@@ -1,0 +1,1607 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Beam Python adapter survey | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-158/design/beam-python-adapter-survey/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-158/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-158/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.5"/><meta name="generator" content="Starlight v0.42.5"/><meta property="og:title" content="Beam Python adapter survey"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-158/design/beam-python-adapter-survey/"/><meta property="og:locale" content="en"/><meta property="og:description" content="> Status: survey, followed by the adapter (docs/BEAMPYTHONADAPTER.md). The forecasts below > are as written before the adapter existed; the scenario tab..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="> Status: survey, followed by the adapter (docs/BEAMPYTHONADAPTER.md). The forecasts below > are as written before the adapter existed; the scenario tab..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-158/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-158/_astro/common.D_L-1Y3_.css"><style>@layer starlight.components{.card:where(.astro-oag6qnet){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-oag6qnet):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-oag6qnet):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-oag6qnet):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-oag6qnet):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-oag6qnet){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-oag6qnet) .icon:where(.astro-oag6qnet){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-oag6qnet) .body:where(.astro-oag6qnet){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-7qmvx3iy){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-7qmvx3iy)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-7qmvx3iy){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-7qmvx3iy){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-7qmvx3iy)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-158/_astro/page.Dwipeu-R.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-158/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-158/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-158/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-158/_astro/Search.astro_astro_type_script_index_0_lang.DwL4bm9o.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="08v5i40" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-158/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-short-version" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The short version</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-to-read-this-document" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How to read this document</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-what-invaract-asks-of-an-engine" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. What Invaract asks of an engine</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-contract-and-the-check" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The contract, and the check</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-engine-neutral-model-the-ir" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The engine-neutral model (the “IR”)</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-the-engine-in-plain-words" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. The engine in plain words</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-how-the-adapter-would-get-hold-of-a-job" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. How the adapter would get hold of a job</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-portable-pipeline-the-proto" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The portable pipeline (the proto)</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-same-pipeline-read-in-java" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The same pipeline, read in Java</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#what-each-io-step-states-probe-3-probe-8" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">What each IO step states (probe 3, probe 8)</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-key-design-decisions" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Key design decisions</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d1-where-does-the-check-run" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D1. Where does the check run?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d2-where-is-the-pipeline-translated-into-the-ir" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D2. Where is the pipeline translated into the IR?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d3-how-does-python-reach-the-java-checker" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D3. How does Python reach the Java checker?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d4-how-do-pythons-names-become-contract-locations" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D4. How do Python’s names become contract locations?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d5-how-do-pythons-types-map-to-the-contracts" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D5. How do Python’s types map to the contract’s?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d6-transformation-shape-rules-required-filter-join-or-group-by-columns-no-cross-join" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D6. Transformation-shape rules (required filter, join or group-by columns; no cross join)</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d7-what-cannot-be-seen-and-the-policy" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D7. What cannot be seen, and the policy</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d8-how-results-are-reported" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D8. How results are reported</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d9-how-ci-proves-it-without-secrets" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D9. How CI proves it without secrets</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d10-language-packaging-and-release" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D10. Language, packaging and release</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-switching-it-on-without-touching-the-job-external-attachability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Switching it on without touching the job: external attachability</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-what-it-would-look-like-to-a-user" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. What it would look like to a user</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-how-much-of-the-suite-it-is-expected-to-pass" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. How much of the suite it is expected to pass</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#71-the-capability-declaration-forecast" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.1 The capability declaration, forecast</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#72-scenario-by-scenario" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.2 Scenario by scenario</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#73-claims-no-scenario-can-check" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.3 Claims no scenario can check</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#74-totals" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.4 Totals</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-what-it-would-take" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. What it would take</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-risks-and-open-questions" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Risks and open questions</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-evidence-log" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Evidence log</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#probes-i-ran" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Probes I ran</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#sources" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Sources</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#unverified" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Unverified</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#glossary" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Glossary</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#retrospective" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Retrospective</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-158/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-short-version" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The short version</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-to-read-this-document" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How to read this document</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-what-invaract-asks-of-an-engine" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. What Invaract asks of an engine</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-contract-and-the-check" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The contract, and the check</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-engine-neutral-model-the-ir" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The engine-neutral model (the “IR”)</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-the-engine-in-plain-words" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. The engine in plain words</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-how-the-adapter-would-get-hold-of-a-job" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. How the adapter would get hold of a job</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-portable-pipeline-the-proto" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The portable pipeline (the proto)</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#the-same-pipeline-read-in-java" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">The same pipeline, read in Java</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#what-each-io-step-states-probe-3-probe-8" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">What each IO step states (probe 3, probe 8)</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-key-design-decisions" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Key design decisions</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d1-where-does-the-check-run" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D1. Where does the check run?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d2-where-is-the-pipeline-translated-into-the-ir" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D2. Where is the pipeline translated into the IR?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d3-how-does-python-reach-the-java-checker" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D3. How does Python reach the Java checker?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d4-how-do-pythons-names-become-contract-locations" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D4. How do Python’s names become contract locations?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d5-how-do-pythons-types-map-to-the-contracts" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D5. How do Python’s types map to the contract’s?</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d6-transformation-shape-rules-required-filter-join-or-group-by-columns-no-cross-join" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D6. Transformation-shape rules (required filter, join or group-by columns; no cross join)</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d7-what-cannot-be-seen-and-the-policy" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D7. What cannot be seen, and the policy</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d8-how-results-are-reported" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D8. How results are reported</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d9-how-ci-proves-it-without-secrets" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D9. How CI proves it without secrets</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#d10-language-packaging-and-release" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">D10. Language, packaging and release</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-switching-it-on-without-touching-the-job-external-attachability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Switching it on without touching the job: external attachability</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-what-it-would-look-like-to-a-user" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. What it would look like to a user</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-how-much-of-the-suite-it-is-expected-to-pass" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. How much of the suite it is expected to pass</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#71-the-capability-declaration-forecast" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.1 The capability declaration, forecast</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#72-scenario-by-scenario" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.2 Scenario by scenario</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#73-claims-no-scenario-can-check" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.3 Claims no scenario can check</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#74-totals" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">7.4 Totals</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-what-it-would-take" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. What it would take</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-risks-and-open-questions" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Risks and open questions</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-evidence-log" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Evidence log</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#probes-i-ran" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Probes I ran</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#sources" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Sources</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#unverified" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Unverified</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#glossary" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Glossary</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#retrospective" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Retrospective</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-158/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Beam Python adapter survey</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/BEAM_PYTHON_ADAPTER_SURVEY.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<blockquote>
+<p><strong>Status: survey, followed by the adapter</strong> (<a href="/Invaract/contributor-pr-preview/pr-158/design/beam-python-adapter/">docs/BEAM_PYTHON_ADAPTER.md</a>). The forecasts below
+are as written before the adapter existed; the scenario tables’ <strong>Actual</strong> column and the Retrospective at the end compare
+them with what the conformance run showed. This document helps decide whether and how to let Invaract check Apache Beam
+pipelines written in Python. It builds on the Java Beam adapter (<code dir="auto">docs/BEAM_ADAPTER.md</code>), which exists, and on its survey
+(<code dir="auto">docs/BEAM_ADAPTER_SURVEY.md</code>).
+Engine surface surveyed: the Beam Python SDK 2.77.0 on Python 3.11, its portable pipeline description, Beam YAML, and Java
+steps used from Python (“cross-language”), checked on Beam’s in-process runner.
+Written: 2026-10-18. Evidence checked: 2026-10-18. Source of each claim: section 10, “Evidence log”.</p>
+</blockquote>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-short-version">The short version</h2><a class="sl-anchor-link" href="#the-short-version"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The short version”</span></a></div>
+<p><strong>What it would be.</strong> Before a Python Beam job starts, Invaract would take the job’s description in Beam’s language-neutral
+form (the <em>portable pipeline</em>, defined in section 2). It would hand that to the checking code that already exists in Java,
+compare it with the data contract, and refuse to start the job if it breaks the contract. As on the Java adapter, it checks
+the <em>shape</em> of a job: what it reads, where it writes, and which columns and types come out. It does not check what the team’s
+own Python functions do to individual values.</p>
+<p><strong>How much of the suite it is expected to pass.</strong> Of the suite’s 53 scenarios: 24 by doing the check, 5 partly, 13 by refusing
+safely, and 11 skipped because they do not apply. “Partly” means BigQuery in CI and streaming runs, neither proven yet. Details
+in section 7.</p>
+<p><strong>Can it be switched on without changing the job’s code?</strong> <em>Partly</em>, in the same way as on Java. A platform team adds
+<code dir="auto">--runner=invaract_beam.InvaractRunner</code> and the Invaract settings to the job’s launch command, and installs one Python package
+where the job is submitted. The job’s code stays as it is, provided it passes its command line to Beam and does not choose its
+own runner. Tested on a real Python pipeline (probe 4). Section 5.</p>
+<p><strong>The biggest risks.</strong></p>
+<ol>
+<li><strong>The checking code runs in Java, so the machine that submits the job needs Java.</strong> A Python job is often launched from a
+Python-only environment, such as a scheduler worker or a Dataflow Flex Template launcher. Whether those have Java is not yet
+checked (UNVERIFIED). The fallback is to ship the checker as a ready-to-run program that needs no Java (D3).</li>
+<li><strong>Much of what a Python job states about itself is “display data”</strong>: labels each step publishes for people (<code dir="auto">File Pattern</code>,
+<code dir="auto">Table</code>), not a promised interface. A Beam release could rename them. The Java adapter has the same exposure through class
+names, and the answer is the same: a version matrix in CI, and refusing what can’t be read.</li>
+<li><strong>Python steps carry their logic as pickled Python</strong> (Python’s own way of saving an object, readable only by Python). Java
+cannot read it, so whatever is known only inside a Python object (a grouping’s keys, a Parquet read’s columns when the job
+did not ask for rows) is invisible unless a small Python-side helper copies it out (D2).</li>
+</ol>
+<p><strong>Decisions I need from you.</strong> (Each is explained in section 4; a one-line answer is enough.)</p>
+<ol>
+<li>Build it, as a Python package plus the existing Java checker reading the portable pipeline? <em>Recommend yes.</em></li>
+<li>Translate in Java from the portable pipeline (one translator for Python, YAML and any other SDK), with a small Python
+helper that adds the facts only Python can read? <em>Recommend yes.</em></li>
+<li>Call the Java checker as a separate program per job submission at first, needing Java on the submitting machine, and move
+to a no-Java build only if that proves a problem? <em>Recommend yes.</em></li>
+<li>Declare the transformation-shape rules unsupported at first (refused safely), and add group-by from the helper later?
+<em>Recommend yes.</em></li>
+<li>For the BigQuery scenarios in CI, check the pipeline without running it, since Python Beam has no in-memory BigQuery?
+<em>Recommend yes, if the kit can be given a “check only” mode; otherwise declare those partial with a note.</em></li>
+<li>Publish the Python package to PyPI with its own release step, versioned with the Java adapter? <em>Recommend yes.</em></li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="how-to-read-this-document">How to read this document</h2><a class="sl-anchor-link" href="#how-to-read-this-document"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “How to read this document”</span></a></div>
+<ul>
+<li><strong>What “conforming” means here.</strong> Invaract has a <em>conformance suite</em>: 53 small, engine-neutral jobs (<em>scenarios</em>) every
+adapter is run against. An <em>adapter</em> is the part of Invaract that knows one engine. It declares what it can and cannot do
+(its <em>declaration</em>), and each scenario must come out the way that declaration promises. <strong>Refusing safely is conforming.</strong> If
+an adapter says “I cannot check this”, the suite expects it to refuse any contract that depends on it, rather than let the
+job through unchecked. So a ❌ below is a limit to understand, not a failing grade.</li>
+<li><strong>Forecast marks.</strong>
+<ul>
+<li>✅ expected to do the check and produce what the suite expects.</li>
+<li>⚠️ only partly, or with a workaround, or depends on something not yet verified.</li>
+<li>❌ cannot do the check, so the suite expects a safe refusal.</li>
+<li>➖ does not apply.</li>
+</ul>
+</li>
+<li><strong>Confidence.</strong> <strong>High</strong>: shown by a probe I ran. <strong>Medium</strong>: each part was probed, or the source says so, but the whole has
+not been assembled. <strong>Low</strong>: inferred. Nothing here has been run as an adapter.</li>
+<li><strong>“Probe”.</strong> A throwaway program I wrote and ran against real Python Beam 2.77.0 to see what it reveals. The programs are not
+committed; what they printed is quoted below.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="1-what-invaract-asks-of-an-engine">1. What Invaract asks of an engine</h2><a class="sl-anchor-link" href="#1-what-invaract-asks-of-an-engine"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “1. What Invaract asks of an engine”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="the-contract-and-the-check">The contract, and the check</h3><a class="sl-anchor-link" href="#the-contract-and-the-check"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The contract, and the check”</span></a></div>
+<p>A <em>data contract</em> is a small YAML file saying what a job may read, where it must write, and what the written data must look
+like:</p>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-158/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-158/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="yaml"><code><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">id</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">orders_report</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">version</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">inputs</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">orders</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data/in/orders</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">parquet</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">outputs</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">report</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data/out/report</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">parquet</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">schema</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent">      </span><span style="--0:#7FDBCA;--1:#111111">fields</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">id</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">long</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">required</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">true</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">amount</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">long</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="id: orders_reportversion: &#x22;1.0.0&#x22;inputs:  - { name: orders, location: data/in/orders, format: parquet }outputs:  - name: report    location: data/out/report    format: parquet    schema:      fields:        - { name: id, type: long, required: true }        - { name: amount, type: long }"><div></div></button></div></figure></div>
+<p>Invaract checks a job against it <strong>before the job writes anything</strong>. If the job reads something undeclared, writes somewhere
+else, or produces the wrong columns, the write is refused with a message saying what was checked, what failed and how to fix
+it. On Spark the check runs inside Spark just before each write. On Beam (Java today, Python here) it runs once, just before
+the whole pipeline is handed to the engine.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="the-engine-neutral-model-the-ir">The engine-neutral model (the “IR”)</h3><a class="sl-anchor-link" href="#the-engine-neutral-model-the-ir"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The engine-neutral model (the “IR”)”</span></a></div>
+<p>Every engine describes a job in its own way. Invaract translates that description into one small engine-independent
+description of reads, filters, joins, groupings and writes, called the <em>IR</em> (intermediate representation). All the checking
+code works on the IR, so it is written once for every engine:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">read data/in/orders  ->  (an opaque step: the team's filter)  ->  write data/out/report (parquet: id long, amount long)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="read data/in/orders  ->  (an opaque step: the team&#x27;s filter)  ->  write data/out/report (parquet: id long, amount long)"><div></div></button></div></figure></div>
+<p>The Spark adapter builds the IR from Spark’s query plan. The Java Beam adapter builds it from the Java pipeline in memory. A
+Python adapter would build it from the portable pipeline, the description every Beam SDK can produce (section 3).</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="2-the-engine-in-plain-words">2. The engine in plain words</h2><a class="sl-anchor-link" href="#2-the-engine-in-plain-words"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. The engine in plain words”</span></a></div>
+<p>Apache Beam is a way of writing data-processing jobs (“pipelines”) once and running them on several engines, called <em>runners</em>:
+Google Dataflow, Flink, Spark, or Beam’s own in-process runner (in Python 2.77 that is “Prism”, a small runner written in Go).
+A pipeline is a chain of steps (<em>transforms</em>: a read, a filter, a grouping, a write) with collections of data flowing between
+them.</p>
+<p>Beam has an SDK (a library for writing pipelines) per language: Java, Python, Go, and a YAML format that the Python SDK runs.
+Python is the most used of these on Dataflow. A Python job looks like this:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="python"><code><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">with</span><span style="--0:#D6DEEB;--1:#403F53"> beam.</span><span style="--0:#B2CCD6;--1:#096E72">Pipeline</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">options</span></span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#B2CCD6;--1:#096E72">PipelineOptions</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#82AAFF;--1:#3B61B0">argv</span><span style="--0:#D6DEEB;--1:#403F53">)) </span><span style="--0:#C792EA;--1:#8844AE">as</span><span style="--0:#D6DEEB;--1:#403F53"> p:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">(p</span></div></div><div class="ec-line"><div class="code"><span class="indent">     </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">ReadOrders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.io.</span><span style="--0:#B2CCD6;--1:#096E72">ReadFromParquet</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">data/in/orders/*.parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D7DBE0;--1:#403F53">as_rows</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#FF6A83;--1:#A24848">True</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span class="indent">     </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">Positive</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.</span><span style="--0:#B2CCD6;--1:#096E72">Filter</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#C792EA;--1:#8844AE">lambda</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#7FDBCA;--1:#096E72">r</span><span style="--0:#82AAFF;--1:#3B61B0">: r.amount </span><span style="--0:#C792EA;--1:#8844AE">></span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#F78C6C;--1:#AA0982">0</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span class="indent">     </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">WriteReport</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.io.</span><span style="--0:#B2CCD6;--1:#096E72">WriteToParquet</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">data/out/report/part</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> schema</span><span style="--0:#D6DEEB;--1:#403F53">))</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="with beam.Pipeline(options=PipelineOptions(argv)) as p:    (p     | &#x22;ReadOrders&#x22; >> beam.io.ReadFromParquet(&#x22;data/in/orders/*.parquet&#x22;, as_rows=True)     | &#x22;Positive&#x22; >> beam.Filter(lambda r: r.amount > 0)     | &#x22;WriteReport&#x22; >> beam.io.WriteToParquet(&#x22;data/out/report/part&#x22;, schema))"><div></div></button></div></figure></div>
+<p>When the <code dir="auto">with</code> block ends, Beam asks the chosen runner to run the pipeline. Before a runner submits a Python pipeline, Beam
+turns it into the <strong>portable pipeline</strong>: a language-neutral description of every step and collection, written in Protocol
+Buffers (a compact, typed data format that any language can read; “proto” for short). That moment, after the pipeline is
+built and before anything runs, is where Invaract can stop a job.</p>
+<p><strong>Why the Java adapter does not cover this.</strong> The Java adapter is a Java runner that reads Java objects. A Python job never
+reaches it: Python picks a Python runner, and the Python objects are not Java objects.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="3-how-the-adapter-would-get-hold-of-a-job">3. How the adapter would get hold of a job</h2><a class="sl-anchor-link" href="#3-how-the-adapter-would-get-hold-of-a-job"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “3. How the adapter would get hold of a job”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="the-portable-pipeline-the-proto">The portable pipeline (the proto)</h3><a class="sl-anchor-link" href="#the-portable-pipeline-the-proto"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The portable pipeline (the proto)”</span></a></div>
+<ul>
+<li>
+<p><strong>What it is.</strong> The pipeline written out as data: every step with its name, the kind of step it is, its inputs and outputs,
+a few labels it publishes about itself, and every collection with the encoding its items travel in. It is like a shipping
+manifest for the job: it lists what goes where, but not what is inside each parcel.</p>
+</li>
+<li>
+<p><strong>How we get hold of it.</strong> <code dir="auto">pipeline.to_runner_api()</code> in Python returns it. A wrapper runner gets the pipeline in
+<code dir="auto">run_pipeline(pipeline, options)</code>, after the job has built it and before any step has run (probe 4), so a job can still be
+refused. The proto can be written to bytes and read in Java with Beam’s own Java classes (<code dir="auto">RunnerApi.Pipeline.parseFrom</code>,
+probe 7).</p>
+</li>
+<li>
+<p><strong>What it contains.</strong></p>
+<ul>
+<li>Every step’s unique name.</li>
+<li>Its kind (a <code dir="auto">urn</code>: <code dir="auto">beam:transform:read:v1</code>, <code dir="auto">beam:transform:pardo:v1</code>, …).</li>
+<li>The Python class it was built from, in an annotation (<code dir="auto">python_type=apache_beam.io.parquetio.ReadFromParquet</code>).</li>
+<li>Its inputs and outputs.</li>
+<li>Its <em>display data</em>: labels such as <code dir="auto">File Pattern=...</code>, <code dir="auto">Table=proj:ds.report</code>, <code dir="auto">schema=id: int64 ...</code>.</li>
+<li>For each collection, whether it is finite or a stream, and its <em>coder</em> (how items are encoded). When items are Beam rows,
+the coder carries the row <em>schema</em>: the column names and types.</li>
+</ul>
+</li>
+<li>
+<p><strong>What it leaves out.</strong></p>
+<ul>
+<li>Anything inside a step’s own Python code. Functions are stored pickled (Python’s own way of saving an object, readable only
+by Python).</li>
+<li>The columns of plain Python dictionaries, which travel pickled too.</li>
+<li>A grouping’s keys (<code dir="auto">beam.GroupBy("id")</code> states no key in the proto).</li>
+<li>The columns of a Parquet read that did not ask for rows.</li>
+</ul>
+<p>The cost: those checks are either done from what the write states, done by a small Python helper (D2), or refused.</p>
+</li>
+<li>
+<p><strong>A real example.</strong> Captured by probe 1 and probe 2 (<code dir="auto">pipeline.to_runner_api()</code>, Beam 2.77.0), trimmed to the steps the
+job wrote:</p>
+</li>
+</ul>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">ReadOrders  urn=beam:transform:generic_composite:v1</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">python_type = apache_beam.io.parquetio.ReadFromParquet</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">File Pattern = .../data/in/orders/*.parquet</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">out coder = beam:coder:row:v1   SCHEMA [('id', INT64, nullable), ('amount', INT64, nullable)]</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">Positive    urn=beam:transform:pardo:v1</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">python_type = apache_beam.transforms.core.ParDo</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">Transform Function = &#x3C;lambda></span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">WriteReport urn=beam:transform:generic_composite:v1</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">python_type = apache_beam.io.parquetio.WriteToParquet</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">File Pattern = .../data/out/report/part-%(shard_num)05d-of-%(num_shards)05d.parquet</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">schema = id: int64</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">             </span></span><span style="--0:#d6deeb;--1:#403f53">amount: int64</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="ReadOrders  urn=beam:transform:generic_composite:v1    python_type = apache_beam.io.parquetio.ReadFromParquet    File Pattern = .../data/in/orders/*.parquet    out coder = beam:coder:row:v1   SCHEMA [(&#x27;id&#x27;, INT64, nullable), (&#x27;amount&#x27;, INT64, nullable)]Positive    urn=beam:transform:pardo:v1    python_type = apache_beam.transforms.core.ParDo    Transform Function = <lambda>WriteReport urn=beam:transform:generic_composite:v1    python_type = apache_beam.io.parquetio.WriteToParquet    File Pattern = .../data/out/report/part-%(shard_num)05d-of-%(num_shards)05d.parquet    schema = id: int64             amount: int64"><div></div></button></div></figure></div>
+<p>Reading it line by line:</p>
+<ul>
+<li><strong><code dir="auto">ReadOrders</code></strong> is a Parquet read (its <code dir="auto">python_type</code>) of the folder <code dir="auto">data/in/orders</code> (its <code dir="auto">File Pattern</code>). Its output has
+the columns <code dir="auto">id</code> and <code dir="auto">amount</code>, both 64-bit integers that may be empty (the row schema).</li>
+<li><strong><code dir="auto">Positive</code></strong> is the team’s own function (<code dir="auto">&#x3C;lambda></code>). Invaract sees that a step is there, not what it does, as with Java.</li>
+<li><strong><code dir="auto">WriteReport</code></strong> writes Parquet files under <code dir="auto">data/out/report</code>, with exactly the columns <code dir="auto">id</code> and <code dir="auto">amount</code>, both 64-bit
+integers (the <code dir="auto">schema</code> label).</li>
+</ul>
+<p>Those are the facts the contract above needs.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="the-same-pipeline-read-in-java">The same pipeline, read in Java</h3><a class="sl-anchor-link" href="#the-same-pipeline-read-in-java"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The same pipeline, read in Java”</span></a></div>
+<ul>
+<li><strong>What it is.</strong> The bytes of the proto above, parsed by Beam’s Java classes inside the existing <code dir="auto">beam-adapter</code> test setup.</li>
+<li><strong>How we get hold of it.</strong> The Python side writes the bytes; the Java side reads them (<code dir="auto">RunnerApi.Pipeline.parseFrom</code>).
+Display data decodes with <code dir="auto">RunnerApi.LabelledPayload.parseFrom</code>, and row schemas with
+<code dir="auto">SchemaTranslation.schemaFromProto</code> (probe 7).</li>
+<li><strong>What it contains.</strong> Everything above. Probe 7 printed, from Java:
+<code dir="auto">ReadOrders urn=beam:transform:generic_composite:v1 dd=[File Pattern=.../data/in/orders/*.parquet, Compression Type=auto] ann=[python_type=apache_beam.io.parquetio.ReadFromParquet] out=[{ id: &#x3C;INT64> amount: &#x3C;INT64> }]</code>.</li>
+<li><strong>What it leaves out.</strong> One surprise: a <code dir="auto">beam.Select</code> with a computed field has fields with no type, and Beam’s Java decoder
+rejects such a schema (<code dir="auto">Failed to decode Schema</code>). The translator must read the field names itself and treat their types as
+unknown.</li>
+<li><strong>A real example.</strong> Above. The annotation Invaract’s helper added in Python (<code dir="auto">invaract:group_keys=id</code>) also arrived intact
+(probe 5, read back in probe 7).</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="what-each-io-step-states-probe-3-probe-8">What each IO step states (probe 3, probe 8)</h3><a class="sl-anchor-link" href="#what-each-io-step-states-probe-3-probe-8"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What each IO step states (probe 3, probe 8)”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Python step</th><th>Where it reads or writes</th><th>Columns</th><th>Other</th></tr></thead><tbody><tr><td><code dir="auto">ReadFromParquet</code></td><td><code dir="auto">File Pattern</code></td><td>only with <code dir="auto">as_rows=True</code> (a row schema)</td><td>read patterns are checked to exist when the pipeline is built</td></tr><tr><td><code dir="auto">WriteToParquet</code></td><td><code dir="auto">File Pattern</code> (prefix plus shard template)</td><td>the <code dir="auto">schema</code> label (pyarrow text, nested types included)</td><td>compression</td></tr><tr><td><code dir="auto">ReadFromText</code> / <code dir="auto">WriteToText</code></td><td><code dir="auto">File Pattern</code> (on the inner <code dir="auto">Read</code> / <code dir="auto">Write</code> step)</td><td>none (lines of text)</td><td></td></tr><tr><td><code dir="auto">ReadFromAvro</code> / <code dir="auto">WriteToAvro</code></td><td><code dir="auto">File Pattern</code></td><td>write: the Avro schema label; read: none</td><td></td></tr><tr><td><code dir="auto">ReadFromBigQuery</code></td><td><code dir="auto">table_reference</code> or <code dir="auto">query</code> (on the inner <code dir="auto">Read</code>)</td><td>none, unless rows are asked for (UNVERIFIED)</td><td><code dir="auto">method=DIRECT_READ</code></td></tr><tr><td><code dir="auto">WriteToBigQuery</code></td><td><code dir="auto">Table=proj:ds.report</code></td><td><code dir="auto">schema={'fields': [...]}</code> (inside the write)</td><td><code dir="auto">write_disposition=WRITE_TRUNCATE</code>, <code dir="auto">create_disposition</code></td></tr><tr><td><code dir="auto">ReadFromPubSub</code> / <code dir="auto">WriteToPubSub</code></td><td><code dir="auto">Pubsub Topic</code></td><td>none (bytes)</td><td>the read’s collection is marked a stream</td></tr><tr><td>a classic-template parameter</td><td><code dir="auto">RuntimeValueProvider(option: input, ...)</code> in place of a path</td><td></td><td>the same as Java’s D21: a read is unlocated, a write is refused</td></tr><tr><td>a Java step used from Python (SQL, Kafka, JDBC)</td><td>the Java step’s own display data, under Java class names</td><td>as on Java</td><td>runs in a separate Java environment (probe 6)</td></tr><tr><td>Beam YAML</td><td>the same Python steps, plus <code dir="auto">yaml_type</code> and <code dir="auto">yaml_args</code> annotations (the step’s YAML configuration as JSON, e.g. <code dir="auto">"keep": "amount > 0"</code>)</td><td>as above</td><td>probe 9</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="4-key-design-decisions">4. Key design decisions</h2><a class="sl-anchor-link" href="#4-key-design-decisions"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Key design decisions”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="d1-where-does-the-check-run">D1. Where does the check run?</h3><a class="sl-anchor-link" href="#d1-where-does-the-check-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D1. Where does the check run?”</span></a></div>
+<ul>
+<li><strong>Options.</strong>
+<ul>
+<li>(a) A Python wrapper runner named by <code dir="auto">--runner</code>, which checks and then hands the pipeline to the real runner.</li>
+<li>(b) A proxy in front of a “job service” (the server portable runners such as Flink and Spark accept jobs through).</li>
+<li>(c) Inside each runner.</li>
+</ul>
+</li>
+<li><strong>Recommendation.</strong> (a).</li>
+<li><strong>Why.</strong> It is the same design as the Java adapter. It sees every pipeline whatever the runner, Dataflow included (Python’s
+Dataflow runner does not go through a job service, so (b) would miss it). And probe 4 showed it works: the wrapper got the
+whole pipeline before anything ran, refused it with exit status 1, and nothing was written.</li>
+<li><strong>What it costs.</strong> A job that picks its runner in code bypasses it, exactly as on Java.</li>
+<li><strong>What would change my mind.</strong> A large share of jobs choosing their runner in code. Then (b) for the portable runners, plus
+a one-line call for the rest.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d2-where-is-the-pipeline-translated-into-the-ir">D2. Where is the pipeline translated into the IR?</h3><a class="sl-anchor-link" href="#d2-where-is-the-pipeline-translated-into-the-ir"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D2. Where is the pipeline translated into the IR?”</span></a></div>
+<ul>
+<li><strong>Options.</strong>
+<ul>
+<li>(a) In Java, from the proto alone.</li>
+<li>(b) In Python, from the live Python objects, sending the IR to Java.</li>
+<li>(c) In Java from the proto, with a small Python helper that first copies into the proto, as annotations, the few facts
+only Python can read.</li>
+</ul>
+</li>
+<li><strong>Recommendation.</strong> (c), starting with an empty helper (pure (a)) and adding facts one at a time.</li>
+<li><strong>Why.</strong> One translator in Java serves Python, Beam YAML and any later SDK (Go), and reuses the Java adapter’s rules: how
+locations become contract locations, what fails closed, which steps only report (D14). The helper is the escape hatch for
+facts that live only in Python objects. Probe 5 read a <code dir="auto">GroupBy</code>’s keys from the live object (<code dir="auto">_key_fields</code>) and added them
+to the proto as <code dir="auto">invaract:group_keys=id</code>, and Java read them back (probe 7).</li>
+<li><strong>What it costs.</strong> A second “IO catalogue”, from Python step types and display labels to reads and writes, next to the Java
+one. The translation walk (the graph, unknown steps, D14, failing closed) should be shared, which means a small refactor of
+<code dir="auto">BeamTranslator</code> to work on steps from either source.</li>
+<li><strong>What would change my mind.</strong> If most checks needed Python-only facts, (b) would be simpler. Probes 1 to 3 say they don’t:
+locations, write schemas, BigQuery tables and dispositions are all in the proto.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d3-how-does-python-reach-the-java-checker">D3. How does Python reach the Java checker?</h3><a class="sl-anchor-link" href="#d3-how-does-python-reach-the-java-checker"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D3. How does Python reach the Java checker?”</span></a></div>
+<ul>
+<li><strong>Options.</strong>
+<ul>
+<li>(a) Run <code dir="auto">java -jar invaract-beam-checker.jar</code> once per submission, passing the proto as a file and reading the verdict.</li>
+<li>(b) A long-running local service.</li>
+<li>(c) The checker compiled ahead of time into a program that needs no Java (GraalVM “native image”), shipped inside the
+Python package.</li>
+</ul>
+</li>
+<li><strong>Recommendation.</strong> (a) first; (c) if Java on the submitting machine turns out to be a real obstacle.</li>
+<li><strong>Why.</strong> (a) is the least new machinery. Submission happens once per job, so a JVM start-up of a second or two
+(UNVERIFIED, to be measured) does not matter. Jobs that use Java steps from Python (SQL, Kafka) already need Java on the
+submitting machine for Beam’s own expansion service (probe 6 started one).</li>
+<li><strong>What it costs.</strong> Java 11+ wherever jobs are submitted, and two artefacts to install (the Python package and the jar). The
+package can download the jar the way Beam downloads its expansion service.</li>
+<li><strong>What would change my mind.</strong> Dataflow Flex Template launchers or common schedulers lacking Java (UNVERIFIED).</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d4-how-do-pythons-names-become-contract-locations">D4. How do Python’s names become contract locations?</h3><a class="sl-anchor-link" href="#d4-how-do-pythons-names-become-contract-locations"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D4. How do Python’s names become contract locations?”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong> Reuse the Java adapter’s rules:
+<ul>
+<li>A read pattern is its folder (<code dir="auto">data/in/orders/*.parquet</code> is <code dir="auto">data/in/orders</code>).</li>
+<li>A write is its prefix’s folder, ignoring the shard template (<code dir="auto">part-%(shard_num)05d-...</code>).</li>
+<li>A BigQuery <code dir="auto">proj:ds.table</code> is <code dir="auto">proj/ds/table</code> in the <code dir="auto">bigquery</code> catalog.</li>
+<li>A Pub/Sub topic is its path.</li>
+</ul>
+</li>
+<li><strong>Why.</strong> One contract then describes the same dataset whichever SDK a job uses.</li>
+<li><strong>What it costs.</strong> Parsing the Python write’s file-pattern template, which Java writes do not have.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d5-how-do-pythons-types-map-to-the-contracts">D5. How do Python’s types map to the contract’s?</h3><a class="sl-anchor-link" href="#d5-how-do-pythons-types-map-to-the-contracts"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D5. How do Python’s types map to the contract’s?”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong>
+<ul>
+<li>Row schemas use Beam’s own type names, mapped exactly as on Java (<code dir="auto">BeamSchemas</code>).</li>
+<li>Write schemas arrive as pyarrow text (<code dir="auto">id: int64</code>, <code dir="auto">tags: list&#x3C;item: string></code>); the helper should send them as structured
+data instead of the text being parsed.</li>
+<li>A field with no type (<code dir="auto">beam.Select</code> with a computed field) is a column whose type is unknown, so a contract that declares
+its type has the write refused, never passed.</li>
+</ul>
+</li>
+<li><strong>Why.</strong> Parsing pyarrow’s printed form is fragile (it is meant for people), while the helper can read the pyarrow schema
+object directly.</li>
+<li><strong>What it costs.</strong> A small part of the helper, and a test per pyarrow type.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d6-transformation-shape-rules-required-filter-join-or-group-by-columns-no-cross-join">D6. Transformation-shape rules (required filter, join or group-by columns; no cross join)</h3><a class="sl-anchor-link" href="#d6-transformation-shape-rules-required-filter-join-or-group-by-columns-no-cross-join"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D6. Transformation-shape rules (required filter, join or group-by columns; no cross join)”</span></a></div>
+<ul>
+<li><strong>Options.</strong>
+<ul>
+<li>(a) Unsupported, refused safely.</li>
+<li>(b) Group-by from the helper (<code dir="auto">GroupBy</code> keys); filters and joins stay opaque.</li>
+<li>(c) Also read Beam YAML’s filter expressions.</li>
+</ul>
+</li>
+<li><strong>Recommendation.</strong> (a) at first, then (b) and (c).</li>
+<li><strong>Why.</strong> Python has no column-naming filter or join: <code dir="auto">beam.Filter</code> takes a function, and joins are <code dir="auto">CoGroupByKey</code>. The suite
+judges a capability as a whole, so declaring it “partial” with only group-by would make the filter and join scenarios fail,
+instead of refusing safely as they do when it is declared unsupported. (b) needs the capability split, or a per-rule
+declaration in the kit.</li>
+<li><strong>What it costs.</strong> Teams that rely on these rules get a clear refusal, not a check, at first.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d7-what-cannot-be-seen-and-the-policy">D7. What cannot be seen, and the policy</h3><a class="sl-anchor-link" href="#d7-what-cannot-be-seen-and-the-policy"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D7. What cannot be seen, and the policy”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong> As on Java:
+<ul>
+<li>A step that ends the pipeline without being a recognised write is refused, unless it only reads what writes report or the
+platform trusts it (D14, <code dir="auto">--invaract_trusted_steps</code>).</li>
+<li>A read Invaract cannot locate makes a declared input “unverifiable”, not “missing”.</li>
+<li>A write whose columns cannot be told is refused when its output declares columns.</li>
+<li>A function that writes in the middle of a pipeline cannot be seen by any check made before the run.</li>
+</ul>
+</li>
+<li><strong>Why.</strong> Failing closed (refusing what cannot be checked) is Invaract’s rule everywhere.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d8-how-results-are-reported">D8. How results are reported</h3><a class="sl-anchor-link" href="#d8-how-results-are-reported"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D8. How results are reported”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong> The Java checker publishes the same validation events as every adapter, through the same sinks. The
+engine is named <code dir="auto">beam-python</code>, and the Python SDK version and the delegate runner are passed by the helper. The Python side
+prints the verdict and raises, so the job’s submit command fails with Invaract’s message.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d9-how-ci-proves-it-without-secrets">D9. How CI proves it without secrets</h3><a class="sl-anchor-link" href="#d9-how-ci-proves-it-without-secrets"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D9. How CI proves it without secrets”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong>
+<ul>
+<li>Python jobs generated from each scenario and run on Beam’s in-process runner (Prism), the way the Java adapter’s
+<code dir="auto">BeamScenarioJobs</code> builds Java jobs.</li>
+<li>Recorded protos as fast unit-test fixtures for the Java translator.</li>
+<li>A Python version matrix like the Java one.</li>
+</ul>
+</li>
+<li><strong>The open part.</strong> Python Beam ships no in-memory BigQuery (Java’s <code dir="auto">FakeBigQueryServices</code> has no Python counterpart in the
+2.77.0 package). The BigQuery scenarios, save mode and catalog, need either a “check only, do not run” mode in the kit or a
+stand-in. Streaming scenarios need a Python stream that ends by itself on Prism (UNVERIFIED).</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="d10-language-packaging-and-release">D10. Language, packaging and release</h3><a class="sl-anchor-link" href="#d10-language-packaging-and-release"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “D10. Language, packaging and release”</span></a></div>
+<ul>
+<li><strong>Recommendation.</strong>
+<ul>
+<li>A Python package (<code dir="auto">invaract-beam</code> on PyPI: the runner, the options and the helper) with its own tests (pytest), lint, and
+a release step.</li>
+<li>The Java checker as a runnable jar (the existing <code dir="auto">beam-adapter</code>, plus a small command-line entry point), published with the
+other modules.</li>
+<li>Versions kept in step.</li>
+</ul>
+</li>
+<li><strong>What it costs.</strong> A new toolchain in the repository’s guardrails: Python tests, coverage and a release job. The repository’s
+mutation testing is Scala-only, so the Python helper would need its own (<code dir="auto">mutmut</code>) or be kept small enough not to.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="5-switching-it-on-without-touching-the-job-external-attachability">5. Switching it on without touching the job: external attachability</h2><a class="sl-anchor-link" href="#5-switching-it-on-without-touching-the-job-external-attachability"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Switching it on without touching the job: external attachability”</span></a></div>
+<p><strong>Verdict: Partly</strong>, exactly as on Java Beam.</p>
+<p><strong>The mechanism.</strong> Python Beam accepts a runner by dotted module path (<code dir="auto">--runner=module.Class</code>; <code dir="auto">apache_beam/runners/runner.py</code>,
+<code dir="auto">create_runner</code>). The wrapper’s options are an ordinary <code dir="auto">PipelineOptions</code> subclass, parsed from the same command line. Probe 4
+ran a job that knows nothing about Invaract like this:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">pip install invaract-beam        # where the job is submitted (PREDICTED name)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">python job.py --runner=invaract_beam.InvaractRunner \</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">--invaract_delegate=DataflowRunner --invaract_contract=gs://contracts/orders_report.yaml \</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">    </span></span><span style="--0:#d6deeb;--1:#403f53">--project=... --region=... --temp_location=...</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="pip install invaract-beam        # where the job is submitted (PREDICTED name)python job.py --runner=invaract_beam.InvaractRunner \    --invaract_delegate=DataflowRunner --invaract_contract=gs://contracts/orders_report.yaml \    --project=... --region=... --temp_location=..."><div></div></button></div></figure></div>
+<p>The probe’s version printed <code dir="auto">INVARACT: contract=contracts/report.yaml delegate=DirectRunner ... nothing has run yet</code>, ran the
+job, and wrote its output. With a refusing contract it exited with status 1 and wrote nothing. Without the package installed,
+Beam stopped with <code dir="auto">ModuleNotFoundError: No module named 'invaract_probe'</code>, exit status 1, nothing written. A missing install
+fails closed.</p>
+<p>A Beam YAML pipeline is launched by Beam’s own Python entry point (<code dir="auto">python -m apache_beam.yaml.main --yaml_pipeline_file=...</code>),
+so the same flags apply (PREDICTED; the proto it produces was probed, the launch was not).</p>
+<p><strong>The settings.</strong> Python options are spelled in snake case:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Setting</th><th>What it does</th><th>How it is given on Python Beam</th><th>Possible?</th></tr></thead><tbody><tr><td><code dir="auto">contract</code></td><td>which contract to enforce (a file, or <code dir="auto">registry://id@version</code>)</td><td><code dir="auto">--invaract_contract</code></td><td>Yes</td></tr><tr><td><code dir="auto">dryRun</code></td><td>observe and infer a contract instead of enforcing</td><td><code dir="auto">--invaract_dry_run=true</code></td><td>Yes</td></tr><tr><td><code dir="auto">notifyConfig</code></td><td>where validation events are sent</td><td><code dir="auto">--invaract_notify_config</code></td><td>Yes</td></tr><tr><td><code dir="auto">registryUrl</code></td><td>where <code dir="auto">registry://</code> contracts are fetched</td><td><code dir="auto">--invaract_registry_url</code></td><td>Yes</td></tr><tr><td><code dir="auto">locationMap</code></td><td>maps <code dir="auto">ref://</code> names in a contract to real locations</td><td><code dir="auto">--invaract_location_map</code></td><td>Yes</td></tr><tr><td><code dir="auto">orgPolicy</code></td><td>organisation-wide rules layered on the contract</td><td><code dir="auto">--invaract_org_policy</code></td><td>Yes</td></tr><tr><td><code dir="auto">rejectUndeclaredInputs</code> / <code dir="auto">rejectUndeclaredFields</code></td><td>stricter checking</td><td><code dir="auto">--invaract_reject_undeclared_inputs</code> / <code dir="auto">..._fields</code></td><td>Yes</td></tr><tr><td><code dir="auto">computeFingerprint</code> / <code dir="auto">staticDataQuality</code> / <code dir="auto">roleConsistency</code></td><td>optional analyses</td><td><code dir="auto">--invaract_compute_fingerprint</code> …</td><td>Yes, but each is declared unsupported, so a run with one is refused</td></tr><tr><td><code dir="auto">trustedSteps</code></td><td>steps the platform trusts to end the pipeline</td><td><code dir="auto">--invaract_trusted_steps</code></td><td>Yes</td></tr></tbody></table>
+<p>The helper passes them to the Java checker unchanged, so the Java side reads them through the same engine-neutral settings
+code (<code dir="auto">ConfigSource</code>) as every adapter.</p>
+<p><strong>How a job can get around it, and what is not possible.</strong></p>
+<ul>
+<li>A job that sets its runner in code (<code dir="auto">PipelineOptions(runner="DataflowRunner")</code>, or <code dir="auto">options.view_as(StandardOptions).runner = ...</code>)
+or ignores its command line is not checked. This is the same as Java, and stated in the declaration.</li>
+<li>A job submitted from a machine without the package fails to start. That fails closed, but means an install step for the
+platform.</li>
+<li>A job submitted from a machine without Java cannot be checked (D3).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="6-what-it-would-look-like-to-a-user">6. What it would look like to a user</h2><a class="sl-anchor-link" href="#6-what-it-would-look-like-to-a-user"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. What it would look like to a user”</span></a></div>
+<p><strong>The contract</strong> is the one in section 1.</p>
+<p><strong>The job</strong> (what the team wrote; unchanged):</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="python"><code><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">import</span><span style="--0:#D6DEEB;--1:#403F53"> sys, apache_beam </span><span style="--0:#C792EA;--1:#8844AE">as</span><span style="--0:#D6DEEB;--1:#403F53"> beam, pyarrow </span><span style="--0:#C792EA;--1:#8844AE">as</span><span style="--0:#D6DEEB;--1:#403F53"> pa</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">from</span><span style="--0:#D6DEEB;--1:#403F53"> apache_beam.options.pipeline_options </span><span style="--0:#C792EA;--1:#8844AE">import</span><span style="--0:#D6DEEB;--1:#403F53"> PipelineOptions</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">schema </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> pa.</span><span style="--0:#B2CCD6;--1:#096E72">schema</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">[</span><span style="--0:#82AAFF;--1:#3B61B0">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#82AAFF;--1:#3B61B0">, pa.</span><span style="--0:#B2CCD6;--1:#096E72">int64</span><span style="--0:#D6DEEB;--1:#403F53">()</span><span style="--0:#82AAFF;--1:#3B61B0">), (</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">amount</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#82AAFF;--1:#3B61B0">, pa.</span><span style="--0:#B2CCD6;--1:#096E72">int64</span><span style="--0:#D6DEEB;--1:#403F53">()</span><span style="--0:#82AAFF;--1:#3B61B0">)</span><span style="--0:#D9F5DD;--1:#111111">]</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">with</span><span style="--0:#D6DEEB;--1:#403F53"> beam.</span><span style="--0:#B2CCD6;--1:#096E72">Pipeline</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">options</span></span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#B2CCD6;--1:#096E72">PipelineOptions</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#82AAFF;--1:#3B61B0">sys.argv</span><span style="--0:#D6DEEB;--1:#403F53">[</span><span style="--0:#F78C6C;--1:#AA0982">1</span><span style="--0:#82AAFF;--1:#3B61B0">:</span><span style="--0:#D6DEEB;--1:#403F53">])) </span><span style="--0:#C792EA;--1:#8844AE">as</span><span style="--0:#D6DEEB;--1:#403F53"> p:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">(p </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">ReadOrders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.io.</span><span style="--0:#B2CCD6;--1:#096E72">ReadFromParquet</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">data/in/orders/*.parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D7DBE0;--1:#403F53">as_rows</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#FF6A83;--1:#A24848">True</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span class="indent">       </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">Positive</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.</span><span style="--0:#B2CCD6;--1:#096E72">Filter</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#C792EA;--1:#8844AE">lambda</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#7FDBCA;--1:#096E72">r</span><span style="--0:#82AAFF;--1:#3B61B0">: r.amount </span><span style="--0:#C792EA;--1:#8844AE">></span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#F78C6C;--1:#AA0982">0</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span class="indent">       </span><span style="--0:#C792EA;--1:#8844AE">|</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">WriteReport</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">>></span><span style="--0:#D6DEEB;--1:#403F53"> beam.io.</span><span style="--0:#B2CCD6;--1:#096E72">WriteToParquet</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">data/out/report/part</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> schema</span><span style="--0:#D6DEEB;--1:#403F53">))</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="import sys, apache_beam as beam, pyarrow as pafrom apache_beam.options.pipeline_options import PipelineOptionsschema = pa.schema([(&#x22;id&#x22;, pa.int64()), (&#x22;amount&#x22;, pa.int64())])with beam.Pipeline(options=PipelineOptions(sys.argv[1:])) as p:    (p | &#x22;ReadOrders&#x22; >> beam.io.ReadFromParquet(&#x22;data/in/orders/*.parquet&#x22;, as_rows=True)       | &#x22;Positive&#x22; >> beam.Filter(lambda r: r.amount > 0)       | &#x22;WriteReport&#x22; >> beam.io.WriteToParquet(&#x22;data/out/report/part&#x22;, schema))"><div></div></button></div></figure></div>
+<p><strong>Turning it on</strong> (what the platform team does): the command in section 5.</p>
+<p><strong>A passing run.</strong> The job runs as before. One INFO line from Invaract says the pipeline was checked against
+<code dir="auto">orders_report@1.0.0</code> and passed, and a PASSED validation event goes to the configured sink.</p>
+<p><strong>A blocked run (PREDICTED).</strong> If the team changed the write to <code dir="auto">data/out/report_v2/part</code>, the submit command would fail
+before anything ran, with the message every adapter prints:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">Invaract: contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">What the contract expects:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">  </span></span><span style="--0:#d6deeb;--1:#403f53">output 'report' at data/out/report: id: long (required), amount: long (optional)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">What the plan contains:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">  </span></span><span style="--0:#d6deeb;--1:#403f53">Write(data/out/report_v2, parquet) &#x3C;- (Positive: a function) &#x3C;- Read(data/in/orders)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">Why it violates the contract (1 violation):</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">  </span></span><span style="--0:#d6deeb;--1:#403f53">1. [OUTPUT_LOCATION_MISMATCH] the job writes to data/out/report_v2, but the contract's output 'report' is at data/out/report</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">How to correct it:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">  </span></span><span style="--0:#d6deeb;--1:#403f53">1. Write to data/out/report, or update the contract if the output has moved.</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="Invaract: contract violation: &#x27;orders_report@1.0.0&#x27; rejected this transformation. Write aborted.What the contract expects:  output &#x27;report&#x27; at data/out/report: id: long (required), amount: long (optional)What the plan contains:  Write(data/out/report_v2, parquet) <- (Positive: a function) <- Read(data/in/orders)Why it violates the contract (1 violation):  1. [OUTPUT_LOCATION_MISMATCH] the job writes to data/out/report_v2, but the contract&#x27;s output &#x27;report&#x27; is at data/out/reportHow to correct it:  1. Write to data/out/report, or update the contract if the output has moved."><div></div></button></div></figure></div>
+<p><strong>Dry-run mode (PREDICTED).</strong> With <code dir="auto">--invaract_dry_run=true</code> and no contract, the job runs unchanged and Invaract publishes a
+draft contract for each write, plus a job summary that merges them. Each draft is self-checked against its write, as on Java,
+and is marked degraded where a column could not be told (a Parquet read without <code dir="auto">as_rows=True</code>).</p>
+<p><strong>Where the events go.</strong> The sink named by <code dir="auto">--invaract_notify_config</code>, as for every adapter. Events name the engine
+(<code dir="auto">beam-python</code>), its version, the job name and the delegate runner.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="7-how-much-of-the-suite-it-is-expected-to-pass">7. How much of the suite it is expected to pass</h2><a class="sl-anchor-link" href="#7-how-much-of-the-suite-it-is-expected-to-pass"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7. How much of the suite it is expected to pass”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="71-the-capability-declaration-forecast">7.1 The capability declaration, forecast</h3><a class="sl-anchor-link" href="#71-the-capability-declaration-forecast"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7.1 The capability declaration, forecast”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Capability</th><th>What it means</th><th>Would declare</th><th>Why</th><th>Confidence</th></tr></thead><tbody><tr><td><code dir="auto">read.batch</code>, <code dir="auto">write.batch</code></td><td>reads and writes of finite data</td><td>supported</td><td>Each IO step states its pattern, table or topic in display data (probe 3)</td><td>High</td></tr><tr><td><code dir="auto">read.streaming</code>, <code dir="auto">write.streaming</code></td><td>the same for streams</td><td>supported</td><td>A Pub/Sub read is marked a stream in the proto (probe 8)</td><td>Medium</td></tr><tr><td><code dir="auto">write.rowLevelDml</code>, <code dir="auto">write.stateChange</code>, <code dir="auto">rules.dml</code></td><td>row-level changes, schema-only changes</td><td>not-applicable</td><td>Beam has neither</td><td>High</td></tr><tr><td><code dir="auto">check.inputExistence</code>, <code dir="auto">check.location</code>, <code dir="auto">check.outputsWritten</code></td><td>declared inputs read, writes in the right place, every declared output written</td><td>supported</td><td>The whole pipeline, with every read and write, is in the proto before it runs</td><td>High</td></tr><tr><td><code dir="auto">check.schema</code></td><td>the written columns and types match</td><td>partial</td><td>Known from row schemas and write schemas, not from plain dictionaries</td><td>Medium</td></tr><tr><td><code dir="auto">check.nestedTypes</code></td><td>arrays, structs and maps</td><td>supported</td><td>Row schemas and pyarrow schemas carry them (probe 8)</td><td>Medium</td></tr><tr><td><code dir="auto">check.format</code></td><td>the file format</td><td>partial</td><td>The IO step names it; a text write cannot tell CSV from JSON</td><td>Medium</td></tr><tr><td><code dir="auto">check.saveMode</code></td><td>append, overwrite, error</td><td>partial</td><td>Only BigQuery writes state a disposition</td><td>Medium</td></tr><tr><td><code dir="auto">check.catalogRegistration</code></td><td>the output is a registered table</td><td>partial</td><td>BigQuery tables only</td><td>Medium</td></tr><tr><td><code dir="auto">rules.planShape</code></td><td>required filter, join, group-by columns; no cross join</td><td>unsupported</td><td>Filters and joins are code; group-by keys need the helper (D6)</td><td>High</td></tr><tr><td><code dir="auto">rules.custom</code></td><td>an organisation’s own rule types</td><td>unsupported</td><td>They judge row-level changes, which Beam has none of</td><td>High</td></tr><tr><td><code dir="auto">analysis.*</code>, <code dir="auto">lineage.columnLevel</code></td><td>static data-quality proofs, role consistency, fingerprints, function catalog, sensitivity, column lineage</td><td>unsupported</td><td>They need to see inside functions, which are pickled Python</td><td>High</td></tr><tr><td><code dir="auto">lineage.boundaryResolution</code></td><td>seeing past a checkpoint or cache</td><td>not-applicable</td><td>A pipeline has neither</td><td>High</td></tr><tr><td><code dir="auto">policy.organizational</code>, <code dir="auto">config.locationRefs</code>, <code dir="auto">config.contractRegistry</code>, <code dir="auto">reporting.notifications</code></td><td>organisation policy, <code dir="auto">ref://</code> locations, a contract registry, events</td><td>supported</td><td>Shared code in Java, configured through the options</td><td>Medium</td></tr><tr><td><code dir="auto">config.zeroCodeInstall</code></td><td>switched on without changing the job</td><td>partial</td><td><code dir="auto">--runner</code> plus an installed package; a job that picks its runner in code escapes (probe 4)</td><td>High</td></tr><tr><td><code dir="auto">reporting.dryRunInference</code></td><td>draft contracts from real jobs</td><td>partial</td><td>Drafts are only as complete as the columns the proto states</td><td>Medium</td></tr><tr><td><code dir="auto">failClosed.unverifiableWrites</code></td><td>refusing what cannot be checked</td><td>partial</td><td>Unknown terminal steps are refused; a write inside a function cannot be seen</td><td>Medium</td></tr></tbody></table>
+<p><strong>Enforcement point:</strong> <code dir="auto">pre-submit-gate</code>. The whole pipeline is checked once, after it is built and before it is submitted, so
+any write can be blocked. Nothing can be stopped once the job is running.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="72-scenario-by-scenario">7.2 Scenario by scenario</h3><a class="sl-anchor-link" href="#72-scenario-by-scenario"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7.2 Scenario by scenario”</span></a></div>
+<div class="sl-heading-wrapper level-h4"><h4 id="structural-checks-strong-where-data-is-read-and-written-and-which-datasets-feed-which-write-are-all-in-the-proto">Structural checks: strong. Where data is read and written, and which datasets feed which write, are all in the proto.</h4><a class="sl-anchor-link" href="#structural-checks-strong-where-data-is-read-and-written-and-which-datasets-feed-which-write-are-all-in-the-proto"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Structural checks: strong. Where data is read and written, and which datasets feed which write, are all in the proto.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>1</td><td><code dir="auto">conforming-write</code></td><td>A team’s job reads the declared input and writes the declared output with the declared columns. Invaract lets it run and records that the check passed.</td><td>does the checks, write allowed</td><td>✅</td><td>Locations, input columns and output columns are all in the proto: the columns written come from the schema the Parquet write is given, which the proto carries as text (probe 1); the read’s columns from <code dir="auto">ReadFromParquet(as_rows=True)</code>’s row schema (probe 2).</td><td>Medium</td><td>✅ checked</td></tr><tr><td>2</td><td><code dir="auto">wrong-output-location</code></td><td>A job writes its report to a different folder than the contract promises, say a test folder in production. Invaract stops it before anything is written.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_LOCATION_MISMATCH</code></td><td>✅</td><td>A wrong destination is visible before the job runs: the read’s file pattern and the write’s destination are in the proto’s display data (probe 1, 3).</td><td>High</td><td>✅ checked</td></tr><tr><td>15</td><td><code dir="auto">declared-input-not-read</code></td><td>The contract says the job is built from the orders data, but the job never reads it. Invaract reports that the job is not using what the contract says it uses.</td><td>does the checks, write blocked: <code dir="auto">MISSING_INPUT</code></td><td>✅</td><td>Every read’s pattern is in the proto, so a declared input nobody reads is seen to be missing.</td><td>High</td><td>✅ checked</td></tr><tr><td>16</td><td><code dir="auto">undeclared-input-rejected</code></td><td>With the strict option on, a job reads a dataset the contract never mentions. Invaract stops it, so nobody quietly pulls in an unapproved source.</td><td>does the checks, write blocked: <code dir="auto">UNDECLARED_INPUT</code></td><td>✅</td><td>Every read is visible with its pattern, so a read the contract does not declare is caught.</td><td>High</td><td>✅ checked</td></tr><tr><td>17</td><td><code dir="auto">derived-from-excuses-an-input-the-output-is-not-built-from</code></td><td>A contract has two outputs built from different inputs. The job writes both; the write of the first does not read the second one’s input, and that is fine: Invaract does not demand it of that write.</td><td>does the checks, write allowed</td><td>✅</td><td>The proto states which step feeds which (inputs and outputs per step), so each write’s reads are known.</td><td>High</td><td>✅ checked</td></tr><tr><td>18</td><td><code dir="auto">derived-from-requires-every-source-of-the-output</code></td><td>The job’s write of one output skips the input that output is built from and reads the other output’s source instead. Invaract still reports the missing input.</td><td>does the checks, write blocked: <code dir="auto">MISSING_INPUT</code></td><td>✅</td><td>As above: a write that does not read a source it is declared to be built from is caught.</td><td>High</td><td>✅ checked</td></tr><tr><td>19</td><td><code dir="auto">derived-from-rejects-a-read-of-another-outputs-source</code></td><td>With the strict option on, a job’s write of one output reads an input that belongs to the other output. Invaract stops it as an unapproved source for this output.</td><td>does the checks, write blocked: <code dir="auto">UNDECLARED_INPUT</code></td><td>✅</td><td>As above, per write.</td><td>High</td><td>✅ checked</td></tr><tr><td>20</td><td><code dir="auto">an-undeclared-second-write-is-blocked</code></td><td>A job writes its report and its audit as the contract says, then also copies the customers somewhere else. Invaract allows the declared writes and stops the extra one: a job writes only where its contract says.</td><td>does the checks, write blocked: <code dir="auto">MISSING_INPUT</code>, <code dir="auto">OUTPUT_LOCATION_MISMATCH</code></td><td>✅</td><td>Each write is a separate step with its own destination; the second is checked like the first.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>21</td><td><code dir="auto">declared-output-never-written</code></td><td>A contract promises two outputs, a report and an audit. The job writes the report, correctly, but never the audit. Invaract refuses the job: an output the contract says the job writes, it must write.</td><td>does the checks, write blocked: <code dir="auto">MISSING_OUTPUT</code></td><td>✅</td><td>The whole pipeline is known before it runs, as on Java Beam.</td><td>High</td><td>✅ checked</td></tr><tr><td>22</td><td><code dir="auto">unrecognized-step-keeps-the-reads-beneath-it-visible</code></td><td>A job passes its data through a step Invaract cannot interpret (a custom or unusual operation). The data still came from the declared input, and Invaract still sees that.</td><td>does the checks, write allowed</td><td>✅</td><td>A step Invaract does not recognise still lists its inputs in the proto, so the reads beneath it stay visible.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>23</td><td><code dir="auto">unrecognized-step-does-not-hide-an-undeclared-read</code></td><td>A job hides an unapproved source behind a step Invaract cannot interpret, hoping it will not be noticed. Invaract still finds it and stops the write.</td><td>does the checks, write blocked: <code dir="auto">UNDECLARED_INPUT</code></td><td>✅</td><td>As above: an undeclared read beneath an unknown step is still seen.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>52</td><td><code dir="auto">untranslatable-write-fails-closed</code></td><td>A job does something that changes data but that Invaract cannot understand. Invaract assumes the worst and stops it, rather than letting an unchecked change through.</td><td>does the checks, write blocked: <code dir="auto">UNVERIFIABLE_WRITE</code></td><td>✅</td><td>A step that ends the pipeline and is not a recognised write (a function pushing data out) is visible in the proto and refused, as on Java Beam.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>53</td><td><code dir="auto">invalid-contract</code></td><td>The contract itself is broken, for example it contradicts itself. Invaract rejects it up front rather than checking jobs against nonsense.</td><td>does the checks, write blocked: <code dir="auto">INVALID_CONTRACT</code></td><td>✅</td><td>An invalid contract is refused by the shared core before any pipeline is looked at.</td><td>High</td><td>✅ checked</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h4"><h4 id="columns-and-types-good-where-the-proto-carries-a-schema-row-schemas-or-the-schema-a-write-is-given-absent-for-plain-python-dictionaries">Columns and types: good where the proto carries a schema (row schemas, or the schema a write is given), absent for plain Python dictionaries.</h4><a class="sl-anchor-link" href="#columns-and-types-good-where-the-proto-carries-a-schema-row-schemas-or-the-schema-a-write-is-given-absent-for-plain-python-dictionaries"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Columns and types: good where the proto carries a schema (row schemas, or the schema a write is given), absent for plain Python dictionaries.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>3</td><td><code dir="auto">missing-output-field</code></td><td>The contract promises a customer_name column but the job’s output no longer has it, which would break whoever reads the data. Invaract stops the write.</td><td>does the checks, write blocked: <code dir="auto">MISSING_OUTPUT_FIELD</code></td><td>✅</td><td>The write’s schema names every column the files will have, so a declared column it lacks is seen (the text form must be parsed).</td><td>Medium</td><td>✅ checked</td></tr><tr><td>4</td><td><code dir="auto">output-type-mismatch</code></td><td>The contract says id is a number but the job turns it into text, which would break whoever reads the report. Invaract stops the write.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code></td><td>✅</td><td>The write’s schema gives each column’s type (<code dir="auto">id: int64</code>), so a column cast to text shows up as <code dir="auto">string</code>.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>5</td><td><code dir="auto">extended-type-not-produced</code></td><td>The contract promises a special type (time, JSON, interval or geography) but the job produces something else, perhaps because its engine has no such type. Invaract treats that as a mismatch and never waves it through.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code></td><td>✅</td><td>pyarrow has time types but no JSON or geography; a declared type the job cannot produce is a mismatch either way, which is the expected result. Not probed.</td><td>Low</td><td>✅ checked</td></tr><tr><td>12</td><td><code dir="auto">output-nullability-mismatch</code></td><td>The contract says a column must always have a value, but the job can produce empty values there. Invaract stops it.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_FIELD_NULLABILITY_MISMATCH</code></td><td>✅</td><td>Row schemas carry nullability (probe 2), and pyarrow prints <code dir="auto">not null</code> for a required column. The write side is not yet probed.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>13</td><td><code dir="auto">undeclared-output-column-allowed-by-default</code></td><td>A job adds an extra column the contract does not list. By default Invaract allows extras, because most teams add columns over time.</td><td>does the checks, write allowed</td><td>✅</td><td>An extra column in the write’s schema is allowed unless the contract says otherwise; the core decides this.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>14</td><td><code dir="auto">undeclared-output-column-rejected</code></td><td>A strict team turns on the no-extra-columns option. A job that adds an unlisted column, perhaps by accident or perhaps personal data, is stopped.</td><td>does the checks, write blocked: <code dir="auto">UNDECLARED_OUTPUT_COLUMN</code></td><td>✅</td><td>The same extra column, with <code dir="auto">rejectUndeclaredFields</code>, is blocked by the core.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>28</td><td><code dir="auto">nested-type-matches</code></td><td>A column holding a list or a record (a list of tags, say) has the structure the contract describes. Invaract lets it through.</td><td>does the checks, write allowed</td><td>✅</td><td>Nested types are in row schemas and in the write’s schema text (<code dir="auto">list&#x3C;item: string></code>, <code dir="auto">struct&#x3C;name: string></code>, probe 8).</td><td>Medium</td><td>✅ checked</td></tr><tr><td>29</td><td><code dir="auto">nested-type-mismatch</code></td><td>The list of tags the job produces holds numbers where the contract says text. Invaract looks inside the structure, not just at the word list, and stops it.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code></td><td>✅</td><td>As above: a struct where an array is declared is a mismatch.</td><td>Medium</td><td>✅ checked</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h4"><h4 id="formats-save-modes-and-catalogs-as-on-java-beam-bigquery-is-the-one-write-that-states-a-save-mode-and-a-catalog-table">Formats, save modes and catalogs: as on Java Beam, BigQuery is the one write that states a save mode and a catalog table.</h4><a class="sl-anchor-link" href="#formats-save-modes-and-catalogs-as-on-java-beam-bigquery-is-the-one-write-that-states-a-save-mode-and-a-catalog-table"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Formats, save modes and catalogs: as on Java Beam, BigQuery is the one write that states a save mode and a catalog table.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>10</td><td><code dir="auto">catalog-required-output-unregistered</code></td><td>The contract says the output must be a registered table other teams can find, but the job writes to a bare folder. Invaract stops it.</td><td>does the checks, write blocked: <code dir="auto">MISSING_OUTPUT_CATALOG_REGISTRATION</code></td><td>✅</td><td>A file write names no catalog table, so a contract that requires one is refused, as on Java Beam.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>11</td><td><code dir="auto">catalog-required-output-registered</code></td><td>The job writes to the registered table the contract requires. Invaract lets it through.</td><td>does the checks, write allowed</td><td>⚠️</td><td>A BigQuery write names its table (<code dir="auto">Table=proj:ds.report</code>, probe 3); but the kit runs jobs for real, and Python Beam has no in-memory BigQuery like Java’s, so CI needs a stand-in (D9).</td><td>Medium</td><td>✅ checked</td></tr><tr><td>24</td><td><code dir="auto">output-format-matches</code></td><td>The contract says the output is Parquet and the job writes Parquet. Invaract lets it through.</td><td>does the checks, write allowed</td><td>✅</td><td>The format is the IO step itself (<code dir="auto">python_type</code> names <code dir="auto">ReadFromParquet</code>, <code dir="auto">WriteToParquet</code>, probe 7).</td><td>Medium</td><td>✅ checked</td></tr><tr><td>25</td><td><code dir="auto">output-format-mismatch</code></td><td>The contract says Parquet but the job writes CSV, which readers cannot parse the same way. Invaract stops it.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_FORMAT_MISMATCH</code></td><td>✅</td><td>As above: a Parquet write where CSV is declared is a mismatch.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>26</td><td><code dir="auto">output-save-mode-matches</code></td><td>The contract says the job must add to the table (append) and it does. Invaract lets it through.</td><td>does the checks, write allowed</td><td>⚠️</td><td>A BigQuery write states its write disposition (<code dir="auto">WRITE_TRUNCATE</code>, probe 3, inside the write); the same CI stand-in question as row 11 applies.</td><td>Medium</td><td>✅ checked</td></tr><tr><td>27</td><td><code dir="auto">output-save-mode-mismatch</code></td><td>The contract says append, but the job overwrites the table and wipes its history. Invaract stops it.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_SAVE_MODE_MISMATCH</code></td><td>⚠️</td><td>As row 26.</td><td>Medium</td><td>✅ checked</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h4"><h4 id="streaming-the-proto-marks-streams-but-a-stream-the-kit-can-run-in-process-is-not-yet-proven">Streaming: the proto marks streams, but a stream the kit can run in-process is not yet proven.</h4><a class="sl-anchor-link" href="#streaming-the-proto-marks-streams-but-a-stream-the-kit-can-run-in-process-is-not-yet-proven"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Streaming: the proto marks streams, but a stream the kit can run in-process is not yet proven.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>50</td><td><code dir="auto">streaming-write-is-checked-like-a-batch-write</code></td><td>A continuously running job (a stream) is checked like a one-off job: its source is the declared input and its destination the declared output.</td><td>does the checks, write allowed</td><td>⚠️</td><td>A Pub/Sub read is marked unbounded (probe 8), but the kit needs a stream it can run to completion in-process; Python’s file-watching reads on the Prism runner are not yet tried.</td><td>Low</td><td>✅ checked</td></tr><tr><td>51</td><td><code dir="auto">streaming-write-to-the-wrong-location</code></td><td>A streaming job writes to the wrong destination. Invaract stops it before it starts.</td><td>does the checks, write blocked: <code dir="auto">OUTPUT_LOCATION_MISMATCH</code></td><td>⚠️</td><td>As row 50.</td><td>Low</td><td>✅ checked</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h4"><h4 id="transformation-shape-rules-and-analyses-refused-safely-as-declared">Transformation-shape rules and analyses: refused safely, as declared.</h4><a class="sl-anchor-link" href="#transformation-shape-rules-and-analyses-refused-safely-as-declared"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Transformation-shape rules and analyses: refused safely, as declared.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>30</td><td><code dir="auto">required-filter-column-present</code></td><td>The contract requires every job to filter on a date column so nobody scans the whole history. The job filters on it. Invaract lets it through.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>31</td><td><code dir="auto">required-filter-column-missing</code></td><td>Same rule, but the job never filters on the date column. Invaract stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>32</td><td><code dir="auto">forbid-cross-join-allows-a-keyed-join</code></td><td>The contract bans accidental all-pairs joins, which can explode a table. The job joins on a matching column. Invaract lets it through.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>33</td><td><code dir="auto">forbid-cross-join-blocks-a-cartesian-product</code></td><td>The job joins two tables with no condition, pairing every row with every row. Invaract stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>34</td><td><code dir="auto">required-join-columns-present</code></td><td>The contract requires joins to use customer_id. The job joins on it. Invaract lets it through.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>35</td><td><code dir="auto">required-join-columns-missing</code></td><td>The job joins on some other column, so the result could mix up customers. Invaract stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>36</td><td><code dir="auto">required-group-by-present</code></td><td>The contract requires totals per customer. The job groups by customer. Invaract lets it through.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>37</td><td><code dir="auto">required-group-by-wrong-keys</code></td><td>The job groups by region, then renames the column to customer so the output looks right. Invaract notices the real grouping and stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported, so the shared core refuses the contract with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before the job starts: Python filters and joins are code, and a grouping’s keys are only in pickled Python (D6).</td><td>High</td><td>✅ refused safely</td></tr><tr><td>40</td><td><code dir="auto">static-data-quality-proves-a-constant</code></td><td>The contract says total must be between 0 and 100 and the job sets it to a fixed 1. Invaract can prove that from the job alone, and says so.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported (functions are pickled Python code), so the contract is refused safely.</td><td>High</td><td>✅ refused safely</td></tr><tr><td>41</td><td><code dir="auto">static-data-quality-cannot-prove-a-passthrough</code></td><td>The contract gives a range for a column that is simply copied from an input. Invaract cannot know the input’s values, so it reports not guaranteed, and does not block.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported (functions are pickled Python code), so the contract is refused safely.</td><td>High</td><td>✅ refused safely</td></tr><tr><td>42</td><td><code dir="auto">static-data-quality-violation-blocks</code></td><td>The job sets a column to a fixed value the contract’s range rules out, such as -5 where 0 to 100 is allowed. Invaract proves it can never be valid and stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported (functions are pickled Python code), so the contract is refused safely.</td><td>High</td><td>✅ refused safely</td></tr><tr><td>43</td><td><code dir="auto">role-source-contributing-conforms</code></td><td>A dataset the contract calls a source feeds the output, as expected. Invaract finds that consistent.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported (needs column-level usage), so the contract is refused safely.</td><td>High</td><td>✅ refused safely</td></tr><tr><td>44</td><td><code dir="auto">role-control-contributing-contradicts</code></td><td>A dataset the contract calls a control (a lookup or switch that should not supply data) ends up in the output. Invaract stops it.</td><td>must refuse safely (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>)</td><td>❌</td><td>Declared unsupported (needs column-level usage), so the contract is refused safely.</td><td>High</td><td>✅ refused safely</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h4"><h4 id="skipped-not-applicable-or-depends-on-an-analysis-declared-out-of-reach">Skipped: not applicable, or depends on an analysis declared out of reach.</h4><a class="sl-anchor-link" href="#skipped-not-applicable-or-depends-on-an-analysis-declared-out-of-reach"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Skipped: not applicable, or depends on an analysis declared out of reach.”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Scenario</th><th>What it means for a user</th><th>What the kit expects</th><th>Forecast</th><th>Why</th><th>Confidence</th><th>Actual</th></tr></thead><tbody><tr><td>6</td><td><code dir="auto">row-level-delete-checked-as-write</code></td><td>A job deletes rows from a table the contract does not mention. Invaract treats the delete as a write to that table and stops it.</td><td>skipped: ‘write.rowLevelDml’ does not apply to this engine: Beam has no row-level MERGE, UPDATE or DELETE.</td><td>➖</td><td>Skipped: Beam has no row-level DML.</td><td>High</td><td>➖ skipped</td></tr><tr><td>7</td><td><code dir="auto">row-level-delete-own-table-is-not-an-input</code></td><td>A job deletes rows from its own output table. Invaract does not complain that the table counts as an unapproved input, because a delete has to look at the rows it changes.</td><td>skipped: ‘write.rowLevelDml’ does not apply to this engine: Beam has no row-level MERGE, UPDATE or DELETE.</td><td>➖</td><td>Skipped: Beam has no row-level DML.</td><td>High</td><td>➖ skipped</td></tr><tr><td>8</td><td><code dir="auto">unconditional-delete-forbidden</code></td><td>The contract forbids deleting every row at once, and a job runs a delete with no condition. Invaract stops it.</td><td>skipped: ‘write.rowLevelDml’ does not apply to this engine: Beam has no row-level MERGE, UPDATE or DELETE.</td><td>➖</td><td>Skipped: Beam has no row-level DML.</td><td>High</td><td>➖ skipped</td></tr><tr><td>9</td><td><code dir="auto">filtered-delete-allowed</code></td><td>Same contract, but the job deletes only the rows matching a condition. Invaract lets it through.</td><td>skipped: ‘write.rowLevelDml’ does not apply to this engine: Beam has no row-level MERGE, UPDATE or DELETE.</td><td>➖</td><td>Skipped: Beam has no row-level DML.</td><td>High</td><td>➖ skipped</td></tr><tr><td>38</td><td><code dir="auto">fingerprint-flags-nothing-for-a-deterministic-job</code></td><td>With fingerprinting on, a job that gives the same answer on every run is reported as repeatable.</td><td>skipped: ‘analysis.fingerprint’ is declared unsupported: Pickled functions cannot be fingerprinted meaningfully.</td><td>➖</td><td>Skipped: the analysis it needs is declared unsupported.</td><td>High</td><td>➖ skipped</td></tr><tr><td>39</td><td><code dir="auto">fingerprint-flags-a-generated-id</code></td><td>A job adds a random unique id to every row. Invaract reports that column as different on every run, so teams know a re-run will not match.</td><td>skipped: ‘analysis.fingerprint’ is declared unsupported: Pickled functions cannot be fingerprinted meaningfully.</td><td>➖</td><td>Skipped: the analysis it needs is declared unsupported.</td><td>High</td><td>➖ skipped</td></tr><tr><td>45</td><td><code dir="auto">lineage-passthrough-cast-and-constant</code></td><td>For each output column Invaract can say where it came from: copied from this input column, converted from that one, or a fixed value that came from nowhere.</td><td>skipped: ‘lineage.columnLevel’ is declared unsupported: Functions are opaque.</td><td>➖</td><td>Skipped: the analysis it needs is declared unsupported.</td><td>High</td><td>➖ skipped</td></tr><tr><td>46</td><td><code dir="auto">lineage-through-join-and-filter</code></td><td>A column that came through a join still traces back to the right input, and filtering rows does not add false sources.</td><td>skipped: ‘lineage.columnLevel’ is declared unsupported: Functions are opaque.</td><td>➖</td><td>Skipped: the analysis it needs is declared unsupported.</td><td>High</td><td>➖ skipped</td></tr><tr><td>47</td><td><code dir="auto">sensitivity-follows-a-cast</code></td><td>An input column is tagged sensitive, say personal data. Output columns built from it, even converted to another type, carry the tag; unrelated ones do not.</td><td>skipped: ‘analysis.sensitivityPropagation’ is declared unsupported: Needs column-level lineage.</td><td>➖</td><td>Skipped: the analysis it needs is declared unsupported.</td><td>High</td><td>➖ skipped</td></tr><tr><td>48</td><td><code dir="auto">boundary-filter-is-seen-through</code></td><td>A job saves intermediate results midway (a checkpoint or cache). A filter applied before that point still counts for the rules.</td><td>skipped: ‘lineage.boundaryResolution’ does not apply to this engine: A pipeline is an immutable graph.</td><td>➖</td><td>Skipped: a pipeline has no checkpoint or cache.</td><td>High</td><td>➖ skipped</td></tr><tr><td>49</td><td><code dir="auto">boundary-does-not-excuse-a-missing-input</code></td><td>Saving intermediate results midway does not let a job get away with never reading a declared input.</td><td>skipped: ‘lineage.boundaryResolution’ does not apply to this engine: A pipeline is an immutable graph.</td><td>➖</td><td>Skipped: a pipeline has no checkpoint or cache.</td><td>High</td><td>➖ skipped</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h3"><h3 id="73-claims-no-scenario-can-check">7.3 Claims no scenario can check</h3><a class="sl-anchor-link" href="#73-claims-no-scenario-can-check"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7.3 Claims no scenario can check”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Capability</th><th>What a test must show</th><th>How this adapter’s test would show it</th><th>Forecast</th></tr></thead><tbody><tr><td><code dir="auto">policy.organizational</code></td><td>a contract that breaks an organizational policy is rejected when enforcement is set up</td><td>a Python job run with <code dir="auto">--invaract_org_policy</code> and a breaking contract fails before it starts</td><td>✅ Medium</td></tr><tr><td><code dir="auto">config.zeroCodeInstall</code></td><td>enforcement installed through configuration alone blocks a violating write</td><td>probe 4, made permanent: an unchanged job, run with <code dir="auto">--runner=invaract_beam.InvaractRunner</code>, refused</td><td>✅ High</td></tr><tr><td><code dir="auto">config.locationRefs</code></td><td>a <code dir="auto">ref://</code> location is resolved through configuration and checked</td><td>a job run with <code dir="auto">--invaract_location_map</code></td><td>✅ Medium</td></tr><tr><td><code dir="auto">config.contractRegistry</code></td><td>a <code dir="auto">registry://</code> contract is fetched and enforced</td><td>a job run against the stub registry the Java adapter’s tests use</td><td>✅ Medium</td></tr><tr><td><code dir="auto">reporting.dryRunInference</code></td><td>dry-run lets a real write through and reports an inferred contract</td><td>a job run with <code dir="auto">--invaract_dry_run=true</code></td><td>✅ Medium</td></tr><tr><td><code dir="auto">write.stateChange</code></td><td>a schema-only change is checked</td><td>not applicable</td><td>➖</td></tr><tr><td><code dir="auto">rules.custom</code></td><td>a custom rule type blocks a write</td><td>declared unsupported</td><td>❌</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h3"><h3 id="74-totals">7.4 Totals</h3><a class="sl-anchor-link" href="#74-totals"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7.4 Totals”</span></a></div>
+<p><strong>24 of 53 by doing the check · 13 by refusing safely · 5 partly · 11 skipped.</strong> For a user, the checks that matter most hold
+from the first version:</p>
+<ul>
+<li>reads and writes in the declared places;</li>
+<li>every declared output written;</li>
+<li>the written columns and types, for Parquet, Avro and BigQuery writes;</li>
+<li>streams treated like batches.</li>
+</ul>
+<p>The transformation-shape rules and the analyses are refused clearly rather than checked. The “partly” rows are about proving
+BigQuery and streaming in CI, not about what the adapter can see.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="8-what-it-would-take">8. What it would take</h2><a class="sl-anchor-link" href="#8-what-it-would-take"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “8. What it would take”</span></a></div>
+<ol>
+<li><strong>Settle the unverified items</strong> (small). Java on Flex Template launchers; a Python stream that ends on Prism; a
+BigQuery read with rows; JVM start-up time. This unlocks the D3 and D9 choices.</li>
+<li><strong>A Java translator from the proto</strong> (medium). Share the walk in <code dir="auto">BeamTranslator</code> between Java steps and proto steps; add a
+Python IO catalogue; add a command-line checker (<code dir="auto">invaract-beam-check --pipeline=x.pb --setting=...</code>). Proven by recorded
+protos as fixtures, covered by the repository’s coverage and mutation gates. This is the first useful piece: it already
+checks Beam YAML and any SDK whose proto can be saved.</li>
+<li><strong>The Python package</strong> (medium). The runner, the options and the bridge to the checker, with pytest tests and the attach
+test of probe 4 made permanent.</li>
+<li><strong>Conformance</strong> (medium). A conformance adapter that writes each scenario as a Python job and runs it on Prism; a baseline
+file; the declaration; the capability matrix row. This is where the forecast is checked.</li>
+<li><strong>The helper’s facts</strong> (small each): structured write schemas (D5), group-by keys (D6), YAML filter expressions.</li>
+<li><strong>Release</strong> (small). The PyPI package and the runnable jar.</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="9-risks-and-open-questions">9. Risks and open questions</h2><a class="sl-anchor-link" href="#9-risks-and-open-questions"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “9. Risks and open questions”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Risk or question</th><th>Why it matters</th><th>How to settle it</th></tr></thead><tbody><tr><td>Java on the submitting machine</td><td>without it, nothing can be checked</td><td>try a Dataflow Flex Template Python launcher image and the common schedulers; if missing, D3 (c)</td></tr><tr><td>Display-data labels are not a promised interface</td><td>a rename hides a location, which the adapter then refuses</td><td>a Python version matrix in CI, as for Java; fail closed on anything unreadable</td></tr><tr><td>Pickled Python holds some facts</td><td>group-by keys, unrequested read columns</td><td>the helper (D2), one fact at a time</td></tr><tr><td>No in-memory BigQuery in Python</td><td>the save-mode and catalog scenarios can’t run as real jobs</td><td>a “check only” mode in the kit, or a stand-in (D9)</td></tr><tr><td>Untyped fields from <code dir="auto">beam.Select</code></td><td>Java’s decoder rejects the schema</td><td>read field names directly; unknown types fail closed (probe 7)</td></tr><tr><td>Jobs that choose their runner in code</td><td>they escape the check</td><td>stated in the declaration; offer a one-line <code dir="auto">invaract_beam.verify(pipeline)</code> call too</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="10-evidence-log">10. Evidence log</h2><a class="sl-anchor-link" href="#10-evidence-log"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “10. Evidence log”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="probes-i-ran">Probes I ran</h3><a class="sl-anchor-link" href="#probes-i-ran"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Probes I ran”</span></a></div>
+<p>All on 2026-10-18, Python 3.11.15, <code dir="auto">apache-beam[gcp,yaml,dataframe]==2.77.0</code> in a scratch virtual environment. They are not
+committed.</p>
+<ol>
+<li><strong>Probe 1, the proto of a Parquet job.</strong> <code dir="auto">ReadFromParquet</code> → <code dir="auto">beam.Filter</code> → <code dir="auto">WriteToParquet</code>, then <code dir="auto">p.to_runner_api()</code>,
+printing every step, its URN, display data, and every collection’s coder. Output quoted in section 3. Python Beam first
+failed with <code dir="auto">OSError: No files found based on the file pattern ...</code>: file reads check their pattern when the pipeline is
+built.</li>
+<li><strong>Probe 2, schemas and Python’s schema transforms.</strong> <code dir="auto">ReadFromParquet(as_rows=True)</code> gave <code dir="auto">beam:coder:row:v1</code> with
+<code dir="auto">[('id', INT64, nullable), ('amount', INT64, nullable)]</code>. <code dir="auto">beam.GroupBy("id").aggregate_field(...)</code> gave a
+<code dir="auto">generic_composite</code> with no display data and pickled output. <code dir="auto">beam.Select("id", amount2=lambda r: r.amount)</code> gave a row
+schema with untyped fields. <code dir="auto">beam.Filter</code> kept the row schema. <code dir="auto">CoGroupByKey</code> gave a <code dir="auto">kv</code> coder.</li>
+<li><strong>Probe 3, IO display data.</strong> Text, Avro, BigQuery (table and query reads, a write with schema and dispositions) and
+Pub/Sub. Summarised in the table in section 3. The BigQuery write’s disposition and schema are on inner steps
+(<code dir="auto">.../TriggerLoadJobsWithoutTempTables/ParDo(TriggerLoadJobs)</code>).</li>
+<li><strong>Probe 4, the wrapper runner.</strong> A probe package with a <code dir="auto">PipelineRunner</code> subclass and a <code dir="auto">PipelineOptions</code> subclass. <code dir="auto">python job.py --runner=invaract_probe.ProbeRunner --invaract_contract=...</code> printed the contract and delegate, delegated to the
+DirectRunner (Prism), and wrote the output. A refusing contract gave exit status 1 with nothing written. Without the
+package: <code dir="auto">ModuleNotFoundError</code>, exit status 1, nothing written. (A first attempt wrongly found the package because Python
+puts the script’s own folder on its import path; rerun from a separate folder.)</li>
+<li><strong>Probe 5, a Python-side helper.</strong> A <code dir="auto">PipelineVisitor</code> found the <code dir="auto">GroupBy</code>’s <code dir="auto">_key_fields</code> (<code dir="auto">[('id', ...)]</code>); an annotation
+<code dir="auto">invaract:group_keys=id</code> written into the proto was kept. The proto already annotates each step with <code dir="auto">python_type</code>.</li>
+<li><strong>Probe 6, a Java step from Python.</strong> <code dir="auto">SqlTransform("SELECT id, SUM(amount) AS total FROM PCOLLECTION GROUP BY id")</code>.
+Beam downloaded and started the Java SQL expansion service (the first download, 324 MB, arrived corrupt and was fetched
+again and checked against its SHA-1). The proto shows Java steps (<code dir="auto">Group.CombineFieldsByFields</code>, <code dir="auto">ParMultiDo</code>) in a
+<code dir="auto">beam:env:docker:v1</code> environment, with Java display data and no key fields.</li>
+<li><strong>Probe 7, the proto in Java.</strong> A throwaway ScalaTest in <code dir="auto">beam-adapter</code> parsed the saved protos with
+<code dir="auto">RunnerApi.Pipeline.parseFrom</code>, decoded display data and row schemas, and read the <code dir="auto">invaract:group_keys</code> annotation. The
+untyped <code dir="auto">Select</code> schema failed <code dir="auto">SchemaTranslation.schemaFromProto</code> with <code dir="auto">Failed to decode Schema due to an error decoding Field proto</code>.</li>
+<li><strong>Probe 8, nested schemas, streams, templates.</strong> A <code dir="auto">WriteToParquet</code> with a list and a struct column printed
+<code dir="auto">schema=id: int64 / tags: list&#x3C;item: string> / cust: struct&#x3C;name: string></code>. <code dir="auto">ReadFromPubSub</code>’s collection had
+<code dir="auto">is_bounded=UNBOUNDED</code>. A <code dir="auto">ReadFromText</code> of a value-provider option showed <code dir="auto">File Pattern=RuntimeValueProvider(option: input, type: str, default_value: None)</code>.</li>
+<li><strong>Probe 9, Beam YAML.</strong> A <code dir="auto">ReadFromParquet</code> → <code dir="auto">Filter</code> (<code dir="auto">keep: "amount > 0"</code>) → <code dir="auto">WriteToParquet</code> chain, expanded with
+<code dir="auto">yaml_transform.expand_pipeline</code>. The proto holds the same Python steps, annotated with <code dir="auto">yaml_type</code>, <code dir="auto">yaml_provider</code> and
+<code dir="auto">yaml_args</code> (the configuration as JSON, filter expression included).</li>
+</ol>
+<div class="sl-heading-wrapper level-h3"><h3 id="sources">Sources</h3><a class="sl-anchor-link" href="#sources"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sources”</span></a></div>
+<ul>
+<li><code dir="auto">apache_beam/runners/runner.py</code>, <code dir="auto">create_runner</code> (lines 58 to 88 in 2.77.0): a runner name with a dot is imported as
+<code dir="auto">module.Class</code>.</li>
+<li><code dir="auto">apache_beam/io/filebasedsource.py</code>, <code dir="auto">_validate</code> (line 191): file patterns are checked when the pipeline is built.</li>
+<li>Beam’s portable pipeline definition (<code dir="auto">beam_runner_api.proto</code>), as shipped in <code dir="auto">apache_beam.portability.api</code> and in the Java
+<code dir="auto">beam-model-pipeline</code> jar (<code dir="auto">RunnerApi</code>, <code dir="auto">LabelledPayload</code>, <code dir="auto">SchemaApi</code>).</li>
+<li>The Java adapter and its survey: <code dir="auto">docs/BEAM_ADAPTER.md</code> (D12 unlocated reads, D14, D18, D21), <code dir="auto">docs/BEAM_ADAPTER_SURVEY.md</code>.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="unverified">Unverified</h3><a class="sl-anchor-link" href="#unverified"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Claim</th><th>The cheapest check</th></tr></thead><tbody><tr><td>Dataflow Flex Template Python launchers and common schedulers have Java 11+</td><td>run <code dir="auto">java -version</code> in the Flex Template Python base image</td></tr><tr><td>The JVM checker starts in a second or two</td><td>time <code dir="auto">java -jar</code> of the assembled checker on a recorded proto</td></tr><tr><td>A Python stream can run to completion in-process on Prism (for the streaming scenarios)</td><td>a <code dir="auto">MatchContinuously</code> read with a stop condition, run on Prism</td></tr><tr><td><code dir="auto">ReadFromBigQuery(output_type="BEAM_ROW")</code> gives a row schema when the pipeline is built</td><td>a probe with a fake table schema (it may need a live table)</td></tr><tr><td>A Beam YAML pipeline launched by <code dir="auto">apache_beam.yaml.main</code> honours <code dir="auto">--runner</code></td><td>run it with the probe runner</td></tr><tr><td>The display labels are the same on Python Beam 2.60 to 2.77</td><td>run probes 1 and 3 on each release</td></tr><tr><td>A nullable pyarrow write field prints without <code dir="auto">not null</code> and a required one with it</td><td>a probe with <code dir="auto">pa.field("id", pa.int64(), nullable=False)</code></td></tr><tr><td><code dir="auto">--invaract_trusted_steps</code> and the other options parse when given before the wrapper’s module is imported</td><td>a probe passing them with the runner given by short name</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="glossary">Glossary</h2><a class="sl-anchor-link" href="#glossary"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Glossary”</span></a></div>
+<ul>
+<li><strong>Adapter</strong>: the part of Invaract that knows one engine and translates its jobs into the IR.</li>
+<li><strong>Annotation</strong>: a key/value note attached to a step in the portable pipeline (<code dir="auto">python_type=...</code>).</li>
+<li><strong>Attach</strong>: switch Invaract on for a job, ideally without changing the job’s code.</li>
+<li><strong>Capability / declaration</strong>: one thing an adapter can or cannot do; the declaration is its full list, with a status for each.</li>
+<li><strong>Coder</strong>: how a collection’s items are encoded; a row coder carries the column names and types.</li>
+<li><strong>Composite step</strong>: a step made of smaller steps (a Parquet read is a read plus a conversion).</li>
+<li><strong>Conformance / scenario</strong>: the suite of small engine-neutral jobs; an adapter conforms when each comes out as its declaration says.</li>
+<li><strong>Cross-language</strong>: a Java step used inside a Python pipeline, run by Beam in a Java environment.</li>
+<li><strong>Display data</strong>: labels a step publishes about itself, meant for people (<code dir="auto">File Pattern</code>, <code dir="auto">Table</code>).</li>
+<li><strong>Dry run</strong>: run the job unchanged and infer a draft contract from its writes, instead of enforcing one.</li>
+<li><strong>Enforcement point</strong>: where the check runs; here <code dir="auto">pre-submit-gate</code>, before the job is handed to the engine.</li>
+<li><strong>Expansion service</strong>: the Java server Beam starts so a Python pipeline can include Java steps.</li>
+<li><strong>Fail closed</strong>: refuse what cannot be checked, rather than let it through.</li>
+<li><strong>Graph / pipeline</strong>: the job as a chain of steps and the collections between them.</li>
+<li><strong>IR</strong>: Invaract’s engine-neutral description of a job’s reads, filters, joins, groupings and writes.</li>
+<li><strong>Lineage</strong>: which input columns each output column comes from.</li>
+<li><strong>Pickled</strong>: saved with Python’s own object format, readable only by Python.</li>
+<li><strong>Portable pipeline / proto</strong>: the language-neutral description of a pipeline, in Protocol Buffers.</li>
+<li><strong>Prism</strong>: Beam’s in-process runner in Python 2.77, a small Go program.</li>
+<li><strong>Runner</strong>: the engine a Beam pipeline is handed to (Dataflow, Flink, Spark, Prism).</li>
+<li><strong>Schema</strong>: the column names and types of a dataset.</li>
+<li><strong>Sink / source</strong>: where a write lands / where a read comes from.</li>
+<li><strong>Transform</strong>: one step of a pipeline.</li>
+<li><strong>Wrapper runner</strong>: a runner that checks the pipeline and then hands it to the real one.</li>
+<li><strong><code dir="auto">OUTPUT_LOCATION_MISMATCH</code></strong>: a write lands somewhere other than the contract’s output.</li>
+<li><strong><code dir="auto">MISSING_OUTPUT_FIELD</code></strong> / <strong><code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code></strong> / <strong><code dir="auto">OUTPUT_FIELD_NULLABILITY_MISMATCH</code></strong>: a declared output column is missing, has the wrong type, or the wrong nullability.</li>
+<li><strong><code dir="auto">UNDECLARED_OUTPUT_COLUMN</code></strong>: with <code dir="auto">rejectUndeclaredFields</code>, the output has a column the contract does not declare.</li>
+<li><strong><code dir="auto">MISSING_INPUT</code></strong> / <strong><code dir="auto">UNDECLARED_INPUT</code></strong>: a declared input is not read / an undeclared one is.</li>
+<li><strong><code dir="auto">MISSING_OUTPUT</code></strong>: a declared output is never written.</li>
+<li><strong><code dir="auto">OUTPUT_FORMAT_MISMATCH</code></strong> / <strong><code dir="auto">OUTPUT_SAVE_MODE_MISMATCH</code></strong>: the write’s format or save mode differs from the contract’s.</li>
+<li><strong><code dir="auto">MISSING_OUTPUT_CATALOG_REGISTRATION</code></strong>: the contract requires a registered table and the write is to a bare path.</li>
+<li><strong><code dir="auto">UNVERIFIABLE_WRITE</code></strong>: a step changes data in a way Invaract cannot check, so it is refused.</li>
+<li><strong><code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code></strong>: the contract relies on something this adapter declares it cannot check, so it is refused.</li>
+<li><strong><code dir="auto">INVALID_CONTRACT</code></strong>: the contract itself is malformed.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="retrospective">Retrospective</h2><a class="sl-anchor-link" href="#retrospective"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Retrospective”</span></a></div>
+<p>The adapter was built the same day (docs/BEAM_PYTHON_ADAPTER.md) and its conformance run, real Python pipelines through the
+real package and checker, gave: <strong>42 of 53 scenarios conform (29 by doing the check, 13 by refusing safely), 11 skipped</strong>,
+against a forecast of 24 checked, 5 partly, 13 refused, 11 skipped. Every ⚠️ became a ✅, and no ✅ or ❌ changed.</p>
+<p>What the forecast got wrong, and why:</p>
+<ul>
+<li><strong>BigQuery (rows 11, 26, 27) did not need a stand-in.</strong> The check happens before the pipeline is handed to a runner, so the
+conformance job hands a checked BigQuery pipeline to a runner that runs nothing. The survey assumed the kit had to run the
+write; it only has to reach the hand-over.</li>
+<li><strong>Streaming (rows 50, 51) works, but not the way forecast.</strong> A file stream (<code dir="auto">fileio.MatchContinuously</code>) keeps its pattern in
+pickled code, so the stream’s read is not located: the declared input is reported unverifiable rather than read. That is
+why <code dir="auto">read.streaming</code> is declared partial, a limit the survey did not foresee. Pub/Sub reads are located.</li>
+<li><strong>No Python-side helper was needed (D2).</strong> Every fact the checks use is in the portable form; the helper the survey kept
+as an escape hatch was never written, which leaves the Python package with no logic to maintain.</li>
+<li><strong>A refusal could hide the reason that mattered.</strong> With shape rules unsupported, a pipeline combining collections with
+<code dir="auto">CoGroupByKey</code> was refused as unverifiable before the core said the rule was unsupported. Both Beam adapters now refuse an
+unsupported contract first (<code dir="auto">VerificationPipeline.requireSupported</code>).</li>
+<li><strong>Unknown coders do not fail; their order is not fixed.</strong> Java rehydrates a pickled Python coder as <code dir="auto">UnknownCoderWrapper</code>,
+and a proto map has no order, so a step’s inputs are sorted by tag. Neither was foreseen; both were found by the first tests.</li>
+<li><strong>Resolved unverified items.</strong> The JVM checker answers in about 0.9 s. Python’s in-process runner (Prism) runs the
+conformance jobs to completion. A required pyarrow column prints <code dir="auto">not null</code>.</li>
+</ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/BEAM_PYTHON_ADAPTER_SURVEY.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
