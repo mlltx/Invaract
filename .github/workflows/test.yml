@@ -1274,11 +1274,12 @@ jobs:
     # key or coder shows up as a failing assertion on the release that renamed it. The checker is this commit's beam-adapter,
     # built against beam.primary's Java libraries whatever the SDK, as the released checker jar is. The releases CI has
     # evidence for are beam.python.verified in supported-beam-versions.properties (version-matrix-drift-check keeps the two
-    # in step); the committed recordings are made with beam.python.primary.
+    # in step); the committed recordings are made with beam.python.primary. 2.68.0 is the first Python SDK whose
+    # WriteToParquet takes triggering_frequency, which a streaming file write needs.
     strategy:
       fail-fast: false
       matrix:
-        beam-python-version: ["2.60.0", "2.65.0", "2.70.0", "2.77.0"]
+        beam-python-version: ["2.68.0", "2.71.0", "2.74.0", "2.77.0"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

@@ -9,10 +9,11 @@ beam-adapter's BeamPythonConformanceAdapter writes the neutral job (a ScenarioJo
 so the job goes through the adapter's real path: the wrapper runner, the Java checker, then the real runner. Nothing here
 knows about Invaract beyond telling a refusal from a failure by its exit status: it is what a team's job looks like.
 
-Every input is an empty Parquet dataset read with ReadFromParquet(as_rows=True); the join is a CoGroupByKey (or, with no
-condition, a side input); the filter a beam.Filter; the projection a typed beam.Map; the output a WriteToParquet with the
-schema it writes, rows written straight to text for a CSV output, or a WriteToBigQuery load. The data is empty: the
-scenarios are about shapes, and an allowed job really runs on the DirectRunner over nothing.
+Every input is a Parquet dataset of one row read with ReadFromParquet(as_rows=True); the join is a CoGroupByKey (or, with
+no condition, a side input); the filter a beam.Filter; the projection a typed beam.Map; the output a WriteToParquet with the
+schema it writes, rows written straight to text for a CSV output, or a WriteToBigQuery load. The scenarios are about shapes,
+not data, and an allowed job really runs. The row is there because the in-process runner of Python SDKs before 2.75 fails on
+the empty batch an empty file is read as (a division by its length in the element counters), after the check has passed.
 """
 import json
 import os
@@ -79,12 +80,17 @@ def as_dict(row):
     return row._asdict() if hasattr(row, "_asdict") else row.as_dict()
 
 
+def zero(t):
+    """A value of the pyarrow type `t` (one this module makes: a long, a string, or a list of them)."""
+    return [] if pa.types.is_list(t) else 0 if pa.types.is_integer(t) else ""
+
+
 def materialize(root, dataset):
-    """An empty Parquet file of the dataset's schema in its folder, so a read of the folder finds it."""
+    """A Parquet file of the dataset's schema holding one row in its folder, so a read of the folder finds it."""
     folder = os.path.join(root, dataset["location"])
     os.makedirs(folder, exist_ok=True)
     schema = arrow_schema(dataset["fields"])
-    pq.write_table(pa.table({f.name: pa.array([], f.type) for f in schema}, schema=schema), os.path.join(folder, "part-0.parquet"))
+    pq.write_table(pa.table({f.name: pa.array([zero(f.type)], f.type) for f in schema}, schema=schema), os.path.join(folder, "part-0.parquet"))
     return os.path.join(folder, "*.parquet")
 
 
