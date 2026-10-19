@@ -1284,13 +1284,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install the Python SDK and the package
+      # The package is built, not installed: the suites below put it on PYTHONPATH, and one of them shows a job on a machine
+      # where it is not installed, which an installed package would make impossible.
+      - name: Install the Python SDK, and build the package
         shell: bash
         run: |
           BEAM=$(grep '^beam.primary' beam-adapter/src/main/resources/supported-beam-versions.properties | cut -d= -f2 | tr -d ' ')
           python -m pip install --upgrade pip
           python -m pip install "apache-beam[gcp]==$BEAM" pytest
-          python -m pip install -e beam-adapter/python
+          python -m pip wheel --no-deps -w "$RUNNER_TEMP/wheel" beam-adapter/python
 
       - name: Test the Python package
         shell: bash

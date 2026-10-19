@@ -68,7 +68,8 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 - **A change to the translator** is a change to both adapters: run both conformance suites (`BeamConformanceSpec`, and
   `BeamPythonConformanceSpec` with `INVARACT_TEST_PYTHON` set).
 - **Running the Python suites locally**: `INVARACT_TEST_PYTHON=<python with apache-beam[gcp] and pytest> sbt "testOnly *BeamPython*"`;
-  without it they are canceled. `cd beam-adapter/python && python -m pytest` runs the package's own tests.
+  without it they are canceled. That interpreter must not have `invaract_beam` installed (the suites put it on `PYTHONPATH`,
+  and one shows a job where it is missing); CI builds the wheel to check the packaging instead of installing it. `cd beam-adapter/python && python -m pytest` runs the package's own tests.
 
 ## Engine investigation
 

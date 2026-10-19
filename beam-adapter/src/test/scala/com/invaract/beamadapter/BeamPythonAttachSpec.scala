@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
   */
 class BeamPythonAttachSpec extends AnyFunSuite {
   import BeamPythonAttachSpec._
-  import BeamPythonConformanceAdapter.{environment, javaCommand, checkerClasspath, python, slashes}
+  import BeamPythonConformanceAdapter.{Python, environment, javaCommand, checkerClasspath, python, slashes}
   import PortableCheckSpec.{file, recording}
 
   private def needsPython(): Unit = environment.left.foreach { why =>
@@ -75,6 +75,12 @@ class BeamPythonAttachSpec extends AnyFunSuite {
 
   test("zero-code install: a job submitted where the package is not installed does not start") {
     needsPython()
+    // the package reaches the jobs here through PYTHONPATH only; installed into the interpreter, it is found anyway
+    val (installed, _) = python(List("-c", "import invaract_beam"), BeamPythonConformanceAdapter.WithoutPackage)
+    if (installed == 0) {
+      val why = s"$Python has invaract_beam installed, so a machine without it cannot be shown: run this test with an interpreter where it is not (pip uninstall invaract-beam)"
+      if (sys.env.get("INVARACT_CONFORMANCE_STRICT").contains("true")) fail(why) else cancel(why)
+    }
     val root = freshRoot()
     val contract = file(root, "contract.yaml", ExampleJob.contractYaml())
     val (status, output) = runJob(root, platform(root, contract), BeamPythonConformanceAdapter.WithoutPackage)
