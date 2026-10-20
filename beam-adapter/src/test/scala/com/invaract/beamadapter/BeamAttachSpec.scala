@@ -138,6 +138,73 @@ class BeamAttachSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(installed.enforces)
   }
 
+  // --- check only: a CI build checks the job with its production command line and one more flag ---
+
+  private def sinkTo(root: Path): (Path, String) = {
+    val events = root.resolve("events.jsonl")
+    (events, file(root, "sink.properties", s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${events.toString.replace('\\', '/')}\n"))
+  }
+
+  private def published(events: Path): String = new String(Files.readAllBytes(events), StandardCharsets.UTF_8).replace(" ", "")
+
+  test(BeamAttachSpec.CheckOnly) {
+    val root = freshRoot()
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml())
+    val (events, sink) = sinkTo(root)
+    val production = Array(runnerFlag, s"--invaractContract=$contract", "--invaractDelegate=com.invaract.beamadapter.CannotBeBuiltRunner", s"--invaractNotifyConfig=$sink")
+    // as in production, the delegate is built, and here that fails
+    assert(intercept[IllegalStateException](new ExampleJob(root).main(production)).getMessage.contains("credentials"))
+    // with --invaractCheckOnly the job's own main runs to its end: the pipeline is checked, and handed to no runner
+    val conforming = new ExampleJob(root)
+    conforming.main(production :+ "--invaractCheckOnly=true")
+    assert(conforming.written.isEmpty, "nothing ran, so nothing was written")
+    assert(published(events).contains("\"status\":\"PASSED\"") && published(events).contains("\"checkOnly\":\"true\""), published(events))
+    // and a job that breaks its contract fails the build, as it would have been refused in production
+    val violating = new ExampleJob(root, "out/elsewhere")
+    assert(blockedWith(violating.main(production :+ "--invaractCheckOnly=true")) == Set(ViolationType.OutputLocationMismatch))
+    assert(violating.written.isEmpty)
+  }
+
+  test("check only: the delegate is not built but its name is still resolved, so a misspelt one fails the check") {
+    val root = freshRoot()
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml())
+    val e = intercept[IllegalArgumentException](
+      new ExampleJob(root).main(Array(runnerFlag, s"--invaractContract=$contract", "--invaractCheckOnly=true", "--invaractDelegate=DataflowRuner"))
+    )
+    assert(e.getMessage.contains("--invaractDelegate=DataflowRuner"))
+  }
+
+  test("check only: with dry-run mode it reports the contract the job would need, and runs nothing") {
+    val root = freshRoot()
+    val (events, sink) = sinkTo(root)
+    val job = new ExampleJob(root, "out/anywhere")
+    job.main(Array(runnerFlag, "--invaractDryRun=true", "--invaractCheckOnly=true", s"--invaractNotifyConfig=$sink"))
+    assert(job.written.isEmpty)
+    assert(published(events).contains("CONTRACT_INFERENCE") && published(events).contains("anywhere"))
+    assert(published(events).contains("\"checkOnly\":\"true\""))
+  }
+
+  test("check only: a value that is neither true nor false stops the job, naming the flag; false runs it as usual") {
+    val root = freshRoot()
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml())
+    val e = intercept[IllegalArgumentException](new ExampleJob(root).main(Array(runnerFlag, s"--invaractContract=$contract", "--invaractCheckOnly=yes")))
+    assert(e.getMessage.contains("--invaractCheckOnly=yes must be true or false"))
+    val (events, sink) = sinkTo(root)
+    val job = new ExampleJob(root)
+    job.main(Array(runnerFlag, s"--invaractContract=$contract", "--invaractCheckOnly= FALSE ", s"--invaractNotifyConfig=$sink"))
+    assert(job.written.nonEmpty)
+    assert(!published(events).contains("checkOnly"), "a run is not marked as a check")
+  }
+
+  test("check only: what run returns is finished at once, cannot be cancelled, and has no metrics") {
+    val result = CheckedOnly
+    import org.apache.beam.sdk.PipelineResult.State
+    assert(result.getState == State.DONE && result.waitUntilFinish() == State.DONE && result.cancel() == State.DONE)
+    assert(result.waitUntilFinish(org.joda.time.Duration.ZERO) == State.DONE)
+    val metrics = result.metrics().allMetrics()
+    assert(!metrics.getCounters.iterator.hasNext && !metrics.getDistributions.iterator.hasNext && !metrics.getGauges.iterator.hasNext)
+  }
+
   // --- dry-run mode ---
 
   test(BeamAttachSpec.DryRunInference) {
@@ -161,4 +228,5 @@ object BeamAttachSpec {
   val ContractRegistry = "contract registry: a registry:// reference is fetched from the registry named in the options and enforced"
   val OrganizationalPolicy = "organizational policy: a contract that breaks a policy is rejected when the runner is set up, before any job runs; one that satisfies it installs"
   val DryRunInference = "dry-run inference: dry-run mode lets a real write through and reports a contract inferred from it"
+  val CheckOnly = "check only: --invaractCheckOnly checks an unmodified job in CI without running it or building its runner, and fails the build when the job breaks its contract"
 }

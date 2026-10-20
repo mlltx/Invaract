@@ -37,6 +37,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | D8 | **The settings are spelled `--invaract_<snake_case>`** and the package forwards each one unchanged; the checker refuses one it does not know (exit 2). | A setting means the same on every engine. `InvaractConf.All` is the list; three tests tie the Java options, the checker and the Python flags to it (see "Maintaining it"). |
 | D9 | **CI runs real Python pipelines** through the real package and checker (`beam-python` job), and the translator's unit tests run on **recorded protos**, so `sbt test` needs no Python. | Fast unit tests everywhere; the end-to-end proof where Python is installed. |
 | D10 | **Release later**: the checker jar is `sbt assembly` in `beam-adapter`; the package installs from the repository. | No release steps to maintain before there is a user; PyPI and a jar asset are a follow-up once the shape has settled. |
+| D11 | **A check-only mode for CI** (`--invaract_check_only=true`): the pipeline is checked and handed to no runner; `run()` returns `CheckedOnly` (finished, no metrics), the delegate is not created, and the checker is told (`--check_only=true`) so events carry `engineDetails.checkOnly`. | The Java adapter's D22, in the bridge's one place for runner behaviour. It is a runner flag, not a setting forwarded to the checker, because it decides what the runner does after the verdict. |
 
 ## Where things are
 

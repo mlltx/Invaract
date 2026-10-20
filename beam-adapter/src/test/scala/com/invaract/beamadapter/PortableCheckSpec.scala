@@ -52,6 +52,19 @@ class PortableCheckSpec extends AnyFunSuite {
       .foreach(fragment => assert(published.contains(fragment), fragment))
   }
 
+  test("a pipeline only checked (--check_only=true) is marked so in its events; a value other than true or false is not checked") {
+    val root = freshRoot()
+    val events = root.resolve("events.jsonl")
+    val sink = file(root, "sink.properties",
+      s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${events.toString.replace('\\', '/')}\n")
+    val contract = s"--invaract_contract=${file(root, "c.yaml", ReportContract)}"
+    val pipeline = s"--pipeline=${recording(root, "parquet_job")}"
+    assert(check(pipeline, contract, s"--invaract_notify_config=$sink", "--check_only=true")._1 == PortableCheck.Passed)
+    assert(new String(Files.readAllBytes(events), StandardCharsets.UTF_8).replace(" ", "").contains("\"checkOnly\":\"true\""))
+    val (status, out) = check(pipeline, contract, "--check_only=yes")
+    assert(status == PortableCheck.NotChecked && out.contains("--check_only=yes must be true or false"), out)
+  }
+
   test("the settings are read with the Python package's spelling: --invaract_reject_undeclared_inputs") {
     val root = freshRoot()
     // the write reads a CSV through pandas, which states no location: allowed by default, refused in strict mode

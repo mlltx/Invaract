@@ -14,7 +14,7 @@ import scala.util.control.NonFatal
   * (docs/BEAM_PYTHON_ADAPTER.md, D1 and D4).
   *
   * {{{
-  * java -jar invaract-beam-checker.jar --pipeline=<file> [--sdk_version=2.77.0] [--runner=DataflowRunner] [--job_name=...]
+  * java -jar invaract-beam-checker.jar --pipeline=<file> [--sdk_version=2.77.0] [--runner=DataflowRunner] [--job_name=...] [--check_only=true]
   *     [--invaract_contract=...] [--invaract_dry_run=true] [--invaract_<setting>=...]
   * }}}
   *
@@ -53,7 +53,11 @@ object PortableCheck {
       require(unknown.isEmpty, s"this checker does not know the argument(s) ${unknown.toList.sorted.map("--" + _).mkString(", ")}")
       val pipeline = given.getOrElse("pipeline", throw new IllegalArgumentException("--pipeline=<file> must name the pipeline to check"))
       val python = BeamFrontEnd.Python
-      val check = python.check(new PythonConfigSource(settings), python.jobInfo(given.get("job_name"), given.get("sdk_version"), given.get("runner")))
+      val checkOnly = given.get("check_only").exists { v =>
+        require(v == "true" || v == "false", s"--check_only=$v must be true or false")
+        v == "true"
+      }
+      val check = python.check(new PythonConfigSource(settings), python.jobInfo(given.get("job_name"), given.get("sdk_version"), given.get("runner"), checkOnly))
       check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), python.steps))
       Passed
     } catch {
@@ -66,7 +70,7 @@ object PortableCheck {
     }
 
   /** The arguments other than the Invaract settings. */
-  private val Arguments = Set("pipeline", "sdk_version", "runner", "job_name")
+  private val Arguments = Set("pipeline", "sdk_version", "runner", "job_name", "check_only")
 
   /** `--name=value` arguments, by name; anything else is a mistake in how the checker was called. */
   private def arguments(args: Array[String]): Map[String, String] =

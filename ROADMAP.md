@@ -3981,7 +3981,8 @@ Extend verification engine to support multiple execution engines.
       streaming; transformation-shape rules from Beam's schema transforms; conforms to 44 scenarios, the
       kit skipping the rest with the declaration's reason (no row-level DML, no checkpoints, analyses it
       does not offer); tested on Beam 2.60 to 2.77 in CI's version matrix, with a hand-over
-      to Flink proven
+      to Flink proven; a check-only mode (`--invaractCheckOnly=true`) checks an unmodified job in CI without running
+      it or building its runner
 - [x] Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the `invaract_beam` package's wrapper runner writes the
       pipeline's portable form and runs a Java checker on it, which translates it with the Beam adapter's own
       translator; conforms to 44 scenarios (13 by refusing safely: transformation-shape rules and analyses are

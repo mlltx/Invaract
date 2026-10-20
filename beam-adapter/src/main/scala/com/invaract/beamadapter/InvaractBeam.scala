@@ -47,6 +47,7 @@ object InvaractBeam {
     BeamFrontEnd.Java.jobInfo(
       Option(options.getJobName),
       Try(org.apache.beam.sdk.util.ReleaseInfo.getReleaseInfo.getSdkVersion).toOption,
-      Option(options.getRunner).map(_.getName)
+      Option(options.getRunner).map(_.getName),
+      InvaractBeamOptions.checkOnly(options)
     )
 }

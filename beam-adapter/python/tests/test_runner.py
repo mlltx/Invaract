@@ -12,7 +12,7 @@ from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.portability.api import beam_runner_api_pb2
 
 import invaract_beam
-from invaract_beam import CheckNotRun, ContractViolation, InvaractOptions, InvaractRunner
+from invaract_beam import CheckedOnly, CheckNotRun, ContractViolation, InvaractOptions, InvaractRunner
 from invaract_beam.options import SETTINGS
 from invaract_beam.runner import CHECKER_JAR_ENV, CHECKER_MAIN, checker_command
 from fakes import RecordingRunner, fake_java, recorded
@@ -57,6 +57,39 @@ def test_the_checker_is_given_the_pipeline_portable_form_and_it_is_removed_after
     assert {"Make", "Write"} <= names
     given = next(a for a in recorded(record) if a.startswith("--pipeline="))
     assert not os.path.exists(given.split("=", 1)[1])
+
+
+def test_check_only_checks_the_pipeline_and_hands_it_to_no_runner(tmp_path):
+    p, record = run_with(tmp_path, 0, "", "--invaract_contract=contract.yaml", "--invaract_check_only=true")
+    result = p.run()
+    assert isinstance(result, CheckedOnly)
+    assert RecordingRunner.handed == []
+    assert "--check_only=true" in recorded(record), "the events say the pipeline was only checked"
+    # a job that waits for its pipeline and reads its metrics goes on as after a run that did nothing
+    assert result.wait_until_finish() == "DONE" and result.state == "DONE" and result.cancel() == "DONE"
+    assert result.metrics().query()["counters"] == []
+
+
+def test_without_check_only_the_checker_is_not_told_so_and_the_pipeline_runs(tmp_path):
+    for flags in ([], ["--invaract_check_only=false"], ["--invaract_check_only= FALSE "]):
+        RecordingRunner.handed.clear()
+        p, record = run_with(tmp_path, 0, "", *flags)
+        assert p.run() == "ran" and RecordingRunner.handed == [p]
+        assert not any(a.startswith("--check_only") for a in recorded(record))
+
+
+def test_a_pipeline_refused_under_check_only_is_refused_as_ever(tmp_path):
+    p, _ = run_with(tmp_path, 1, "Contract violation: [OUTPUT_LOCATION_MISMATCH] ...", "--invaract_check_only=TRUE")
+    with pytest.raises(ContractViolation, match=r"OUTPUT_LOCATION_MISMATCH"):
+        p.run()
+    assert RecordingRunner.handed == []
+
+
+def test_a_check_only_value_that_is_not_true_or_false_stops_the_job_before_the_checker_runs(tmp_path):
+    p, record = run_with(tmp_path, 0, "", "--invaract_check_only=yes")
+    with pytest.raises(CheckNotRun, match=r"--invaract_check_only=yes must be true or false"):
+        p.run()
+    assert RecordingRunner.handed == [] and not os.path.exists(record)
 
 
 def test_a_refused_pipeline_is_not_handed_on_and_the_reason_is_the_checker_s(tmp_path):
@@ -140,4 +173,4 @@ def test_the_delegate_defaults_to_the_direct_runner():
 
 
 def test_the_package_names_what_a_job_uses():
-    assert invaract_beam.__all__ == ["InvaractRunner", "InvaractOptions", "ContractViolation", "CheckNotRun"]
+    assert invaract_beam.__all__ == ["InvaractRunner", "InvaractOptions", "ContractViolation", "CheckNotRun", "CheckedOnly"]
