@@ -13,7 +13,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /** What a refusal of something the Beam adapters cannot check tells the job's owner (`BeamAdvice`): the advice for the kind of
   * refusal it is, in the terms of the SDK the pipeline was written with, and nothing about another engine. */
 class BeamAdviceSpec extends AnyFunSuite {
-  import PortableCheckSpec.{ReportContract, file, freshRoot, recording}
+  import PortableCheckSpec.{ReportContract, check, file, freshRoot, recording}
 
   private def refusal(p: Pipeline, contract: com.invaract.contract.Contract = ExampleJob.contract()): Violation = {
     val e = intercept[ContractViolationException](InvaractBeam.enforce(contract).verify(p))
@@ -58,11 +58,11 @@ class BeamAdviceSpec extends AnyFunSuite {
   test("Python: the same advice, spelled as the Python package spells its flags, pointing at the Python guide") {
     val root = freshRoot()
     val contract = s"--invaract_contract=${file(root, "c.yaml", ReportContract)}"
-    val (ending, endingOut) = checkPortable(s"--pipeline=${recording(root, "side_effects")}", contract)
+    val (ending, endingOut) = check(s"--pipeline=${recording(root, "side_effects")}", contract)
     assert(ending == PortableCheck.Refused && endingOut.contains("[UNVERIFIABLE_WRITE]"), endingOut)
     assert(endingOut.contains("--invaract_trusted_steps=PushToService"))
     assert(endingOut.contains(""""Steps that end the pipeline" in the docs' guide (guides/using-invaract-with-beam-python)"""))
-    val (unplaced, unplacedOut) = checkPortable(s"--pipeline=${recording(root, "template_job")}", contract)
+    val (unplaced, unplacedOut) = check(s"--pipeline=${recording(root, "template_job")}", contract)
     assert(unplaced == PortableCheck.Refused && unplacedOut.contains("Naming the step as trusted does not let it through"), unplacedOut)
     assert(unplacedOut.contains("guides/using-invaract-with-beam-python") && !unplacedOut.contains("--invaractTrustedSteps"))
     assert(!endingOut.contains("Spark") && !unplacedOut.contains("Spark"))
@@ -73,11 +73,5 @@ class BeamAdviceSpec extends AnyFunSuite {
     assert(BeamAdvice.Python.endingStep("S", "p").remediation.contains("--invaract_trusted_steps=S"))
     assert(BeamAdvice.Java.unplacedWrite("W", "p").name == "W" && BeamAdvice.Java.unplacedWrite("W", "p").problem == "p")
     assert(BeamAdvice.Python.unstatedWrite("out/x", "p").name == "the write to out/x")
-  }
-
-  private def checkPortable(args: String*): (Int, String) = {
-    val bytes = new java.io.ByteArrayOutputStream()
-    val status = PortableCheck.run(args.toArray, new java.io.PrintStream(bytes, true, "UTF-8"))
-    (status, new String(bytes.toByteArray, java.nio.charset.StandardCharsets.UTF_8))
   }
 }

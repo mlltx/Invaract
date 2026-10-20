@@ -475,5 +475,14 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     assert(raw.outputSchema.isEmpty && raw.format.contains("text"), "plain lines are text, with no columns")
   }
 
+  test("a Read.from step is data the job makes only when its source says so, and a step with no transform is no file write") {
+    def bare(className: String, display: Map[String, String] = Map.empty) = BeamStep("S", className, Nil, Nil, display, Nil)
+    val countingSource = Map("source" -> "org.apache.beam.sdk.io.CountingSource$BoundedCountingSource")
+    assert(BeamIO.isInJobData(bare("org.apache.beam.sdk.io.Read$Bounded", countingSource)))
+    assert(!BeamIO.isInJobData(bare("org.apache.beam.sdk.io.Read$Bounded")), "a source that names nothing is not data the job makes")
+    // what a Python pipeline's steps are (no Java transform): never mistaken for the primitive a Java file write is built on
+    assert(!BeamIO.isFileWrite(bare("org.apache.beam.sdk.io.WriteFiles")))
+  }
+
   private def withoutDrive(location: String): String = location.replaceFirst("^[A-Za-z]:(?=/)", "")
 }

@@ -16,12 +16,6 @@ import java.nio.file.{Files, Path}
 class PortableCheckSpec extends AnyFunSuite {
   import PortableCheckSpec._
 
-  private def check(args: String*): (Int, String) = {
-    val bytes = new ByteArrayOutputStream()
-    val status = PortableCheck.run(args.toArray, new PrintStream(bytes, true, "UTF-8"))
-    (status, new String(bytes.toByteArray, StandardCharsets.UTF_8))
-  }
-
   test("a pipeline its contract allows: exit 0, nothing printed") {
     val root = freshRoot()
     assert(check(s"--pipeline=${recording(root, "parquet_job")}", s"--invaract_contract=${file(root, "c.yaml", ReportContract)}") == ((PortableCheck.Passed, "")))
@@ -124,8 +118,8 @@ class PortableCheckSpec extends AnyFunSuite {
 
   test("every setting a Beam pipeline can be given is a flag of the Python package (a new one needs adding to invaract_beam/options.py)") {
     val source = new String(Files.readAllBytes(java.nio.file.Paths.get("python/invaract_beam/options.py")), StandardCharsets.UTF_8)
-    val block = source.substring(source.indexOf("SETTINGS = ("), source.indexOf(")", source.indexOf("SETTINGS = (")))
-    val declared = "\"([a-z_]+)\"".r.findAllMatchIn(block).map(_.group(1)).toSet
+    val block = source.substring(source.indexOf("SETTINGS = {"), source.indexOf("\n}", source.indexOf("SETTINGS = {")))
+    val declared = "(?m)^\\s+\"([a-z_]+)\":".r.findAllMatchIn(block).map(_.group(1)).toSet
     assert(declared == PythonConfigSource.Flags)
   }
 }
@@ -147,6 +141,13 @@ private[beamadapter] object PortableCheckSpec {
       |        - { name: id, type: long, required: true }
       |        - { name: amount, type: long }
       |""".stripMargin
+
+  /** The checker, called as the Python package calls it: its exit status and what it printed. */
+  def check(args: String*): (Int, String) = {
+    val bytes = new ByteArrayOutputStream()
+    val status = PortableCheck.run(args.toArray, new PrintStream(bytes, true, "UTF-8"))
+    (status, new String(bytes.toByteArray, StandardCharsets.UTF_8))
+  }
 
   def freshRoot(): Path = Files.createTempDirectory("portable-check-")
 

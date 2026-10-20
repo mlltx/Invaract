@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 class BeamPythonAttachSpec extends AnyFunSuite {
   import BeamPythonAttachSpec._
   import BeamPythonConformanceAdapter.{Python, environment, javaCommand, checkerClasspath, python, slashes}
-  import PortableCheckSpec.{file, recording}
+  import PortableCheckSpec.{check, file, recording}
 
   private def needsPython(): Unit = environment.left.foreach { why =>
     if (sys.env.get("INVARACT_CONFORMANCE_STRICT").contains("true")) fail(why) else cancel(why)
@@ -108,12 +108,6 @@ class BeamPythonAttachSpec extends AnyFunSuite {
   }
 
   // --- what the checker applies, with the flags the package forwards ---
-
-  private def check(args: String*): (Int, String) = {
-    val bytes = new java.io.ByteArrayOutputStream()
-    val status = PortableCheck.run(args.toArray, new java.io.PrintStream(bytes, true, "UTF-8"))
-    (status, new String(bytes.toByteArray, StandardCharsets.UTF_8))
-  }
 
   test(LocationRefs) {
     val root = Files.createTempDirectory("beam-python-attach-")

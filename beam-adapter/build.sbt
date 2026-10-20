@@ -142,14 +142,21 @@ assembly / assemblyMergeStrategy := {
 // compare with: set this to the first released version, and add the module to the CI loops (check_modules.py says where).
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set.empty
-// The adapter's API is what a job or a platform touches: InvaractRunner (and its registrar), InvaractBeam, BeamCheck,
-// InvaractBeamOptions (and its registrar) and BeamCapabilities. Everything below is `private[beamadapter]`, which Scala compiles to
-// public bytecode, so MiMa sees it; no code outside this module can call it, so a change to it is not a break.
+// The adapter's API is what a job or a platform touches: the classes named in `BeamPublicApi`. Everything else in the package is
+// `private[beamadapter]`, which Scala compiles to public bytecode, so MiMa sees it; no code outside this module can call it, so a
+// change to it is not a break. MiMa therefore reports only problems in the public classes (an object is two classes, `X` and
+// `X$`), and a new internal class needs nothing here.
+val BeamPublicApi = Set(
+  "InvaractRunner", "InvaractRunner$", "InvaractRunnerRegistrar", "InvaractBeam", "InvaractBeam$", "BeamCheck", "InvaractBeamOptions",
+  "InvaractOptionsRegistrar", "BeamCapabilities", "BeamCapabilities$", "PortableCheck", "PortableCheck$"
+)
 mimaBinaryIssueFilters ++= Seq(
-  "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
-  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$", "BeamShapes", "SchemaShape", "JoinSide", "StepCatalogue",
-  "JavaSteps", "PythonSteps", "PortablePipeline", "PyArrowSchemas", "PythonConfigSource", "BeamSettings"
-).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*")) ++ Seq(
+  (problem: Problem) => problem.matchName.forall { name =>
+    BeamPublicApi.contains(name.stripPrefix("com.invaract.beamadapter.").takeWhile(_ != '.'))
+  },
+  // `InvaractBeam.fromConfig` was `private[beamadapter]`; what it did is `BeamFrontEnd.check` now
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.beamadapter.InvaractBeam.fromConfig")
+) ++ Seq(
   // A new option is a new getter/setter pair on InvaractBeamOptions, which MiMa reports because a class implementing the
   // interface would lack them. None does: Beam implements an options interface itself, as a proxy made at run time, and a
   // job only asks for it (`options.as(classOf[InvaractBeamOptions])`). So adding an option breaks no caller. Each new option

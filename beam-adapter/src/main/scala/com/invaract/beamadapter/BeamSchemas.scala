@@ -77,7 +77,7 @@ private[beamadapter] object BeamSchemas {
     def fromArgument = Try(lt.getArgument[org.apache.beam.sdk.values.Row]).toOption.flatMap(Option(_))
       .flatMap(arg => Try(LogicalType.DecimalType(arg.getInt32("precision").intValue, arg.getInt32("scale").intValue)).toOption)
     def fromFields = Try {
-      def field(name: String): Int = { val f = lt.getClass.getDeclaredField(name); f.setAccessible(true); f.getInt(lt) }
+      def field(name: String): Int = Reflection.field(lt, name).asInstanceOf[java.lang.Integer].intValue
       LogicalType.DecimalType(field("precision"), field("scale"))
     }.toOption
     fromArgument.orElse(fromFields)
@@ -108,10 +108,7 @@ private[beamadapter] object BeamSchemas {
   }
 
   private def fromAvroCoder(coder: Coder[_]): Option[LogicalSchema] =
-    Try {
-      val method = coder.getClass.getMethods.find(m => m.getName == "getSchema" && m.getParameterCount == 0)
-      method.flatMap(m => Option(m.invoke(coder))).map(_.toString)
-    }.toOption.flatten.flatMap(fromAvroJson)
+    Try(Option(Reflection.call(coder, "getSchema")).map(_.toString)).toOption.flatten.flatMap(fromAvroJson)
 
   /** The columns of an Avro record schema given as JSON, or `None` when it is not a record. */
   def fromAvroJson(json: String): Option[LogicalSchema] =

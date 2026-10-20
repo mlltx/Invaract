@@ -47,6 +47,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | Reading the portable form | `PortablePipeline.scala` |
 | pyarrow schemas | `PyArrowSchemas.scala` |
 | The checker program | `PortableCheck.scala` (`PythonConfigSource` spells the settings) |
+| What differs from a Java pipeline | `BeamFrontEnd.scala` (`BeamFrontEnd.Python`: the engine name, the step catalogue, the declaration and the advice, kept together) |
 | What a refusal advises | `BeamAdvice.scala` (`BeamAdvice.Python`: the settings as Python spells them, the Python guide) |
 | The declaration | `beam-adapter/src/main/resources/invaract-capabilities-beam-python.yaml` |
 | The Python package | `beam-adapter/python/invaract_beam/` (`runner.py`, `options.py`), tests in `beam-adapter/python/tests/` |
@@ -58,7 +59,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 
 - **A new neutral setting** (added to `InvaractConf` and `InvaractConf.All`): `ConfigSourceSpec` fails until it is in `All`;
   then `PortableCheckSpec` fails until it is a Beam option (`InvaractBeamOptions` and `BeamConfigSource`) and a flag of the
-  Python package (`SETTINGS` in `python/invaract_beam/options.py`), naming each file. A setting that only an adapter checking
+  Python package (`SETTINGS` in `python/invaract_beam/options.py`, each with its help text), naming each file. A setting that only an adapter checking
   after the job reads (`failOnMissingOutput`) is left out of `BeamSettings.Names`.
 - **Python SDK releases tested**: `beam.python.verified` (2.68.0, 2.71.0, 2.74.0 and 2.77.0). 2.68.0 is the floor: the
   first release whose `WriteToParquet` takes `triggering_frequency`, which the streaming scenarios need.
