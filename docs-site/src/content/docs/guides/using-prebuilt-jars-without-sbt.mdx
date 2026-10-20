@@ -10,15 +10,13 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 Invaract hasn't published a Maven Central release yet (see
 [Installation](/getting-started/installation/)), so a Spark job built with a different
 toolchain — Maven, Gradle, or anything else that isn't sbt — can't add it as an ordinary
-dependency coordinate. This guide covers the alternative: prebuilt jars, published as
-GitHub Release assets, that you download and register into your own build instead of
-building Invaract from source yourself.
+dependency coordinate. This guide covers the alternative: a prebuilt jar, published as a
+GitHub Release asset, that you download instead of building Invaract from source yourself.
 
 ## Where the jars come from
 
-Every push to `main` that passes Invaract's full CI suite (`Test and Build`, including
-the `docker-regression` proof that enforcement actually blocks a bad write) rebuilds
-`contract`, `ir`, and `spark-adapter` and republishes their `sbt assembly` fat jars to a
+Every push to `main` that passes Invaract's full CI suite (including the proof that
+enforcement actually blocks a bad write) rebuilds the engine's jars and republishes them to a
 single rolling GitHub Release tagged
 [`spark-jars-latest`](https://github.com/mlltx/Invaract/releases/tag/spark-jars-latest).
 
@@ -29,26 +27,23 @@ a specific Invaract commit, build that commit's jars yourself with `./dev/build`
 of depending on this release staying put.
 </Aside>
 
-Download the three jars you need:
+You need one jar. `invaract-spark-adapter-0.11.0.jar` already contains everything else
+Invaract runs on (the contract model, the IR, fingerprinting and the shared verification
+code), so the other jars on the release page are only for building something of your own on
+a single module.
 
 ```bash
-RELEASE="https://github.com/mlltx/Invaract/releases/download/spark-jars-latest"
-curl -fLO "$RELEASE/invaract-contract-0.13.0.jar"
-curl -fLO "$RELEASE/invaract-ir-0.6.0.jar"
-curl -fLO "$RELEASE/invaract-spark-adapter-0.11.0.jar"
+curl -fLO "https://github.com/mlltx/Invaract/releases/download/spark-jars-latest/invaract-spark-adapter-0.11.0.jar"
 ```
 
-Check the release page for the current filenames if these version numbers have moved —
-they follow each module's own `version` in its `build.sbt`, not the release tag.
+Check the release page for the current filename if the version has moved — it follows
+`spark-adapter`'s own `version` in its `build.sbt`, not the release tag.
 
 ## Run with `spark-submit` — no Maven registration needed
 
 Installing Invaract [purely via `spark-submit --conf`](/guides/installing-the-enforcement-rule/#attach-it-via-spark-submit---conf)
-(`spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`) is the
-default this whole documentation site leads with, and it's the simplest path here too: your
-job's own source never imports anything from `com.invaract.contract`/
-`com.invaract.sparkadapter` at all, so there's nothing for a Maven/Gradle/whatever build to
-compile against.
+is the simplest path: your job's own source never imports anything from Invaract, so there's
+nothing for your build to compile against.
 
 ```bash
 spark-submit \
@@ -61,59 +56,34 @@ spark-submit \
   ...
 ```
 
-Just the one jar downloaded above, passed straight to `--jars` — no `install:install-file`,
-no `pom.xml` changes, nothing to add to your build at all. This mirrors exactly how this
-repository's own example job runs (see `runner/DemoJobHarness` and `dev/test`).
+The jar goes straight to `--jars` — no `install:install-file`, no `pom.xml` changes. Every
+other setting is another `--conf`: see [Configuration Settings](/reference/configuration/).
 
 ## Calling Invaract's APIs directly in code
 
 If you're instead following [Install and Configure Invaract Explicitly in
 Code](/guides/calling-invaract-explicitly/) — calling `ContractEnforcementRule.forContract(...)`
 yourself, because you need something the conf-driven path can't express — your job's code
-compiles against `com.invaract.contract`/`com.invaract.sparkadapter` classes, so you need
-these jars available to your build at compile time too, not only on Spark's runtime
-classpath. Register them with Maven:
+compiles against Invaract's classes, so your build needs the jar at compile time too. With
+Maven:
 
 <Steps>
 
-1. ### Install each jar into your local Maven repository
+1. ### Install the jar into your local Maven repository
 
    ```bash
-   mvn install:install-file \
-     -Dfile=invaract-contract-0.13.0.jar \
-     -DgroupId=com.invaract -DartifactId=invaract-contract \
-     -Dversion=0.13.0 -Dpackaging=jar
-
-   mvn install:install-file \
-     -Dfile=invaract-ir-0.6.0.jar \
-     -DgroupId=com.invaract -DartifactId=invaract-ir \
-     -Dversion=0.5.0 -Dpackaging=jar
-
    mvn install:install-file \
      -Dfile=invaract-spark-adapter-0.11.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-spark-adapter \
      -Dversion=0.11.0 -Dpackaging=jar
    ```
 
-   This puts them in `~/.m2/repository` under the same `com.invaract` coordinates
-   Invaract's own `build.sbt` files use, so a future real Maven Central release would
-   only mean removing this step — not renaming anything in your `pom.xml`.
+   This puts it in `~/.m2/repository` under the same `com.invaract` coordinate Invaract's
+   own build uses.
 
-2. ### Add them as `provided`-scope dependencies
+2. ### Add it as a `provided`-scope dependency
 
    ```xml
-   <dependency>
-     <groupId>com.invaract</groupId>
-     <artifactId>invaract-contract</artifactId>
-     <version>0.13.0</version>
-     <scope>provided</scope>
-   </dependency>
-   <dependency>
-     <groupId>com.invaract</groupId>
-     <artifactId>invaract-ir</artifactId>
-     <version>0.5.0</version>
-     <scope>provided</scope>
-   </dependency>
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-spark-adapter</artifactId>
@@ -124,34 +94,37 @@ classpath. Register them with Maven:
 
    `provided` is correct here, the same way it's correct for `spark-core`/`spark-sql` in
    a Spark job's `pom.xml`: your code compiles against these classes, but you supply the
-   actual jars to Spark yourself at submit time via `--jars` (next step), not by shading
-   them into your job's own jar.
+   jar to Spark yourself at submit time via `--jars` (next step), not by shading it into
+   your job's own jar.
 
 3. ### Write your job
 
    Follow [Install and Configure Invaract Explicitly in
    Code](/guides/calling-invaract-explicitly/) — nothing about that page's code changes
-   based on which build tool produced the jars.
+   based on which build tool produced the jar.
 
-4. ### Run with `spark-submit`, passing all four jars
+4. ### Run with `spark-submit`
 
    ```bash
    spark-submit \
      --class com.example.MySparkJob \
      --master local[*] \
-     --jars invaract-contract-0.13.0.jar,invaract-ir-0.6.0.jar,invaract-spark-adapter-0.11.0.jar \
+     --jars invaract-spark-adapter-0.11.0.jar \
      target/my-job.jar \
      ...
    ```
-
-   Your Maven build never needs to bundle Invaract's classes into `my-job.jar` — they come
-   from `--jars`, the same as `runner/DemoJobHarness` and `dev/test` already run.
 
 </Steps>
 
 ## Picking up a new build
 
 Because `spark-jars-latest` is a rolling release, "updating" is just re-running the
-download and `install:install-file` steps above — the same filenames get replaced with
-whatever `main` most recently passed CI with. There's no version bump to track unless a
-module's own `version` in `build.sbt` changes.
+download and `install:install-file` steps above — the same filename gets replaced with
+whatever `main` most recently passed CI with. There's no version bump to track unless
+`spark-adapter`'s own `version` in `build.sbt` changes.
+
+## Apache Beam
+
+The release holds Spark jars only. For Beam, build the adapter from source
+(`cd beam-adapter && sbt assembly`), as the [Java](/guides/using-invaract-with-apache-beam/#what-a-job-needs)
+and [Python](/guides/using-invaract-with-beam-python/#what-a-job-needs) guides show.

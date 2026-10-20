@@ -107,6 +107,14 @@ A filter, grouping or join written as code (`Filter.by`, a `DoFn`, `GroupByKey`,
   tested against is checked for this. If a release changed them so the columns could not be
   read, a contract with any of these rules would refuse the write rather than guess.
 
+## On Beam Python pipelines
+
+These rules can't be checked for a Python pipeline yet. Its filters and joins are Python
+functions, and a `beam.GroupBy`'s keys are held only in pickled Python, so Beam's description
+of the pipeline names no filter, join or grouping column. A contract with any of these rules is
+refused with `UNSUPPORTED_CONTRACT_FEATURE` before the pipeline runs, rather than passed
+unchecked.
+
 ## What these rules don't check yet
 
 - **Which specific rows a filter's predicate actually excludes**, or whether it's trivially

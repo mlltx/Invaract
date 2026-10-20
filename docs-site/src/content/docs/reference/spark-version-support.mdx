@@ -1,6 +1,6 @@
 ---
-title: Spark Version Support
-description: Which Apache Spark versions Invaract's verification engine is tested against.
+title: Engine Version Support
+description: Which Apache Spark and Apache Beam versions Invaract is tested against.
 sidebar:
   order: 5
 ---
@@ -10,9 +10,10 @@ import { Aside } from '@astrojs/starlight/components';
 `spark-adapter` translates Spark's Catalyst logical plan into Invaract's engine-independent
 IR (see [The Transformation IR](/concepts/transformation-ir/)) — an internal Spark API that
 isn't guaranteed stable node-by-node release to release. This page states what's actually
-been verified, not just what the code happens to compile against.
+been verified, not just what the code happens to compile against. For Apache Beam, see
+[Apache Beam versions](#apache-beam-versions) below.
 
-## Supported versions
+## Supported Spark versions
 
 {/* generate-version-docs:BEGIN spark-table */}
 {/* Generated from spark-adapter/src/main/resources/supported-versions.properties by
@@ -45,7 +46,7 @@ against a Spark 4.x cluster isn't a configuration a real user has today.
 
 Every one of the versions above is exercised by `spark-adapter`'s own full test suite,
 automatically, on every change — not a claim taken on faith. See
-[docs/SPARK_ADAPTER.md's "Spark version compatibility" section](https://github.com/mlltx/invaract/blob/main/docs/SPARK_ADAPTER.md)
+[docs/SPARK_ADAPTER.md's "Spark version compatibility" section](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md)
 for how that CI job works if you're contributing to `spark-adapter` itself.
 
 `ContractEnforcementRule` also checks this same verified list at runtime, in your own job —
@@ -62,3 +63,17 @@ version it detected, so you have a concrete signal if something related goes wro
 
 Scala 2.13 cross-compilation isn't done — see the Spark 4.x note above for why it would be
 needed before a newer Spark line could be supported.
+
+## Apache Beam versions
+
+The Beam adapters read Beam's own description of a pipeline, which can change between
+releases, so each supported release is run through the full conformance suite in CI.
+
+| SDK | Tested releases | Notes |
+|---|---|---|
+| Java | 2.60.0, 2.65.0, 2.70.0, 2.77.0 | The job brings its own Beam; the adapter does not bundle it. |
+| Python | 2.68.0, 2.71.0, 2.74.0, 2.77.0 | The checker it runs needs Java 11 or later on the machine that launches the pipeline. |
+
+The requirements of each SDK are in its guide:
+[Java](/guides/using-invaract-with-apache-beam/#what-a-job-needs) and
+[Python](/guides/using-invaract-with-beam-python/#what-a-job-needs).

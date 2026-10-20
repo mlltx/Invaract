@@ -12,6 +12,11 @@ Beyond schema, location, and format checks, a contract can constrain a table's r
 way everything else is — the write is aborted before anything is committed if a rule is
 violated.
 
+<Aside type="note" title="Spark only">
+Row-level DML exists only on Spark. A Beam pipeline reads collections and writes new output,
+so these rules don't apply there, and neither do custom rule types (below).
+</Aside>
+
 ## The three rule types
 
 ```yaml
@@ -88,10 +93,9 @@ Set expectations correctly rather than assuming full coverage:
 - **Governance rules** (field-level masking, residency, purpose limitation) — no rule
   vocabulary exists for these yet; `rules` entries of other types are recorded on the
   contract but not interpreted.
-- **Transformation-semantic rules** (join/aggregation/filter shape) now have a first
-  vocabulary — see [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/)
-  — but that's a separate rule family (`PlanRuleVerifier`, checked against a plan's whole
-  shape) from the row-level-DML rules this page covers, not an extension of them.
+- **Transformation-shape rules** (join, aggregation and filter shape) are a separate rule
+  family, checked against the whole plan: see
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
 
 ## Write your own rule type
 

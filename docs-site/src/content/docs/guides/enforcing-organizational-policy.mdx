@@ -14,6 +14,10 @@ catalog-registered," "every dataset must declare a `pii_reviewed` field," "every
 name must be `snake_case`" — without any contract's author having to opt in, or being
 able to opt out.
 
+<Aside type="note" title="Every engine">
+A policy works the same on Spark and on Beam. On Beam, attach it with `--invaractOrgPolicy` (Java) or `--invaract_org_policy` (Python); see [Configuration Settings](/reference/configuration/).
+</Aside>
+
 <Aside type="note" title="Entirely optional">
 No `spark.invaract.orgPolicy` conf key means no behavior change at all — this is exactly
 how every job runs today. Everything below only applies once a platform attaches a policy.
@@ -273,14 +277,15 @@ the same check can run as a standalone command against a whole contracts reposit
 CI or a pre-commit hook:
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+# run from the repository root; file paths are relative to contract/, or absolute
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
 ```
 
 A business unit can lint its own contracts against the same layered stack its jobs will
 actually run under, with the exact argument shape `spark-submit` would take:
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml org-policy.yaml contracts/"
 ```
 
 Real, unedited output against a contract missing its `catalog:` block:
@@ -314,7 +319,7 @@ still fully in force, this is a look-ahead, not a violation. Widen or narrow the
 with `--warn-expiring-within-days`:
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --warn-expiring-within-days 14 org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli --warn-expiring-within-days 14 org-policy.yaml contracts/"
 ```
 
 ## Test your own policy before deploying it

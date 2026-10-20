@@ -57,6 +57,11 @@ spark-submit \
   my-real-job.jar
 ```
 
+On Apache Beam, the same file attaches with `--invaractNotifyConfig=/path/to/notify.properties`
+(Java) or `--invaract_notify_config=/path/to/notify.properties` (Python). Beam publishes a
+`ContractValidationEvent` for every check, before anything runs, but no `WriteEvent` or
+`JOB_SUMMARY`: it has no after-the-fact listener to see a write complete.
+
 `InvaractSparkSessionExtension` builds the sink from `notify.properties` itself, passes it
 to `forContract` for `ContractValidationEvent`s, **and** registers a `SparkAdapterListener`
 on the same session for `WriteEvent`s — the two-call wiring Step 2/3 below do by hand,
@@ -675,12 +680,13 @@ Compose the two in either order — wrap a `SummarizingNotificationSink` in a
 `FailureOnlyNotificationSink` in a `SummarizingNotificationSink` if the *tallies*
 themselves should reflect only failures.
 
-## Retrying a flaky sink, with a dead letter for events that never make it
+## Retrying any other sink in code
 
-A network sink — `HttpNotificationSink`, `KafkaNotificationSink`, anything reaching
-outside the JVM — can fail for reasons that have nothing to do with your job: a
-timeout, a momentary outage on the receiving end. `RetryingNotificationSink` wraps
-another sink to retry a failed `publish` a few times, with capped exponential backoff,
+`HttpNotificationSink` retries on its own, configured by properties
+([above](#delivery-retries-the-dead-letter-and-duplicates)). Any other sink that reaches
+outside the JVM — `KafkaNotificationSink`, or one you wrote — can fail for reasons that have
+nothing to do with your job: a timeout, a momentary outage on the receiving end.
+`RetryingNotificationSink` wraps such a sink in code to retry a failed `publish` a few times, with capped exponential backoff,
 before giving up — and if every attempt fails, it publishes the event to a
 **dead-letter sink** instead of letting it disappear:
 

@@ -258,3 +258,10 @@ A job that sets its runner in code (`PipelineOptions(argv, runner="DirectRunner"
 its command line to Beam is not checked: the flags never reach it. A job submitted from a machine
 without the package does not start (`ModuleNotFoundError: No module named 'invaract_beam'`), and one
 submitted without Java stops with `CheckNotRun`.
+
+## Related
+
+- [Configuration Settings](/reference/configuration/): every `--invaract_...` flag, with its Spark and Java spelling.
+- [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the checker recognizes.
+- [Common Problems](/troubleshooting/common-problems/#beam-python-checknotrun): what each `CheckNotRun` message means.

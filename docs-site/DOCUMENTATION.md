@@ -10,9 +10,15 @@ write it well once you've decided to.
 
 ## Audience
 
-**Users of Invaract** — people writing Spark jobs who want to install and use the
-verification engine, and people authoring data contracts against it. Not contributors to
-Invaract's own codebase.
+**Users of Invaract** — people writing Spark jobs or Apache Beam pipelines (Java or Python)
+who want to install and use the verification engine, platform teams attaching it to jobs they
+don't own, and people authoring data contracts against it. Not contributors to Invaract's own
+codebase.
+
+Where behavior differs by engine, say so on the page (a short "On Apache Beam" section, or a
+note), and link [Engine Capabilities](/reference/engine-capabilities/) rather than restating
+its table. A new setting goes in `reference/configuration.md` with its spelling on every
+engine.
 
 The test for every page: could someone who has never opened this repository's source
 follow this page and succeed, using only Invaract's public, user-facing surface (the
@@ -191,7 +197,15 @@ No → the developer docs.
 - [ ] Every command/output/config example is real, not invented.
 - [ ] No feature is described that doesn't exist yet (check `ROADMAP.md` if unsure).
 - [ ] The page fits the information architecture above without straining.
-- [ ] Internal links use the site's base path (`/Invaract/...`) and point to a real page.
+- [ ] Internal links are root-relative (`/guides/foo/`, never `/Invaract/guides/foo/`) and
+      point to a real page; `remark-base-links.mjs` adds the base path at build time, so the
+      same source builds for production and for PR previews. (The hero links in `index.mdx`'s
+      frontmatter are the one exception: frontmatter isn't rewritten.)
+- [ ] A new page is added to the sidebar in `astro.config.mjs`; a page left out of it is only
+      reachable by search.
+- [ ] Links into the repository (`docs/...`, source files) are full GitHub URLs, not bare
+      paths a reader can't open, and never point a user at `CLAUDE.md` or other contributor
+      guidance.
 - [ ] `npm run build` succeeds from `docs-site/`.
 - [ ] New/changed content reads correctly for someone with zero prior context on the
       repository — not just someone who already knows what the feature does.

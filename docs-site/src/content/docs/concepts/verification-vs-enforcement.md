@@ -5,9 +5,10 @@ sidebar:
   order: 3
 ---
 
-Invaract ships two distinct mechanisms that are easy to conflate, since both end up
-checking a write against a contract. They run at different moments, for different
-purposes, and a real job typically uses both together.
+On Spark, Invaract ships two distinct mechanisms that are easy to conflate, since both end
+up checking a write against a contract. They run at different moments, for different
+purposes, and a real job typically uses both together. (Beam works differently: see
+[On Apache Beam](#on-apache-beam) below.)
 
 ## `SparkAdapterListener` — observe, after the fact
 
@@ -50,9 +51,9 @@ job:
 | Purpose | Reporting / observability | Prevention |
 | Extension point | `QueryExecutionListener` | `SparkSessionExtensions` check rule |
 
-`runner/DemoJobHarness.scala` uses both: the check rule decides whether a write happens
-at all, and the listener — fed from a write that only proceeded because it already
-passed verification — supplies the human-facing summary. See
+`InvaractSparkSessionExtension` always installs the check rule, which decides whether a
+write happens at all. With a notification sink configured, it also registers the listener,
+which reports the writes that went ahead. See
 [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) for
 how to wire both into your own job.
 
@@ -61,3 +62,20 @@ Each mechanism can also publish an event to an external system at the moment it 
 `SparkAdapterListener` a `WriteEvent` once a write actually completes. See
 [Configure a Notification Sink](/guides/notification-sinks/) — this is opt-in and
 changes nothing about either mechanism's own behavior when no sink is configured.
+
+## On Apache Beam
+
+Beam builds the whole pipeline before any step runs, so Invaract checks it all at once, at
+that moment. `InvaractRunner`, named by `--runner`, receives the finished pipeline, checks
+every write in it against the contract, and only then hands the pipeline to the real runner
+(Dataflow, Flink, the Direct runner). A violation stops the job before anything has read or
+written data.
+
+```
+Beam pipeline → InvaractRunner → PASS → hand to the real runner
+                               └─→ FAIL → nothing is submitted
+```
+
+There is no after-the-fact listener on Beam, so it publishes a `ContractValidationEvent` for
+each check but no `WriteEvent`. See
+[Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/).
