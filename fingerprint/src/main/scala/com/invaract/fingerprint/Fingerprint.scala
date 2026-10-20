@@ -76,7 +76,7 @@ private[fingerprint] final class Digests {
           memo.getOrElseUpdate(node, digest(Encoding.TagKind, tag.getBytes(java.nio.charset.StandardCharsets.UTF_8), fields.map(f => memo.get(f).get)))
         case CTag(_, fields) =>
           stack.push((node, true))
-          fields.foreach(f => if (memo.get(f).isEmpty) stack.push((f, false)))
+          fields.foreach(f => stack.push((f, false))) // one already hashed is skipped when it is popped
       }
     }
     memo.get(root).get
