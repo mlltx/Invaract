@@ -3,7 +3,6 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.verification.notification.JobInfo
 import com.invaract.verification.{ConfigSource, ContractViolationException}
 
 import java.io.PrintStream
@@ -53,16 +52,9 @@ object PortableCheck {
       val unknown = given.keySet.filterNot(_.startsWith(PythonConfigSource.Prefix)) -- Arguments
       require(unknown.isEmpty, s"this checker does not know the argument(s) ${unknown.toList.sorted.map("--" + _).mkString(", ")}")
       val pipeline = given.getOrElse("pipeline", throw new IllegalArgumentException("--pipeline=<file> must name the pipeline to check"))
-      val job = JobInfo(
-        runId = given.get("job_name"),
-        name = given.get("job_name"),
-        engine = Some(Engine),
-        engineVersion = given.get("sdk_version"),
-        engineDetails = given.get("runner").map("runner" -> _).toMap,
-        startTimeMs = Some(System.currentTimeMillis())
-      )
-      val check = InvaractBeam.fromConfig(new PythonConfigSource(settings), job, BeamCapabilities.python, BeamAdvice.Python)
-      check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), PythonSteps))
+      val python = BeamFrontEnd.Python
+      val check = python.check(new PythonConfigSource(settings), python.jobInfo(given.get("job_name"), given.get("sdk_version"), given.get("runner")))
+      check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), python.steps))
       Passed
     } catch {
       case e: ContractViolationException =>

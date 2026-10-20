@@ -3,6 +3,7 @@
 
 package com.invaract.beamadapter
 
+import com.invaract.beamadapter.Reflection.{call, field}
 import com.invaract.ir.JoinType
 import org.apache.beam.sdk.schemas.{FieldAccessDescriptor, Schema => BeamSchema}
 import org.apache.beam.sdk.schemas.transforms.{CoGroup, Filter, Group, Join}
@@ -66,7 +67,7 @@ private[beamadapter] object BeamShapes {
     else
       Some(
         try shapeOf(step)
-        catch { case NonFatal(e) => SchemaShape.Unreadable(s"the fields of ${BeamIO.simpleName(step)} could not be read on this Beam release: $e") }
+        catch { case NonFatal(e) => SchemaShape.Unreadable(s"the fields of ${step.simpleName} could not be read on this Beam release: $e") }
       )
 
   private def shapeOf(step: BeamStep): SchemaShape = {
@@ -132,23 +133,5 @@ private[beamadapter] object BeamShapes {
       (resolved.getFieldsAccessed.asScala.toList ++ resolved.getNestedFieldsAccessed.keySet.asScala.toList)
         .map(d => Option(d.getFieldName).getOrElse(throw new IllegalStateException(s"field ${d.getFieldId} of a collection with no schema")))
         .distinct
-  }
-
-  // --- reflection: a member declared on the object's class or one it extends, `null` when it holds none ---
-
-  private def classes(o: AnyRef): Iterator[Class[_]] = Iterator.iterate[Class[_]](o.getClass)(_.getSuperclass).takeWhile(_ != null)
-
-  private def field(o: AnyRef, name: String): AnyRef = {
-    val f = classes(o).flatMap(_.getDeclaredFields.find(_.getName == name)).toSeq.headOption
-      .getOrElse(throw new NoSuchFieldException(s"${o.getClass.getName}.$name"))
-    f.setAccessible(true)
-    f.get(o)
-  }
-
-  private def call(o: AnyRef, name: String): AnyRef = {
-    val m = classes(o).flatMap(_.getDeclaredMethods.find(m => m.getName == name && m.getParameterCount == 0)).toSeq.headOption
-      .getOrElse(throw new NoSuchMethodException(s"${o.getClass.getName}.$name()"))
-    m.setAccessible(true)
-    m.invoke(o)
   }
 }

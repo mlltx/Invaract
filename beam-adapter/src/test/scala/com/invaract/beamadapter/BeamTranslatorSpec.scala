@@ -45,16 +45,16 @@ class BeamTranslatorSpec extends AnyFunSuite {
   // --- reads ---
 
   test("the folder a read pattern reads from is what a contract declares") {
-    assert(BeamTranslator.readLocation("in/orders/*.parquet") == "in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders/*.parquet") == "/data/in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders/part-?.txt") == "/data/in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders/[ab].txt") == "/data/in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders/{a,b}.txt") == "/data/in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders/") == "/data/in/orders")
-    assert(BeamTranslator.readLocation("/data/in/orders") == "/data/in/orders", "no glob in the last segment: the path is the location")
-    assert(BeamTranslator.readLocation("C:\\data\\in\\orders\\*.avro") == "C:/data/in/orders")
-    assert(BeamTranslator.readLocation("*.parquet") == "", "a bare glob names no folder")
-    assert(BeamTranslator.readLocation("/data/*/orders") == "/data/*/orders", "a glob in a folder, not the file name, is left as written")
+    assert(BeamLocations.folderOf("in/orders/*.parquet") == "in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders/*.parquet") == "/data/in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders/part-?.txt") == "/data/in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders/[ab].txt") == "/data/in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders/{a,b}.txt") == "/data/in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders/") == "/data/in/orders")
+    assert(BeamLocations.folderOf("/data/in/orders") == "/data/in/orders", "no glob in the last segment: the path is the location")
+    assert(BeamLocations.folderOf("C:\\data\\in\\orders\\*.avro") == "C:/data/in/orders")
+    assert(BeamLocations.folderOf("*.parquet") == "", "a bare glob names no folder")
+    assert(BeamLocations.folderOf("/data/*/orders") == "/data/*/orders", "a glob in a folder, not the file name, is left as written")
   }
 
   test("Parquet, text and Avro reads are recognised by the folder they read, with the format of the IO transform") {

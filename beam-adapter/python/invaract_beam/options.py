@@ -9,25 +9,8 @@ reads; beam-adapter's PortableCheckSpec fails, naming this file, when the two di
 """
 from apache_beam.options.pipeline_options import PipelineOptions
 
-# The engine-neutral settings, in the checker's spelling after the ``--invaract_`` prefix.
-SETTINGS = (
-    "contract",
-    "dry_run",
-    "notify_config",
-    "registry_url",
-    "registry_client_class",
-    "location_map",
-    "org_policy",
-    "org_policy_overlays",
-    "reject_undeclared_inputs",
-    "reject_undeclared_fields",
-    "compute_fingerprint",
-    "static_data_quality",
-    "role_consistency",
-    "trusted_steps",
-)
-
-_HELP = {
+# The engine-neutral settings, in the checker's spelling after the ``--invaract_`` prefix, each with its help text.
+SETTINGS = {
     "contract": "The data contract to enforce: a file path, or registry://<id>@<version>.",
     "dry_run": "true: observe and infer a contract from the job's writes instead of enforcing one; needs no contract.",
     "notify_config": "Path of a notification-sink .properties file: where validation events are sent.",
@@ -62,5 +45,5 @@ class InvaractOptions(PipelineOptions):
         parser.add_argument(
             "--invaract_java_options", default=None,
             help="Options for the checker's JVM (-Xmx512m). With no checker jar, these must give it a classpath.")
-        for name in SETTINGS:
-            parser.add_argument("--invaract_" + name, default=None, help=_HELP[name])
+        for name, description in SETTINGS.items():
+            parser.add_argument("--invaract_" + name, default=None, help=description)

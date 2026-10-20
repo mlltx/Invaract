@@ -31,6 +31,25 @@ private[beamadapter] object IoRead {
   /** A read from outside the pipeline whose source the step does not state (a query, a source class it does not know, file
     * patterns the job computes): seen, so never mistaken for data the job makes itself, but not located. */
   final case class Unlocated(what: String) extends IoRead
+
+  // --- the reads both catalogues (`JavaSteps`, `PythonSteps`) describe alike ---
+
+  /** A read from a classic template's runtime parameter, which has no value until the job runs. */
+  def templateParameter(parameter: String): IoRead =
+    Unlocated(s"a read whose source is a template parameter ($parameter), known only when the job runs")
+
+  /** A BigQuery read of `table`; without one, a query (whose tables are named only in its SQL) or a read that states no table. */
+  def bigQuery(table: Option[BeamLocations.BigQueryTable], isQuery: Boolean): IoRead = table match {
+    case Some(t)          => Located(List(t.location), Some(Formats.BigQuery), Some(t.catalog))
+    case None if isQuery  => Unlocated("a BigQuery query, whose tables are named only in its SQL")
+    case None             => Unlocated("a BigQuery read whose table is not stated")
+  }
+
+  /** A Pub/Sub read of `topicOrSubscription` (`projects/p/topics/t`), when it is stated. */
+  def pubsub(topicOrSubscription: Option[String]): IoRead =
+    topicOrSubscription.fold[IoRead](Unlocated("a Pub/Sub read whose topic or subscription is not stated")) { name =>
+      Located(List(BeamLocations.pubsub(name)), Some(BeamFormats.PubSub))
+    }
 }
 
 /** A step that sends data out of the pipeline, other than a file write (`BeamIO.fileWrite`). */
@@ -47,6 +66,35 @@ private[beamadapter] object IoWrite {
   ) extends IoWrite
 
   final case class Unverifiable(why: String) extends IoWrite
+
+  // --- the writes both catalogues (`JavaSteps`, `PythonSteps`) describe alike ---
+
+  /** A write to a classic template's runtime parameter, which has no value until the job runs. */
+  def templateParameter(parameter: String): IoWrite =
+    Unverifiable(s"a write whose destination is a template parameter ($parameter), known only when the job runs")
+
+  /** A BigQuery write to `table`, with the write disposition and table schema it states. Without a table it cannot be placed. */
+  def bigQuery(table: Option[BeamLocations.BigQueryTable], disposition: Option[String], schema: Option[LogicalSchema]): IoWrite =
+    table.fold[IoWrite](
+      Unverifiable("a BigQuery write whose table is computed by the job (dynamic destinations) or not stated, so where it lands cannot be told")
+    ) { t =>
+      Located(t.location, Some(Formats.BigQuery), disposition.flatMap(BigQuerySaveModes.get), Some(t.catalog), schema)
+    }
+
+  /** BigQuery's write dispositions as the canonical save modes (docs/MULTI_ENGINE_ADAPTERS.md, "Write modes"). */
+  private val BigQuerySaveModes = Map("WRITE_APPEND" -> "append", "WRITE_TRUNCATE" -> "overwrite", "WRITE_EMPTY" -> "error")
+
+  /** A Pub/Sub write to `topic` (`projects/p/topics/t`), when it is stated. */
+  def pubsub(topic: Option[String]): IoWrite =
+    topic.fold[IoWrite](Unverifiable("a Pub/Sub write whose topic is not stated")) { t =>
+      Located(BeamLocations.pubsub(t), Some(BeamFormats.PubSub))
+    }
+}
+
+/** Formats Beam reads and writes that the contract's canonical vocabulary (`Formats`) has no name for, as the adapter reports them. */
+private[beamadapter] object BeamFormats {
+  val TFRecord = "tfrecord"
+  val PubSub = "pubsub"
 }
 
 /** Every IO transform the adapter recognises, and what it reads from each one's display data - the one place that knows Beam's
@@ -57,8 +105,6 @@ private[beamadapter] object IoWrite {
   */
 private[beamadapter] object BeamIO {
 
-  def simpleName(step: BeamStep): String = step.className.substring(step.className.lastIndexOf('.') + 1)
-
   // --- reads ---
 
   /** Reads stated by a file pattern (`filePattern` display item), with the format of the IO. */
@@ -68,7 +114,7 @@ private[beamadapter] object BeamIO {
     "AutoValue_TextIO_Read" -> Some(Formats.Text),
     "AutoValue_AvroIO_Read" -> Some(Formats.Avro),
     "AutoValue_AvroIO_Parse" -> Some(Formats.Avro),
-    "AutoValue_TFRecordIO_Read" -> Some("tfrecord"),
+    "AutoValue_TFRecordIO_Read" -> Some(BeamFormats.TFRecord),
     // FileIO.match(): the files it matches are read by whatever consumes them, so the format is the reader's
     "AutoValue_FileIO_Match" -> None
   )
@@ -80,7 +126,7 @@ private[beamadapter] object BeamIO {
     "AutoValue_TextIO_ReadFiles" -> Some(Formats.Text),
     "AutoValue_AvroIO_ReadFiles" -> Some(Formats.Avro),
     "AutoValue_AvroIO_ParseFiles" -> Some(Formats.Avro),
-    "AutoValue_TFRecordIO_ReadFiles" -> Some("tfrecord")
+    "AutoValue_TFRecordIO_ReadFiles" -> Some(BeamFormats.TFRecord)
   )
 
   /** Reads whose source is computed by the job (from a collection of patterns or queries), so no step states it. */
@@ -96,9 +142,8 @@ private[beamadapter] object BeamIO {
   /** The read `step` is, if it is one. Composites are asked before what they contain, so the outermost recognised step wins. */
   def read(step: BeamStep): Option[IoRead] =
     statedRead(step).map {
-      case _: IoRead.Located if runtimeParameter(step).isDefined =>
-        IoRead.Unlocated(s"a read whose source is a template parameter (${runtimeParameter(step).get}), known only when the job runs")
-      case other => other
+      case located: IoRead.Located => runtimeParameter(step).fold[IoRead](located)(IoRead.templateParameter)
+      case other                   => other
     }
 
   /** The keys of the display data an IO names its data by. */
@@ -114,7 +159,7 @@ private[beamadapter] object BeamIO {
       .map(v => """propertyName=([^,}]+)""".r.findFirstMatchIn(v).fold(v)(_.group(1)))
 
   private def statedRead(step: BeamStep): Option[IoRead] = {
-    val name = simpleName(step)
+    val name = step.simpleName
     // the file schema a Parquet or Avro read states (`schema`), not its projection
     lazy val fileSchema = step.display.get("schema").flatMap(BeamSchemas.fromAvroJson)
     PatternReads.get(name).flatMap(format => step.display.get("filePattern").map(p => IoRead.Located(List(BeamLocations.folderOf(p)), format, schema = fileSchema)))
@@ -129,19 +174,14 @@ private[beamadapter] object BeamIO {
         case "Impulse" => Some(IoRead.Unlocated("a source started from an Impulse (a splittable DoFn or an IO built on one), whose source states no location"))
         // Read.from(source): any bounded or unbounded source, including one an IO above wraps (asked first, so never here); one of
         // the sources Beam uses for data the job makes itself is left out before this is asked (isInJobData)
-        case "Read$Bounded" | "Read$Unbounded" =>
+        case read if SourceReads.contains(read) =>
           Some(IoRead.Unlocated(s"a read from ${step.display.getOrElse("source", "a source")} (Read.from), whose source states no location"))
         case _ => None
       })
   }
 
   private def bigQueryRead(step: BeamStep): IoRead =
-    step.display.get("table").flatMap(BeamLocations.bigQueryTable) match {
-      case Some(table) => IoRead.Located(List(table.location), Some(Formats.BigQuery), Some(table.catalog))
-      case None =>
-        if (step.display.contains("query")) IoRead.Unlocated("a BigQuery query, whose tables are named only in its SQL")
-        else IoRead.Unlocated("a BigQuery read whose table is not stated")
-    }
+    IoRead.bigQuery(step.display.get("table").flatMap(BeamLocations.bigQueryTable), isQuery = step.display.contains("query"))
 
   private def kafkaRead(step: BeamStep): IoRead =
     (step.display.get("topics").map(_.split(",").map(_.trim).filter(_.nonEmpty).toList).filter(_.nonEmpty), step.display.get("bootstrap.servers")) match {
@@ -160,20 +200,20 @@ private[beamadapter] object BeamIO {
     }
   }
 
-  private def pubsubRead(step: BeamStep): IoRead =
-    step.display.get("topic").orElse(step.display.get("subscription")) match {
-      case Some(name) => IoRead.Located(List(LocationMatching.fromParts(name.split('/').toSeq)), Some("pubsub"))
-      case None       => IoRead.Unlocated("a Pub/Sub read whose topic or subscription is not stated")
-    }
+  private def pubsubRead(step: BeamStep): IoRead = IoRead.pubsub(step.display.get("topic").orElse(step.display.get("subscription")))
 
   /** The steps that make data in the job itself (`Create.of`, `GenerateSequence`, `PeriodicImpulse`, `TestStream`, a
     * `Read.from` of one of their sources): never a read from outside the pipeline, whatever primitives (an Impulse, a splittable
     * DoFn) they are built from. */
   def isInJobData(step: BeamStep): Boolean = {
-    val name = simpleName(step)
-    name.startsWith("Create$") || Set("AutoValue_GenerateSequence", "PeriodicImpulse", "PeriodicSequence", "TestStream").contains(name) ||
-      (Set("Read$Bounded", "Read$Unbounded").contains(name) && step.display.get("source").exists(isInJobSource))
+    val name = step.simpleName
+    name.startsWith("Create$") || JobData.contains(name) || (SourceReads.contains(name) && step.display.get("source").exists(isInJobSource))
   }
+
+  private val JobData = Set("AutoValue_GenerateSequence", "PeriodicImpulse", "PeriodicSequence", "TestStream")
+
+  /** `Read.from(source)`, bounded or unbounded. */
+  private val SourceReads = Set("Read$Bounded", "Read$Unbounded")
 
   /** Whether `result`, something a write hands on, holds only what the write reports - names (the files it wrote, the tables it
     * loaded) or nothing - rather than rows: a FileIO or TextIO write's file names, a BigQuery load's table destinations. A BigQuery
@@ -198,10 +238,10 @@ private[beamadapter] object BeamIO {
   /** Steps that turn lines of text into rows with a schema (`JsonToRow`, `CsvIO.parseRows`): the columns a text read really has
     * when it is parsed straight away. */
   def isTextParser(step: BeamStep): Boolean =
-    Set("JsonToRow$JsonToRowFn", "JsonToRow$JsonToRowWithFailures", "AutoValue_CsvIOParse").contains(simpleName(step))
+    Set("JsonToRow$JsonToRowFn", "JsonToRow$JsonToRowWithFailures", "AutoValue_CsvIOParse").contains(step.simpleName)
 
   /** Steps that turn rows into lines of text in a known format (`ToJson`): the columns and format a text write of their output has. */
-  def textFormatterFormat(step: BeamStep): Option[String] = simpleName(step) match {
+  def textFormatterFormat(step: BeamStep): Option[String] = step.simpleName match {
     case "ToJson" => Some(Formats.Json)
     case _        => None
   }
@@ -211,42 +251,27 @@ private[beamadapter] object BeamIO {
   /** The write `step` is, if it is one of the non-file IOs (BigQuery, Kafka, JDBC, Pub/Sub). */
   def write(step: BeamStep): Option[IoWrite] =
     statedWrite(step).map {
-      case _: IoWrite.Located if runtimeParameter(step).isDefined => unknownUntilRun(runtimeParameter(step).get)
-      case other                                                => other
+      case located: IoWrite.Located => runtimeParameter(step).fold[IoWrite](located)(IoWrite.templateParameter)
+      case other                    => other
     }
 
-  private def unknownUntilRun(parameter: String): IoWrite =
-    IoWrite.Unverifiable(s"a write whose destination is a template parameter ($parameter), known only when the job runs")
-
   private def statedWrite(step: BeamStep): Option[IoWrite] =
-    simpleName(step) match {
+    step.simpleName match {
       case "AutoValue_BigQueryIO_Write"                                     => Some(bigQueryWrite(step))
       case "AutoValue_KafkaIO_Write" | "AutoValue_KafkaIO_WriteRecords"     => Some(kafkaWrite(step))
       case "JdbcIO$Write" | "AutoValue_JdbcIO_Write" | "AutoValue_JdbcIO_WriteVoid" | "AutoValue_JdbcIO_WriteWithResults" =>
         Some(jdbcWrite(step))
-      case "AutoValue_PubsubIO_Write" =>
-        Some(step.display.get("topic").fold[IoWrite](IoWrite.Unverifiable("a Pub/Sub write whose topic is not stated")) { t =>
-          IoWrite.Located(LocationMatching.fromParts(t.split('/').toSeq), Some("pubsub"))
-        })
-      case _ => None
+      case "AutoValue_PubsubIO_Write"                                       => Some(IoWrite.pubsub(step.display.get("topic")))
+      case _                                                                => None
     }
-
-  /** BigQuery's write dispositions as the canonical save modes (docs/MULTI_ENGINE_ADAPTERS.md, "Write modes"). */
-  private[beamadapter] val BigQuerySaveModes = Map("WRITE_APPEND" -> "append", "WRITE_TRUNCATE" -> "overwrite", "WRITE_EMPTY" -> "error")
 
   private def bigQueryWrite(step: BeamStep): IoWrite =
-    step.display.get("table").flatMap(BeamLocations.bigQueryTable) match {
-      case None => IoWrite.Unverifiable("a BigQuery write whose table is computed by the job (dynamic destinations), so where it lands cannot be told")
-      case Some(table) =>
-        IoWrite.Located(
-          table.location,
-          Some(Formats.BigQuery),
-          saveMode = step.display.get("writeDisposition").flatMap(BigQuerySaveModes.get),
-          catalog = Some(table.catalog),
-          // "Custom Schema Function" (a schema the job computes per destination) is not a schema the graph states
-          schema = step.display.get("schema").flatMap(BeamSchemas.fromBigQueryJson)
-        )
-    }
+    IoWrite.bigQuery(
+      step.display.get("table").flatMap(BeamLocations.bigQueryTable),
+      step.display.get("writeDisposition"),
+      // "Custom Schema Function" (a schema the job computes per destination) is not a schema the graph states
+      step.display.get("schema").flatMap(BeamSchemas.fromBigQueryJson)
+    )
 
   private def kafkaWrite(step: BeamStep): IoWrite =
     step.withDescendants.flatMap(_.display.get("topic")).headOption match {
@@ -268,15 +293,12 @@ private[beamadapter] object BeamIO {
   /** The connection URL of a `JdbcIO.write()`. It publishes its statement but not its connection: the URL is held by the
     * `DataSourceConfiguration` behind its data-source provider, read here by reflection, `None` on any failure. */
   private def jdbcUrlOf(step: BeamStep): Option[String] =
-    step.withDescendants.iterator.flatMap(_.transform).map(t => Try(jdbcUrlOfTransform(t)).toOption.flatten).collectFirst { case Some(u) => u }
+    step.withDescendants.iterator.flatMap(_.transform).map(jdbcUrlOfTransform).collectFirst { case Some(u) => u }
 
   private def jdbcUrlOfTransform(t: AnyRef): Option[String] = {
-    def field(o: AnyRef, name: String): Option[AnyRef] =
-      Iterator.iterate[Class[_]](o.getClass)(_.getSuperclass).takeWhile(_ != null)
-        .flatMap(c => Try(c.getDeclaredField(name)).toOption).toSeq.headOption
-        .flatMap { f => f.setAccessible(true); Option(f.get(o)) }
-    def call(o: AnyRef, name: String): Option[AnyRef] =
-      Try { val m = o.getClass.getDeclaredMethod(name); m.setAccessible(true); m.invoke(o) }.toOption.flatMap(Option(_))
+    def field(o: AnyRef, name: String): Option[AnyRef] = Try(Option(Reflection.field(o, name))).toOption.flatten
+    def call(o: AnyRef, name: String): Option[AnyRef] = Try(Option(Reflection.call(o, name))).toOption.flatten
+    // JdbcIO.Write holds the provider itself; the other writes hold it through the `inner` write they wrap
     val provider = call(t, "getDataSourceProviderFn").orElse(field(t, "inner").flatMap(i => call(i, "getDataSourceProviderFn")))
     provider.flatMap(p => field(p, "config")).flatMap(c => call(c, "getUrl")).map {
       case v: ValueProvider[_] => String.valueOf(v.get())
@@ -289,11 +311,9 @@ private[beamadapter] object BeamIO {
   def isFileWrite(step: BeamStep): Boolean = step.transform.exists(_.isInstanceOf[WriteFiles[_, _, _]])
 
   /** The file write a write unit (a step holding exactly one `WriteFiles`) makes: where its files land and in which format. */
-  def fileWrite(unit: BeamStep): IoWrite =
+  def fileWrite(unit: BeamStep): IoWrite = {
     // CsvIO writes its rows as CSV through a text sink: the format is known even though the sink's is only "text"
-    fileWrite(unit, if (simpleName(unit) == "AutoValue_CsvIO_Write") Some(Formats.Csv) else None)
-
-  private def fileWrite(unit: BeamStep, knownFormat: Option[String]): IoWrite = {
+    val knownFormat = if (unit.simpleName == "AutoValue_CsvIO_Write") Some(Formats.Csv) else None
     val all = unit.withDescendants
     val sink = all.flatMap(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = all.flatMap(_.display.get("filePrefix")).headOption
@@ -301,13 +321,13 @@ private[beamadapter] object BeamIO {
     val writtenSchema = all.flatMap(_.display.get("schema")).headOption.flatMap(BeamSchemas.fromAvroJson)
     def prefixed(format: String, what: String): IoWrite = prefix match {
       case None                              => IoWrite.Unverifiable(s"$what write whose file prefix is not published")
-      case Some(p) if isRuntimeParameter(p)  => unknownUntilRun(all.flatMap(runtimeParameter).headOption.getOrElse(p))
+      case Some(p) if isRuntimeParameter(p)  => IoWrite.templateParameter(all.flatMap(runtimeParameter).headOption.getOrElse(p))
       case Some(p)                           => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema)
     }
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")
       case Some(avro) if avro.endsWith(".AvroSink") => prefixed(Formats.Avro, "an Avro")
-      case Some(tf) if tf.endsWith("TFRecordIO$TFRecordSink") => prefixed("tfrecord", "a TFRecord")
+      case Some(tf) if tf.endsWith("TFRecordIO$TFRecordSink") => prefixed(BeamFormats.TFRecord, "a TFRecord")
       case Some("org.apache.beam.sdk.io.FileIO$Write$ViaFileBasedSink") =>
         fileIoWrite(all) match {
           case Some((location, sink)) => IoWrite.Located(location, formatOfSink(sink.getClass.getName), schema = sinkSchema(sink))
@@ -322,16 +342,13 @@ private[beamadapter] object BeamIO {
     if (sinkClass.contains("ParquetIO")) Some(Formats.Parquet)
     else if (sinkClass.contains("AvroIO")) Some(Formats.Avro)
     else if (sinkClass.contains("TextIO")) Some(Formats.Text)
-    else if (sinkClass.contains("TFRecordIO")) Some("tfrecord")
+    else if (sinkClass.contains("TFRecordIO")) Some(BeamFormats.TFRecord)
     else None
 
   /** The schema a sink writes its files with (`ParquetIO.sink(schema)`, `AvroIO.sink(schema)`: `getJsonSchema`), which is
     * what the files hold whatever the records carry; `None` for a sink that states none (a text sink). */
   private def sinkSchema(sink: AnyRef): Option[LogicalSchema] =
-    Iterator.iterate[Class[_]](sink.getClass)(_.getSuperclass).takeWhile(_ != null)
-      .flatMap(c => Try(c.getDeclaredMethod("getJsonSchema")).toOption).toSeq.headOption
-      .flatMap(m => Try { m.setAccessible(true); Option(m.invoke(sink)).map(_.toString) }.toOption.flatten)
-      .flatMap(BeamSchemas.fromAvroJson)
+    Try(Option(Reflection.call(sink, "getJsonSchema")).map(_.toString)).toOption.flatten.flatMap(BeamSchemas.fromAvroJson)
 
   /** `(output directory, sink)` of a `FileIO.write()`. Beam publishes neither: the writer's display data names only its
     * sink class, and the destination and the sink are held in non-public members of `FileIO.Write` (docs/BEAM_ADAPTER.md,
@@ -342,13 +359,8 @@ private[beamadapter] object BeamIO {
     steps.find(_.className.endsWith("AutoValue_FileIO_Write")).flatMap { s =>
       Try {
         val t = s.transform.get
-        def member(name: String): AnyRef = {
-          val m = t.getClass.getDeclaredMethod(name)
-          m.setAccessible(true)
-          m.invoke(t)
-        }
-        val directory = Option(member("getOutputDirectory")).map(_.asInstanceOf[ValueProvider[String]].get()).filter(_.nonEmpty)
-        val sinkFn = member("getSinkFn").asInstanceOf[Contextful[Contextful.Fn[AnyRef, AnyRef]]]
+        val directory = Option(Reflection.call(t, "getOutputDirectory")).map(_.asInstanceOf[ValueProvider[String]].get()).filter(_.nonEmpty)
+        val sinkFn = Reflection.call(t, "getSinkFn").asInstanceOf[Contextful[Contextful.Fn[AnyRef, AnyRef]]]
         val sink = sinkFn.getClosure.apply(null, null)
         directory.map(d => BeamLocations.folder(d) -> sink)
       }.toOption.flatten
@@ -405,6 +417,9 @@ private[beamadapter] object BeamLocations {
       )
     }
   }
+
+  /** A Pub/Sub topic or subscription (`projects/p/topics/t`), located by its path. */
+  def pubsub(name: String): String = LocationMatching.fromParts(name.split('/').toSeq)
 
   /** A Kafka topic, located under the cluster it is read from or written to: `broker:9092/orders` (`orders` when no servers are
     * stated). A contract that declares `orders` matches it on any cluster. */

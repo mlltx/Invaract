@@ -3,8 +3,8 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.contract.{Contract, ContractParser, LogicalSchema, RuleType}
-import com.invaract.ir.UnknownPlan
+import com.invaract.contract.{Contract, ContractParser, Formats, LogicalSchema, RuleType}
+import com.invaract.ir.{UnknownPlan, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, TrustedSteps, VerificationOptions, VerificationPipeline, Violation}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
@@ -43,8 +43,8 @@ final class BeamCheck private[beamadapter] (
   private[beamadapter] def verifyTranslation(translated: BeamTranslation): Unit = {
     // a step that ends the pipeline is let through when it reads only what writes report, or when the platform trusts it (D14)
     translated.reportSteps.foreach(s => logger.info(s"Invaract: $s ends the pipeline but reads only what writes report (file or table names), not data; let through"))
-    val (trustedSteps, unverifiable) = translated.unverifiable.partition(_.step.exists(trusted.trusts))
-    trustedSteps.foreach(u => logger.info(s"Invaract: ${u.step.get} ends the pipeline without a recognised write and is a trusted step; let through"))
+    val (trustedSteps, unverifiable) = translated.unverifiable.partition(u => u.trustable && trusted.trusts(u.name))
+    trustedSteps.foreach(u => logger.info(s"Invaract: ${u.name} ends the pipeline without a recognised write and is a trusted step; let through"))
     val translation = translated.copy(unverifiable = unverifiable)
     contract match {
       case Some(c) => enforce(c, translation)
@@ -58,7 +58,7 @@ final class BeamCheck private[beamadapter] (
     capabilities.foreach(caps => VerificationPipeline.requireSupported(c, options, caps, pipelinePlan, sink, runId, Some(job)))
     // a step that may change data but that cannot be checked is refused before any write is judged (fail closed)
     translation.unverifiable.headOption.foreach { u =>
-      val operation = if (u.step.isDefined) advice.endingStep(u.name, u.operation) else advice.unplacedWrite(u.name, u.operation)
+      val operation = if (u.trustable) advice.endingStep(u.name, u.operation) else advice.unplacedWrite(u.name, u.operation)
       VerificationPipeline.rejectUnverifiableWrite(c, operation, u.plan, sink, runId, Some(job))
     }
     // the whole pipeline is known: an output the contract declares that no write lands on refuses the job (docs/BEAM_ADAPTER.md, D17)
@@ -145,9 +145,10 @@ final class BeamCheck private[beamadapter] (
   ): Unit =
     sink match {
       case Some(s) =>
+        val (selfCheckStatus, selfCheckViolations, selfCheckNotes) =
+          selfCheck.fold[(Option[String], List[Violation], List[String])]((None, Nil, Nil)) { case (s, v, n) => (Some(s), v, n) }
         s.publish(ContractInferenceEvent(
-          status, reason, location, yaml, selfCheck.map(_._1), selfCheck.toList.flatMap(_._2), selfCheck.toList.flatMap(_._3), None, job,
-          System.currentTimeMillis(), Map.empty
+          status, reason, location, yaml, selfCheckStatus, selfCheckViolations, selfCheckNotes, None, job, System.currentTimeMillis(), Map.empty
         ))
       case None =>
         logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
@@ -161,15 +162,15 @@ private[beamadapter] object BeamCheck {
 
   /** The formats a text writer can be producing: Beam's text writers publish no delimiter or encoding, so a write through one
     * is `text` and nothing in the graph says whether its lines are CSV or JSON (docs/BEAM_ADAPTER.md, D5). */
-  private val TextFamily = Set("text", "csv", "json")
+  private val TextFamily = Set(Formats.Text, Formats.Csv, Formats.Json)
 
   /** `write`'s plan, with a text write reported in the text-family format the contract declares for the dataset it is checked
     * against (`csv` and `json` included), since the graph cannot tell them apart; a contract that declares any other format for
     * it, or none, sees `text`, and a mismatch stays a mismatch. The declared dataset is the one the core's format check uses
     * (`OutputChecker.expectedOutputFor`: a single-output contract's only output even when the location missed), so the two
     * never disagree. The limit is the declaration's (`check.format` is partial), not a guess. */
-  def asDeclared(contract: Contract, write: TranslatedWrite): com.invaract.ir.Write =
-    if (!write.format.contains("text")) write.plan
+  def asDeclared(contract: Contract, write: TranslatedWrite): Write =
+    if (!write.format.contains(Formats.Text)) write.plan
     else declaredFormat(contract, write).filter(TextFamily.contains).fold(write.plan)(f => write.plan.copy(format = Some(f)))
 
   /** The format the contract declares for the dataset `write` is checked against, normalised as the core compares it. */
@@ -189,15 +190,17 @@ private[beamadapter] object BeamCheck {
   /** Why `write` is refused without being checked, if it is: what the contract asks about it cannot be told from the pipeline.
     * The core skips a comparison when the actual side is unknown, so each of these would otherwise pass unchecked
     * (docs/BEAM_ADAPTER.md, D10 to D12). */
-  def refusal(contract: Contract, write: TranslatedWrite, options: VerificationOptions): Option[String] =
+  def refusal(contract: Contract, write: TranslatedWrite, options: VerificationOptions): Option[String] = {
+    // the core skips a comparison whose actual side is unknown, so a format or save mode the contract names would pass unseen
+    lazy val unknownFormat = if (write.format.isEmpty) declaredFormat(contract, write) else None
+    // a file write has no save mode in Beam (it always replaces the files it names): only a BigQuery write states one
+    lazy val unknownSaveMode = if (write.plan.saveMode.isEmpty) declaredSaveMode(contract, write) else None
     if (write.outputSchema.isEmpty && declaresColumns(contract, write))
       Some(s"a write to ${write.location} whose data exposes no schema (its items are plain objects, not rows with a schema), so its columns cannot be checked")
-    else if (write.format.isEmpty && declaredFormat(contract, write).isDefined)
-      // the core skips a format check when the actual format is unknown, so a named format would pass a write nobody can name
-      Some(s"a write to ${write.location} through a sink whose file format cannot be told, while the contract declares '${declaredFormat(contract, write).get}'")
-    else if (write.plan.saveMode.isEmpty && declaredSaveMode(contract, write).isDefined)
-      // a file write has no save mode in Beam (it always replaces the files it names): only a BigQuery write states one
-      Some(s"a write to ${write.location} that states no save mode (only a BigQuery write does), while the contract declares '${declaredSaveMode(contract, write).get}'")
+    else if (unknownFormat.isDefined)
+      Some(s"a write to ${write.location} through a sink whose file format cannot be told, while the contract declares '${unknownFormat.get}'")
+    else if (unknownSaveMode.isDefined)
+      Some(s"a write to ${write.location} that states no save mode (only a BigQuery write does), while the contract declares '${unknownSaveMode.get}'")
     else if (options.rejectUndeclaredInputs && write.unlocatedReads.nonEmpty)
       // strict mode promises no read goes undeclared, which cannot be shown for a read whose source is not known
       Some(s"the write to ${write.location} depends on reads whose source cannot be located (${write.unlocatedReads.mkString("; ")}), so an undeclared input cannot be ruled out")
@@ -208,6 +211,7 @@ private[beamadapter] object BeamCheck {
       // a join written as code is not seen, and the rule passes when no join is seen: refuse rather than pass a cross join unseen (D19)
       Some(s"the write to ${write.location} depends on steps that combine several collections in code (${write.opaqueCombines.mkString("; ")}), any of which could be a cross join, so forbid_cross_join cannot be checked")
     else None
+  }
 
   private def ruleTypes(contract: Contract): Set[String] = contract.rules.map(_.ruleType).toSet
 }

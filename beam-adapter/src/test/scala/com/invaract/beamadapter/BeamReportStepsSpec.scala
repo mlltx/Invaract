@@ -80,7 +80,7 @@ class BeamReportStepsSpec extends AnyFunSuite {
     result.getSuccessfulTableLoads.apply("AnnounceLoad", ParDo.of(new Notify[org.apache.beam.sdk.io.gcp.bigquery.TableDestination]))
     val translation = BeamTranslator.translate(p)
     assert(translation.reportSteps == List("AnnounceLoad (ParDo$SingleOutput)"), "the table it loaded is a name")
-    assert(translation.unverifiable.flatMap(_.step) == List("LogFailures"))
+    assert(translation.unverifiable.filter(_.trustable).map(_.name) == List("LogFailures"))
   }
 
   test("what a write reports is told by what it holds: names and nothing, not rows") {

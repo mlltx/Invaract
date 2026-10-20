@@ -48,6 +48,10 @@ private[beamadapter] final case class BeamStep(
 ) {
   def isComposite: Boolean = children.nonEmpty
 
+  /** The class that built the step, without its package (`AutoValue_ParquetIO_Read`, `WriteToParquet`): how the IO catalogues
+    * recognise a step, and how it is named in a message. */
+  def simpleName: String = className.substring(className.lastIndexOf('.') + 1)
+
   /** This step and every step beneath it, outermost first. */
   lazy val withDescendants: List[BeamStep] = this :: children.flatMap(_.withDescendants)
 }

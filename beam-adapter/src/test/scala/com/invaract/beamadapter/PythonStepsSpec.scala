@@ -142,9 +142,11 @@ class PythonStepsSpec extends AnyFunSuite {
 
   test("a BigQuery write to a table the job computes, a template parameter or nothing cannot be verified") {
     def bq(table: Option[String]) = PythonSteps.write(step("W", BigQueryWrite, display = table.map("table" -> _).toMap))
-    val refused = Some(IoWrite.Unverifiable("a BigQuery write whose table is computed by the job or not stated, so where it lands cannot be told"))
+    val refused = Some(IoWrite.Unverifiable("a BigQuery write whose table is computed by the job (dynamic destinations) or not stated, so where it lands cannot be told"))
     assert(bq(Some("<function <lambda> at 0x7f>")) == refused)
-    assert(bq(Some("RuntimeValueProvider(option: table, type: str, default_value: None)")) == refused)
+    // a template parameter is named, as it is for a Java pipeline
+    assert(bq(Some("RuntimeValueProvider(option: table, type: str, default_value: None)")) ==
+      Some(IoWrite.Unverifiable("a write whose destination is a template parameter (table), known only when the job runs")))
     assert(bq(Some("None")) == refused)
     assert(bq(None) == refused)
   }
@@ -240,7 +242,7 @@ class PythonStepsSpec extends AnyFunSuite {
     assert(reads(load) == List("proj/ds/orders"))
     val stream = byTable("proj/ds/events")
     assert(stream.plan.saveMode.contains("append") && stream.outputSchema.isEmpty, "streaming inserts publish no schema")
-    assert(t.unverifiable.map(_.operation) == List("a BigQuery write whose table is computed by the job or not stated, so where it lands cannot be told"))
+    assert(t.unverifiable.map(_.operation) == List("a BigQuery write whose table is computed by the job (dynamic destinations) or not stated, so where it lands cannot be told"))
     val top = fixture("bigquery_job").map(s => s.name -> s).toMap
     assert(PythonSteps.read(top("ReadDirect")).collect { case l: IoRead.Located => l.locations }.contains(List("proj/ds/customers")))
     assert(PythonSteps.read(top("ReadQuery")) == Some(IoRead.Unlocated("a BigQuery query, whose tables are named only in its SQL")))
@@ -254,7 +256,7 @@ class PythonStepsSpec extends AnyFunSuite {
   test("CSV through pandas states no location: the read is not located and the write is refused") {
     val t = translate("pandas_csv")
     assert(t.writes.isEmpty)
-    assert(t.unverifiable.map(_.step) == List(Some("WriteCsv")))
+    assert(t.unverifiable.filter(_.trustable).map(_.name) == List("WriteCsv"))
     assert(PythonSteps.read(fixture("pandas_csv").head).exists(_.isInstanceOf[IoRead.Unlocated]))
   }
 
@@ -266,7 +268,7 @@ class PythonStepsSpec extends AnyFunSuite {
 
   test("a step that ends the pipeline is refused by name, one that reads only what a write reports is let through, data the job makes is no read") {
     val t = translate("side_effects")
-    assert(t.unverifiable.map(_.step) == List(Some("PushToService")))
+    assert(t.unverifiable.filter(_.trustable).map(_.name) == List("PushToService"))
     assert(t.reportSteps == List("Notify (ParDo)"))
     val made = t.writes.find(_.location == "data/out/made").get
     assert(made.unlocatedReads.isEmpty && reads(made).isEmpty)
