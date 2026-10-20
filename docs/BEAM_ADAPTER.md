@@ -275,6 +275,21 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   provider's text). Now a read from one is an `UnlocatedRead` naming the parameter (D12) and a write to one is refused as
   unverifiable, naming it: the check runs before the values exist. A Flex Template builds its pipeline with the values, so it
   is checked like any job. `BeamIO.isRuntimeParameter`.
+- **D22. Decided: a check-only mode for CI (`--invaractCheckOnly=true`, Python `--invaract_check_only=true`).** The whole
+  pipeline is known before it runs, which Spark never offers (its writes are seen one at a time, as they execute, in a live
+  session that has read its inputs' schemas), so a Beam job can be checked in a CI build with no data or cluster. The flag is
+  separate from `--invaractDelegate` so that CI takes the production command line unchanged and adds one flag: the delegate
+  is not built (building Dataflow's runner checks a project and credentials), but its name is resolved, so a misspelt one fails
+  CI too. `run` returns `CheckedOnly` (state `DONE`, empty metrics made by Beam's own `MetricQueryResults.create`, called by
+  reflection because its arity grew across 2.60-2.77), so a job that waits for its pipeline ends normally. A value other
+  than true or false refuses to start, naming the flag, rather than running the job. Events carry
+  `engineDetails.checkOnly = "true"` (Python: the package passes `--check_only=true` to the checker). With dry-run mode it
+  infers the job's contract without running it. What reaches external systems before Invaract sees the pipeline is Beam's
+  own step validation (`Pipeline.validate`, which `Pipeline.run` calls after building the runner and before `run`), probed on
+  2.77 with no credentials: BigQuery's default validation looks up the dataset and validates a query (`withoutValidation()`
+  avoids it; `--tempLocation` must be set either way); files, Kafka, JDBC and Pub/Sub contact nothing. In Python, BigQuery and
+  Pub/Sub contact nothing, but a file read checks its pattern matches files when the pipeline is built (`validate=False`
+  avoids it). `BeamAttachSpec`/`BeamPythonAttachSpec` "check only", `PortableCheckSpec`, `test_runner.py`.
 
 ## Friction log
 
@@ -422,6 +437,12 @@ Every undocumented decision, surprise, or guess made while building this adapter
     shape as two scenarios (`rejoining-branches-*`, `ScenarioJob.rejoins`): the Java pipeline merges with `Flatten`, the
     Python one with `beam.Flatten()`, and both adapters conform to both. *For the guide:* settle what shape the IR may
     have in the IR itself; a fix in the one walk an engine reaches first leaves the others for the next engine.
+31. **Checking without running is the feature Beam gives that Spark cannot (D22).** The runner hook already ran before the
+    pipeline did, so the mode is a branch in `InvaractRunner.run`, not a new mechanism. Two things were not obvious: the
+    delegate must not even be built (its construction is where production runners check credentials), and Beam's own step
+    validation runs before any runner sees the pipeline, so "needs no credentials" is true per IO, not in general, and had to be
+    probed rather than assumed. *For the guide:* an adapter whose hook sees the whole job before it runs should offer this, and
+    should probe and document what the engine itself does before the hook.
 
 ## Unverified items
 

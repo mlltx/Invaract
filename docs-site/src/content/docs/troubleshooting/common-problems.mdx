@@ -37,8 +37,13 @@ recognized write — so it refused to guess, and rejected it. This is deliberate
 
 Check whether your write goes through a shape listed in
 [Reference → Connector Support](/reference/connector-support/). If it doesn't
-(a DataSourceV2 catalog write, a streaming write, or `MERGE`/`UPDATE`/`DELETE` outside the
-connectors this covers), support for it may not exist yet.
+(a DataSourceV2 catalog write, or `MERGE`/`UPDATE`/`DELETE` outside the connectors this
+covers), support for it may not exist yet.
+
+On Beam, the same violation names the step that ends the pipeline without a recognized
+write. If that step only reports (it sends metrics or a notification, and writes no governed
+data), a platform can let it through with the
+[trusted steps setting](/reference/configuration/#making-the-checks-stricter).
 
 ## A rule check is rejected with `RULE_UNVERIFIABLE_DML`
 
@@ -106,7 +111,7 @@ those `delta-spark` releases against a newer Spark session hits exactly this
 range at all.
 
 Pin `delta-spark` to 3.3.3. See
-[Reference → Connector Support](/reference/connector-support/#supported-connectors) for
+[Reference → Connector Support](/reference/connector-support/#spark-connectors) for
 the current verified Delta version, and (same as above) check for an
 `Invaract is running against Delta Lake ...` warning in your job's logs if you're on a
 version new enough for the runtime compatibility guard to have run.
@@ -148,10 +153,46 @@ driver runs. In a cluster deploy mode that is the cluster, not your laptop, so m
 file is shipped there (for example with `--files`). A `sink.class` that doesn't exist, or a
 sink whose own required property is missing, is reported the same way.
 
+## Beam: the pipeline runs, but nothing is checked
+
+`--runner=Invaract` (Java) or `--runner=invaract_beam.InvaractRunner` (Python) only takes
+effect if the job builds its options from its command line and doesn't set a runner in code
+afterwards. A job that does either runs on its own runner and Invaract never sees it: no log
+line, no events. The Java guide's
+[When the command line cannot reach the job](/guides/using-invaract-with-apache-beam/#when-the-command-line-cannot-reach-the-job)
+shows the one-line check to add for such a job.
+
+## Beam Python: `CheckNotRun`
+
+The pipeline was not submitted because the check could not be made. The message says why:
+
+| Message starts | Fix |
+|---|---|
+| `Invaract could not start its checker (java: ...)` | Install Java 11 or later where the job is submitted, or point `--invaract_java` at it. |
+| `Invaract has no checker to run` | Build the checker jar (`cd beam-adapter && sbt assembly`) and set `INVARACT_BEAM_CHECKER_JAR` or `--invaract_checker_jar`. |
+| `--invaract_check_only=... must be true or false` | Use `true` or `false`. |
+| `--invaract_delegate names InvaractRunner itself` | Name the runner the job should really run on, for example `DataflowRunner`. |
+| `Invaract could not check the pipeline, ...` | The checker's own reason follows, for example a contract file it can't read or a setting it doesn't know. |
+
+A job submitted from a machine without the package stops earlier, with
+`ModuleNotFoundError: No module named 'invaract_beam'`: install it there
+([What a job needs](/guides/using-invaract-with-beam-python/#what-a-job-needs)).
+
+## Beam: a check-only run in CI fails before Invaract runs
+
+Beam validates some steps itself before handing the pipeline to any runner, including in a
+check-only run. A Java BigQuery read or write looks its dataset up in BigQuery, and wants
+`--tempLocation`; a Python file read checks that its pattern matches a file. Give the build
+what Beam asks for, or build those steps without validation. The
+[Java](/guides/using-invaract-with-apache-beam/#check-a-pipeline-in-ci-without-running-it) and
+[Python](/guides/using-invaract-with-beam-python/#check-a-pipeline-in-ci-without-running-it)
+guides say exactly what each IO needs.
+
 ## Still stuck
 
-1. Re-check [CLAUDE.md](https://github.com/mlltx/Invaract/blob/main/CLAUDE.md) in the
-   repository for the full development guide.
-2. Check the relevant module's own test suite (`contract`, `ir`, `spark-adapter`,
-   `plugin`) for a similar, working example.
-3. Open an issue on [GitHub](https://github.com/mlltx/Invaract).
+1. Look up the violation in [Violation Types](/reference/violation-types/), and check
+   [Engine Capabilities](/reference/engine-capabilities/) for whether your engine can make
+   the check at all.
+2. Open an issue on [GitHub](https://github.com/mlltx/Invaract/issues) with the full
+   violation message: it says what the contract expects, what the job contains, and why
+   they disagree.

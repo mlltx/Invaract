@@ -14,6 +14,10 @@ edited by hand. `ref://<id>` lets a dataset's location be resolved at job startu
 — from a fixed mapping, or (in the future) an HTTP call to a path registry — so the
 contract itself never needs to change when the underlying location does.
 
+<Aside type="note" title="Every engine">
+`ref://` locations work the same on Spark and on Beam. On Beam, name the map with `--invaractLocationMap` (Java) or `--invaract_location_map` (Python); see [Configuration Settings](/reference/configuration/).
+</Aside>
+
 <Aside type="note" title="No changes to contract or ContractParser">
 `ref://<id>` is just an ordinary, valid `location` string as far as `ContractParser` and
 the JSON Schema are concerned — parsing and validation are unaffected. Resolution happens
@@ -97,11 +101,9 @@ before the first check ever runs. See
 that one-time setup.
 
 <Aside type="tip" title="No extra --jars entry either">
-The `location` package's classes need no separate `--jars` entry: they compile straight
-into `spark-adapter`'s own jar via `sbt-assembly`'s ordinary dependency bundling, the same
-way `com.invaract.fingerprint`'s classes already ride along for free (see CLAUDE.md's
-"Build Artifacts and Outputs"). Confirmed directly: `unzip -l` on a real build shows
-`com/invaract/verification/location/*.class` inside `spark-adapter`'s jar.
+Location resolution is part of `invaract-spark-adapter-0.11.0.jar`, so it needs no extra
+`--jars` entry. (`unzip -l` on that jar lists
+`com/invaract/verification/location/*.class`.)
 </Aside>
 
 ## Need a resolver `--conf` can't express?

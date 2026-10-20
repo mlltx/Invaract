@@ -37,6 +37,10 @@ class InvaractOptions(PipelineOptions):
             "--invaract_delegate", default="DirectRunner",
             help="The runner the pipeline is handed to once it passes: a runner name (DataflowRunner) or module.Class. Default: DirectRunner.")
         parser.add_argument(
+            "--invaract_check_only", default=None,
+            help="true: check the pipeline (or, with --invaract_dry_run, infer its contract) and stop there: it is handed to no runner, "
+                 "so a CI build needs no data, cluster or credentials for it.")
+        parser.add_argument(
             "--invaract_checker_jar", default=None,
             help="Path of the Invaract checker jar. Default: the INVARACT_BEAM_CHECKER_JAR environment variable.")
         parser.add_argument(

@@ -162,7 +162,9 @@ mimaBinaryIssueFilters ++= Seq(
   // job only asks for it (`options.as(classOf[InvaractBeamOptions])`). So adding an option breaks no caller. Each new option
   // is listed here by name, as MiMa's own output gives it, rather than the whole interface being filtered.
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractTrustedSteps"),
-  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractTrustedSteps")
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractTrustedSteps"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractCheckOnly"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractCheckOnly")
 )
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating

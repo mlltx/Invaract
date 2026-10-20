@@ -23,8 +23,9 @@ write — using the example job this repository ships with. It assumes you've co
 
    This single command:
 
-   1. Builds all 5 modules (`contract`, `ir`, `plugin` concurrently, then `spark-adapter`,
-      then `runner`), in dependency order.
+   1. Builds every module in dependency order: the engine (`contract`, `ir`,
+      `fingerprint`, `verification-core`, `spark-adapter`, `beam-adapter`), the conformance
+      kit, and the demo's own `plugin` and `runner`.
    2. Runs a real Spark job — `DemoJobHarness` — via actual `spark-submit`, with
       Invaract's `ContractEnforcementRule` installed in the `SparkSession`.
    3. The job reads `demo/input/sample.csv`, runs a small example transformation
@@ -34,15 +35,17 @@ write — using the example job this repository ships with. It assumes you've co
       allowed to happen.
    4. Generates and validates `demo/output/report.json`.
 
-   Expect output ending in something like:
+   Expect output ending like this (from a real run; the duration varies):
 
    ```
    Step 7/7: Validating execution report...
      Status: PASS
      Plugin Version: 0.1.0
-     Duration: 2345ms
+     Duration: 13660ms
+     Notification events: 3 line(s) in demo/output/events.jsonl (CONTRACT_VALIDATION, WRITE, and JOB_SUMMARY all present)
 
    ✓ All validation passed
+   ✓ Plugin JAR is ready: plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar
    ✓ Execution report: demo/output/report.json
    ```
 
@@ -78,12 +81,12 @@ write — using the example job this repository ships with. It assumes you've co
    ./dev/regression
    ```
 
-   This runs two real jobs: one against the contract above (passes, output file is
-   created), and one against a deliberately broken contract
-   (`demo/contracts/invaract_output_broken_example.yaml`, which requires a
-   `customer_name` column the demo transformation never produces). The second job exits
-   non-zero, and its output file is **never created** — the write was aborted before
-   Spark touched disk. See
+   This runs ten real jobs in pairs: each pair has one job that keeps to its contract
+   (it passes and its output file is created) and one that breaks it. For example,
+   `demo/contracts/invaract_output_broken_example.yaml` requires a `customer_name`
+   column the demo transformation never produces. Each breaking job exits non-zero,
+   and its output file is **never created** — the write was aborted before Spark
+   touched disk. See
    [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/)
    for the full walkthrough and output.
 
@@ -103,5 +106,8 @@ pass/fail proof inside a self-contained Docker image — nothing but Docker requ
   from a blank file.
 - [Write a Contract](/guides/writing-a-contract/) — the full format, from
   scratch.
-- [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) — wire
+- [Install the Enforcement Rule on Spark](/guides/installing-the-enforcement-rule/) — wire
   Invaract into your own Spark job, not just the demo.
+- [Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/) or
+  [with Beam Python pipelines](/guides/using-invaract-with-beam-python/) — the same
+  contracts, checked before a pipeline runs.

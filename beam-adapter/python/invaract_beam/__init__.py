@@ -5,8 +5,8 @@
 See ``runner.py`` for what the runner does, and docs/BEAM_PYTHON_ADAPTER.md for the design.
 """
 from .options import InvaractOptions
-from .runner import CheckNotRun, ContractViolation, InvaractRunner
+from .runner import CheckedOnly, CheckNotRun, ContractViolation, InvaractRunner
 
 __version__ = "0.1.0"
 
-__all__ = ["InvaractRunner", "InvaractOptions", "ContractViolation", "CheckNotRun"]
+__all__ = ["InvaractRunner", "InvaractOptions", "ContractViolation", "CheckNotRun", "CheckedOnly"]

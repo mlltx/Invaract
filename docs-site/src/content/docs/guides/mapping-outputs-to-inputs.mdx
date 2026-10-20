@@ -66,13 +66,13 @@ plan reads 'bronze.orders' (input 'orders'), which this contract declares but no
 
 | You write | It means |
 |---|---|
-| no `derivedFrom` | The output is built from **all** declared inputs — exactly how contracts behaved before this key existed. Nothing changes for an existing contract. |
+| no `derivedFrom` | The output is built from **all** declared inputs. |
 | `derivedFrom: [a, b]` | Built from `a` and `b`; other declared inputs are not expected of this write. |
 | `derivedFrom: []` | Built from **no** declared input (for example, generated rows). Any declared input the write reads is an `UNDECLARED_INPUT` under `rejectUndeclaredInputs`. |
 
 A single-output contract does not need `derivedFrom`; it only becomes useful once a contract
 governs more than one write. When a multi-output contract without `derivedFrom` reports a
-`MISSING_INPUT`, the remediation now points you here.
+`MISSING_INPUT`, the violation's remediation points you here.
 
 <Aside type="note" title="Validation catches typos">
 A name in `derivedFrom` that isn't one of the contract's inputs is a validation **error**, not
@@ -100,5 +100,5 @@ out the full input list where it was previously implied is not a change.
 ## No code change needed to turn it on
 
 `derivedFrom` lives in the contract file itself, so a platform team can enable it against a job
-whose source they don't own by editing the contract that job is pointed at — the same
-`--conf spark.invaract.contract=...` route every other contract change takes.
+whose source they don't own by editing the contract that job is pointed at. It works the same
+on Spark and on Beam.

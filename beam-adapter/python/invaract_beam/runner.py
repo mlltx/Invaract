@@ -10,6 +10,10 @@ with no change to its code. When the job runs its pipeline, Beam hands the const
    Java adapter does - all the checking is there, none of it here;
 3. hands the pipeline to the real runner (``--invaract_delegate``) only if the checker lets it through.
 
+With ``--invaract_check_only=true`` there is no third step: the pipeline is checked and ``run`` returns a finished result
+(``CheckedOnly``) without creating the delegate, so a CI build can check a job with its production command line and one
+more flag, and nothing runs.
+
 Anything other than a pass stops the job before any step runs: a refusal raises ``ContractViolation`` with the checker's
 explanation, and a check that could not be made (no Java, no checker, a setting the checker does not know) raises
 ``CheckNotRun``. A job is never submitted unchecked.
@@ -20,9 +24,12 @@ import shlex
 import subprocess
 import tempfile
 
+import collections
+
 import apache_beam as beam
+from apache_beam.metrics.metric import MetricResults
 from apache_beam.options.pipeline_options import GoogleCloudOptions
-from apache_beam.runners.runner import PipelineRunner, create_runner
+from apache_beam.runners.runner import PipelineResult, PipelineRunner, PipelineState, create_runner
 
 from .options import SETTINGS, InvaractOptions
 
@@ -54,8 +61,49 @@ class InvaractRunner(PipelineRunner):
         delegate = options.view_as(InvaractOptions).invaract_delegate
         if delegate in ("InvaractRunner", "invaract_beam.InvaractRunner", "invaract_beam.runner.InvaractRunner"):
             raise CheckNotRun("--invaract_delegate names InvaractRunner itself; name the runner the job should run on (DataflowRunner).")
+        only = check_only(options.view_as(InvaractOptions))
         check(pipeline, options)
+        if only:
+            _LOG.info("Invaract: the pipeline was checked against its contract and, as --invaract_check_only asks, not run")
+            return CheckedOnly()
         return create_runner(delegate).run_pipeline(pipeline, options)
+
+
+class CheckedOnly(PipelineResult):
+    """What ``run`` returns for a pipeline that was only checked (``--invaract_check_only=true``): nothing ran, so it is
+    finished at once, cannot be cancelled, and has no metrics. A job that waits for its pipeline and reads its metrics goes
+    on as after a run that did nothing."""
+
+    def __init__(self):
+        super().__init__(PipelineState.DONE)
+
+    def wait_until_finish(self, duration=None):
+        return self.state
+
+    def cancel(self):
+        return self.state
+
+    def metrics(self):
+        return _NoMetrics()
+
+
+class _NoMetrics(MetricResults):
+    """No metric of any kind: whatever kind a job asks for (counters, distributions, gauges, ...) is an empty list."""
+
+    def query(self, filter=None):
+        return collections.defaultdict(list)
+
+
+def check_only(settings):
+    """Whether ``--invaract_check_only`` asks for the pipeline only to be checked. A value other than true or false stops the
+    job, naming the flag, rather than being read as false: a check-only run that went on to run the job would write where CI
+    should not."""
+    value = (settings.invaract_check_only or "").strip()
+    if not value or value.lower() == "false":
+        return False
+    if value.lower() == "true":
+        return True
+    raise CheckNotRun(f"--invaract_check_only={value} must be true or false, so the pipeline is not submitted.")
 
 
 def check(pipeline, options):
@@ -99,6 +147,8 @@ def checker_arguments(path, options):
     job_name = options.view_as(GoogleCloudOptions).job_name
     if job_name:
         arguments.append(f"--job_name={job_name}")
+    if check_only(settings):
+        arguments.append("--check_only=true")
     for name in SETTINGS:
         value = getattr(settings, "invaract_" + name)
         if value is not None:

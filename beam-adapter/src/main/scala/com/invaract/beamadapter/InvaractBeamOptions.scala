@@ -74,6 +74,24 @@ trait InvaractBeamOptions extends PipelineOptions {
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
   def setInvaractDelegate(value: String): Unit
+
+  @Description("true: check the pipeline (or, with --invaractDryRun, infer its contract) and stop there: it is handed to no runner, and the delegate is not built, so a CI build needs no data, cluster or credentials for it.")
+  def getInvaractCheckOnly: String
+  def setInvaractCheckOnly(value: String): Unit
+}
+
+private[beamadapter] object InvaractBeamOptions {
+
+  /** Whether `--invaractCheckOnly` asks for the pipeline only to be checked. A value other than true or false is refused, naming the
+    * flag, rather than read as false: a check-only run that went on to run the job would write where CI should not. */
+  def checkOnly(options: PipelineOptions): Boolean =
+    Option(options.as(classOf[InvaractBeamOptions]).getInvaractCheckOnly).map(_.trim).filter(_.nonEmpty).exists { value =>
+      value.toLowerCase match {
+        case "true"  => true
+        case "false" => false
+        case _       => throw new IllegalArgumentException(s"--invaractCheckOnly=$value must be true or false.")
+      }
+    }
 }
 
 /** The engine-neutral settings a Beam pipeline can be given: every one but `failOnMissingOutput`, which is for an adapter that finds a

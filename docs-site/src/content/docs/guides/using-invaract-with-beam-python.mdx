@@ -164,6 +164,7 @@ And how the checker is run:
 | Flag | What it does |
 |---|---|
 | `--invaract_delegate` | The runner a passing pipeline is handed to. Default: `DirectRunner`. |
+| `--invaract_check_only=true` | Check the pipeline and hand it to no runner, for a CI build (see below). |
 | `--invaract_checker_jar` | The checker jar. Default: the `INVARACT_BEAM_CHECKER_JAR` environment variable. |
 | `--invaract_java` | The `java` program. Default: `$JAVA_HOME/bin/java`, else `java` on the `PATH`. |
 | `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. |
@@ -221,9 +222,46 @@ A write Invaract cannot place (a destination the job computes, a template parame
 refused the same way, but naming it as trusted does not let it through, and its remediation
 says so.
 
+## Check a pipeline in CI, without running it
+
+Add `--invaract_check_only=true` to the job's production command line and run the job in a CI
+build:
+
+```bash
+python -m my_job \
+  --runner=invaract_beam.InvaractRunner \
+  --invaract_contract=contracts/orders_report.yaml \
+  --invaract_delegate=DataflowRunner --project=my-project --region=europe-west1 \
+  --invaract_check_only=true
+```
+
+The job builds its pipeline as always and the checker checks it, but the pipeline is then handed
+to no runner: `run()` returns `invaract_beam.CheckedOnly`, a finished result (state `DONE`, no
+metrics), so a job that waits for its pipeline ends normally. Nothing is read or written, and the
+runner `--invaract_delegate` names is not created. A pipeline that breaks its contract raises
+`ContractViolation` exactly as it would in production, so the build fails with the same
+explanation. With `--invaract_dry_run=true` in place of a contract, the same command reports the
+contract the job would need, without running it. Events from a check-only run have
+`"checkOnly": "true"` in their `job.engineDetails`, so a platform can tell a CI check from a
+production run.
+
+What the build needs: Java and the checker jar, as any check does, and the job's own
+dependencies, but no cluster or credentials. Python's BigQuery and Pub/Sub transforms contact
+nothing while the pipeline is built (confirmed with Beam 2.77). File reads are the exception, and
+it is Beam's own: they check that their pattern matches some file when the pipeline is built
+(confirmed for `ReadFromText`), so give the build the input files or build the read with
+`validate=False`.
+
 ## When the command line cannot reach the job
 
 A job that sets its runner in code (`PipelineOptions(argv, runner="DirectRunner")`) or does not pass
 its command line to Beam is not checked: the flags never reach it. A job submitted from a machine
 without the package does not start (`ModuleNotFoundError: No module named 'invaract_beam'`), and one
 submitted without Java stops with `CheckNotRun`.
+
+## Related
+
+- [Configuration Settings](/reference/configuration/): every `--invaract_...` flag, with its Spark and Java spelling.
+- [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the checker recognizes.
+- [Common Problems](/troubleshooting/common-problems/#beam-python-checknotrun): what each `CheckNotRun` message means.

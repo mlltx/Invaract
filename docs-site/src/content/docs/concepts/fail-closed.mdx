@@ -12,7 +12,7 @@ confidence — worse than no tool at all, since a team relying on it believes wr
 being checked when some genuinely aren't. Invaract is built to fail closed instead: a
 write it can't verify is rejected, not passed.
 
-## The gap this closes
+## The gap this closes, on Spark
 
 Every Spark write shape Invaract hasn't been taught to translate — an early gap in
 Delta Lake support, and any future write shape the adapter doesn't yet recognize — shares
@@ -61,10 +61,24 @@ violation found" with nothing actually checked, this case is classified
 contract actually declares a rule that operation kind would need to be checked against;
 an unrelated rule never blocks an operation it doesn't apply to.
 
+## On Apache Beam
+
+The Beam adapters apply the same rule to a pipeline before it runs:
+
+- A step that ends the pipeline without being a write Invaract recognizes (a function that
+  pushes rows to a service, an IO it doesn't know, a write whose destination the job computes
+  per row) refuses the pipeline with `UNVERIFIABLE_WRITE`. A platform can name steps that only
+  report, such as a metrics step, as [trusted steps](/reference/configuration/#making-the-checks-stricter).
+- A write whose columns Beam doesn't state (plain Java or Python objects) is refused if its
+  output declares columns, rather than passed with the schema unchecked.
+- A contract that needs a check the engine can't make (a row-level DML rule, a static
+  data-quality proof on Beam) is refused with `UNSUPPORTED_CONTRACT_FEATURE` before the
+  pipeline runs.
+
 ## What this means in practice
 
 If a job you've put under contract starts failing with `UNVERIFIABLE_WRITE` or
-`RULE_UNVERIFIABLE_DML` after upgrading Spark, Delta, or Iceberg, or after changing how a
+`RULE_UNVERIFIABLE_DML` after upgrading Spark, Beam, Delta, or Iceberg, or after changing how a
 write is issued, that's Invaract telling you it can no longer confirm the write is safe
 — not a false positive to work around. See
 [Troubleshooting](/troubleshooting/common-problems/) and

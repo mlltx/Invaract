@@ -863,7 +863,8 @@ registry listing) is out of scope for this module — `CrossContractLintCli`
 covers the common "lint a directory of contract files" case:
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
+# run from the repository root; file paths are relative to contract/, or absolute
+cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
 ```
 
 ### Type guarantee checks
@@ -890,7 +891,7 @@ typeGuarantees:
 ```
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
 ```
 
 `TypeGuaranteeCheck` is the extension point — `def check(contracts:
@@ -1630,8 +1631,8 @@ evaluation a job pays for at session-build time can also run as a
 standalone check with nothing but a JVM:
 
 ```
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
 ```
 
 Recursively lints every `*.yaml`/`*.yml` contract under a directory (or a

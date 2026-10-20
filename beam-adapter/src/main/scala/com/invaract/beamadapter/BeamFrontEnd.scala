@@ -37,14 +37,15 @@ private[beamadapter] final case class BeamFrontEnd(
   }
 
   /** Which job a check's events come from: the job's name (also its run id: Beam gives a job no other), the SDK release that
-    * built it, the runner it is handed to, and the user submitting it. */
-  def jobInfo(jobName: Option[String], sdkVersion: Option[String], runner: Option[String]): JobInfo =
+    * built it, the runner it is handed to, the user submitting it, and whether it is only checked (`checkOnly`: handed to no
+    * runner, so a platform can tell a CI check from a run). */
+  def jobInfo(jobName: Option[String], sdkVersion: Option[String], runner: Option[String], checkOnly: Boolean = false): JobInfo =
     JobInfo(
       runId = jobName,
       name = jobName,
       engine = Some(engine),
       engineVersion = sdkVersion,
-      engineDetails = runner.map("runner" -> _).toMap,
+      engineDetails = runner.map("runner" -> _).toMap ++ (if (checkOnly) Map("checkOnly" -> "true") else Map.empty),
       user = Option(System.getProperty("user.name")),
       startTimeMs = Some(System.currentTimeMillis())
     )

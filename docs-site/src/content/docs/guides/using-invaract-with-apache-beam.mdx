@@ -116,6 +116,42 @@ before anything starts, with one `MISSING_OUTPUT` violation per output nothing l
 contract if the job no longer produces it. (Spark checks one write at a time, as each runs, so it
 finds this only when the job ends; see [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/#every-declared-output-must-be-written).)
 
+## Check a pipeline in CI, without running it
+
+Add `--invaractCheckOnly=true` to the job's production command line and run the job's own `main`
+in a CI build:
+
+```bash
+java -cp job.jar:invaract-beam-adapter.jar com.example.Job \
+  --runner=Invaract \
+  --invaractContract=contracts/orders_report.yaml \
+  --invaractDelegate=DataflowRunner --project=my-project --region=europe-west1 \
+  --invaractCheckOnly=true
+```
+
+The job builds its pipeline as always and Invaract checks it, but then hands it to no runner:
+`run()` returns at once with a finished result (state `DONE`, no metrics), so a job that waits
+for its pipeline ends normally, and it logs
+`Invaract: the pipeline was checked against its contract and, as --invaractCheckOnly asks, not run`.
+Nothing is read or written. A pipeline that breaks its contract throws exactly as it would in
+production, so the build fails with the same explanation. The runner `--invaractDelegate` names
+is not built (building Dataflow's checks a project and credentials), but the name is still looked
+up, so a misspelt one fails the build too.
+
+With `--invaractDryRun=true` in place of a contract, the same command reports the contract the
+job would need (see [Dry-run mode](#dry-run-mode)), without running it. Events from a check-only
+run say so: their `job.engineDetails` has `"checkOnly": "true"`, so a platform can tell a CI
+check from a production run.
+
+What the build needs: the job's classpath and its options, but no data, cluster or credentials,
+with one exception that is Beam's own. Beam validates each step before it hands the pipeline to
+any runner, and BigQuery's validation looks up the table's dataset (and checks a query) in
+BigQuery. To check a job that reads or writes BigQuery, either give the build credentials, or
+build those steps with `.withoutValidation()`; either way BigQuery also wants `--tempLocation` set,
+to any `gs://` path (nothing is written there). Files, Kafka, JDBC and Pub/Sub need nothing: a
+check-only run was confirmed with a file pattern that matches nothing, an unreachable broker, an
+unreachable database and a topic that does not exist (Beam 2.77).
+
 ## How locations are written in a contract
 
 | In the job | Declared in the contract |
@@ -240,6 +276,8 @@ and the summary are logged.
 ## Related
 
 - [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [Configuration Settings](/reference/configuration/): every `--invaract...` option, with its Spark and Python spelling.
+- [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the adapter recognizes.
 - [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/): `ref://` locations, here via `--invaractLocationMap`.
 - [Use a Contract Registry](/guides/using-a-contract-registry/): `registry://` contracts, here via `--invaractContract` and `--invaractRegistryUrl`.
 - [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/): here via `--invaractOrgPolicy`.

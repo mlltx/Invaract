@@ -88,6 +88,21 @@ class BeamPythonAttachSpec extends AnyFunSuite {
     assert(written(root).isEmpty)
   }
 
+  // --- check only ---
+
+  test(CheckOnly) {
+    needsPython()
+    val root = freshRoot()
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml())
+    // the production delegate is not even created, so one that cannot be found where CI runs does not matter
+    val ci = platform(root, contract) ++ List("--invaract_delegate=no_such_module.NoSuchRunner", "--invaract_check_only=true")
+    val (status, output) = runJob(root, ci)
+    assert(status == 0, output)
+    assert(written(root).isEmpty, "nothing ran, so nothing was written")
+    val (refused, why) = runJob(root, "--output=out/elsewhere" :: ci)
+    assert(refused != 0 && why.contains("ContractViolation") && why.contains("[OUTPUT_LOCATION_MISMATCH]"), why)
+  }
+
   // --- dry-run mode ---
 
   test(DryRunInference) {
@@ -150,4 +165,5 @@ object BeamPythonAttachSpec {
   val ContractRegistry = "contract registry: a registry:// reference is fetched from the registry the flags name and enforced"
   val OrganizationalPolicy = "organizational policy: a contract that breaks a policy given by --invaract_org_policy is refused; one that satisfies it is checked"
   val DryRunInference = "dry-run inference: --invaract_dry_run lets a real Python job write and reports a contract inferred from it"
+  val CheckOnly = "check only: --invaract_check_only checks an unmodified Python job in CI without running it or creating its runner, and fails the build when the job breaks its contract"
 }

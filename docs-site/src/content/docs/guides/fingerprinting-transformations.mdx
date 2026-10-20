@@ -15,6 +15,10 @@ only checks shape. Semantic lineage fingerprinting can: it turns a transformatio
 translated logic into a deterministic hash, so a later revision of the same job can be
 compared against it.
 
+<Aside type="note" title="Spark only">
+A fingerprint is computed from the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `computeFingerprint` on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE` before it runs.
+</Aside>
+
 <Aside type="note" title="This is a hash, not a diff">
 Enabling this gives you a fingerprint for *this* check — a value you can log, publish, and
 compare by hand or with your own tooling. Invaract does not yet store a history of
