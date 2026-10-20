@@ -389,6 +389,17 @@ above. It is intentionally a separate module from `Plan.scala`/`Expr.scala`
 way `Lineage` carries no display logic either. Two independent things
 consume the same `children`-based structure.
 
+A plan can share a node between parents: an adapter whose engine describes a
+job as a graph (Beam, where one collection feeds two branches that later
+rejoin) hands the same `Plan` object to both. `render` draws such a node in
+full where it is first reached and, each later time, as its one label line
+followed by `(shown above)`; a node with no children is the same line either
+way and is left unmarked. Drawn as a tree, `k` branches that rejoin in a row
+would be `2^k` copies. Nodes are told apart by reference, never by equality:
+two equal plans that are separate objects are both drawn, and a case class's
+`equals`/`hashCode` would itself walk every path. `PlanPrinterSpec` holds the
+exact rendering and a 60-step chain (2^60 paths) drawn in 241 lines.
+
 ## What Phase 2 does *not* do yet
 
 - **No translator from a real Spark logical plan into this IR.** That's the

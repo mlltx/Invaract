@@ -3253,6 +3253,11 @@ be inline, each with its own spec:
   write and hands it to `StructuralVerifier`, `PlanRuleVerifier` (previously one full walk
   per declared rule), `StaticDataQualityVerifier` and `RoleConsistencyVerifier`. Order is the
   same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
+  A node with children that several parents share (an adapter for a graph-shaped engine, such
+  as Beam, hands over such plans; Spark's translation never does) is visited once, by
+  reference, so the walk is linear in the graph rather than in its paths; a node with no
+  children (a read) is still listed each time it is reached, so a table read on both sides of
+  a join stays two reads and a tree's lists are unchanged.
 
 `StructuralVerifier.scala` was one 1,200-line file holding the result model, the violation
 vocabulary, `verify` (a ~230-line method) and the catalog checks. It is now an orchestrator over:

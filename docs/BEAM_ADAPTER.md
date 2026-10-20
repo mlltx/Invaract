@@ -403,6 +403,16 @@ Every undocumented decision, surprise, or guess made while building this adapter
       (`VerificationPipeline.requireSupported`, new in verification-core). Before, a write refused as unverifiable could hide that
       the contract asked for a check this adapter never makes.
     *For the guide:* when an engine has more than one SDK, translate each into the same step tree and keep one translator.
+29. **Branches that rejoin made the checks exponential (fixed in verification-core and ir).** The translator visits each step
+    once, and the plan it builds gives a collection that two steps consume one `Plan` object under both. The core's walks
+    treated that plan as a tree: a pipeline whose collection splits in two and is merged again, 21 times in a row (2^21
+    paths), took 7.7 s to verify, listing 2,097,152 reads of its one input, and its refusal ran out of memory drawing the
+    plan. `PlanFacts.of` now visits a node with children once, by reference, and `PlanPrinter` draws it once and marks
+    later sightings `(shown above)`: the same pipeline verifies in about 40 ms and is refused in about 20 ms. A 30-times
+    rejoining Java pipeline (`BeamCheckSpec`) and the 40-diamond translation test now go through those walks. Still
+    exponential on such a plan: fingerprinting (declared unsupported here) and a case class's `equals`/`hashCode` (nothing
+    in the checks hashes or compares plans). *For the guide:* an engine whose job is a graph produces plans that share
+    nodes; test a long chain of branches that rejoin through the whole check, not only the translation.
 
 ## Unverified items
 
