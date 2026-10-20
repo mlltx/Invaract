@@ -4067,8 +4067,10 @@ to Flink proven</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the <code dir="auto">invaract_beam</code> package’s wrapper runner writes the
 pipeline’s portable form and runs a Java checker on it, which translates it with the Beam adapter’s own
 translator; conforms to 42 scenarios (13 by refusing safely: transformation-shape rules and analyses are
-unsupported), real Python pipelines in CI’s <code dir="auto">beam-python</code> job. Publishing the package and the checker jar
-is still to do</li>
+unsupported), real Python pipelines in CI’s <code dir="auto">beam-python</code> job, a matrix over Python SDK releases from 2.68
+that records the test pipelines afresh with each. A refusal’s advice is the adapter’s own
+(<code dir="auto">UnverifiableOperation</code>), with the flag spelled for the SDK. Publishing the package and the checker jar is
+still to do</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Every declared output must be written (<code dir="auto">check.outputsWritten</code>): Beam refuses the pipeline before it
 runs; Spark reports at application end, with an opt-in failing exit status</li>
 <li class="task-list-item"><input type="checkbox" disabled> SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with <code dir="auto">survey-engine-adapter</code></li>

@@ -248,7 +248,9 @@ cannot translate, so nothing is silently dropped.</li>
 <code dir="auto">rejectUnverifiableWrite</code>), passing a <code dir="auto">JobInfo</code> that names the engine (<code dir="auto">engine</code>, <code dir="auto">engineVersion</code>) and, if the
 engine has one, the job’s stable id and the platform’s attributes. Do not re-implement validation, verifier
 order, fingerprinting, events or the rejection text. The kit fails an adapter whose events do not name its
-engine.</li>
+engine. The one text an adapter writes is for what it cannot check: <code dir="auto">rejectUnverifiableWrite</code> takes an
+<code dir="auto">UnverifiableOperation</code>, the engine’s name for the operation, why it cannot be checked, and what the job’s owner
+can do, naming the engine’s own settings and docs.</li>
 <li><strong>Read configuration</strong> through <code dir="auto">ConfigSource</code>, <code dir="auto">VerificationSetup</code> and <code dir="auto">AttachSetup</code>, spelling the neutral keys
 the engine’s way (see “Spelling the configuration keys” below). <code dir="auto">AttachSetup.select</code> decides dry-run or
 enforcement, resolves the contract (a path or a <code dir="auto">registry://</code> reference) and builds the sink; the adapter
