@@ -5,6 +5,7 @@ on:
     types: [opened, reopened, synchronize, closed]
     paths:
       - "docs-site/**"
+      - "contract/schema/**"
       - ".github/workflows/preview-docs.yml"
 
 permissions:

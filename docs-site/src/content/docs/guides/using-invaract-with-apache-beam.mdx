@@ -30,7 +30,7 @@ unchecked. The full list is in [Engine Capabilities](/reference/engine-capabilit
 The job must build its options from its command line the way any Beam job does
 (`PipelineOptionsFactory.fromArgs(args)`) and must **not** choose its own runner in code.
 Beam is a `provided` dependency of the adapter: the job brings its own Beam. The adapter is
-tested with Beam 2.60.0, 2.65.0, 2.70.0 and 2.77.0.
+tested with Beam {/* generate-version-docs:BEGIN beam.list */}2.60.0, 2.65.0, 2.70.0 and 2.77.0{/* generate-version-docs:END */}.
 
 Add the `invaract-beam-adapter` jar to the job's classpath, then name the runner and the
 contract:
@@ -267,7 +267,7 @@ Each draft is checked against the write it was inferred from, as enforcement wou
 the result is the event's `selfCheck` (`PASSED`, or `FAILED` with the violations). A write with
 no columns (a text write of strings) gets a draft whose output declares none, with status
 `INFERRED_DEGRADED` and that reason; a step the adapter cannot describe is reported with status
-`SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `JOB_SUMMARY` event counts
+`SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `DRY_RUN_SUMMARY` event counts
 the writes by status and merges every draft into one contract named after the job (its
 `--jobName`), the same summary Spark publishes when its application ends. Beam publishes it
 before the pipeline runs, since the whole pipeline is known by then. With no sink, the drafts

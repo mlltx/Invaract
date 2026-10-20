@@ -1425,7 +1425,9 @@ jobs:
     # dev/generate-version-docs regenerates the "Supported versions"
     # sections of docs-site/src/content/docs/reference/spark-version-
     # support.mdx, connector-support.mdx, and docs/COMPATIBILITY.md from
-    # supported-versions.properties (see that file's own header comment,
+    # supported-versions.properties, and the Beam release lists in the Beam
+    # guides and design docs from supported-beam-versions.properties (see
+    # each file's own header comment,
     # and dev/generate-version-docs's own comment for the exact scope - the
     # investigative prose around each table stays hand-written, only the
     # version enumeration and status badges are generated). This job runs

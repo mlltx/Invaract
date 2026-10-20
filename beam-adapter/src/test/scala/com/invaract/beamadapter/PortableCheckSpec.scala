@@ -52,6 +52,18 @@ class PortableCheckSpec extends AnyFunSuite {
       .foreach(fragment => assert(published.contains(fragment), fragment))
   }
 
+  test("dry-run mode lists a Python read that states no columns (ReadFromParquet of dictionaries) as an input of the draft") {
+    val root = freshRoot()
+    val events = root.resolve("events.jsonl")
+    val sink = file(root, "sink.properties",
+      s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${events.toString.replace('\\', '/')}\n")
+    assert(check(s"--pipeline=${recording(root, "parquet_dicts")}", "--invaract_dry_run=true", s"--invaract_notify_config=$sink")._1 == PortableCheck.Passed)
+    val published = new String(Files.readAllBytes(events), StandardCharsets.UTF_8)
+    assert(published.contains("INFERRED_DEGRADED"), published)
+    assert(published.contains("- name: input\\n  location: data/in/orders"), "the read is the draft's input")
+    assert(published.contains("the pipeline states no columns for the read of data/in/orders, so the draft declares none for it"))
+  }
+
   test("a pipeline only checked (--check_only=true) is marked so in its events; a value other than true or false is not checked") {
     val root = freshRoot()
     val events = root.resolve("events.jsonl")

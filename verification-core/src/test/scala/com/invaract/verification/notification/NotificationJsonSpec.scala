@@ -28,6 +28,47 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(NotificationJson.anyToJson(Opaque(7)) == "\"opaque(7)\"")
   }
 
+  test("anyToJson renders Java maps and lists (what a contract's extensions hold below their first level) as JSON") {
+    val inner = new java.util.LinkedHashMap[String, Any]()
+    inner.put("purpose", "orders")
+    inner.put("audience", java.util.Arrays.asList("finance", "ops"))
+    inner.put("reviewed", true)
+    // keys in insertion order, not sorted (b before a), as a YAML mapping is read
+    val ordered = new java.util.LinkedHashMap[String, Any]()
+    ordered.put("b", 2)
+    ordered.put("a", inner)
+    assert(NotificationJson.anyToJson(ordered) == """{"b": 2, "a": {"purpose": "orders", "audience": ["finance", "ops"], "reviewed": true}}""")
+    assert(NotificationJson.anyToJson(new java.util.LinkedHashMap[String, Any]()) == "{}")
+    assert(NotificationJson.anyToJson(new java.util.ArrayList[Any]()) == "[]")
+    assert(NotificationJson.anyToJson(Map("description" -> inner)) == """{"description": {"purpose": "orders", "audience": ["finance", "ops"], "reviewed": true}}""")
+  }
+
+  test("a contract's nested description reaches an event's metadata as JSON, not as a Java map's toString") {
+    val contract = com.invaract.contract.ContractParser.parse(
+      """id: c
+        |version: "1.0.0"
+        |description:
+        |  purpose: Orders for finance
+        |outputs:
+        |  - name: out
+        |    location: data/out
+        |""".stripMargin
+    )
+    val json = NotificationJson.toJson(ContractValidationEvent("c@1.0.0", "PASSED", Nil, 0L, contract.extensions))
+    assert(json.contains(""""metadata": {"description": {"purpose": "Orders for finance"}}"""), json)
+  }
+
+  test("eventId does not depend on the key order of a Java map, and does depend on its content") {
+    def event(entries: (String, Any)*) = {
+      val m = new java.util.LinkedHashMap[String, Any]()
+      entries.foreach { case (k, v) => m.put(k, v) }
+      ContractValidationEvent("c@1.0.0", "PASSED", Nil, 0L, Map("description" -> m))
+    }
+    val id = NotificationJson.eventIdOf(event("a" -> 1, "b" -> 2))
+    assert(id == NotificationJson.eventIdOf(event("b" -> 2, "a" -> 1)))
+    assert(id != NotificationJson.eventIdOf(event("a" -> 1, "b" -> 3)))
+  }
+
   test("anyToJson escapes backslash, quote, newline, carriage return, and tab") {
     val raw = "back\\slash quote\" newline\n cr\r tab\t end"
     val json = NotificationJson.anyToJson(raw)

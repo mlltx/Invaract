@@ -97,12 +97,16 @@ final class BeamCheck private[beamadapter] (
         LogicalSchema(Nil) -> Some(s"the write to ${w.location} exposes no columns, so the draft declares none for it")
       )(_ -> None)
       try {
-        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.inputSchemas, w.plan)
+        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.draftInputs, w.plan)
         // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
         val unlocated =
           if (w.unlocatedReads.isEmpty) None
           else Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}")
-        val degradations = noColumns.toList ++ unlocated
+        // a read the pipeline states no columns for is listed, with none, and the draft says so: a reviewer fills them in
+        val inputsWithoutColumns =
+          if (w.readsWithoutColumns.isEmpty) None
+          else Some(s"the pipeline states no columns for the read of ${w.readsWithoutColumns.mkString(", ")}, so the draft declares none for it")
+        val degradations = noColumns.toList ++ unlocated ++ inputsWithoutColumns
         val (status, reason) =
           if (degradations.isEmpty) (InferenceStatus.Inferred, None) else (InferenceStatus.InferredDegraded, Some(degradations.mkString("; ")))
         // the draft checked against the write it describes, as enforcement would check it

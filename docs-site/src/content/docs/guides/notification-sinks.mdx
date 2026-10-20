@@ -60,7 +60,8 @@ spark-submit \
 On Apache Beam, the same file attaches with `--invaractNotifyConfig=/path/to/notify.properties`
 (Java) or `--invaract_notify_config=/path/to/notify.properties` (Python). Beam publishes a
 `ContractValidationEvent` for every check, before anything runs, but no `WriteEvent` or
-`JOB_SUMMARY`: it has no after-the-fact listener to see a write complete.
+`JOB_SUMMARY`: it has no after-the-fact listener to see a write complete. In dry-run mode it
+publishes `CONTRACT_INFERENCE` and `DRY_RUN_SUMMARY`, as Spark does.
 
 `InvaractSparkSessionExtension` builds the sink from `notify.properties` itself, passes it
 to `forContract` for `ContractValidationEvent`s, **and** registers a `SparkAdapterListener`
