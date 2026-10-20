@@ -58,15 +58,15 @@ class EncodingSpec extends AnyFunSuite {
     assert(Encoding.encode(asTag).toVector != Encoding.encode(asLeaf).toVector)
   }
 
-  test("sortKey orders same-length leaves by their unsigned byte content") {
-    // sortKey orders by the *full* self-delimited encoding (kind byte +
-    // length prefix + content, per §10) - for leaves of equal length, the
-    // identical length prefix cancels out, isolating a content comparison.
+  test("sortKey is the node's hash in lowercase hex, so it orders by the bytes a fingerprint is made of") {
     val a = CanonicalNode.stringLeaf("aaa")
     val b = CanonicalNode.stringLeaf("aab")
     val c = CanonicalNode.stringLeaf("aac")
-    val sorted = List(c, a, b).sortBy(Encoding.sortKey)
-    assert(sorted == List(a, b, c))
+    assert(Encoding.sortKey(a) == FingerprintHasher.hash(a).value)
+    assert(Encoding.sortKey(a).matches("[0-9a-f]{64}"))
+    val keys = List(a, b, c).map(Encoding.sortKey)
+    assert(List(c, a, b).sortBy(Encoding.sortKey).map(Encoding.sortKey) == keys.sorted)
+    assert(keys.distinct.size == 3)
   }
 
   test("decode rejects a byte string with an unrecognized kind marker") {
@@ -90,7 +90,7 @@ class EncodingSpec extends AnyFunSuite {
     assert(nodes.sortBy(Encoding.sortKey) == nodes.sortBy(Encoding.sortKey))
   }
 
-  test("sortKey is a pure function of the node's own encoded bytes: equal nodes sort identically") {
+  test("sortKey is a pure function of the node's content: equal nodes sort identically") {
     val n1 = CTag("X", List(CanonicalNode.intLeaf(1)))
     val n2 = CTag("X", List(CanonicalNode.intLeaf(1)))
     assert(Encoding.sortKey(n1) == Encoding.sortKey(n2))

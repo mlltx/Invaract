@@ -21,8 +21,8 @@ import org.apache.beam.sdk.transforms.DoFn.ProcessElement
 import org.apache.beam.sdk.extensions.avro.coders.AvroCoder
 import org.apache.beam.sdk.extensions.avro.schemas.utils.AvroUtils
 import org.apache.beam.sdk.schemas.transforms.{CoGroup, Group, Join, Filter => SchemaFilter}
-import org.apache.beam.sdk.transforms.{Combine, Contextful, Count, DoFn, MapElements, ParDo, SerializableFunction}
-import org.apache.beam.sdk.values.{PCollection, PCollectionTuple, Row, TypeDescriptor}
+import org.apache.beam.sdk.transforms.{Combine, Contextful, Count, DoFn, Flatten, MapElements, ParDo, SerializableFunction}
+import org.apache.beam.sdk.values.{PCollection, PCollectionList, PCollectionTuple, Row, TypeDescriptor}
 import org.apache.parquet.avro.AvroParquetWriter
 import org.apache.parquet.io.{OutputFile, PositionOutputStream}
 
@@ -85,9 +85,15 @@ private[beamadapter] object BeamScenarioJobs {
       asRows(reads.head, schemas.head, "AsRows0").apply("Filter", SchemaFilter.create[GenericRecord]().whereFieldName[AnyRef](column, new PositiveValue))
     }
     val (filtered, joinedFieldOf) = combine(firstFiltered :: reads.tail, schemas, job)
-    val stepped =
+    val opaque =
       if (job.opaqueStep) filtered.apply("OpaqueStep", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new IdentityFn)).setCoder(filtered.getCoder)
       else filtered
+    // branches that rejoin: two steps over the same collection, merged again (Flatten) each time
+    val stepped = (1 to job.rejoins).foldLeft(opaque) { (below, i) =>
+      def side(name: String) =
+        below.apply(s"$name$i", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new IdentityFn)).setCoder(below.getCoder)
+      PCollectionList.of(side("Left")).and(side("Right")).apply(s"Rejoin$i", Flatten.pCollections[GenericRecord]())
+    }
     val out = ReferenceAdapter.outputSchema(job)
     val outAvro = avro("report", out)
     val shaped = job.groupBy match {

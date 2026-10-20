@@ -39,6 +39,8 @@ undeclared-input-rejected
 undeclared-output-column-allowed-by-default
 undeclared-output-column-rejected
 unrecognized-step-does-not-hide-an-undeclared-read
+rejoining-branches-keep-the-read-beneath-them-visible
+rejoining-branches-do-not-hide-an-undeclared-read
 unrecognized-step-keeps-the-reads-beneath-it-visible
 untranslatable-write-fails-closed
 wrong-output-location

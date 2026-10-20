@@ -23,6 +23,8 @@ an-undeclared-second-write-is-blocked
 declared-output-never-written
 unrecognized-step-keeps-the-reads-beneath-it-visible
 unrecognized-step-does-not-hide-an-undeclared-read
+rejoining-branches-keep-the-read-beneath-them-visible
+rejoining-branches-do-not-hide-an-undeclared-read
 output-format-matches
 output-format-mismatch
 output-save-mode-matches

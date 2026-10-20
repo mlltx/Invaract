@@ -267,7 +267,10 @@ Sorting "by encoded canonical bytes" (rather than by, say, `Expr`'s
 natural Scala ordering, which doesn't exist for most of these types
 anyway) means the sort key is exactly the same byte string that will be
 hashed — no separate, potentially-inconsistent comparator to keep in
-sync with the encoder.
+sync with the encoder. Since version 4 (§10) the key is each element's own
+hash in hex (`Encoding.sortKey`) rather than its full encoding: the same
+deterministic, content-only order property, without re-encoding a large
+element, and it is exactly what the element contributes to its parent's hash.
 
 ---
 
@@ -340,7 +343,12 @@ raw alias, for the same alpha-renaming reason as §2.3 — but
 `<location>` itself, the real identifying half, is always present, so
 "which physical datasets does this transformation read from, and how
 many distinct occurrences of each" is legible directly from the map's
-keys without decoding anything.
+keys without decoding anything. An occurrence is a `Read` reached on the walk:
+a `Read` reached directly from two parents is two occurrences (a self-join),
+while one beneath a node with children that two parents share (`ir.Plan`) is one,
+since that node is walked once - the same counting `PlanFacts` in
+verification-core uses for reads. For a plan that shares nothing, which is every
+plan Spark's translation produces, the keys are what a tree walk gives.
 
 **Row mutation facts (`rowMutation`).** `ir.Plan` alone cannot represent
 a MERGE's `ON` condition or a conditional DELETE/UPDATE's predicate:
@@ -734,12 +742,37 @@ two different trees can ever encode to the same byte string by
 coincidence of where one field's text happened to end and the next
 began.
 
+**What is actually hashed: each node from its children's hashes (version 4).**
+Hashing the encoding above in one piece costs as much as the canonical tree
+drawn out in full, and that tree can be exponential in the plan's size: a plan
+may share a node between parents (`ir.Plan`'s doc: Beam's branches that rejoin,
+Spark's resolved checkpoints), and a column's resolved definition (§3's
+`expression`) inlines every column it refers to, so `v = v + v` repeated `k`
+times is `2^k` copies of the bottom definition even in a plain tree. So since
+version 4 the fingerprint is a Merkle hash (`Digests`, `Fingerprint.scala`):
+
+- a leaf's hash is `SHA-256(0x01 ++ varint(len) ++ bytes)`;
+- a tag's hash is `SHA-256(0x00 ++ varint(len(name)) ++ name ++ varint(fieldCount) ++ hash(field1) ++ ... ++ hash(fieldN))`,
+  each field's 32-byte hash in field order.
+
+Each `CanonicalNode` object is hashed once and its hash remembered, and the
+canonicalizer makes one `CanonicalNode` object per plan or expression object
+(`Canonicalizer.Canon`, `IdentityMemo` in `ir`), so a fingerprint costs the
+plan's distinct nodes. The rule keeps everything this section asks of the
+encoding: a node's hash still depends on its kind, its tag, the number and order
+of its fields and each field's content, and an equal copy of a node hashes the
+same as the node itself, so sharing never changes a fingerprint (a plan with a
+shared node fingerprints exactly as the same plan with that node copied;
+`SharedNodesSpec` holds both, and the bytes hashed, by hand).
+`Encoding.encode`/`decode` remain as the readable form of a canonical tree and
+for the round-trip property tests.
+
 **Fingerprint shape:**
 
 ```scala
 case class Fingerprint(version: Int, algorithm: String, value: String)
 // value: lowercase hex SHA-256 digest, e.g.
-// Fingerprint(version = 1, algorithm = "SHA-256", value = "4f2a...c9")
+// Fingerprint(version = 4, algorithm = "SHA-256", value = "4f2a...c9")
 ```
 
 **Versioning.** A single monotonically increasing integer,
@@ -1389,7 +1422,7 @@ A fingerprint section is appended on the same deterministic basis,
 "How to correct it" section:
 
 ```
-Fingerprints (v1, SHA-256):
+Fingerprints (v4, SHA-256):
   overall: 9c3d1a...
   outputs:
     customer_id: 55ee0f... (unchanged shape n/a — no prior fingerprint available here)

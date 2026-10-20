@@ -131,6 +131,7 @@ private[beamadapter] object BeamPythonConformanceAdapter {
       "untranslatableWrite" -> job.untranslatableWrite,
       "streaming" -> job.streaming,
       "opaqueStep" -> job.opaqueStep,
+      "rejoins" -> job.rejoins,
       "crossJoin" -> job.crossJoin,
       "groupBy" -> job.groupBy,
       "extraWrites" -> job.extraWrites.map(e => Map("input" -> dataset(e.input), "output" -> Map("location" -> e.output.location)))

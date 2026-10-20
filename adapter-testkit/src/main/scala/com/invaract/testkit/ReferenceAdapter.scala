@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
-import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
+import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Union, UnknownPlan, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, UnverifiableOperation, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.JobInfo
 
@@ -122,7 +122,9 @@ object ReferenceAdapter {
     val filtered: Plan = job.filterColumn.fold(joined)(c => Filter(joined, Comparison(">", ref(job, 0, c), Literal(0L, "long"))))
     // an opaque step is a node this adapter has no representation for: the translation keeps it as an UnknownPlan that
     // still carries the plan beneath it, which is what `ir.UnknownPlan` is for ("the rest of the tree stays inspectable")
-    val stepped: Plan = if (job.opaqueStep) UnknownPlan("a step the reference adapter has no representation for", "OpaqueStep", List(filtered)) else filtered
+    val opaque: Plan = if (job.opaqueStep) UnknownPlan("a step the reference adapter has no representation for", "OpaqueStep", List(filtered)) else filtered
+    // branches that rejoin: the step beneath is one node under both sides of the merge, as a graph-shaped engine hands it over
+    val stepped: Plan = (1 to job.rejoins).foldLeft(opaque)((below, _) => Union(List(below, below)))
     val columns = job.columns.map { c =>
       NamedExpr(
         c.name,

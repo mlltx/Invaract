@@ -162,6 +162,12 @@ def build(p, job, root, target):
     rows, field_of = combine(reads, job)
     if job["opaqueStep"]:
         rows = rows | "OpaqueStep" >> beam.Reshuffle()
+    # branches that rejoin: two steps over the same collection, merged again each time
+    for i in range(1, job.get("rejoins", 0) + 1):
+        typed = rows.element_type  # kept on both sides, so the merged rows keep their schema
+        rows = ((rows | f"Left{i}" >> beam.Map(lambda r: r).with_output_types(typed),
+                 rows | f"Right{i}" >> beam.Map(lambda r: r).with_output_types(typed))
+                | f"Rejoin{i}" >> beam.Flatten())
     out = row_type("Report", job["outputFields"])
     columns = job["columns"]
     if job.get("groupBy"):

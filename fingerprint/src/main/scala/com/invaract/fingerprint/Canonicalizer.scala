@@ -81,6 +81,9 @@ object Canonicalizer {
     // mutable stack, LIFO) rather than recursion for exactly that
     // reason - `scala.collection.mutable.Stack`, not `ArrayDeque`
     // (2.13-only; this module targets 2.12).
+    // A node with children that several parents share (see `ir.Plan`) is walked once, where it is first reached; a
+    // `Read` is an occurrence each time it is reached, as `PlanFacts` in verification-core counts reads.
+    val walked = new IdentityMemo[Plan, Unit]
     val worklist = scala.collection.mutable.Stack(plan)
     while (worklist.nonEmpty) {
       worklist.pop() match {
@@ -94,7 +97,10 @@ object Canonicalizer {
           // Pushed in reverse so popping (LIFO) still visits children in
           // the same left-to-right, top-to-bottom pre-order a recursive
           // walk would.
-          worklist.pushAll(other.children.reverse)
+          if (walked.get(other).isEmpty) {
+            walked.getOrElseUpdate(other, ())
+            worklist.pushAll(other.children.reverse)
+          }
       }
     }
     ScopeInfo(substitution.toMap, reads.toList)
@@ -177,94 +183,197 @@ object Canonicalizer {
     CTag("ColumnRef", List(stringLeaf(ref.name), qualifierNode))
   }
 
-  private def canonicalizeExprT(expr: Expr, scope: Map[String, String]): TailRec[CanonicalNode] = expr match {
-    case ColumnReference(ref) => done(CTag("ColumnReference", List(canonicalizeColumnRef(ref, scope))))
-    case Literal(value, literalType) => done(LiteralEncoding.encode(value, literalType))
-    case Alias(name, inner) =>
-      tailcall(canonicalizeExprT(inner, scope)).map(n => CTag("Alias", List(stringLeaf(name), n)))
-    case Cast(inner, targetType) =>
-      tailcall(canonicalizeExprT(inner, scope)).map(n => CTag("Cast", List(n, stringLeaf(targetType))))
-    // Operand order always preserved - never sorted, even for an
-    // abstractly-commutative operator. See §2.4/§6: floating-point
-    // rounding and evaluation-order hazards make blanket commutative
-    // normalisation unsafe as a default.
-    case Arithmetic(operator, operands) =>
-      traverseT(operands)(canonicalizeExprT(_, scope)).map(nodes => CTag("Arithmetic", stringLeaf(operator) :: nodes))
-    case Comparison(operator, left, right) =>
-      for {
-        l <- tailcall(canonicalizeExprT(left, scope))
-        r <- tailcall(canonicalizeExprT(right, scope))
-      } yield CTag("Comparison", List(stringLeaf(operator), l, r))
-    case BooleanExpr(operator, operands) =>
-      traverseT(operands)(canonicalizeExprT(_, scope)).map(nodes => CTag("BooleanExpr", stringLeaf(operator) :: nodes))
-    case Conditional(branches, elseValue) =>
-      // Branch order always preserved - first-matching-branch-wins makes
-      // it observable, unlike Aggregate.groupBy's set-like keys.
-      for {
-        branchNodes <- traverseT(branches) { case (cond, value) =>
-          for {
-            c <- tailcall(canonicalizeExprT(cond, scope))
-            v <- tailcall(canonicalizeExprT(value, scope))
-          } yield CTag("Branch", List(c, v)): CanonicalNode
+  /** One canonicalisation, under one scope table: what it has already canonicalised is remembered per plan and
+    * expression object, so a node shared by several parents (see `ir.Plan`), or an expression shared by several
+    * resolved columns (`resolvedOutputs`), becomes one `CanonicalNode` object, made once. `Digests` then hashes it
+    * once too. `digests` is the instance a fingerprint hashes with, so the set-like fields sorted here by hash are
+    * not hashed twice.
+    */
+  private[fingerprint] final class Canon(scope: Map[String, String]) {
+    private val exprs = new IdentityMemo[Expr, CanonicalNode]
+    private val plans = new IdentityMemo[Plan, CanonicalNode]
+    val digests = new Digests
+
+    def expr(e: Expr): CanonicalNode = exprT(e).result
+    def plan(p: Plan): CanonicalNode = planT(p).result
+
+    private def exprT(e: Expr): TailRec[CanonicalNode] = exprs.getOrElseUpdateT(e)(exprUncachedT(e))
+    private def planT(p: Plan): TailRec[CanonicalNode] = plans.getOrElseUpdateT(p)(planUncachedT(p))
+    private def canonicalizeColumnRef(ref: ColumnRef): CanonicalNode = Canonicalizer.canonicalizeColumnRef(ref, scope)
+    private def sorted(nodes: List[CanonicalNode]): List[CanonicalNode] = canonicallySorted(nodes, digests)
+
+    private def exprUncachedT(expr: Expr): TailRec[CanonicalNode] = expr match {
+      case ColumnReference(ref) => done(CTag("ColumnReference", List(canonicalizeColumnRef(ref))))
+      case Literal(value, literalType) => done(LiteralEncoding.encode(value, literalType))
+      case Alias(name, inner) =>
+        tailcall(exprT(inner)).map(n => CTag("Alias", List(stringLeaf(name), n)))
+      case Cast(inner, targetType) =>
+        tailcall(exprT(inner)).map(n => CTag("Cast", List(n, stringLeaf(targetType))))
+      // Operand order always preserved - never sorted, even for an
+      // abstractly-commutative operator. See §2.4/§6: floating-point
+      // rounding and evaluation-order hazards make blanket commutative
+      // normalisation unsafe as a default.
+      case Arithmetic(operator, operands) =>
+        traverseT(operands)(exprT(_)).map(nodes => CTag("Arithmetic", stringLeaf(operator) :: nodes))
+      case Comparison(operator, left, right) =>
+        for {
+          l <- tailcall(exprT(left))
+          r <- tailcall(exprT(right))
+        } yield CTag("Comparison", List(stringLeaf(operator), l, r))
+      case BooleanExpr(operator, operands) =>
+        traverseT(operands)(exprT(_)).map(nodes => CTag("BooleanExpr", stringLeaf(operator) :: nodes))
+      case Conditional(branches, elseValue) =>
+        // Branch order always preserved - first-matching-branch-wins makes
+        // it observable, unlike Aggregate.groupBy's set-like keys.
+        for {
+          branchNodes <- traverseT(branches) { case (cond, value) =>
+            for {
+              c <- tailcall(exprT(cond))
+              v <- tailcall(exprT(value))
+            } yield CTag("Branch", List(c, v)): CanonicalNode
+          }
+          elseNode <- elseValue match {
+            case Some(e) => tailcall(exprT(e)).map(n => CTag("Else", List(CTag("Option", List(n)))): CanonicalNode)
+            case None    => done(CTag("Else", List(CTag("Option"))): CanonicalNode)
+          }
+        } yield CTag("Conditional", branchNodes :+ elseNode)
+      // See the seed note above `canonicalizeColumnRef`: RAND/RANDN's
+      // sole argument is an analyzer-injected random seed when the call is
+      // unseeded, indistinguishable post-analysis from a genuinely
+      // user-written literal - excluded from the hash entirely for exactly
+      // these three names, never for any other Function.
+      case Function(name, _) if FunctionCatalog.isSeedBearing(name) =>
+        done(CTag("Function", List(stringLeaf(name))))
+      case Function(name, args) =>
+        traverseT(args)(exprT(_)).map(nodes => CTag("Function", stringLeaf(name) :: nodes))
+      case UDF(name, args, _engineType) =>
+        // engineType is deliberately never read here - reported as metadata
+        // elsewhere (see NonDeterminism/TransformationFingerprinter), never
+        // hash-affecting. See §7's rationale (translator-classification
+        // noise risk).
+        traverseT(args)(exprT(_)).map { nodes =>
+          CTag("UDF", List(optionNode(name.map(stringLeaf)), CTag("Args", nodes)))
         }
-        elseNode <- elseValue match {
-          case Some(e) => tailcall(canonicalizeExprT(e, scope)).map(n => CTag("Else", List(CTag("Option", List(n)))): CanonicalNode)
-          case None    => done(CTag("Else", List(CTag("Option"))): CanonicalNode)
+      case AggregateCall(function, arg, distinct) =>
+        tailcall(exprT(arg)).map(n => CTag("AggregateCall", List(stringLeaf(function), boolLeaf(distinct), n)))
+      case UnknownExpression(_description, sourceType, children) =>
+        // description is deliberately never read here - free text, excluded
+        // from the hash per §8 (surfaced as metadata elsewhere, never hash
+        // input). sourceType (a stable structural label for *what kind* of
+        // construct this is) and children are always included.
+        traverseT(children)(exprT(_)).map { nodes =>
+          CTag("UnknownExpression", List(stringLeaf(sourceType), CTag("Children", nodes)))
         }
-      } yield CTag("Conditional", branchNodes :+ elseNode)
-    // See the seed note above `canonicalizeColumnRef`: RAND/RANDN's
-    // sole argument is an analyzer-injected random seed when the call is
-    // unseeded, indistinguishable post-analysis from a genuinely
-    // user-written literal - excluded from the hash entirely for exactly
-    // these three names, never for any other Function.
-    case Function(name, _) if FunctionCatalog.isSeedBearing(name) =>
-      done(CTag("Function", List(stringLeaf(name))))
-    case Function(name, args) =>
-      traverseT(args)(canonicalizeExprT(_, scope)).map(nodes => CTag("Function", stringLeaf(name) :: nodes))
-    case UDF(name, args, _engineType) =>
-      // engineType is deliberately never read here - reported as metadata
-      // elsewhere (see NonDeterminism/TransformationFingerprinter), never
-      // hash-affecting. See §7's rationale (translator-classification
-      // noise risk).
-      traverseT(args)(canonicalizeExprT(_, scope)).map { nodes =>
-        CTag("UDF", List(optionNode(name.map(stringLeaf)), CTag("Args", nodes)))
-      }
-    case AggregateCall(function, arg, distinct) =>
-      tailcall(canonicalizeExprT(arg, scope)).map(n => CTag("AggregateCall", List(stringLeaf(function), boolLeaf(distinct), n)))
-    case UnknownExpression(_description, sourceType, children) =>
-      // description is deliberately never read here - free text, excluded
-      // from the hash per §8 (surfaced as metadata elsewhere, never hash
-      // input). sourceType (a stable structural label for *what kind* of
-      // construct this is) and children are always included.
-      traverseT(children)(canonicalizeExprT(_, scope)).map { nodes =>
-        CTag("UnknownExpression", List(stringLeaf(sourceType), CTag("Children", nodes)))
-      }
-    case StructField(struct, fieldName) =>
-      tailcall(canonicalizeExprT(struct, scope)).map(n => CTag("StructField", List(n, stringLeaf(fieldName))))
-    case StructConstruct(fields) =>
-      // Field order always preserved, never sorted - the same "never
-      // normalize an abstractly-reorderable operand" discipline
-      // Arithmetic/Conditional's own comments above already document.
-      traverseT(fields) { case (name, value) =>
-        tailcall(canonicalizeExprT(value, scope)).map(n => CTag("Field", List(stringLeaf(name), n)): CanonicalNode)
-      }.map(nodes => CTag("StructConstruct", nodes))
+      case StructField(struct, fieldName) =>
+        tailcall(exprT(struct)).map(n => CTag("StructField", List(n, stringLeaf(fieldName))))
+      case StructConstruct(fields) =>
+        // Field order always preserved, never sorted - the same "never
+        // normalize an abstractly-reorderable operand" discipline
+        // Arithmetic/Conditional's own comments above already document.
+        traverseT(fields) { case (name, value) =>
+          tailcall(exprT(value)).map(n => CTag("Field", List(stringLeaf(name), n)): CanonicalNode)
+        }.map(nodes => CTag("StructConstruct", nodes))
+    }
+
+
+    private def namedExprT(ne: NamedExpr): TailRec[CanonicalNode] =
+      tailcall(exprT(ne.expr)).map(n => CTag("NamedExpr", List(stringLeaf(ne.name), n)))
+
+    private def sortOrderT(order: SortOrder): TailRec[CanonicalNode] =
+      tailcall(exprT(order.expr)).map(n => CTag("SortOrder", List(n, boolLeaf(order.ascending), boolLeaf(order.nullsFirst))))
+
+    private def planUncachedT(plan: Plan): TailRec[CanonicalNode] = plan match {
+      case Read(dataset, _alias, catalog) =>
+        // alias is deliberately never read here - it never affects the hash
+        // directly, only (via ScopeInfo.substitution, applied at every
+        // ColumnRef site) which positional label downstream references are
+        // normalized to. See §2.3. catalog, unlike alias, does affect the
+        // hash - see canonicalizeCatalogIdentity's own doc.
+        done(CTag("Read", List(stringLeaf(dataset.location), canonicalizeCatalogIdentity(catalog))))
+      case Write(dataset, input, format, saveMode, catalog) =>
+        tailcall(planT(input)).map { inputNode =>
+          CTag(
+            "Write",
+            List(
+              stringLeaf(dataset.location),
+              inputNode,
+              optionNode(format.map(stringLeaf)),
+              optionNode(saveMode.map(stringLeaf)),
+              canonicalizeCatalogIdentity(catalog)
+            )
+          )
+        }
+      case Project(input, columns) =>
+        for {
+          inputNode <- tailcall(planT(input))
+          columnNodes <- traverseT(columns)(namedExprT(_))
+        } yield CTag("Project", inputNode :: columnNodes)
+      case Filter(input, condition) =>
+        for {
+          inputNode <- tailcall(planT(input))
+          conditionNode <- tailcall(exprT(condition))
+        } yield CTag("Filter", List(inputNode, conditionNode))
+      case Join(left, right, joinType, condition) =>
+        // left/right order always preserved - never reordered, even for a
+        // relationally-commutative Inner/Cross join. See §2.3/§2.4/§11: this
+        // is a deliberately accepted conservatism, not an oversight.
+        for {
+          leftNode <- tailcall(planT(left))
+          rightNode <- tailcall(planT(right))
+          conditionNode <- condition match {
+            case Some(c) => tailcall(exprT(c)).map(n => optionNode(Some(n)))
+            case None    => done(optionNode(None))
+          }
+        } yield CTag("Join", List(leftNode, rightNode, stringLeaf(joinType.toString), conditionNode))
+      case Aggregate(input, groupBy, aggregates) =>
+        // groupBy is set-like (a plain GROUP BY's key order doesn't change
+        // which rows fall in which group - this IR models no ROLLUP/CUBE/
+        // GROUPING SETS) - canonically sorted, unlike every ordered field
+        // above. See §2.4.
+        for {
+          inputNode <- tailcall(planT(input))
+          groupByNodes <- traverseT(groupBy)(exprT(_))
+          aggregateNodes <- traverseT(aggregates)(namedExprT(_))
+        } yield CTag("Aggregate", inputNode :: CTag("GroupBy", sorted(groupByNodes)) :: aggregateNodes)
+      case Union(inputs) =>
+        // Branch order always preserved - the IR's own doc: "Output column
+        // names follow the first branch."
+        traverseT(inputs)(planT(_)).map(nodes => CTag("Union", nodes))
+      case Sort(input, order) =>
+        for {
+          inputNode <- tailcall(planT(input))
+          orderNodes <- traverseT(order)(sortOrderT(_))
+        } yield CTag("Sort", inputNode :: orderNodes)
+      case Limit(input, limit, offset) =>
+        tailcall(planT(input)).map(n => CTag("Limit", List(n, intLeaf(limit), intLeaf(offset))))
+      case Window(input, windowExprs, partitionBy, orderBy) =>
+        // partitionBy is set-like, same reasoning as Aggregate.groupBy above;
+        // orderBy is not (it defines window-function ordering, e.g. RANK) -
+        // preserved, mirroring Sort.order.
+        for {
+          inputNode <- tailcall(planT(input))
+          partitionNodes <- traverseT(partitionBy)(exprT(_))
+          orderNodes <- traverseT(orderBy)(sortOrderT(_))
+          windowNodes <- traverseT(windowExprs)(namedExprT(_))
+        } yield CTag(
+          "Window",
+          inputNode :: CTag("PartitionBy", sorted(partitionNodes)) :: CTag("OrderBy", orderNodes) :: windowNodes
+        )
+      case UnknownPlan(_description, sourceType, children) =>
+        // Same description/sourceType split as UnknownExpression above.
+        traverseT(children)(planT(_)).map(nodes => CTag("UnknownPlan", stringLeaf(sourceType) :: nodes))
+    }
   }
 
-  def canonicalizeExpr(expr: Expr, scope: Map[String, String]): CanonicalNode = canonicalizeExprT(expr, scope).result
-
-  private def canonicalizeNamedExprT(ne: NamedExpr, scope: Map[String, String]): TailRec[CanonicalNode] =
-    tailcall(canonicalizeExprT(ne.expr, scope)).map(n => CTag("NamedExpr", List(stringLeaf(ne.name), n)))
-
-  private def canonicalizeSortOrderT(order: SortOrder, scope: Map[String, String]): TailRec[CanonicalNode] =
-    tailcall(canonicalizeExprT(order.expr, scope)).map(n => CTag("SortOrder", List(n, boolLeaf(order.ascending), boolLeaf(order.nullsFirst))))
+  def canonicalizeExpr(expr: Expr, scope: Map[String, String]): CanonicalNode = new Canon(scope).expr(expr)
 
   /** Sorts a set-like list of already-canonicalized expressions by their
-    * own encoded bytes (§2.4) - used only for `Aggregate.groupBy`/
+    * own hash (§2.4, `Encoding.sortKey`) - used only for `Aggregate.groupBy`/
     * `Window.partitionBy`, whose declared order carries no relational
     * meaning (unlike every other ordered field in the IR).
     */
-  private def canonicallySorted(nodes: List[CanonicalNode]): List[CanonicalNode] =
-    nodes.sortBy(Encoding.sortKey)
+  private def canonicallySorted(nodes: List[CanonicalNode], digests: Digests = new Digests): List[CanonicalNode] =
+    nodes.sortBy(digests.hex)
 
   // ---------------------------------------------------------------------
   // Plans
@@ -295,89 +404,7 @@ object Canonicalizer {
       )
     })
 
-  private def canonicalizePlanT(plan: Plan, scope: Map[String, String]): TailRec[CanonicalNode] = plan match {
-    case Read(dataset, _alias, catalog) =>
-      // alias is deliberately never read here - it never affects the hash
-      // directly, only (via ScopeInfo.substitution, applied at every
-      // ColumnRef site) which positional label downstream references are
-      // normalized to. See §2.3. catalog, unlike alias, does affect the
-      // hash - see canonicalizeCatalogIdentity's own doc.
-      done(CTag("Read", List(stringLeaf(dataset.location), canonicalizeCatalogIdentity(catalog))))
-    case Write(dataset, input, format, saveMode, catalog) =>
-      tailcall(canonicalizePlanT(input, scope)).map { inputNode =>
-        CTag(
-          "Write",
-          List(
-            stringLeaf(dataset.location),
-            inputNode,
-            optionNode(format.map(stringLeaf)),
-            optionNode(saveMode.map(stringLeaf)),
-            canonicalizeCatalogIdentity(catalog)
-          )
-        )
-      }
-    case Project(input, columns) =>
-      for {
-        inputNode <- tailcall(canonicalizePlanT(input, scope))
-        columnNodes <- traverseT(columns)(canonicalizeNamedExprT(_, scope))
-      } yield CTag("Project", inputNode :: columnNodes)
-    case Filter(input, condition) =>
-      for {
-        inputNode <- tailcall(canonicalizePlanT(input, scope))
-        conditionNode <- tailcall(canonicalizeExprT(condition, scope))
-      } yield CTag("Filter", List(inputNode, conditionNode))
-    case Join(left, right, joinType, condition) =>
-      // left/right order always preserved - never reordered, even for a
-      // relationally-commutative Inner/Cross join. See §2.3/§2.4/§11: this
-      // is a deliberately accepted conservatism, not an oversight.
-      for {
-        leftNode <- tailcall(canonicalizePlanT(left, scope))
-        rightNode <- tailcall(canonicalizePlanT(right, scope))
-        conditionNode <- condition match {
-          case Some(c) => tailcall(canonicalizeExprT(c, scope)).map(n => optionNode(Some(n)))
-          case None    => done(optionNode(None))
-        }
-      } yield CTag("Join", List(leftNode, rightNode, stringLeaf(joinType.toString), conditionNode))
-    case Aggregate(input, groupBy, aggregates) =>
-      // groupBy is set-like (a plain GROUP BY's key order doesn't change
-      // which rows fall in which group - this IR models no ROLLUP/CUBE/
-      // GROUPING SETS) - canonically sorted, unlike every ordered field
-      // above. See §2.4.
-      for {
-        inputNode <- tailcall(canonicalizePlanT(input, scope))
-        groupByNodes <- traverseT(groupBy)(canonicalizeExprT(_, scope))
-        aggregateNodes <- traverseT(aggregates)(canonicalizeNamedExprT(_, scope))
-      } yield CTag("Aggregate", inputNode :: CTag("GroupBy", canonicallySorted(groupByNodes)) :: aggregateNodes)
-    case Union(inputs) =>
-      // Branch order always preserved - the IR's own doc: "Output column
-      // names follow the first branch."
-      traverseT(inputs)(canonicalizePlanT(_, scope)).map(nodes => CTag("Union", nodes))
-    case Sort(input, order) =>
-      for {
-        inputNode <- tailcall(canonicalizePlanT(input, scope))
-        orderNodes <- traverseT(order)(canonicalizeSortOrderT(_, scope))
-      } yield CTag("Sort", inputNode :: orderNodes)
-    case Limit(input, limit, offset) =>
-      tailcall(canonicalizePlanT(input, scope)).map(n => CTag("Limit", List(n, intLeaf(limit), intLeaf(offset))))
-    case Window(input, windowExprs, partitionBy, orderBy) =>
-      // partitionBy is set-like, same reasoning as Aggregate.groupBy above;
-      // orderBy is not (it defines window-function ordering, e.g. RANK) -
-      // preserved, mirroring Sort.order.
-      for {
-        inputNode <- tailcall(canonicalizePlanT(input, scope))
-        partitionNodes <- traverseT(partitionBy)(canonicalizeExprT(_, scope))
-        orderNodes <- traverseT(orderBy)(canonicalizeSortOrderT(_, scope))
-        windowNodes <- traverseT(windowExprs)(canonicalizeNamedExprT(_, scope))
-      } yield CTag(
-        "Window",
-        inputNode :: CTag("PartitionBy", canonicallySorted(partitionNodes)) :: CTag("OrderBy", orderNodes) :: windowNodes
-      )
-    case UnknownPlan(_description, sourceType, children) =>
-      // Same description/sourceType split as UnknownExpression above.
-      traverseT(children)(canonicalizePlanT(_, scope)).map(nodes => CTag("UnknownPlan", stringLeaf(sourceType) :: nodes))
-  }
-
-  def canonicalizePlan(plan: Plan, scope: Map[String, String]): CanonicalNode = canonicalizePlanT(plan, scope).result
+  def canonicalizePlan(plan: Plan, scope: Map[String, String]): CanonicalNode = new Canon(scope).plan(plan)
 
   // ---------------------------------------------------------------------
   // Lineage summary layer (§3's "lineage" fingerprint)
@@ -466,104 +493,121 @@ object Canonicalizer {
   // kind of plan-shape-aware logic spark-adapter itself already writes
   // against ir's public surface.
 
-  private def resolveExprDeepT(expr: Expr, input: Plan): TailRec[Expr] = expr match {
-    case ColumnReference(ref) => tailcall(resolveRefDeepT(ref, input)).map(_.getOrElse(expr))
-    case literal: Literal     => done(literal)
-    case Alias(name, inner)   => tailcall(resolveExprDeepT(inner, input)).map(Alias(name, _))
-    case Cast(inner, targetType) => tailcall(resolveExprDeepT(inner, input)).map(Cast(_, targetType))
-    case Arithmetic(operator, operands) => traverseT(operands)(resolveExprDeepT(_, input)).map(Arithmetic(operator, _))
-    case Comparison(operator, left, right) =>
-      for {
-        l <- tailcall(resolveExprDeepT(left, input))
-        r <- tailcall(resolveExprDeepT(right, input))
-      } yield Comparison(operator, l, r)
-    case BooleanExpr(operator, operands) => traverseT(operands)(resolveExprDeepT(_, input)).map(BooleanExpr(operator, _))
-    case Conditional(branches, elseValue) =>
-      for {
-        resolvedBranches <- traverseT(branches) { case (cond, value) =>
-          for {
-            c <- tailcall(resolveExprDeepT(cond, input))
-            v <- tailcall(resolveExprDeepT(value, input))
-          } yield (c, v)
-        }
-        resolvedElse <- elseValue match {
-          case Some(e) => tailcall(resolveExprDeepT(e, input)).map(Some(_): Option[Expr])
-          case None    => done(None: Option[Expr])
-        }
-      } yield Conditional(resolvedBranches, resolvedElse)
-    case Function(name, args) => traverseT(args)(resolveExprDeepT(_, input)).map(Function(name, _))
-    case UDF(name, args, engineType) => traverseT(args)(resolveExprDeepT(_, input)).map(UDF(name, _, engineType))
-    case AggregateCall(function, arg, distinct) => tailcall(resolveExprDeepT(arg, input)).map(AggregateCall(function, _, distinct))
-    case UnknownExpression(description, sourceType, children) =>
-      traverseT(children)(resolveExprDeepT(_, input)).map(UnknownExpression(description, sourceType, _))
-    case StructField(struct, fieldName) =>
-      tailcall(resolveExprDeepT(struct, input)).map(StructField(_, fieldName))
-    case StructConstruct(fields) =>
-      traverseT(fields) { case (name, value) =>
-        tailcall(resolveExprDeepT(value, input)).map(name -> _)
-      }.map(StructConstruct(_))
-  }
+  /** One resolution: what each column name resolves to below each plan node is remembered (by node object), so a
+    * column several expressions refer to (`v = v + v`, repeated) or a node shared by several parents is resolved
+    * once. The expressions it returns share those results as objects: the inlined definition of such a column is a
+    * graph of expressions, not a tree, which `Canon` then canonicalises once per object.
+    */
+  private final class Resolve {
+    private val refs = new IdentityMemo[Plan, scala.collection.mutable.HashMap[ColumnRef, Option[Expr]]]
 
-  def resolveExprDeep(expr: Expr, input: Plan): Expr = resolveExprDeepT(expr, input).result
-
-  private def resolveRefDeepT(ref: ColumnRef, plan: Plan): TailRec[Option[Expr]] = plan match {
-    case Read(dataset, alias, _) =>
-      val scope = alias.getOrElse(dataset.location)
-      done(if (ref.qualifier.forall(_ == scope)) Some(ColumnReference(ColumnRef(ref.name, Some(scope)))) else None)
-    case Project(input, columns) =>
-      columns.find(_.name == ref.name) match {
-        case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
-        case None     => done(None)
-      }
-    case Aggregate(input, _, aggregates) =>
-      aggregates.find(_.name == ref.name) match {
-        case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
-        case None     => done(None)
-      }
-    case Window(input, windowExprs, _, _) =>
-      windowExprs.find(_.name == ref.name) match {
-        case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
-        case None     => tailcall(resolveRefDeepT(ref, input))
-      }
-    case Filter(input, _)   => tailcall(resolveRefDeepT(ref, input))
-    case Sort(input, _)     => tailcall(resolveRefDeepT(ref, input))
-    case Limit(input, _, _) => tailcall(resolveRefDeepT(ref, input))
-    case Union(inputs) =>
-      // Unlike ir.Lineage's combineUnion (which merges every plausible
-      // candidate's *summary* into one Provenance), reconstructing a
-      // single Expr means picking one concrete candidate when more than
-      // one branch resolves the name - the first, in declared branch
-      // order, deterministically. A narrower limitation than Lineage's own
-      // resolution for this one ambiguous case; the "lineage" fingerprint
-      // layer (built from ir.Lineage.trace directly) is unaffected and
-      // still unions every candidate's real sources. Trampolined the same
-      // way as everywhere else in this file - a Union with many branches
-      // is exactly as real-world-plausible as a long Project chain.
-      def firstMatch(remaining: List[Plan]): TailRec[Option[Expr]] = remaining match {
-        case Nil => done(None)
-        case head :: tail =>
-          tailcall(resolveRefDeepT(ref, head)).flatMap {
-            case found @ Some(_) => done(found)
-            case None            => firstMatch(tail)
+    def resolveExprDeepT(expr: Expr, input: Plan): TailRec[Expr] = expr match {
+      case ColumnReference(ref) => tailcall(resolveRefDeepT(ref, input)).map(_.getOrElse(expr))
+      case literal: Literal     => done(literal)
+      case Alias(name, inner)   => tailcall(resolveExprDeepT(inner, input)).map(Alias(name, _))
+      case Cast(inner, targetType) => tailcall(resolveExprDeepT(inner, input)).map(Cast(_, targetType))
+      case Arithmetic(operator, operands) => traverseT(operands)(resolveExprDeepT(_, input)).map(Arithmetic(operator, _))
+      case Comparison(operator, left, right) =>
+        for {
+          l <- tailcall(resolveExprDeepT(left, input))
+          r <- tailcall(resolveExprDeepT(right, input))
+        } yield Comparison(operator, l, r)
+      case BooleanExpr(operator, operands) => traverseT(operands)(resolveExprDeepT(_, input)).map(BooleanExpr(operator, _))
+      case Conditional(branches, elseValue) =>
+        for {
+          resolvedBranches <- traverseT(branches) { case (cond, value) =>
+            for {
+              c <- tailcall(resolveExprDeepT(cond, input))
+              v <- tailcall(resolveExprDeepT(value, input))
+            } yield (c, v)
           }
+          resolvedElse <- elseValue match {
+            case Some(e) => tailcall(resolveExprDeepT(e, input)).map(Some(_): Option[Expr])
+            case None    => done(None: Option[Expr])
+          }
+        } yield Conditional(resolvedBranches, resolvedElse)
+      case Function(name, args) => traverseT(args)(resolveExprDeepT(_, input)).map(Function(name, _))
+      case UDF(name, args, engineType) => traverseT(args)(resolveExprDeepT(_, input)).map(UDF(name, _, engineType))
+      case AggregateCall(function, arg, distinct) => tailcall(resolveExprDeepT(arg, input)).map(AggregateCall(function, _, distinct))
+      case UnknownExpression(description, sourceType, children) =>
+        traverseT(children)(resolveExprDeepT(_, input)).map(UnknownExpression(description, sourceType, _))
+      case StructField(struct, fieldName) =>
+        tailcall(resolveExprDeepT(struct, input)).map(StructField(_, fieldName))
+      case StructConstruct(fields) =>
+        traverseT(fields) { case (name, value) =>
+          tailcall(resolveExprDeepT(value, input)).map(name -> _)
+        }.map(StructConstruct(_))
+    }
+
+    private def resolveRefDeepT(ref: ColumnRef, plan: Plan): TailRec[Option[Expr]] = {
+      val byRef = refs.getOrElseUpdate(plan, scala.collection.mutable.HashMap.empty)
+      byRef.get(ref) match {
+        case Some(resolved) => done(resolved)
+        case None           => resolveRefDeepUncachedT(ref, plan).map { resolved => byRef(ref) = resolved; resolved }
       }
-      firstMatch(inputs)
-    case Join(left, right, _, _) =>
-      for {
-        l <- tailcall(resolveRefDeepT(ref, left))
-        r <- tailcall(resolveRefDeepT(ref, right))
-      } yield (l, r) match {
-        case (Some(lv), None) => Some(lv)
-        case (None, Some(rv)) => Some(rv)
-        // Both sides match an unqualified name - genuinely ambiguous.
-        // Same deterministic-but-narrower-than-Lineage choice as Union
-        // above: prefer the left side.
-        case (Some(lv), Some(_)) => Some(lv)
-        case (None, None)        => None
-      }
-    case Write(_, input, _, _, _) => tailcall(resolveRefDeepT(ref, input))
-    case UnknownPlan(_, _, _)     => done(None)
+    }
+
+    private def resolveRefDeepUncachedT(ref: ColumnRef, plan: Plan): TailRec[Option[Expr]] = plan match {
+      case Read(dataset, alias, _) =>
+        val scope = alias.getOrElse(dataset.location)
+        done(if (ref.qualifier.forall(_ == scope)) Some(ColumnReference(ColumnRef(ref.name, Some(scope)))) else None)
+      case Project(input, columns) =>
+        columns.find(_.name == ref.name) match {
+          case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
+          case None     => done(None)
+        }
+      case Aggregate(input, _, aggregates) =>
+        aggregates.find(_.name == ref.name) match {
+          case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
+          case None     => done(None)
+        }
+      case Window(input, windowExprs, _, _) =>
+        windowExprs.find(_.name == ref.name) match {
+          case Some(nc) => tailcall(resolveExprDeepT(nc.expr, input)).map(Some(_))
+          case None     => tailcall(resolveRefDeepT(ref, input))
+        }
+      case Filter(input, _)   => tailcall(resolveRefDeepT(ref, input))
+      case Sort(input, _)     => tailcall(resolveRefDeepT(ref, input))
+      case Limit(input, _, _) => tailcall(resolveRefDeepT(ref, input))
+      case Union(inputs) =>
+        // Unlike ir.Lineage's combineUnion (which merges every plausible
+        // candidate's *summary* into one Provenance), reconstructing a
+        // single Expr means picking one concrete candidate when more than
+        // one branch resolves the name - the first, in declared branch
+        // order, deterministically. A narrower limitation than Lineage's own
+        // resolution for this one ambiguous case; the "lineage" fingerprint
+        // layer (built from ir.Lineage.trace directly) is unaffected and
+        // still unions every candidate's real sources. Trampolined the same
+        // way as everywhere else in this file - a Union with many branches
+        // is exactly as real-world-plausible as a long Project chain.
+        def firstMatch(remaining: List[Plan]): TailRec[Option[Expr]] = remaining match {
+          case Nil => done(None)
+          case head :: tail =>
+            tailcall(resolveRefDeepT(ref, head)).flatMap {
+              case found @ Some(_) => done(found)
+              case None            => firstMatch(tail)
+            }
+        }
+        firstMatch(inputs)
+      case Join(left, right, _, _) =>
+        for {
+          l <- tailcall(resolveRefDeepT(ref, left))
+          r <- tailcall(resolveRefDeepT(ref, right))
+        } yield (l, r) match {
+          case (Some(lv), None) => Some(lv)
+          case (None, Some(rv)) => Some(rv)
+          // Both sides match an unqualified name - genuinely ambiguous.
+          // Same deterministic-but-narrower-than-Lineage choice as Union
+          // above: prefer the left side.
+          case (Some(lv), Some(_)) => Some(lv)
+          case (None, None)        => None
+        }
+      case Write(_, input, _, _, _) => tailcall(resolveRefDeepT(ref, input))
+      case UnknownPlan(_, _, _)     => done(None)
+    }
   }
+
+  def resolveExprDeep(expr: Expr, input: Plan): Expr = new Resolve().resolveExprDeepT(expr, input).result
 
   /** The per-output deep-resolved expression for every output name a
     * `Write`'s (or a bare plan's) top-level `Project`/`Aggregate`/`Window`
@@ -573,15 +617,16 @@ object Canonicalizer {
     * isn't reused directly from `ir.Lineage`).
     */
   def resolvedOutputs(plan: Plan): Map[String, Expr] = {
+    val resolve = new Resolve
     def outputsOfT(p: Plan): TailRec[List[(String, Expr)]] = p match {
       case Project(input, columns) =>
-        traverseT(columns)(nc => tailcall(resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
+        traverseT(columns)(nc => tailcall(resolve.resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
       case Aggregate(input, _, aggregates) =>
-        traverseT(aggregates)(nc => tailcall(resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
+        traverseT(aggregates)(nc => tailcall(resolve.resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
       case Window(input, windowExprs, _, _) =>
         for {
           base <- tailcall(outputsOfT(input))
-          windowOnes <- traverseT(windowExprs)(nc => tailcall(resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
+          windowOnes <- traverseT(windowExprs)(nc => tailcall(resolve.resolveExprDeepT(nc.expr, input)).map(nc.name -> _))
         } yield base ++ windowOnes
       case Filter(input, _)   => tailcall(outputsOfT(input))
       case Sort(input, _)     => tailcall(outputsOfT(input))

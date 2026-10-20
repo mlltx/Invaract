@@ -19,6 +19,29 @@ object JoinType {
   * here corresponds to a step in the pipeline the way a person would
   * describe it ("read", "filter", "join", "aggregate"), not to an engine's
   * internal execution or optimization representation.
+  *
+  * '''A plan is a graph, not necessarily a tree.''' A node may be the child of
+  * more than one parent: an adapter for an engine that describes a job as a
+  * graph (Beam, where one collection feeds two steps whose results are later
+  * merged) gives such a step one `Plan` object under both parents. (Spark's
+  * translation builds a tree: each use of a node is translated afresh.) There
+  * are no cycles. Two rules follow, and every
+  * walk in `ir`, `fingerprint` and `verification-core` keeps them:
+  *
+  *  - A walk works out each node object once (`IdentityMemo`), so its cost is
+  *    in proportion to the distinct nodes, not to the paths through them: `k`
+  *    branches that rejoin in a row are `2^k` paths. The same holds for a
+  *    column several expressions refer to (`v = v + v`, repeated), which is
+  *    the same blow-up in a tree.
+  *  - Nodes are told apart by reference, never by `==` or as keys of a hash
+  *    set or map: a case class's `equals` and `hashCode` themselves walk every
+  *    path. Two equal nodes that are separate objects are two nodes (a table
+  *    read on both sides of a self-join).
+  *
+  * What a walk computes does not depend on whether a node is shared: a shared
+  * node gives the same answer as two equal copies of it would. (The one
+  * exception is what counts as one occurrence of something: see `PlanFacts`
+  * in verification-core and the fingerprint's inputs.)
   */
 sealed trait Plan {
   def children: List[Plan]
