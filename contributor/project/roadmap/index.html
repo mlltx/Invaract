@@ -4063,7 +4063,8 @@ through a wrapper runner named with <code dir="auto">--runner</code>; files, Big
 streaming; transformation-shape rules from Beam’s schema transforms; conforms to 44 scenarios, the
 kit skipping the rest with the declaration’s reason (no row-level DML, no checkpoints, analyses it
 does not offer); tested on Beam 2.60 to 2.77 in CI’s version matrix, with a hand-over
-to Flink proven</li>
+to Flink proven; a check-only mode (<code dir="auto">--invaractCheckOnly=true</code>) checks an unmodified job in CI without running
+it or building its runner</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the <code dir="auto">invaract_beam</code> package’s wrapper runner writes the
 pipeline’s portable form and runs a Java checker on it, which translates it with the Beam adapter’s own
 translator; conforms to 44 scenarios (13 by refusing safely: transformation-shape rules and analyses are

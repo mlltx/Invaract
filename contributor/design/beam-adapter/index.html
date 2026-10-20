@@ -897,6 +897,21 @@ pipeline is built (a classic Dataflow template’s parameter) is shown in displa
 provider’s text). Now a read from one is an <code dir="auto">UnlocatedRead</code> naming the parameter (D12) and a write to one is refused as
 unverifiable, naming it: the check runs before the values exist. A Flex Template builds its pipeline with the values, so it
 is checked like any job. <code dir="auto">BeamIO.isRuntimeParameter</code>.</li>
+<li><strong>D22. Decided: a check-only mode for CI (<code dir="auto">--invaractCheckOnly=true</code>, Python <code dir="auto">--invaract_check_only=true</code>).</strong> The whole
+pipeline is known before it runs, which Spark never offers (its writes are seen one at a time, as they execute, in a live
+session that has read its inputs’ schemas), so a Beam job can be checked in a CI build with no data or cluster. The flag is
+separate from <code dir="auto">--invaractDelegate</code> so that CI takes the production command line unchanged and adds one flag: the delegate
+is not built (building Dataflow’s runner checks a project and credentials), but its name is resolved, so a misspelt one fails
+CI too. <code dir="auto">run</code> returns <code dir="auto">CheckedOnly</code> (state <code dir="auto">DONE</code>, empty metrics made by Beam’s own <code dir="auto">MetricQueryResults.create</code>, called by
+reflection because its arity grew across 2.60-2.77), so a job that waits for its pipeline ends normally. A value other
+than true or false refuses to start, naming the flag, rather than running the job. Events carry
+<code dir="auto">engineDetails.checkOnly = "true"</code> (Python: the package passes <code dir="auto">--check_only=true</code> to the checker). With dry-run mode it
+infers the job’s contract without running it. What reaches external systems before Invaract sees the pipeline is Beam’s
+own step validation (<code dir="auto">Pipeline.validate</code>, which <code dir="auto">Pipeline.run</code> calls after building the runner and before <code dir="auto">run</code>), probed on
+2.77 with no credentials: BigQuery’s default validation looks up the dataset and validates a query (<code dir="auto">withoutValidation()</code>
+avoids it; <code dir="auto">--tempLocation</code> must be set either way); files, Kafka, JDBC and Pub/Sub contact nothing. In Python, BigQuery and
+Pub/Sub contact nothing, but a file read checks its pattern matches files when the pipeline is built (<code dir="auto">validate=False</code>
+avoids it). <code dir="auto">BeamAttachSpec</code>/<code dir="auto">BeamPythonAttachSpec</code> “check only”, <code dir="auto">PortableCheckSpec</code>, <code dir="auto">test_runner.py</code>.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="friction-log">Friction log</h2><a class="sl-anchor-link" href="#friction-log"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Friction log”</span></a></div>
 <p>Every undocumented decision, surprise, or guess made while building this adapter, as it happened. It is the input to improving
@@ -1104,6 +1119,14 @@ found a blow-up Spark could reach without any sharing: a column defined from its
 shape as two scenarios (<code dir="auto">rejoining-branches-*</code>, <code dir="auto">ScenarioJob.rejoins</code>): the Java pipeline merges with <code dir="auto">Flatten</code>, the
 Python one with <code dir="auto">beam.Flatten()</code>, and both adapters conform to both. <em>For the guide:</em> settle what shape the IR may
 have in the IR itself; a fix in the one walk an engine reaches first leaves the others for the next engine.</p>
+</li>
+<li>
+<p><strong>Checking without running is the feature Beam gives that Spark cannot (D22).</strong> The runner hook already ran before the
+pipeline did, so the mode is a branch in <code dir="auto">InvaractRunner.run</code>, not a new mechanism. Two things were not obvious: the
+delegate must not even be built (its construction is where production runners check credentials), and Beam’s own step
+validation runs before any runner sees the pipeline, so “needs no credentials” is true per IO, not in general, and had to be
+probed rather than assumed. <em>For the guide:</em> an adapter whose hook sees the whole job before it runs should offer this, and
+should probe and document what the engine itself does before the hook.</p>
 </li>
 </ol>
 <div class="sl-heading-wrapper level-h2"><h2 id="unverified-items">Unverified items</h2><a class="sl-anchor-link" href="#unverified-items"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified items”</span></a></div>
