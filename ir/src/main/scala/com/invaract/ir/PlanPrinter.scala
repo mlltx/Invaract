@@ -7,13 +7,25 @@ package com.invaract.ir
   * demonstrating that the IR captures a transformation's real structure.
   * Rendering is a separate concern from the plan/expression model itself —
   * `Plan.scala` and `Expr.scala` carry no display logic.
+  *
+  * A node object that more than one parent holds (an engine that describes a
+  * job as a graph, such as Beam, shares the plan of a collection read by two
+  * branches) is drawn in full where it is first reached; each later time it is
+  * one line, its label marked `(shown above)`. Drawn as a tree, `k` branches
+  * that rejoin in a row would be `2^k` copies. Nodes are told apart by
+  * reference: two equal plans that are not the same object are both drawn.
   */
 object PlanPrinter {
 
+  /** The mark on a node drawn earlier in the same rendering. */
+  val ShownAbove = "(shown above)"
+
   def render(plan: Plan): String = {
     val sb = new StringBuilder
+    val drawn = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Plan, java.lang.Boolean]())
+    drawn.add(plan)
     sb.append(label(plan)).append("\n")
-    renderChildren(contentOf(plan), sb, "")
+    renderChildren(contentOf(plan), sb, "", drawn)
     sb.toString()
   }
 
@@ -37,7 +49,7 @@ object PlanPrinter {
     case other => other.children.map(Right(_))
   }
 
-  private def renderChildren(items: List[Either[String, Plan]], sb: StringBuilder, prefix: String): Unit =
+  private def renderChildren(items: List[Either[String, Plan]], sb: StringBuilder, prefix: String, drawn: java.util.Set[Plan]): Unit =
     items.zipWithIndex.foreach { case (item, idx) =>
       val isLast = idx == items.length - 1
       val branch = if (isLast) "└─ " else "├─ "
@@ -46,8 +58,12 @@ object PlanPrinter {
         case Left(line) =>
           sb.append(prefix).append(branch).append(line).append("\n")
         case Right(child) =>
-          sb.append(prefix).append(branch).append(label(child)).append("\n")
-          renderChildren(contentOf(child), sb, childPrefix)
+          val content = contentOf(child)
+          // a node with nothing under it is the same line either way
+          if (drawn.add(child) || content.isEmpty) {
+            sb.append(prefix).append(branch).append(label(child)).append("\n")
+            renderChildren(content, sb, childPrefix, drawn)
+          } else sb.append(prefix).append(branch).append(label(child)).append(" ").append(ShownAbove).append("\n")
       }
     }
 

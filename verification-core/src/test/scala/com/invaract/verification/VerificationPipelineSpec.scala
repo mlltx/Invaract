@@ -571,4 +571,32 @@ class VerificationPipelineSpec extends AnyFunSuite {
     }
     assert(validationEvents(sink).map(_.job) == List(Some(job), Some(job)))
   }
+
+  // --- plans that share nodes ------------------------------------------------------------------
+
+  // A plan an engine that describes a job as a graph hands over (Beam: a collection read by two branches that
+  // later rejoin): 40 steps, each two branches over the same node below, so 2^40 paths from the write to the read.
+  private def rejoining(steps: Int): Plan =
+    Write(
+      DatasetRef("out/report"),
+      (1 to steps).foldLeft[Plan](Read(DatasetRef(orders))) { (below, i) =>
+        UnknownPlan(s"Flatten $i", "Flatten", List(UnknownPlan(s"Left $i", "ParDo", List(below)), UnknownPlan(s"Right $i", "ParDo", List(below))))
+      }
+    )
+
+  test("verifyWrite: a plan whose branches rejoin many times is checked node by node, not path by path") {
+    val sink = new TestNotificationSink
+    val options = VerificationOptions(staticDataQuality = true, roleConsistency = true)
+    VerificationPipeline.verifyWrite(contract, checked(plan = rejoining(40)), options, Some(sink))
+    assert(validationEvents(sink).map(_.status) == List("PASSED"))
+  }
+
+  test("rejectUnverifiableWrite: the explanation of a plan whose branches rejoin draws each shared step once") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.rejectUnverifiableWrite(contract, UnverifiableOperation("X", "x", "r"), rejoining(40))
+    }
+    assert(ex.getMessage.contains("UnknownPlan(Flatten 40)"))
+    assert(ex.getMessage.contains(com.invaract.ir.PlanPrinter.ShownAbove))
+    assert(ex.getMessage.length < 100000, ex.getMessage.length) // about 25 KB; drawn as a tree it would be 2^40 lines
+  }
 }

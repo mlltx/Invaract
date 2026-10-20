@@ -6,6 +6,7 @@ package com.invaract.beamadapter
 import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.{DatasetRef, Plan, Read, UnknownPlan, Write}
 import com.invaract.testkit.{ColumnSource, JoinOn, OutColumn, ScenarioInput, ScenarioJob, ScenarioOutput}
+import com.invaract.verification.PlanFacts
 import org.apache.avro.generic.GenericRecord
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.coders.ByteArrayCoder
@@ -32,15 +33,10 @@ class BeamTranslatorSpec extends AnyFunSuite {
   private def parquetWrite(records: PCollection[GenericRecord], dir: String = "/data/out/report", name: String = "WriteReport"): Unit =
     records.apply(name, FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to(dir).withSuffix(".parquet"))
 
-  private def readsIn(plan: Plan): List[String] = plan match {
-    case Read(DatasetRef(location), _, _) => List(location)
-    case other                               => other.children.flatMap(readsIn)
-  }
+  // through the walk every check uses, which looks at a step two branches share once
+  private def readsIn(plan: Plan): List[String] = PlanFacts.of(plan).reads.map(_.dataset.location)
 
-  private def unknowns(plan: Plan): List[UnknownPlan] = plan match {
-    case u: UnknownPlan => u :: u.children.flatMap(unknowns)
-    case other          => other.children.flatMap(unknowns)
-  }
+  private def unknowns(plan: Plan): List[UnknownPlan] = PlanFacts.of(plan).unknownPlans
 
   // --- reads ---
 
@@ -244,8 +240,8 @@ class BeamTranslatorSpec extends AnyFunSuite {
     }
     val steps = s("Read", Nil, List("c0")) :: diamonds ::: List(s("Write", List("c40"), Nil))
     val Seq(w) = BeamTranslator.translate(steps, reads).writes
-    // (the plan shares each diamond's input between its two sides, so it is checked through what the translation reports)
     assert(w.location == "out/report" && w.unlocatedReads.isEmpty)
+    assert(readsIn(w.plan) == List("in/orders", "in/orders"), "the read, under the lowest diamond's two sides")
     assert(w.opaqueCombines == (0 until 40).map(i => s"Join$i (Join$i)").reverse.toList, "each join is seen once")
   }
 

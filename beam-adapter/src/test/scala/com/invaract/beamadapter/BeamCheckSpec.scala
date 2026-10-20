@@ -65,6 +65,21 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("PASSED"))
   }
 
+  test("a pipeline whose branches rejoin many times is checked at once: each shared step is looked at once, not once per path") {
+    // 30 times over: the collection goes to two steps whose results are merged again, so 2^30 paths lead from the read to the write
+    val capture = new Capture
+    val p = pipeline
+    val read = p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    val merged = (0 until 30).foldLeft(read) { (below, i) =>
+      def side(name: String) =
+        below.apply(s"$name$i", org.apache.beam.sdk.transforms.MapElements.into(org.apache.beam.sdk.values.TypeDescriptor.of(classOf[GenericRecord])).via(new BeamScenarioJobs.IdentityFn)).setCoder(below.getCoder)
+      org.apache.beam.sdk.values.PCollectionList.of(side("Left")).and(side("Right")).apply(s"Merge$i", org.apache.beam.sdk.transforms.Flatten.pCollections[GenericRecord]())
+    }
+    merged.apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture)).verify(p)
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("PASSED"))
+  }
+
   test("a step that ends the pipeline without a recognised write is refused before any write is judged") {
     val check = InvaractBeam.enforce(ExampleJob.contract())
     val p = pipeline

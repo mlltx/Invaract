@@ -113,4 +113,40 @@ class PlanFactsSpec extends AnyFunSuite {
     assert(StructuralVerifier.collectReads(tree) == refReads(tree))
     assert(StructuralVerifier.collectUnknownPlans(tree) == refUnknown(tree))
   }
+
+  test("a node with children that two parents share is visited once, where it is first reached") {
+    val shared = Filter(Join(a, b, JoinType.Inner), eq(col("x"), col("y")))
+    val plan = Write(DatasetRef("out"), Union(List(Project(shared, Nil), Aggregate(shared, List(col("g")), Nil))))
+    val facts = PlanFacts.of(plan)
+    assert(facts.filters.size == 1 && (facts.filters.head eq shared))
+    assert(facts.joins.size == 1)
+    assert(facts.reads == List(a, b)) // the reads under it once, not once per path
+    assert(facts.aggregates.size == 1) // the second parent itself is still visited
+    // the tree walk would have listed it twice:
+    assert(refFilter(plan).size == 2 && refReads(plan).size == 4)
+  }
+
+  test("a node with no children is listed each time it is reached: a table read on both sides of a join is two reads") {
+    val facts = PlanFacts.of(Join(a, a, JoinType.Inner))
+    assert(facts.reads == List(a, a))
+    val boundary = UnknownPlan("boundary", "LogicalRDD")
+    assert(PlanFacts.of(Union(List(boundary, boundary))).unknownPlans == List(boundary, boundary))
+  }
+
+  test("two equal nodes that are not the same object are both visited") {
+    def branch = Filter(Read(DatasetRef("a")), eq(col("x"), col("y")))
+    val facts = PlanFacts.of(Union(List(branch, branch)))
+    assert(facts.filters.size == 2 && facts.reads.size == 2)
+  }
+
+  test("branches that rejoin many times in a row are walked in steps proportional to the nodes, not the paths") {
+    // each step: a node feeding two branches that rejoin - 3 nodes, but twice the paths of the step below (2^60 in all)
+    val plan = (1 to 60).foldLeft[Plan](a) { (below, i) =>
+      UnknownPlan(s"rejoin $i", "x", List(Filter(below, eq(col("x"), col("y"))), UnknownPlan(s"other $i", "x", List(below))))
+    }
+    val facts = PlanFacts.of(plan)
+    assert(facts.unknownPlans.size == 120 && facts.filters.size == 60)
+    assert(facts.reads == List(a, a)) // the read at the bottom, under each of the lowest step's two branches
+    assert(facts.unknownPlans.head.description == "rejoin 60") // pre-order: the top first
+  }
 }

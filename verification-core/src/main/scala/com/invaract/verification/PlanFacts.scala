@@ -19,6 +19,16 @@ import scala.collection.mutable
   * own recursive walks produced — so nothing that iterates them changes order.
   * The traversal is iterative (an explicit stack), so a very deep plan cannot
   * overflow the JVM stack here the way a recursive walk over it could.
+  *
+  * A plan may share a node between several parents: an adapter whose engine
+  * describes a job as a graph (Beam: a collection read by two branches that
+  * later rejoin) hands the same `Plan` object to both. Each node object is
+  * visited once, where it is first reached, so a plan of `n` distinct nodes is
+  * walked in `n` steps however many paths lead to them - walked as a tree, `k`
+  * branches that rejoin in a row would be `2^k` paths. Nodes are told apart by
+  * reference, not equality: a plan is a case class, so equality and hashing
+  * would themselves walk every path, and two equal nodes that are not shared
+  * (a self-join reading the same table twice) are two reads.
   */
 private[invaract] final class PlanFacts private (
     val plan: Plan,
@@ -63,19 +73,23 @@ private[invaract] object PlanFacts {
     val filters = List.newBuilder[Filter]
 
     // Pre-order with children visited left to right: push a node's children in
-    // reverse so the leftmost is popped first.
+    // reverse so the leftmost is popped first. A node with children already
+    // visited (shared with a parent walked earlier) is skipped.
+    val visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Plan, java.lang.Boolean]())
     val stack = mutable.ArrayStack[Plan](plan)
     while (stack.nonEmpty) {
       val node = stack.pop()
-      node match {
-        case r: Read        => reads += r
-        case u: UnknownPlan => unknownPlans += u
-        case a: Aggregate   => aggregates += a
-        case j: Join        => joins += j
-        case f: Filter      => filters += f
-        case _              => ()
+      if (node.children.isEmpty || visited.add(node)) {
+        node match {
+          case r: Read        => reads += r
+          case u: UnknownPlan => unknownPlans += u
+          case a: Aggregate   => aggregates += a
+          case j: Join        => joins += j
+          case f: Filter      => filters += f
+          case _              => ()
+        }
+        node.children.reverseIterator.foreach(stack.push)
       }
-      node.children.reverseIterator.foreach(stack.push)
     }
     new PlanFacts(plan, reads.result(), unknownPlans.result(), aggregates.result(), joins.result(), filters.result())
   }

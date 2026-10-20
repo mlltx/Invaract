@@ -101,6 +101,12 @@ How to correct it:
 
 Nothing was written: the check happens in `run`, before the pipeline is handed on.
 
+Under "What the plan contains", a collection that feeds more than one step (a branch that is
+merged again later, or used on both sides of a join) is drawn in full, with the steps that
+produce it, the first time. Each later place it feeds is a single line ending `(shown above)`,
+so the explanation stays short however many times a pipeline splits and rejoins. A read on its
+own is one line, so it is simply repeated.
+
 ## Every declared output must be written
 
 A contract that declares an output promises the job writes it. Because the whole pipeline is

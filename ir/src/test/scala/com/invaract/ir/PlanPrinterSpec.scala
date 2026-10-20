@@ -261,4 +261,44 @@ class PlanPrinterSpec extends AnyFunSuite {
     val rendered = PlanPrinter.render(plan)
     assert(rendered.contains("z = STRUCT(zip: 94107, city: raw.orders.city).zip"))
   }
+
+  test("a node two parents share is drawn in full once, then as one line marked (shown above)") {
+    val shared = Filter(Read(DatasetRef("raw.orders")), Comparison(">", ColumnReference(ColumnRef("amount")), Literal(0, "int")))
+    val plan = Write(DatasetRef("out"), Union(List(Project(shared, List(NamedExpr("a", ColumnReference(ColumnRef("amount"))))), Aggregate(shared, Nil, Nil))))
+    assert(
+      PlanPrinter.render(plan) ==
+        """Write(out)
+          |└─ Union
+          |   ├─ Project
+          |   │  ├─ Filter(amount > 0)
+          |   │  │  └─ Read(raw.orders)
+          |   │  └─ a = amount
+          |   └─ Aggregate
+          |      └─ Filter(amount > 0) (shown above)
+          |""".stripMargin
+    )
+  }
+
+  test("a shared node with nothing under it is the same line each time, unmarked") {
+    val a = Read(DatasetRef("a"))
+    assert(PlanPrinter.render(Join(a, a, JoinType.Inner)) == "Join(Inner)\n├─ Read(a)\n└─ Read(a)\n")
+  }
+
+  test("two equal nodes that are not the same object are both drawn in full") {
+    def branch = Filter(Read(DatasetRef("a")), Comparison(">", ColumnReference(ColumnRef("x")), Literal(0, "int")))
+    val rendered = PlanPrinter.render(Union(List(branch, branch)))
+    assert(!rendered.contains(PlanPrinter.ShownAbove))
+    assert(rendered.split("\n").count(_.contains("Read(a)")) == 2)
+  }
+
+  test("branches that rejoin many times in a row render in lines proportional to the nodes, not the paths") {
+    // each step: a node feeding two branches that rejoin - 3 nodes, but twice the paths of the step below
+    val plan = (1 to 60).foldLeft[Plan](Read(DatasetRef("a"))) { (below, i) =>
+      Union(List(Filter(below, Literal(true, "boolean")), Project(below, Nil)))
+    }
+    val lines = PlanPrinter.render(plan).split("\n")
+    assert(lines.count(_.endsWith(PlanPrinter.ShownAbove)) == 59)
+    // per step: the Union, the Filter, the Project and the line under the Project; then the read under the lowest Filter
+    assert(lines.length == 60 * 4 + 1)
+  }
 }
