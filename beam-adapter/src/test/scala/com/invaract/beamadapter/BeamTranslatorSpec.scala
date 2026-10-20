@@ -221,6 +221,34 @@ class BeamTranslatorSpec extends AnyFunSuite {
     assert(w.inputSchemas.size == 2)
   }
 
+  test("each step upstream of a write is visited once, so a long chain of branches that rejoin translates at once") {
+    // 40 diamonds: each splits in two and rejoins, so there are 2^40 paths from the read to the write but 121 steps
+    val reads = new StepCatalogue {
+      override def read(step: BeamStep): Option[IoRead] =
+        if (step.name == "Read") Some(IoRead.Located(List("in/orders"), Some("parquet"))) else None
+      override def write(step: BeamStep): Option[IoWrite] =
+        if (step.name == "Write") Some(IoWrite.Located("out/report", Some("parquet"))) else None
+      override def isFileWrite(step: BeamStep): Boolean = false
+      override def fileWrite(unit: BeamStep): IoWrite = IoWrite.Unverifiable("none")
+      override def isInJobData(step: BeamStep): Boolean = false
+      override def isUnion(step: BeamStep): Boolean = false
+      override def isTextParser(step: BeamStep): Boolean = false
+      override def textFormatterFormat(step: BeamStep): Option[String] = None
+      override def recognisesShape(step: BeamStep): Boolean = false
+      override def shape(step: BeamStep): Option[SchemaShape] = None
+    }
+    def c(name: String) = BeamCollection(name, bounded = true, None, None)
+    def s(name: String, in: List[String], out: List[String]) = BeamStep(name, name, in.map(c), out.map(c), Map.empty, Nil)
+    val diamonds = (0 until 40).toList.flatMap { i =>
+      List(s(s"Left$i", List(s"c$i"), List(s"l$i")), s(s"Right$i", List(s"c$i"), List(s"r$i")), s(s"Join$i", List(s"l$i", s"r$i"), List(s"c${i + 1}")))
+    }
+    val steps = s("Read", Nil, List("c0")) :: diamonds ::: List(s("Write", List("c40"), Nil))
+    val Seq(w) = BeamTranslator.translate(steps, reads).writes
+    // (the plan shares each diamond's input between its two sides, so it is checked through what the translation reports)
+    assert(w.location == "out/report" && w.unlocatedReads.isEmpty)
+    assert(w.opaqueCombines == (0 until 40).map(i => s"Join$i (Join$i)").reverse.toList, "each join is seen once")
+  }
+
   test("a step that ends the pipeline without being a recognised write is refused as unverifiable") {
     val p = pipeline
     p.apply("Counter", GenerateSequence.from(0).to(10)).apply("PushToSomeService", org.apache.beam.sdk.transforms.ParDo.of(new BeamScenarioJobs.SideEffectLong))
