@@ -264,6 +264,47 @@ column each output column traces to, whether that trace passes through an
 aggregation (and which one), and how directly the output relates to its
 source (a plain passthrough vs. a real computation).
 
+## A plan is a graph: shared nodes and what a walk costs
+
+A `Plan` is not necessarily a tree. One node object can be the child of several
+parents: an adapter for an engine that describes a job as a graph (Beam, where
+one collection feeds two steps whose results are merged again) hands over the
+step both branches consume once. Spark's translation builds a tree (each use
+of a node is translated afresh). There are no cycles. `Plan`'s own doc states the rules every walk in `ir`, `fingerprint` and
+`verification-core` keeps:
+
+- **Each node object is worked out once.** `IdentityMemo` (`IdentityMemo.scala`)
+  remembers a result per object, told apart by reference, and has a form for
+  the trampolined walks below (`getOrElseUpdateT`). `Lineage.trace` and
+  `PropertyAnalysis.analyze` each run in a `Run` holding one per call: what each
+  node outputs, and what each column name resolves to below each node. A walk
+  then costs the plan's distinct nodes, not its paths (`k` branches that rejoin
+  in a row are `2^k` paths).
+- **The same blow-up exists in a tree.** A column defined from the same column
+  twice, `withColumn("v", col("v") + col("v"))` repeated, makes every
+  resolution of `v` resolve the `v` below it twice. Measured before the memo:
+  22 such steps took about 4 s in `Lineage.trace` and as long again in
+  `PropertyAnalysis.analyze`, doubling with each step; with it, about 2 ms. This
+  is an ordinary Spark job, so it was reachable from Spark with column-level
+  lineage, sensitivity propagation, static data quality or fingerprinting on.
+- **Never compare or hash plans.** A case class's `equals` and `hashCode` walk
+  every path, so they are exponential on such a plan; nodes are told apart by
+  reference. Two equal nodes that are separate objects are two nodes.
+- **Sharing never changes an answer.** A plan with a shared node traces and
+  analyzes exactly as the same plan with that node copied
+  (`SharedNodesSpec`). The one exception is counting occurrences of a leaf: a
+  `Read` reached directly from two parents is two reads (a self-join), one
+  beneath a shared node with children is one (`PlanFacts` in verification-core,
+  and the fingerprint's `inputs`).
+
+Why the conformance kit's scenario for this shape is shallow
+(`ScenarioJob.rejoins`, 6): Spark's own analysis of a self-union is
+exponential in it (`df.union(df)` repeated 12 times took 6 s to analyze, 14
+times 83 s), so no adapter could run a deep one. The kit checks that each
+adapter keeps both branches and still sees the reads beneath them; the cost of
+the walks is held here and in verification-core and fingerprint, at 40 and 60
+steps.
+
 ## Lineage tracing (`Lineage.scala`)
 
 ```scala

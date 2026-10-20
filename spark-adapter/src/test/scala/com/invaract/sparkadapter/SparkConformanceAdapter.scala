@@ -149,7 +149,9 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       // Spark's representative of a step the adapter has no translation for: a row sample, a Catalyst node
       // `SparkPlanAdapter` has no case for (it becomes an `ir.UnknownPlan` over the translated plan beneath it) that
       // keeps every column, so the projection still refers to the inputs' own attributes.
-      val stepped = if (job.opaqueStep) filtered.sample(0.5) else filtered
+      val opaque = if (job.opaqueStep) filtered.sample(0.5) else filtered
+      // branches that rejoin: the same data down both sides of a union, merged again each time
+      val stepped = (1 to job.rejoins).foldLeft(opaque)((below, _) => below.union(below))
       job.groupBy.fold(stepped.select(selectColumns(job, frames): _*)) { keys =>
         // the aggregate's own output: the group columns (kept under the output's names) and the rows per group
         val grouped = stepped.groupBy(keys.map(frames(0)(_)): _*).agg(count(lit(1)).as(RowCountColumn))

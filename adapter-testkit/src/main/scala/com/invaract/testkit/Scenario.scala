@@ -105,6 +105,16 @@ final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
   * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
   * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
   *
+  * With `rejoins` set the work so far (the read, the join, the filter, any opaque step) is split into two branches
+  * that are merged again (a union of the two), that many times in a row, before the projection and the write; each
+  * branch keeps the rows and columns as they are. An engine that describes a job as a graph (Beam) hands the adapter
+  * one step consumed by both branches, which its plan must keep as one node under both (see `ir.Plan`); what the
+  * contract says about the job must come out the same as without the merges, so an adapter that loses what is beneath
+  * a merge reports a genuinely read input missing or an undeclared read unseen. The scenarios keep it small (6, 64
+  * paths through the plan): Spark's own analysis of a self-union is exponential in it (12 takes seconds). That
+  * Invaract's own checks cost the plan's distinct nodes, not its paths, is held at 40 by verification-core's and
+  * ir's tests, which no engine has to run.
+  *
   * With `extraWrites` the job makes further writes after its main one (`ExtraWrite`), each checked as a write of its own,
   * in order.
   *
@@ -125,7 +135,8 @@ final case class ScenarioJob(
     opaqueStep: Boolean = false,
     crossJoin: Boolean = false,
     groupBy: Option[List[String]] = None,
-    extraWrites: List[ExtraWrite] = Nil
+    extraWrites: List[ExtraWrite] = Nil,
+    rejoins: Int = 0
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
   require(inputs.size == 1 || join.isDefined || crossJoin, "a two-input job must say how its inputs are joined")
@@ -142,6 +153,8 @@ final case class ScenarioJob(
   require(!opaqueStep || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "an opaque step is part of a plain read-transform-write")
   require(!streaming || (inputs.size == 1 && rowChange.isEmpty && !untranslatableWrite && !boundary), "a streaming job is a plain read-transform-write of one input")
   require(extraWrites.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !streaming), "only a plain batch job makes further writes")
+  require(rejoins >= 0, "a job merges its branches again a number of times, or not at all")
+  require(rejoins == 0 || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "branches that rejoin are part of a plain read-transform-write")
 
   /** Where the job's writes land, the main one first: every write it makes. */
   def writtenLocations: List[String] = output.location :: extraWrites.map(_.output.location)

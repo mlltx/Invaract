@@ -315,7 +315,8 @@ class NodeStructureSpec extends AnyFunSuite {
         List(
           CTag("Option", List(CTag("Comparison", List(stringLeaf("="), cRef("x"), cRef("x"))))),
           CTag("Conditional", List(CTag("Comparison", List(stringLeaf(">"), cRef("x"), cRef("x"))))),
-          CTag("UpdatedColumns", List(stringLeaf("a"), stringLeaf("b")))
+          // set-like: in the order of their hashes (Encoding.sortKey), not as declared
+          CTag("UpdatedColumns", List(stringLeaf("a"), stringLeaf("b")).sortBy(Encoding.sortKey))
         )
       ))
   }

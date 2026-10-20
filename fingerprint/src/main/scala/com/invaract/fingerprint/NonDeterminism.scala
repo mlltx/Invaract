@@ -37,33 +37,44 @@ object NonDeterminism {
     */
   val knownNonDeterministicFunctionNames: Set[String] = FunctionCatalog.nonDeterministicNames.map(_.toLowerCase)
 
-  def classify(expr: Expr): Option[Boolean] = expr match {
-    case ColumnReference(_) => Some(false)
-    case Literal(_, _)      => Some(false)
-    case Alias(_, inner)    => classify(inner)
-    case Cast(inner, _)     => classify(inner)
-    case Arithmetic(_, operands) => combine(operands.map(classify))
-    case Comparison(_, left, right) => combine(List(classify(left), classify(right)))
-    case BooleanExpr(_, operands) => combine(operands.map(classify))
-    case Conditional(branches, elseValue) =>
-      val branchResults = branches.flatMap { case (c, v) => List(classify(c), classify(v)) }
-      combine(branchResults ++ elseValue.map(classify).toList)
-    case Function(name, args) =>
-      val own: Option[Boolean] = Some(FunctionCatalog.isNonDeterministic(name))
-      combine(own :: args.map(classify))
-    case UDF(_, _, _) =>
-      // Opaque unconditionally, regardless of its arguments' own
-      // classification - an opaque body could do anything internally,
-      // independent of what it's applied to. Mirrors ir.Lineage's own
-      // "UDF is Opaque regardless of its arguments" rule for DerivationKind.
-      None
-    case AggregateCall(_, arg, _) => combine(List(Some(false), classify(arg)))
-    case UnknownExpression(_, _, children) =>
-      // An unrepresented construct is exactly as unknowable here as a UDF
-      // - this module cannot say whether it's deterministic either.
-      combine(None :: children.map(classify))
-    case StructField(struct, _) => classify(struct)
-    case StructConstruct(fields) => combine(Some(false) :: fields.map(f => classify(f._2)))
+  def classify(expr: Expr): Option[Boolean] = new Classifier().classify(expr)
+
+  /** One classification run: each expression object is classified once, so an expression that several others share
+    * (a resolved column's definition, see `Canonicalizer.resolvedOutputs`) costs one look however many refer to it.
+    */
+  private[fingerprint] final class Classifier {
+    private val memo = new IdentityMemo[Expr, Option[Boolean]]
+
+    def classify(expr: Expr): Option[Boolean] = memo.getOrElseUpdate(expr, classifyUncached(expr))
+
+    private def classifyUncached(expr: Expr): Option[Boolean] = expr match {
+      case ColumnReference(_) => Some(false)
+      case Literal(_, _)      => Some(false)
+      case Alias(_, inner)    => classify(inner)
+      case Cast(inner, _)     => classify(inner)
+      case Arithmetic(_, operands) => combine(operands.map(classify))
+      case Comparison(_, left, right) => combine(List(classify(left), classify(right)))
+      case BooleanExpr(_, operands) => combine(operands.map(classify))
+      case Conditional(branches, elseValue) =>
+        val branchResults = branches.flatMap { case (c, v) => List(classify(c), classify(v)) }
+        combine(branchResults ++ elseValue.map(classify).toList)
+      case Function(name, args) =>
+        val own: Option[Boolean] = Some(FunctionCatalog.isNonDeterministic(name))
+        combine(own :: args.map(classify))
+      case UDF(_, _, _) =>
+        // Opaque unconditionally, regardless of its arguments' own
+        // classification - an opaque body could do anything internally,
+        // independent of what it's applied to. Mirrors ir.Lineage's own
+        // "UDF is Opaque regardless of its arguments" rule for DerivationKind.
+        None
+      case AggregateCall(_, arg, _) => combine(List(Some(false), classify(arg)))
+      case UnknownExpression(_, _, children) =>
+        // An unrepresented construct is exactly as unknowable here as a UDF
+        // - this module cannot say whether it's deterministic either.
+        combine(None :: children.map(classify))
+      case StructField(struct, _) => classify(struct)
+      case StructConstruct(fields) => combine(Some(false) :: fields.map(f => classify(f._2)))
+    }
   }
 
   /** Combines several classifications conservatively: any `None` makes the

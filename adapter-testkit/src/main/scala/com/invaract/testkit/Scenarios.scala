@@ -76,11 +76,15 @@ object Scenarios {
       opaqueStep: Boolean = false,
       crossJoin: Boolean = false,
       groupBy: Option[List[String]] = None,
-      extraWrites: List[ExtraWrite] = Nil
+      extraWrites: List[ExtraWrite] = Nil,
+      rejoins: Int = 0
   ) = ScenarioJob(
     inputs, columns, output, join, filterColumn, rowChange = rowChange, opaqueStep = opaqueStep, crossJoin = crossJoin, groupBy = groupBy,
-    extraWrites = extraWrites
+    extraWrites = extraWrites, rejoins = rejoins
   )
+
+  /** How many times the rejoining scenarios split their data in two and merge it again: see `ScenarioJob.rejoins`. */
+  private val Rejoins = 6
 
   private val defaults = VerificationOptions()
 
@@ -396,6 +400,21 @@ object Scenarios {
       "A job hides an unapproved source behind a step Invaract cannot interpret, hoping it will not be noticed. Invaract still finds it and stops the write.",
       Set(Capability.CheckInputExistence),
       contract(), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id")), opaqueStep = true),
+      defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
+    ),
+    Scenario(
+      "rejoining-branches-keep-the-read-beneath-them-visible",
+      "a job whose data is split into branches that are merged again, several times over, still reads its declared input",
+      "A job sends its data down two paths and merges them back together, over and over, before writing it. The data still came from the declared input, and Invaract still sees that, however many times the paths split and rejoin.",
+      Set(Capability.CheckInputExistence),
+      contract(), job(rejoins = Rejoins), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "rejoining-branches-do-not-hide-an-undeclared-read",
+      "with rejectUndeclaredInputs, a dataset read beneath branches that are merged again is still blocked",
+      "A job joins in an unapproved source and then sends the data down paths that split and rejoin, over and over. Invaract still finds the unapproved source beneath them and stops the write.",
+      Set(Capability.CheckInputExistence),
+      contract(), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id")), rejoins = Rejoins),
       defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
     ),
     Scenario(

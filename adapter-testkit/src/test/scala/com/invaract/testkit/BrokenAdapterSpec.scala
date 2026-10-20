@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalType}
-import com.invaract.ir.{Aggregate, CatalogIdentity, ColumnRef, ColumnReference, Comparison, DatasetRef, Filter, Function, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
+import com.invaract.ir.{Aggregate, CatalogIdentity, ColumnRef, ColumnReference, Comparison, DatasetRef, Filter, Function, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Union, UnknownPlan, Write}
 import com.invaract.verification.{CheckedWrite, VerificationOptions, ViolationType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -48,6 +48,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
       case j: Join    => j.copy(left = rewrite(j.left)(f), right = rewrite(j.right)(f))
       case u: UnknownPlan => u.copy(children = u.children.map(rewrite(_)(f)))
       case a: Aggregate   => a.copy(input = rewrite(a.input)(f))
+      case u: Union       => u.copy(inputs = u.inputs.map(rewrite(_)(f)))
       case other      => other
     }
     f.applyOrElse(rebuilt, identity[Plan])
@@ -122,6 +123,9 @@ class BrokenAdapterSpec extends AnyFunSuite {
     Mistake("drops what is beneath a step it cannot translate",
       new Variant(rewritePlan = (_, p) => rewrite(p) { case u: UnknownPlan => u.copy(children = Nil) }),
       Set("unrecognized-step-keeps-the-reads-beneath-it-visible", "unrecognized-step-does-not-hide-an-undeclared-read")),
+    Mistake("loses what is beneath a merge of branches",
+      new Variant(rewritePlan = (_, p) => rewrite(p) { case _: Union => Union(Nil) }),
+      Set("rejoining-branches-keep-the-read-beneath-them-visible", "rejoining-branches-do-not-hide-an-undeclared-read")),
     Mistake("reports every join as having no condition",
       new Variant(rewritePlan = (_, p) => rewrite(p) { case j: Join => j.copy(condition = None) }),
       Set("forbid-cross-join-allows-a-keyed-join", "required-join-columns-present")),

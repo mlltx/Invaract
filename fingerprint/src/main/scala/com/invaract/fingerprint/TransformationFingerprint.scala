@@ -91,39 +91,36 @@ object TransformationFingerprinter {
     val scopeInfo = Canonicalizer.buildScopeInfo(plan)
     val substitution = scopeInfo.substitution
 
-    val planNode = Canonicalizer.canonicalizePlan(plan, substitution)
+    // One canonicalisation and one set of hashes for the whole fingerprint: what the plan, its columns and the
+    // combined hashes share is made and hashed once.
+    val canon = new Canonicalizer.Canon(substitution)
+    val hash = canon.digests.fingerprint _
+    val planNode = canon.plan(plan)
     val rowMutationNode = rowMutation.map(Canonicalizer.canonicalizeRowMutation(_, substitution))
     val overall = rowMutationNode match {
-      case Some(rmNode) => FingerprintHasher.hash(CTag("Transformation", List(planNode, rmNode)))
-      case None         => FingerprintHasher.hash(planNode)
+      case Some(rmNode) => hash(CTag("Transformation", List(planNode, rmNode)))
+      case None         => hash(planNode)
     }
-    val rowMutationFingerprint = rowMutationNode.map(FingerprintHasher.hash)
+    val rowMutationFingerprint = rowMutationNode.map(hash)
 
     val inputs = scopeInfo.reads
-      .map(r => r.inputKey -> FingerprintHasher.hash(CTag("Read", List(CanonicalNode.stringLeaf(r.location)))))
+      .map(r => r.inputKey -> hash(CTag("Read", List(CanonicalNode.stringLeaf(r.location)))))
       .toMap
 
     val resolvedExprs = Canonicalizer.resolvedOutputs(plan)
     val lineages = Lineage.trace(plan)
+    val nonDeterminism = new NonDeterminism.Classifier
 
     val outputs = lineages.map { columnLineage =>
       val name = columnLineage.output.name
       val resolvedExprOpt = resolvedExprs.get(name)
-      // The getOrElse fallback is defensive, not expected to be reachable
-      // for any real plan: resolvedExprs and lineages are built from two
-      // structurally parallel top-level dispatches over the same plan
-      // (see Canonicalizer.resolvedOutputs' own doc), so every name
-      // ir.Lineage.trace produces already has a matching entry here by
-      // construction. Kept rather than a bare `.get` to fail safe (a
-      // distinctly-tagged fingerprint, not an exception) if that parallel
-      // structure is ever broken by a future change to either dispatch.
-      val exprNode = resolvedExprOpt.map(Canonicalizer.canonicalizeExpr(_, substitution)).getOrElse(CTag("NoExpression"))
+      val exprNode = resolvedExprOpt.map(canon.expr).getOrElse(CTag("NoExpression"))
       val lineageNode = Canonicalizer.canonicalizeLineage(columnLineage, substitution)
 
-      val exprFingerprint = FingerprintHasher.hash(exprNode)
-      val lineageFingerprint = FingerprintHasher.hash(lineageNode)
-      val combinedFingerprint = FingerprintHasher.hash(CTag("Combined", List(exprNode, lineageNode)))
-      val nonDeterministic = resolvedExprOpt.flatMap(NonDeterminism.classify)
+      val exprFingerprint = hash(exprNode)
+      val lineageFingerprint = hash(lineageNode)
+      val combinedFingerprint = hash(CTag("Combined", List(exprNode, lineageNode)))
+      val nonDeterministic = resolvedExprOpt.flatMap(nonDeterminism.classify)
 
       name -> OutputFingerprint(exprFingerprint, lineageFingerprint, combinedFingerprint, nonDeterministic)
     }.toMap

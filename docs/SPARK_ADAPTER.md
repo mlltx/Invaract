@@ -3258,6 +3258,14 @@ be inline, each with its own spec:
   reference, so the walk is linear in the graph rather than in its paths; a node with no
   children (a read) is still listed each time it is reached, so a table read on both sides of
   a join stays two reads and a tree's lists are unchanged.
+- **Lineage, the property analysis and the fingerprint** resolve each column name once per
+  plan node (`ir.IdentityMemo`; docs/TRANSFORMATION_IR.md's "A plan is a graph"). Before,
+  a column defined from itself twice, repeated (`withColumn("v", col("v") + col("v"))`
+  22 times), took about 4 s each in lineage and the property analysis, doubling per step,
+  and its fingerprint inlined `2^k` copies of the bottom definition: reachable from an
+  ordinary Spark job with `staticDataQuality`, `roleConsistency`, sensitivity propagation
+  or `computeFingerprint` on. Now about 2 ms, and the fingerprint is a per-node hash
+  (fingerprint version 4).
 
 `StructuralVerifier.scala` was one 1,200-line file holding the result model, the violation
 vocabulary, `verify` (a ~230-line method) and the catalog checks. It is now an orchestrator over:

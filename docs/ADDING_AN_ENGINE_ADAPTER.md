@@ -116,12 +116,13 @@ An adapter owns exactly this, and nothing the pipeline already does:
 1. **Recognise** an operation on the engine's own hook (question 1).
 2. **Translate** it to `ir.Plan` (`Read`, `Write`, `Project`, `Filter`, `Join`, ...), with `UnknownPlan` for anything it
    cannot translate, so nothing is silently dropped. If the engine describes a job as a graph, give a step that two
-   branches consume one `Plan` object under both parents rather than copying it: the core's walks (`PlanFacts`, the
-   rejection's `PlanPrinter` rendering) visit a shared node once, by reference. Never put plans in a hash set or map or
-   compare them with `==`: a case class's `hashCode` and `equals` walk every path, which is `2^k` for `k` branches
-   that rejoin in a row. Fingerprinting (`computeFingerprint`) still encodes a plan as a tree, so it is exponential on
-   such a plan: an adapter for a graph-shaped engine should not declare `analysis.fingerprint` supported until that
-   changes (Beam declares it unsupported, for its own reason).
+   branches consume one `Plan` object under both parents rather than copying it: every walk in the core (`PlanFacts`,
+   lineage, the property analysis, the fingerprint, the rejection's `PlanPrinter` rendering) works a node object out
+   once, by reference, and gives the same answer as for the plan with the node copied (`ir.Plan`'s doc, and
+   docs/TRANSFORMATION_IR.md's "A plan is a graph"). An adapter's own walks over its plans must do the same
+   (`ir.IdentityMemo`). Never put plans in a hash set or map or compare them with `==`: a case class's `hashCode` and
+   `equals` walk every path, which is `2^k` for `k` branches that rejoin in a row. The kit's rejoining scenarios
+   (`ScenarioJob.rejoins`) check that the translation keeps both branches.
 3. **Map schemas** to `LogicalSchema` (question 7), and input schemas for each read.
 4. **Hand over** a `CheckedWrite` to `VerificationPipeline.verifyWrite` (or `verifyStateChange`,
    `rejectUnverifiableWrite`), passing a `JobInfo` that names the engine (`engine`, `engineVersion`) and, if the

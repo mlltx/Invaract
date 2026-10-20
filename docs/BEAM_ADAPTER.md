@@ -410,9 +410,18 @@ Every undocumented decision, surprise, or guess made while building this adapter
     plan. `PlanFacts.of` now visits a node with children once, by reference, and `PlanPrinter` draws it once and marks
     later sightings `(shown above)`: the same pipeline verifies in about 40 ms and is refused in about 20 ms. A 30-times
     rejoining Java pipeline (`BeamCheckSpec`) and the 40-diamond translation test now go through those walks. Still
-    exponential on such a plan: fingerprinting (declared unsupported here) and a case class's `equals`/`hashCode` (nothing
+    exponential on such a plan then: fingerprinting (declared unsupported here) and a case class's `equals`/`hashCode` (nothing
     in the checks hashes or compares plans). *For the guide:* an engine whose job is a graph produces plans that share
     nodes; test a long chain of branches that rejoin through the whole check, not only the translation.
+30. **The rule went into the IR, and the rest of the walks followed.** `ir.Plan`'s doc now says a plan is a graph, and
+    every walk in the core keeps it (`ir.IdentityMemo`): lineage, the property analysis and the fingerprint, whose hash
+    is now worked out per node from its children's hashes (fingerprint version 4), so fingerprinting would no longer be
+    what stops Beam declaring `analysis.fingerprint` (its reason, the logic inside functions, stands). The same work
+    found a blow-up Spark could reach without any sharing: a column defined from itself twice, repeated
+    (`v = v + v`), doubled the cost of lineage, data-quality analysis and fingerprinting per step. The kit gained the
+    shape as two scenarios (`rejoining-branches-*`, `ScenarioJob.rejoins`): the Java pipeline merges with `Flatten`, the
+    Python one with `beam.Flatten()`, and both adapters conform to both. *For the guide:* settle what shape the IR may
+    have in the IR itself; a fix in the one walk an engine reaches first leaves the others for the next engine.
 
 ## Unverified items
 
