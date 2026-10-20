@@ -3967,7 +3967,7 @@ Extend verification engine to support multiple execution engines.
   - [x] Stage 2c: neutral package names (`com.invaract.verification`), no forwarding layer
   - [x] Stage 3: per-adapter capability declaration (`invaract-capabilities-<adapter>.yaml`),
         generated docs-site matrix with a drift test, `UNSUPPORTED_CONTRACT_FEATURE` fail-closed
-  - [x] Stage 4: `adapter-testkit` — engine-neutral conformance scenarios (53 today) judged
+  - [x] Stage 4: `adapter-testkit` — engine-neutral conformance scenarios (55 today) judged
         against each adapter's own declaration, as real jobs that may make several writes; a
         reference adapter on the SPI; deliberately broken adapters every scenario must catch;
         per-adapter conformance baselines
@@ -3978,13 +3978,13 @@ Extend verification engine to support multiple execution engines.
       release), and the `survey-engine-adapter` skill, which writes a feasibility survey before any code
 - [x] Apache Beam adapter (`beam-adapter`, docs/BEAM_ADAPTER.md): checks a pipeline before it is submitted,
       through a wrapper runner named with `--runner`; files, BigQuery, Kafka, JDBC and Pub/Sub, batch and
-      streaming; transformation-shape rules from Beam's schema transforms; conforms to 42 scenarios, the
+      streaming; transformation-shape rules from Beam's schema transforms; conforms to 44 scenarios, the
       kit skipping the rest with the declaration's reason (no row-level DML, no checkpoints, analyses it
       does not offer); tested on Beam 2.60 to 2.77 in CI's version matrix, with a hand-over
       to Flink proven
 - [x] Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the `invaract_beam` package's wrapper runner writes the
       pipeline's portable form and runs a Java checker on it, which translates it with the Beam adapter's own
-      translator; conforms to 42 scenarios (13 by refusing safely: transformation-shape rules and analyses are
+      translator; conforms to 44 scenarios (13 by refusing safely: transformation-shape rules and analyses are
       unsupported), real Python pipelines in CI's `beam-python` job, a matrix over Python SDK releases from 2.68
       that records the test pipelines afresh with each. A refusal's advice is the adapter's own
       (`UnverifiableOperation`), with the flag spelled for the SDK. Publishing the package and the checker jar is
