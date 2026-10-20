@@ -61,6 +61,13 @@ class PortableCheckSpec extends AnyFunSuite {
     val pipeline = s"--pipeline=${recording(root, "parquet_job")}"
     assert(check(pipeline, contract, s"--invaract_notify_config=$sink", "--check_only=true")._1 == PortableCheck.Passed)
     assert(new String(Files.readAllBytes(events), StandardCharsets.UTF_8).replace(" ", "").contains("\"checkOnly\":\"true\""))
+    // without the argument, or with false, the pipeline is to run, and its events do not say otherwise
+    for (flags <- Seq(Nil, Seq("--check_only=false"))) {
+      Files.deleteIfExists(events)
+      assert(check(Seq(pipeline, contract, s"--invaract_notify_config=$sink") ++ flags: _*)._1 == PortableCheck.Passed)
+      val published = new String(Files.readAllBytes(events), StandardCharsets.UTF_8)
+      assert(published.contains("CONTRACT_VALIDATION") && !published.contains("checkOnly"), flags)
+    }
     val (status, out) = check(pipeline, contract, "--check_only=yes")
     assert(status == PortableCheck.NotChecked && out.contains("--check_only=yes must be true or false"), out)
   }
