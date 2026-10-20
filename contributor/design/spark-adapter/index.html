@@ -3192,7 +3192,20 @@ whole of <code dir="auto">verify</code> after (200 inputs: 13 ms vs 6 ms). The m
 filters in one iterative pre-order pass. <code dir="auto">ContractEnforcementRule</code> builds one per checked
 write and hands it to <code dir="auto">StructuralVerifier</code>, <code dir="auto">PlanRuleVerifier</code> (previously one full walk
 per declared rule), <code dir="auto">StaticDataQualityVerifier</code> and <code dir="auto">RoleConsistencyVerifier</code>. Order is the
-same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.</li>
+same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
+A node with children that several parents share (an adapter for a graph-shaped engine, such
+as Beam, hands over such plans; Spark’s translation never does) is visited once, by
+reference, so the walk is linear in the graph rather than in its paths; a node with no
+children (a read) is still listed each time it is reached, so a table read on both sides of
+a join stays two reads and a tree’s lists are unchanged.</li>
+<li><strong>Lineage, the property analysis and the fingerprint</strong> resolve each column name once per
+plan node (<code dir="auto">ir.IdentityMemo</code>; docs/TRANSFORMATION_IR.md’s “A plan is a graph”). Before,
+a column defined from itself twice, repeated (<code dir="auto">withColumn("v", col("v") + col("v"))</code>
+22 times), took about 4 s each in lineage and the property analysis, doubling per step,
+and its fingerprint inlined <code dir="auto">2^k</code> copies of the bottom definition: reachable from an
+ordinary Spark job with <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code>, sensitivity propagation
+or <code dir="auto">computeFingerprint</code> on. Now about 2 ms, and the fingerprint is a per-node hash
+(fingerprint version 4).</li>
 </ul>
 <p><code dir="auto">StructuralVerifier.scala</code> was one 1,200-line file holding the result model, the violation
 vocabulary, <code dir="auto">verify</code> (a ~230-line method) and the catalog checks. It is now an orchestrator over:</p>

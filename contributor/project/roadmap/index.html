@@ -4047,7 +4047,7 @@ Spark spells them <code dir="auto">spark.invaract.*</code>, Beam <code dir="auto
 <li class="task-list-item"><input type="checkbox" checked disabled> Stage 2c: neutral package names (<code dir="auto">com.invaract.verification</code>), no forwarding layer</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Stage 3: per-adapter capability declaration (<code dir="auto">invaract-capabilities-&#x3C;adapter>.yaml</code>),
 generated docs-site matrix with a drift test, <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> fail-closed</li>
-<li class="task-list-item"><input type="checkbox" checked disabled> Stage 4: <code dir="auto">adapter-testkit</code> — engine-neutral conformance scenarios (53 today) judged
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 4: <code dir="auto">adapter-testkit</code> — engine-neutral conformance scenarios (55 today) judged
 against each adapter’s own declaration, as real jobs that may make several writes; a
 reference adapter on the SPI; deliberately broken adapters every scenario must catch;
 per-adapter conformance baselines</li>
@@ -4060,13 +4060,13 @@ non-determinism and seed handling read the catalog; Spark’s table swept agains
 release), and the <code dir="auto">survey-engine-adapter</code> skill, which writes a feasibility survey before any code</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Apache Beam adapter (<code dir="auto">beam-adapter</code>, docs/BEAM_ADAPTER.md): checks a pipeline before it is submitted,
 through a wrapper runner named with <code dir="auto">--runner</code>; files, BigQuery, Kafka, JDBC and Pub/Sub, batch and
-streaming; transformation-shape rules from Beam’s schema transforms; conforms to 42 scenarios, the
+streaming; transformation-shape rules from Beam’s schema transforms; conforms to 44 scenarios, the
 kit skipping the rest with the declaration’s reason (no row-level DML, no checkpoints, analyses it
 does not offer); tested on Beam 2.60 to 2.77 in CI’s version matrix, with a hand-over
 to Flink proven</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the <code dir="auto">invaract_beam</code> package’s wrapper runner writes the
 pipeline’s portable form and runs a Java checker on it, which translates it with the Beam adapter’s own
-translator; conforms to 42 scenarios (13 by refusing safely: transformation-shape rules and analyses are
+translator; conforms to 44 scenarios (13 by refusing safely: transformation-shape rules and analyses are
 unsupported), real Python pipelines in CI’s <code dir="auto">beam-python</code> job, a matrix over Python SDK releases from 2.68
 that records the test pipelines afresh with each. A refusal’s advice is the adapter’s own
 (<code dir="auto">UnverifiableOperation</code>), with the flag spelled for the SDK. Publishing the package and the checker jar is

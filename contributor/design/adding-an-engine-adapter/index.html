@@ -242,7 +242,14 @@ something you have not got to.</li>
 <ol>
 <li><strong>Recognise</strong> an operation on the engine’s own hook (question 1).</li>
 <li><strong>Translate</strong> it to <code dir="auto">ir.Plan</code> (<code dir="auto">Read</code>, <code dir="auto">Write</code>, <code dir="auto">Project</code>, <code dir="auto">Filter</code>, <code dir="auto">Join</code>, …), with <code dir="auto">UnknownPlan</code> for anything it
-cannot translate, so nothing is silently dropped.</li>
+cannot translate, so nothing is silently dropped. If the engine describes a job as a graph, give a step that two
+branches consume one <code dir="auto">Plan</code> object under both parents rather than copying it: every walk in the core (<code dir="auto">PlanFacts</code>,
+lineage, the property analysis, the fingerprint, the rejection’s <code dir="auto">PlanPrinter</code> rendering) works a node object out
+once, by reference, and gives the same answer as for the plan with the node copied (<code dir="auto">ir.Plan</code>’s doc, and
+docs/TRANSFORMATION_IR.md’s “A plan is a graph”). An adapter’s own walks over its plans must do the same
+(<code dir="auto">ir.IdentityMemo</code>). Never put plans in a hash set or map or compare them with <code dir="auto">==</code>: a case class’s <code dir="auto">hashCode</code> and
+<code dir="auto">equals</code> walk every path, which is <code dir="auto">2^k</code> for <code dir="auto">k</code> branches that rejoin in a row. The kit’s rejoining scenarios
+(<code dir="auto">ScenarioJob.rejoins</code>) check that the translation keeps both branches.</li>
 <li><strong>Map schemas</strong> to <code dir="auto">LogicalSchema</code> (question 7), and input schemas for each read.</li>
 <li><strong>Hand over</strong> a <code dir="auto">CheckedWrite</code> to <code dir="auto">VerificationPipeline.verifyWrite</code> (or <code dir="auto">verifyStateChange</code>,
 <code dir="auto">rejectUnverifiableWrite</code>), passing a <code dir="auto">JobInfo</code> that names the engine (<code dir="auto">engine</code>, <code dir="auto">engineVersion</code>) and, if the

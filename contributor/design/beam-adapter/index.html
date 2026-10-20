@@ -1082,6 +1082,29 @@ the contract asked for a check this adapter never makes.
 <em>For the guide:</em> when an engine has more than one SDK, translate each into the same step tree and keep one translator.</li>
 </ul>
 </li>
+<li>
+<p><strong>Branches that rejoin made the checks exponential (fixed in verification-core and ir).</strong> The translator visits each step
+once, and the plan it builds gives a collection that two steps consume one <code dir="auto">Plan</code> object under both. The core’s walks
+treated that plan as a tree: a pipeline whose collection splits in two and is merged again, 21 times in a row (2^21
+paths), took 7.7 s to verify, listing 2,097,152 reads of its one input, and its refusal ran out of memory drawing the
+plan. <code dir="auto">PlanFacts.of</code> now visits a node with children once, by reference, and <code dir="auto">PlanPrinter</code> draws it once and marks
+later sightings <code dir="auto">(shown above)</code>: the same pipeline verifies in about 40 ms and is refused in about 20 ms. A 30-times
+rejoining Java pipeline (<code dir="auto">BeamCheckSpec</code>) and the 40-diamond translation test now go through those walks. Still
+exponential on such a plan then: fingerprinting (declared unsupported here) and a case class’s <code dir="auto">equals</code>/<code dir="auto">hashCode</code> (nothing
+in the checks hashes or compares plans). <em>For the guide:</em> an engine whose job is a graph produces plans that share
+nodes; test a long chain of branches that rejoin through the whole check, not only the translation.</p>
+</li>
+<li>
+<p><strong>The rule went into the IR, and the rest of the walks followed.</strong> <code dir="auto">ir.Plan</code>’s doc now says a plan is a graph, and
+every walk in the core keeps it (<code dir="auto">ir.IdentityMemo</code>): lineage, the property analysis and the fingerprint, whose hash
+is now worked out per node from its children’s hashes (fingerprint version 4), so fingerprinting would no longer be
+what stops Beam declaring <code dir="auto">analysis.fingerprint</code> (its reason, the logic inside functions, stands). The same work
+found a blow-up Spark could reach without any sharing: a column defined from itself twice, repeated
+(<code dir="auto">v = v + v</code>), doubled the cost of lineage, data-quality analysis and fingerprinting per step. The kit gained the
+shape as two scenarios (<code dir="auto">rejoining-branches-*</code>, <code dir="auto">ScenarioJob.rejoins</code>): the Java pipeline merges with <code dir="auto">Flatten</code>, the
+Python one with <code dir="auto">beam.Flatten()</code>, and both adapters conform to both. <em>For the guide:</em> settle what shape the IR may
+have in the IR itself; a fix in the one walk an engine reaches first leaves the others for the next engine.</p>
+</li>
 </ol>
 <div class="sl-heading-wrapper level-h2"><h2 id="unverified-items">Unverified items</h2><a class="sl-anchor-link" href="#unverified-items"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified items”</span></a></div>
 <p>What could not be checked against the engine, to be settled by the adapter’s own tests.</p>
