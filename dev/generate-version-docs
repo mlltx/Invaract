@@ -1,12 +1,13 @@
 #!/bin/bash
 # Regenerates the "Supported versions" tables/cells in docs-site/ and
-# docs/COMPATIBILITY.md from spark-adapter's single canonical
-# supported-versions.properties file (see that file's own header comment
+# docs/ from spark-adapter's single canonical supported-versions.properties
+# file, and the Beam release lists from beam-adapter's
+# supported-beam-versions.properties (see each file's own header comment
 # for its other consumers: build.sbt's test defaults, the runtime
 # compatibility guard, and CI's matrix-drift-check job).
 #
 # This script owns exactly the version enumeration and status badges the
-# three target files' `<!-- generate-version-docs:BEGIN ... -->` markers
+# target files' `<!-- generate-version-docs:BEGIN ... -->` markers
 # wrap — never the surrounding investigative prose (why an excluded version
 # fails, which real CI run or Maven Central metadata backs a claim, etc.).
 # That stays hand-written outside the markers, deliberately not something
@@ -38,6 +39,11 @@
 #     library versions" cell for that connector (e.g. "3.3.3 only", or
 #     "1.10.2 – 1.11.0" for a range) - just the version-range string, the
 #     rest of that row's Notes column stays hand-written.
+#   - `<spec>` = "<lib>.list"         -> every verified release of <lib> as
+#     prose ("2.60.0, 2.65.0, 2.70.0 and 2.77.0"), wherever a page names them:
+#     the Beam guides, the Beam rows of spark-version-support.mdx and the
+#     Beam design docs. <lib> is `beam` (Java SDK) or `beam.python`, read
+#     from beam-adapter's supported-beam-versions.properties.
 #   - `<spec>` = "<lib> <version>"    -> docs/COMPATIBILITY.md's per-row
 #     Status cell only (e.g. "✓ Verified, Primary") for an existing,
 #     hand-written row - that row's own Notes cell (the specific
@@ -81,7 +87,9 @@ def parse_properties(path):
     return values
 
 
-PROPS = parse_properties(PROPERTIES_PATH)
+BEAM_PROPERTIES_PATH = "beam-adapter/src/main/resources/supported-beam-versions.properties"
+
+PROPS = {**parse_properties(PROPERTIES_PATH), **parse_properties(BEAM_PROPERTIES_PATH)}
 
 
 def version_key(v):
@@ -121,6 +129,14 @@ def connector_cell(lib):
     if len(vs) == 1:
         return f"{vs[0]} only"
     return f"{vs[0]} – {vs[-1]}"
+
+
+def prose_list(lib):
+    """Every verified release of `lib`, oldest first, as prose - see MARKER shape `<lib>.list`."""
+    vs = verified(lib)
+    if not vs:
+        sys.exit(f"generate-version-docs: no {lib}.verified releases in the properties files")
+    return vs[0] if len(vs) == 1 else ", ".join(vs[:-1]) + " and " + vs[-1]
 
 
 def spark_table():
@@ -173,8 +189,10 @@ def render(spec):
     if spec == "spark-table":
         return spark_table()
     if len(parts) == 1 and parts[0].endswith(".verified"):
-        lib = parts[0].split(".", 1)[0]
+        lib = parts[0].rsplit(".", 1)[0]
         return connector_cell(lib)
+    if len(parts) == 1 and parts[0].endswith(".list"):
+        return prose_list(parts[0].rsplit(".", 1)[0])
     if len(parts) == 2:
         lib, version = parts
         return compat_status(lib, version)
@@ -192,6 +210,10 @@ TARGET_FILES = [
     "docs-site/src/content/docs/reference/spark-version-support.mdx",
     "docs-site/src/content/docs/reference/connector-support.mdx",
     "docs/COMPATIBILITY.md",
+    "docs-site/src/content/docs/guides/using-invaract-with-apache-beam.mdx",
+    "docs-site/src/content/docs/guides/using-invaract-with-beam-python.mdx",
+    "docs/BEAM_ADAPTER.md",
+    "docs/BEAM_PYTHON_ADAPTER.md",
 ]
 
 changed_files = []

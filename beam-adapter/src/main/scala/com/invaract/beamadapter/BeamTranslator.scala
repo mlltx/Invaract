@@ -26,8 +26,22 @@ private[beamadapter] final case class TranslatedWrite(
     inputSchemas: List[(String, LogicalSchema)],
     unlocatedReads: List[String] = Nil,
     opaqueCombines: List[String] = Nil,
-    unreadableShapes: List[String] = Nil
-)
+    unreadableShapes: List[String] = Nil,
+    readLocations: List[String] = Nil
+) {
+
+  /** Every located read this write depends on, with its columns where the pipeline states them and none where it does not (a
+    * Python `ReadFromParquet` of dictionaries, a text read): what a dry-run draft lists as the write's inputs. `inputSchemas`
+    * alone holds only the reads whose columns are stated, which is what the schema checks need but would leave a draft without
+    * an input the job plainly reads. */
+  def draftInputs: List[(String, LogicalSchema)] = {
+    val described = inputSchemas.map(_._1).toSet
+    inputSchemas ++ readLocations.filterNot(described).distinct.map(_ -> LogicalSchema(Nil))
+  }
+
+  /** The located reads whose columns the pipeline does not state. */
+  def readsWithoutColumns: List[String] = draftInputs.collect { case (location, schema) if schema.fields.isEmpty => location }
+}
 
 /** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). `name` is
   * the step's full name and `operation` what it is and why it cannot be checked. `trustable` is whether a platform may name it as
@@ -263,7 +277,8 @@ private[beamadapter] object BeamTranslator {
         // what the transformation-shape rules cannot see past (D19): a step that combines several collections in code (not
         // Flatten, which only concatenates them), or a schema transform it could not read
         others.collect { case o if !io.recognisesShape(o.step) && !io.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step) }.distinct,
-        others.collect { case o if io.shape(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }.distinct
+        others.collect { case o if io.shape(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }.distinct,
+        above.collect { case r: ReadNode => r }.flatMap(_.locations).distinct
       )
     }
 

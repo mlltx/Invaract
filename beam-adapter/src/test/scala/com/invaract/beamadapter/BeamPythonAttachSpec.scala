@@ -117,7 +117,11 @@ class BeamPythonAttachSpec extends AnyFunSuite {
     assert(status == 0, output)
     assert(written(root, "anywhere").nonEmpty, "dry-run mode enforces nothing, so the write went ahead")
     val published = Files.readAllLines(events, StandardCharsets.UTF_8).asScala.mkString("\n").replace(" ", "")
-    assert(published.contains("CONTRACT_INFERENCE") && published.contains("\"status\":\"INFERRED\""))
+    // ReadFromParquet of dictionaries states no columns (Python reads the file schema when the job runs), so the draft lists the
+    // read as an input with none, and is degraded for saying so
+    assert(published.contains("CONTRACT_INFERENCE") && published.contains("\"status\":\"INFERRED_DEGRADED\""))
+    assert(published.contains("inputs:\\n-name:input\\nlocation:") && published.contains("/in/orders"), "the draft names the job's read")
+    assert(published.contains("thepipelinestatesnocolumnsforthereadof"))
     assert(published.contains("out/anywhere"), "the inferred contract names the write's location")
     assert(published.contains("\"engine\":\"beam-python\""))
   }

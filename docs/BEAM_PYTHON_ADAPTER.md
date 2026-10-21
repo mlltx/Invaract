@@ -62,7 +62,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
   then `PortableCheckSpec` fails until it is a Beam option (`InvaractBeamOptions` and `BeamConfigSource`) and a flag of the
   Python package (`SETTINGS` in `python/invaract_beam/options.py`, each with its help text), naming each file. A setting that only an adapter checking
   after the job reads (`failOnMissingOutput`) is left out of `BeamSettings.Names`.
-- **Python SDK releases tested**: `beam.python.verified` (2.68.0, 2.71.0, 2.74.0 and 2.77.0). 2.68.0 is the floor: the
+- **Python SDK releases tested**: `beam.python.verified` (<!-- generate-version-docs:BEGIN beam.python.list -->2.68.0, 2.71.0, 2.74.0 and 2.77.0<!-- generate-version-docs:END -->). 2.68.0 is the floor: the
   first release whose `WriteToParquet` takes `triggering_frequency`, which the streaming scenarios need.
 - **A new Python SDK release**: add it to the `beam-python` job's `beam-python-version` matrix in
   `.github/workflows/test.yml`. Each run there records the test pipelines afresh with its release (`record_fixtures.py`)

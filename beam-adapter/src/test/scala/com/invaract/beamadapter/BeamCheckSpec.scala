@@ -180,6 +180,21 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(events(1).reason.exists(_.contains("PushToSomeService")))
   }
 
+  test("dry-run mode lists a read whose columns the pipeline does not state as an input with none, and says so") {
+    val capture = new Capture
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None)
+    val p = pipeline
+    p.apply("ReadLines", TextIO.read().from("/data/in/lines/*.txt")).apply("WriteLines", TextIO.write().to("/data/out/lines"))
+    check.verify(p)
+    val Seq(event) = capture.events.collect { case e: ContractInferenceEvent => e }
+    assert(event.status == InferenceStatus.InferredDegraded)
+    val draft = com.invaract.contract.ContractParser.parse(event.contractYaml.get)
+    assert(draft.inputs.map(i => withoutDrive(i.location) -> i.schema.fields) == List("/data/in/lines" -> Nil), "the read is an input, with no columns")
+    assert(draft.outputs.flatMap(_.derivedFrom.toList.flatten) == List("input"), "and the output is built from it")
+    assert(event.reason.map(withoutDrive).exists(_.contains("the pipeline states no columns for the read of /data/in/lines, so the draft declares none for it")))
+    assert(event.selfCheck.contains(SelfCheckStatus.Passed), "the draft still passes against its own write")
+  }
+
   test("dry-run mode ends with one job summary merging every draft, after the per-write events, and flushes the sink") {
     val capture = new Capture
     val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true", "--jobName=nightly-orders").create()

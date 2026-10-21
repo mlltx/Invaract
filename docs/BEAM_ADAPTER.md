@@ -236,7 +236,10 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   exposes no columns. The contract format now lets a dataset leave `schema` out (or list no fields): its content is not governed,
   `SchemaChecker` compares nothing for it, and `ContractValidator` warns so the omission is never silent. A Beam write with no
   columns is refused only when the output it lands on declares columns (`BeamCheck.declaresColumns`); in dry-run mode such a write
-  gets a draft whose output declares none (`INFERRED_DEGRADED`, saying why), rather than being skipped. Still refused, and for the
+  gets a draft whose output declares none (`INFERRED_DEGRADED`, saying why), rather than being skipped. The same holds for a read
+  whose columns the pipeline does not state (a text read; in Python, a `ReadFromParquet` of dictionaries, whose file schema is read
+  only when the job runs): the draft lists it as an input with no columns (`TranslatedWrite.draftInputs`) and says so, where it
+  used to be left out of the draft altogether, although enforcement saw it. Still refused, and for the
   job to fix rather than the contract: a BigQuery write of `TableRow`s into an existing table that names no schema
   (`CREATE_NEVER`), whose columns exist but only BigQuery knows them (`withSchema`, or rows with a Beam schema and
   `useBeamSchema()`, fixes it).
@@ -448,7 +451,7 @@ Every undocumented decision, surprise, or guess made while building this adapter
 
 What could not be checked against the engine, to be settled by the adapter's own tests.
 
-- **Beam releases outside 2.60 to 2.77.** The suite passes on 2.60.0, 2.65.0, 2.70.0 and 2.77.0 (`beam-version-matrix`); a release
+- **Beam releases outside 2.60 to 2.77.** The suite passes on <!-- generate-version-docs:BEGIN beam.list -->2.60.0, 2.65.0, 2.70.0 and 2.77.0<!-- generate-version-docs:END --> (`beam-version-matrix`); a release
   that changes the IO class names or the members read by reflection (`Reflection`) makes those steps fail closed, and the matrix is where
   that shows up first.
 - **Runners other than the DirectRunner and Flink.** Dataflow, Spark and Samza hand-over is the same code path, not tested on its own (D16).
