@@ -222,6 +222,61 @@ A write Invaract cannot place (a destination the job computes, a template parame
 refused the same way, but naming it as trusted does not let it through, and its remediation
 says so.
 
+## Dry-run mode
+
+With `--invaract_dry_run=true` and no contract, the job runs unchanged and Invaract writes the
+contract each write would need. It is the usual way to start on an existing job:
+
+```bash
+python example_job.py --root=. \
+  --runner=invaract_beam.InvaractRunner \
+  --invaract_dry_run=true \
+  --invaract_notify_config=notify.properties \
+  --job_name=orders-report
+```
+
+With a [notification sink](/guides/notification-sinks/) configured, each write's draft is
+published as a `CONTRACT_INFERENCE` event. For the example job above, its `contractYaml` is
+(real output, Beam 2.77.0):
+
+```yaml
+id: inferred_contract
+version: 0.1.0
+status: draft
+inputs:
+- name: input
+  location: ./in/orders
+outputs:
+- name: output
+  location: ./out/report
+  format: parquet
+  schema:
+    fields:
+    - name: id
+      type: long
+      required: true
+      nullable: false
+    - name: amount
+      type: long
+      required: true
+      nullable: true
+  derivedFrom:
+  - input
+```
+
+The output's columns come from the schema `WriteToParquet` is given. The input has none, because
+a `ReadFromParquet` of dictionaries leaves its file schema for Python to read when the job runs.
+The event says so, with status `INFERRED_DEGRADED` and the reason
+`the pipeline states no columns for the read of ./in/orders, so the draft declares none for it`.
+Read with `as_rows=True`, or fill the columns in yourself when you review the draft.
+
+After the last write, one `DRY_RUN_SUMMARY` event merges every draft into one contract named
+after `--job_name` (here `id: orders-report`, with the input named `orders` and the output
+`report`). It is published before the pipeline runs, since the whole pipeline is known by then.
+Add `--invaract_check_only=true` to get the same events without running the job at all. With no
+sink, the drafts and the summary are logged instead. See
+[Dry-run mode](/guides/dry-run-mode/) for how to turn a draft into a contract.
+
 ## Check a pipeline in CI, without running it
 
 Add `--invaract_check_only=true` to the job's production command line and run the job in a CI

@@ -88,7 +88,7 @@ copied from real runs; they are published as files next to the
 ```json
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791616869177,
+  "timestamp": 1792586926573,
   "unverifiableInputs": [],
   "job": {
     "engineDetails": {
@@ -96,28 +96,30 @@ copied from real runs; they are published as files next to the
       "deployMode": "client"
     },
     "name": "InvaractDemoJobHarness",
-    "startTimeMs": 1791616859629,
+    "startTimeMs": 1792586919215,
     "attributes": {
       "team": "orders",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
     "engineVersion": "3.5.7",
-    "runId": "local-1791616860604",
+    "runId": "local-1792586920008",
     "user": "root",
     "engine": "spark"
   },
-  "eventId": "2f7d167bf3c686181e4f51e12f393b45933e631a2f403396bd940a7a3b20c480",
+  "eventId": "d20ce5e99c811308aa7129f026455786eaad88bf832183d700d62e40aea6d6a6",
   "fingerprints": null,
   "status": "PASSED",
   "metadata": {
-    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "description": {
+      "purpose": "Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n"
+    },
     "owner": "invaract-demo"
   },
   "violations": [],
   "schemaVersion": 1,
   "roleConformance": [],
-  "runId": "local-1791616860604",
+  "runId": "local-1792586920008",
   "dataQuality": [],
   "contract": "invaract_demo_output@1.0.0"
 }
@@ -129,7 +131,7 @@ deliberately breaks a contract):
 ```json
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791616898958,
+  "timestamp": 1792586962933,
   "unverifiableInputs": [],
   "job": {
     "engineDetails": {
@@ -137,22 +139,24 @@ deliberately breaks a contract):
       "deployMode": "client"
     },
     "name": "InvaractDemoJobHarness",
-    "startTimeMs": 1791616888688,
+    "startTimeMs": 1792586954690,
     "attributes": {
       "team": "orders",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
     "engineVersion": "3.5.7",
-    "runId": "local-1791616889809",
+    "runId": "local-1792586955529",
     "user": "root",
     "engine": "spark"
   },
-  "eventId": "6d80cb9064e5dc24371a60320a2f5d1a8eca27b874df00a4994517f084df11e0",
+  "eventId": "e50bd679a876382a95a6de7498e88bb8edc42af020816ee69b2503e801fbf524",
   "fingerprints": null,
   "status": "FAILED",
   "metadata": {
-    "description": "{purpose=A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n}",
+    "description": {
+      "purpose": "A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n"
+    },
     "owner": "invaract-demo"
   },
   "violations": [
@@ -167,7 +171,7 @@ deliberately breaks a contract):
   ],
   "schemaVersion": 1,
   "roleConformance": [],
-  "runId": "local-1791616889809",
+  "runId": "local-1792586955529",
   "dataQuality": [],
   "contract": "invaract_demo_output@1.0.0"
 }
@@ -182,7 +186,7 @@ deliberately breaks a contract):
   "eventType": "WRITE",
   "catalog": null,
   "location": "file:/home/user/Invaract/demo/output/result.parquet",
-  "timestamp": 1791616870381,
+  "timestamp": 1792586927566,
   "rowCount": 10,
   "bytesWritten": 1324,
   "job": {
@@ -191,18 +195,18 @@ deliberately breaks a contract):
       "deployMode": "client"
     },
     "name": "InvaractDemoJobHarness",
-    "startTimeMs": 1791616859629,
+    "startTimeMs": 1792586919215,
     "attributes": {
       "team": "orders",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
     "engineVersion": "3.5.7",
-    "runId": "local-1791616860604",
+    "runId": "local-1792586920008",
     "user": "root",
     "engine": "spark"
   },
-  "eventId": "f2ff702406da2560f0c5f62eac759e12cc799eeac36c0b31c108bdb5f5e9d469",
+  "eventId": "108aeb8b5b912576ec5f410f02400ab33338eba82c6e2f40638a393d189d9a6e",
   "operation": null,
   "partitionColumns": [],
   "schema": [
@@ -228,15 +232,17 @@ deliberately breaks a contract):
     }
   ],
   "fileCount": 1,
-  "durationMs": 1183,
+  "durationMs": 980,
   "deltaVersion": null,
   "metadata": {
-    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "description": {
+      "purpose": "Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n"
+    },
     "owner": "invaract-demo"
   },
   "saveMode": "overwrite",
   "schemaVersion": 1,
-  "runId": "local-1791616860604",
+  "runId": "local-1792586920008",
   "contract": "invaract_demo_output@1.0.0",
   "datasetType": null
 }
@@ -644,7 +650,7 @@ event.
   afterward:
 
   ```json
-  {"checksFailed": 0, "eventType": "JOB_SUMMARY", "timestamp": 1791616871013, "totalViolations": 0, "job": {"engineDetails": {"master": "local[*]", "deployMode": "client"}, "name": "InvaractDemoJobHarness", "startTimeMs": 1791616859629, "attributes": {"team": "orders", "dag": "orders_daily"}, "jobId": "orders_nightly", "engineVersion": "3.5.7", "runId": "local-1791616860604", "user": "root", "engine": "spark"}, "eventId": "76663fb3c9180185675677c6cdd78b024516f6678f21494338187ae5a5f4a311", "totalWrites": 1, "durationMs": 11415, "metadata": {"description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}", "owner": "invaract-demo"}, "schemaVersion": 1, "checksPassed": 1, "runId": "local-1791616860604"}
+  {"checksFailed": 0, "eventType": "JOB_SUMMARY", "timestamp": 1792586928063, "totalViolations": 0, "job": {"engineDetails": {"master": "local[*]", "deployMode": "client"}, "name": "InvaractDemoJobHarness", "startTimeMs": 1792586919215, "attributes": {"team": "orders", "dag": "orders_daily"}, "jobId": "orders_nightly", "engineVersion": "3.5.7", "runId": "local-1792586920008", "user": "root", "engine": "spark"}, "eventId": "da11dc178c97876a4d2484bae3d48ae161cbb75d4753091c0f86c98839ad5ddb", "totalWrites": 1, "durationMs": 8872, "metadata": {"description": {"purpose": "Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n"}, "owner": "invaract-demo"}, "schemaVersion": 1, "checksPassed": 1, "runId": "local-1792586920008"}
   ```
 
   A single job (like `DemoJobHarness`) calls `publishSummary()` once, right after its
