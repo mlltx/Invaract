@@ -214,7 +214,7 @@ translation with: <a href="/Invaract/contributor/design/beam-adapter/">docs/BEAM
 then <code dir="auto">PortableCheckSpec</code> fails until it is a Beam option (<code dir="auto">InvaractBeamOptions</code> and <code dir="auto">BeamConfigSource</code>) and a flag of the
 Python package (<code dir="auto">SETTINGS</code> in <code dir="auto">python/invaract_beam/options.py</code>, each with its help text), naming each file. A setting that only an adapter checking
 after the job reads (<code dir="auto">failOnMissingOutput</code>) is left out of <code dir="auto">BeamSettings.Names</code>.</li>
-<li><strong>Python SDK releases tested</strong>: <code dir="auto">beam.python.verified</code> (2.68.0, 2.71.0, 2.74.0 and 2.77.0). 2.68.0 is the floor: the
+<li><strong>Python SDK releases tested</strong>: <code dir="auto">beam.python.verified</code> (<!-- generate-version-docs:BEGIN beam.python.list -->2.68.0, 2.71.0, 2.74.0 and 2.77.0<!-- generate-version-docs:END -->). 2.68.0 is the floor: the
 first release whose <code dir="auto">WriteToParquet</code> takes <code dir="auto">triggering_frequency</code>, which the streaming scenarios need.</li>
 <li><strong>A new Python SDK release</strong>: add it to the <code dir="auto">beam-python</code> job’s <code dir="auto">beam-python-version</code> matrix in
 <code dir="auto">.github/workflows/test.yml</code>. Each run there records the test pipelines afresh with its release (<code dir="auto">record_fixtures.py</code>)

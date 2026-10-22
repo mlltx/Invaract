@@ -382,7 +382,9 @@ it complete.</p>
 <li>coverage: measure, then pin <code dir="auto">coverageMinimumStmtTotal</code>/<code dir="auto">Branch</code> a few points under;</li>
 <li>scoped mutation testing: at least 70% on the files you wrote, written to be mutation-resistant the first time;</li>
 <li>API compatibility: after the first release, <code dir="auto">mimaPreviousArtifacts</code> names it; before, it is empty;</li>
-<li><code dir="auto">./dev/capabilities</code> to regenerate the engine-capabilities page, and the user documentation (<code dir="auto">docs-site</code>) for
+<li><code dir="auto">./dev/capabilities</code> to regenerate the engine-capabilities page and the user page “What Each Engine Checks” (every capability
+the adapter does not fully support needs a <code dir="auto">summary:</code> line, one plain sentence for users, beside its <code dir="auto">note</code>; the
+file’s <code dir="auto">guide:</code> names the adapter’s install guide), and the user documentation (<code dir="auto">docs-site</code>) for
 anything a user of the engine would need: how to install it, what it verifies, what it does not;</li>
 <li>the External Attachability Requirement: every capability a job can turn on is reachable through the engine’s own
 configuration surface, or the declaration says it is not;</li>

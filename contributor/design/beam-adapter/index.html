@@ -846,7 +846,10 @@ scenarios keep their two-output contracts and write both outputs.</li>
 exposes no columns. The contract format now lets a dataset leave <code dir="auto">schema</code> out (or list no fields): its content is not governed,
 <code dir="auto">SchemaChecker</code> compares nothing for it, and <code dir="auto">ContractValidator</code> warns so the omission is never silent. A Beam write with no
 columns is refused only when the output it lands on declares columns (<code dir="auto">BeamCheck.declaresColumns</code>); in dry-run mode such a write
-gets a draft whose output declares none (<code dir="auto">INFERRED_DEGRADED</code>, saying why), rather than being skipped. Still refused, and for the
+gets a draft whose output declares none (<code dir="auto">INFERRED_DEGRADED</code>, saying why), rather than being skipped. The same holds for a read
+whose columns the pipeline does not state (a text read; in Python, a <code dir="auto">ReadFromParquet</code> of dictionaries, whose file schema is read
+only when the job runs): the draft lists it as an input with no columns (<code dir="auto">TranslatedWrite.draftInputs</code>) and says so, where it
+used to be left out of the draft altogether, although enforcement saw it. Still refused, and for the
 job to fix rather than the contract: a BigQuery write of <code dir="auto">TableRow</code>s into an existing table that names no schema
 (<code dir="auto">CREATE_NEVER</code>), whose columns exist but only BigQuery knows them (<code dir="auto">withSchema</code>, or rows with a Beam schema and
 <code dir="auto">useBeamSchema()</code>, fixes it).</li>
@@ -1132,7 +1135,7 @@ should probe and document what the engine itself does before the hook.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="unverified-items">Unverified items</h2><a class="sl-anchor-link" href="#unverified-items"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified items”</span></a></div>
 <p>What could not be checked against the engine, to be settled by the adapter’s own tests.</p>
 <ul>
-<li><strong>Beam releases outside 2.60 to 2.77.</strong> The suite passes on 2.60.0, 2.65.0, 2.70.0 and 2.77.0 (<code dir="auto">beam-version-matrix</code>); a release
+<li><strong>Beam releases outside 2.60 to 2.77.</strong> The suite passes on <!-- generate-version-docs:BEGIN beam.list -->2.60.0, 2.65.0, 2.70.0 and 2.77.0<!-- generate-version-docs:END --> (<code dir="auto">beam-version-matrix</code>); a release
 that changes the IO class names or the members read by reflection (<code dir="auto">Reflection</code>) makes those steps fail closed, and the matrix is where
 that shows up first.</li>
 <li><strong>Runners other than the DirectRunner and Flink.</strong> Dataflow, Spark and Samza hand-over is the same code path, not tested on its own (D16).</li>

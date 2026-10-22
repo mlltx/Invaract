@@ -447,6 +447,14 @@ declares nothing unsupported, so no Spark verdict changes; the check exists for 
 <code dir="auto">docs-site/.../reference/engine-capabilities.md</code>. <code dir="auto">CapabilityMatrixSpec</code> fails when the checked-in page
 differs from what the declarations generate, so editing a declaration without regenerating (or editing
 the page by hand) fails the <code dir="auto">verification-core</code> tests — in CI, with no separate job.</p>
+<p><strong>The user page.</strong> The same run writes <code dir="auto">reference/what-each-engine-checks.md</code> (<code dir="auto">EngineGuidePage</code>, in the
+kit): the same facts for people who use Invaract, in plain words. Each capability’s title, what it does
+and what a user loses without it come from the kit’s <code dir="auto">CapabilityGuide</code> (<code dir="auto">CapabilityGuideTest</code> fails
+until a new capability has an entry); each adapter’s own gaps come from its declaration, where every
+capability not fully <code dir="auto">supported</code> carries a <code dir="auto">summary:</code> (one sentence for a user, beside the
+contributor-facing <code dir="auto">note</code>) and the file names its install guide as <code dir="auto">guide:</code>. <code dir="auto">AdapterCapabilities.parse</code>
+ignores both keys; <code dir="auto">EngineGuidePage</code> refuses a declaration missing a summary, and <code dir="auto">EngineGuidePageSpec</code>
+is its drift check.</p>
 <p><strong>Tests.</strong> <code dir="auto">CapabilitySpec</code> (parsing, every rejection path), <code dir="auto">CapabilityCheckSpec</code> (each relied-on
 shape, each side of every condition), <code dir="auto">CapabilityMatrixSpec</code> (rendering and drift),
 <code dir="auto">SparkCapabilitiesSpec</code> (Spark’s declaration loads, is complete, and a broken one fails closed), and a
