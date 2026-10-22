@@ -77,6 +77,37 @@ violations list, and see
 [Reference → Contract Format](/reference/contract-format/#validator-checks) for
 the full list of checks.
 
+## Something in the contract seems to be ignored
+
+Invaract reads only the keys it knows and keeps the rest, because a contract may carry
+anything the Open Data Contract Standard or your own team defines. A misspelt key is
+therefore not an error: `nulable: false` is kept and ignored, and the field stays nullable.
+When a job starts with a contract, Invaract logs a warning for each key spelt close to one
+it reads, and for each other thing the contract validator warns about, such as a field type
+or format it doesn't recognize:
+
+```
+WARN AttachSetup$: Invaract: contract orders@1.0.0: [Warning] outputs[0].schema.fields[0].nulable: Unknown key 'nulable' is ignored. Did you mean 'nullable'?
+WARN AttachSetup$: Invaract: contract orders@1.0.0: [Warning] outputs[0].format: format 'parqet' is not one of the canonical formats (avro, bigquery, csv, delta, hive, hudi, iceberg, jdbc, json, kafka, orc, parquet, table, text); it can only match an adapter that reports exactly this string, so the same contract may fail on another engine. Did you mean 'parquet'?
+```
+
+Search the job's log for `Invaract: contract` to find them. A contract fetched from a
+[registry](/guides/using-a-contract-registry/) is checked the same way, except for
+misspelt keys: those are found only in a contract read from a file.
+
+## A setting is refused with "must be true or false"
+
+Every setting that switches something on (`dryRun`, `rejectUndeclaredFields`,
+`computeFingerprint`, ...) takes `true` or `false`, in any case. Anything else, such as
+`yes` or `1`, is refused when the job starts, naming the setting:
+
+```
+'spark.invaract.dryRun' must be true or false, not 'yes'.
+```
+
+A notification config's `sink.enabled` is held to the same rule, and the message names the
+file. A value Invaract can't read is never quietly taken to mean `false`.
+
 ## A location doesn't match even though it "looks right"
 
 Locations are matched by normalized suffix, not exact string equality — see
@@ -145,13 +176,16 @@ If `spark.invaract.notifyConfig` can't be loaded, dry-run mode doesn't fail your
 one warning, and falls back to logging the inferred contract:
 
 ```
-WARN InvaractSparkSessionExtension: Invaract dry-run mode: could not set up the notification sink named by 'spark.invaract.notifyConfig=/etc/invaract/notify.properties' (java.io.FileNotFoundException: /etc/invaract/notify.properties (No such file or directory)); falling back to logging inferred contracts. The job is not affected.
+WARN AttachSetup$: Invaract dry-run mode: could not set up the notification sink named by 'spark.invaract.notifyConfig=/etc/invaract/notify.properties' (java.lang.IllegalArgumentException: 'spark.invaract.notifyConfig' names '/etc/invaract/notify.properties', which is not a file that exists.); falling back to logging inferred contracts. The job is not affected.
 ```
 
 The cause is in the parentheses: here, a path that doesn't exist on the machine where the
 driver runs. In a cluster deploy mode that is the cluster, not your laptop, so make sure the
-file is shipped there (for example with `--files`). A `sink.class` that doesn't exist, or a
-sink whose own required property is missing, is reported the same way.
+file is shipped there (for example with `--files`). A `sink.class` that doesn't exist
+(`Class '...' was not found: check the name, and that its jar is on the job's classpath`), or a
+sink whose own required property is missing, is reported the same way. When Invaract is
+enforcing a contract rather than in dry-run mode, each of these stops the job at start-up
+instead, with the same message.
 
 ## Beam: the pipeline runs, but nothing is checked
 

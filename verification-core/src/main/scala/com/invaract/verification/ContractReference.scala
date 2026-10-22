@@ -53,7 +53,11 @@ object ContractReference {
   def resolve(raw: String, config: ConfigSource): Contract =
     parse(raw) match {
       case Some((contractId, version)) => fetchFromRegistry(contractId, version, config)
-      case None                        => ContractParser.parseFile(raw)
+      case None if raw.startsWith(Scheme) =>
+        throw new IllegalArgumentException(
+          s"'$raw' is not a valid contract reference: write it as 'registry://<id>@<version>' (the version may be '$LatestVersion')."
+        )
+      case None => ContractParser.parseFile(raw)
     }
 
   private def fetchFromRegistry(contractId: String, version: String, config: ConfigSource): Contract = {

@@ -27,6 +27,19 @@ trait ConfigSource {
 
 object ConfigSource {
 
+  /** The on/off setting `name`: `false` when unset, `true` or `false` when set to either (any case, surrounding space
+    * ignored). Any other value is refused with an error naming the setting as the engine spells it, rather than read as
+    * `false`: `dryRun=yes` silently enforcing, or `rejectUndeclaredFields=1` silently not, would be worse than failing.
+    */
+  def flag(config: ConfigSource, name: String): Boolean =
+    config.get(name).exists { raw =>
+      raw.trim.toLowerCase match {
+        case "true"  => true
+        case "false" => false
+        case _       => throw new IllegalArgumentException(s"'${config.describe(name)}' must be true or false, not '$raw'.")
+      }
+    }
+
   /** Nothing configured. */
   val empty: ConfigSource = new ConfigSource {
     def get(name: String): Option[String] = None

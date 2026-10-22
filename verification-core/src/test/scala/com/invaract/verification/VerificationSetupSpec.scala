@@ -76,8 +76,34 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("resolveContractLocations: a ref:// with nothing configured fails clearly instead of becoming a downstream mismatch") {
-    intercept[LocationResolutionException] {
+    val e = intercept[LocationResolutionException] {
       VerificationSetup.resolveContractLocations(refContract, ConfigSource.empty)
+    }
+    assert(
+      e.getMessage == "The contract declares 'ref://gold_out', but no location map is set: set 'locationMap' to a .properties file " +
+        "with a line 'gold_out=<real location>'."
+    )
+    val spark = ConfigSource.prefixed("spark.invaract.")(_ => None)
+    assert(intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(refContract, spark)).getMessage
+      .contains("set 'spark.invaract.locationMap' to"))
+  }
+
+  test("resolveContractLocations: an id the map does not have names the id, the file, the setting and the ids it does map") {
+    val map = file("other-locations.properties", "silver_out=/s\nbronze_out=/b\n")
+    val e = intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(refContract, config(InvaractConf.LocationMap -> map)))
+    assert(
+      e.getMessage == s"The contract declares 'ref://gold_out', but the location map '$map' (named by 'locationMap') has no line for " +
+        "'gold_out'; the ids it maps are: bronze_out, silver_out."
+    )
+    val empty = file("empty-locations.properties", "# nothing yet\n")
+    assert(intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(refContract, config(InvaractConf.LocationMap -> empty)))
+      .getMessage.endsWith("has no line for 'gold_out'; it maps no ids at all."))
+  }
+
+  test("resolveContractLocations: a locationMap that is not a file names the setting, even for a contract with no ref://") {
+    List("/definitely/not/there.properties", scratch.toString).foreach { path =>
+      val e = intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(plainContract, config(InvaractConf.LocationMap -> path)))
+      assert(e.getMessage == s"'locationMap' names '$path', which is not a file that exists.", path)
     }
   }
 
@@ -111,6 +137,14 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     val allOn = VerificationOptions(true, true, true, true, true)
     assert(VerificationSetup.resolveVerificationOptions(allOn, config(allFlags.map(_._1 -> "false"): _*)) == allOn)
+  }
+
+  test("resolveVerificationOptions: a flag that is neither true nor false is refused by name, never read as false") {
+    allFlags.foreach { case (name, flag) =>
+      assert(flag(VerificationSetup.resolveVerificationOptions(VerificationOptions(), config(name -> " True "))), name)
+      val e = intercept[IllegalArgumentException](VerificationSetup.resolveVerificationOptions(VerificationOptions(), config(name -> "yes")))
+      assert(e.getMessage == s"'$name' must be true or false, not 'yes'.", name)
+    }
   }
 
   // --- org policy: layers ----------------------------------------------------------------------

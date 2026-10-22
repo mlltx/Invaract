@@ -74,6 +74,8 @@ object ReflectivePluginResolver {
     val loaded =
       try Class.forName(className, false, getClass.getClassLoader)
       catch {
+        case e: ClassNotFoundException =>
+          throw new IllegalArgumentException(s"Class '$className' was not found: check the name, and that its jar is on the job's classpath", e)
         case e: ReflectiveOperationException => throw cannotInstantiate(e)
         case e: LinkageError                 => throw new IllegalArgumentException(s"Could not load '$className': ${e.getMessage}", e)
       }

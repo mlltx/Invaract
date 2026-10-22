@@ -22,7 +22,8 @@ import scala.collection.JavaConverters._
   *
   * Recognized keys:
   *   - `sink.enabled` (`true`/`false`, default `false`) — the master
-  *     switch; every other key is ignored when this is off.
+  *     switch; every other key is ignored when this is off. Any other
+  *     value is refused, so `yes` never silently turns the sink off.
   *   - `sink.class` — the fully-qualified class name of a `NotificationSink`
   *     implementation with a public no-arg constructor. Required when
   *     `sink.enabled=true`.
@@ -60,7 +61,12 @@ object NotificationConfig {
       in.close()
     }
 
-    val enabled = props.getProperty("sink.enabled", "false").trim.equalsIgnoreCase("true")
+    val enabled = props.getProperty("sink.enabled", "false").trim.toLowerCase match {
+      case "true"  => true
+      case "false" => false
+      case other =>
+        throw new IllegalArgumentException(s"'sink.enabled' in '$path' must be true or false, not '$other'.")
+    }
     val sinkClassName = Option(props.getProperty("sink.class")).map(_.trim).filter(_.nonEmpty)
     val sinkProperties = props
       .stringPropertyNames()

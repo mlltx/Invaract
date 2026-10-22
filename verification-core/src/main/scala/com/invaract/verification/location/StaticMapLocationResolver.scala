@@ -16,6 +16,10 @@ import scala.collection.JavaConverters._
   * doc for where this plugs into contract loading.
   */
 class StaticMapLocationResolver(mapping: Map[String, String]) extends LocationResolver {
+
+  /** The ids this resolver maps. */
+  def ids: Set[String] = mapping.keySet
+
   override def resolve(id: String): String =
     mapping.getOrElse(
       id,

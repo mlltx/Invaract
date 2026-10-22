@@ -211,7 +211,8 @@ object ContractValidator {
         ValidationSeverity.Warning,
         path,
         s"$label '$v' is not one of the canonical $plural (${all.toList.sorted.mkString(", ")}); " +
-          "it can only match an adapter that reports exactly this string" + (if (consequence.isEmpty) "" else s", $consequence")
+          "it can only match an adapter that reports exactly this string" + (if (consequence.isEmpty) "" else s", $consequence") +
+          "." + Suggestions.didYouMean(v, all)
       )
     }
 
@@ -285,7 +286,8 @@ object ContractValidator {
       issues += ValidationIssue(
         ValidationSeverity.Warning,
         path,
-        s"Unrecognized field type '${field.fieldType}'. Known types: ${KnownTypes.mkString(", ")}"
+        s"Unrecognized field type '${field.fieldType}'.${Suggestions.didYouMean(baseType(field.fieldType), KnownTypes)} " +
+          s"Known types: ${KnownTypes.toList.sorted.mkString(", ")}"
       )
     }
 
