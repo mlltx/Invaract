@@ -406,6 +406,17 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(fingerprinted(None), "no declaration, no capability check")
   }
 
+  test("computeFingerprint: the warning says which adapter and why, only when a fingerprint was asked for and is not computed") {
+    val unsupported = Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("unsupported", Some("would mislead"))))))
+    val on = VerificationOptions(computeFingerprint = true)
+    assert(VerificationPipeline.fingerprintSkipped(on, unsupported).contains(
+      "computeFingerprint is on, but the toy adapter does not compute fingerprints (would mislead), so this check publishes none"
+    ))
+    assert(VerificationPipeline.fingerprintSkipped(VerificationOptions(), unsupported).isEmpty, "none asked for, nothing to say")
+    assert(VerificationPipeline.fingerprintSkipped(on, Some(CapabilityFixtures.parsed())).isEmpty, "supported: one is computed")
+    assert(VerificationPipeline.fingerprintSkipped(on, None).isEmpty)
+  }
+
   test("explain: a fingerprint with no per-output entries prints only the overall hash") {
     val noOutputs = com.invaract.fingerprint.TransformationFingerprinter.fingerprint(Write(DatasetRef("out/report"), Read(DatasetRef(orders))), None)
     val result = VerificationResult.of("pipe@1.0.0", List(Violations.missingInput(contract.inputs.head, nudgeTowardDerivedFrom = false)), fingerprints = Some(noOutputs))

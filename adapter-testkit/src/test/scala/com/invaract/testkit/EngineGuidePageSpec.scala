@@ -162,6 +162,9 @@ class EngineGuidePageSpec extends AnyFunSuite {
       EngineGuidePage.main((out.toString :: declarations).toArray)
       assert(read(out.toString) == EngineGuidePage.renderFiles(declarations))
       intercept[IllegalArgumentException](EngineGuidePage.main(Array(out.toString)))
+      // one declaration is enough
+      EngineGuidePage.main(Array(out.toString, declarations.head))
+      assert(read(out.toString) == EngineGuidePage.renderFiles(List(declarations.head)))
     } finally {
       Files.list(dir).forEach(p => Files.delete(p))
       Files.delete(dir)
