@@ -1,0 +1,550 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Beam Python adapter | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-167/design/beam-python-adapter/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-167/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-167/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.5"/><meta name="generator" content="Starlight v0.42.5"/><meta property="og:title" content="Beam Python adapter"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-167/design/beam-python-adapter/"/><meta property="og:locale" content="en"/><meta property="og:description" content="> Status: built. Checks Apache Beam pipelines written with the Python SDK against a data contract before they are > submitted. Survey: docs/BEAMPYTHONAD..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="> Status: built. Checks Apache Beam pipelines written with the Python SDK against a data contract before they are > submitted. Survey: docs/BEAMPYTHONAD..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-167/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-167/_astro/common.D_L-1Y3_.css"><style>@layer starlight.components{.card:where(.astro-oag6qnet){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-oag6qnet):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-oag6qnet):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-oag6qnet):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-oag6qnet):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-oag6qnet){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-oag6qnet) .icon:where(.astro-oag6qnet){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-oag6qnet) .body:where(.astro-oag6qnet){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-7qmvx3iy){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-7qmvx3iy)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-7qmvx3iy){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-7qmvx3iy){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-7qmvx3iy)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-167/_astro/page.Dwipeu-R.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-167/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-167/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-167/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-167/_astro/Search.astro_astro_type_script_index_0_lang.fyX7nGoD.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="0byxf7y" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-167/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#in-one-picture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">In one picture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-decisions-and-why-they-keep-it-easy-to-maintain" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The decisions, and why they keep it easy to maintain</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#where-things-are" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Where things are</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#maintaining-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Maintaining it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#engine-investigation" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Engine investigation</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#capability-ledger" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Capability ledger</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#operation-surface" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Operation surface</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#type-mapping" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Type mapping</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#friction-log" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Friction log</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#unverified-items" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Unverified items</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-167/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#in-one-picture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">In one picture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-decisions-and-why-they-keep-it-easy-to-maintain" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The decisions, and why they keep it easy to maintain</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#where-things-are" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Where things are</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#maintaining-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Maintaining it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#engine-investigation" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Engine investigation</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#capability-ledger" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Capability ledger</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#operation-surface" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Operation surface</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#type-mapping" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Type mapping</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#friction-log" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Friction log</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#unverified-items" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Unverified items</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-167/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Beam Python adapter</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/BEAM_PYTHON_ADAPTER.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<blockquote>
+<p><strong>Status: built.</strong> Checks Apache Beam pipelines written with the Python SDK against a data contract before they are
+submitted. Survey: <a href="/Invaract/contributor-pr-preview/pr-167/design/beam-python-adapter-survey/">docs/BEAM_PYTHON_ADAPTER_SURVEY.md</a>. The Java adapter it shares its
+translation with: <a href="/Invaract/contributor-pr-preview/pr-167/design/beam-adapter/">docs/BEAM_ADAPTER.md</a>. User guide: docs-site <code dir="auto">guides/using-invaract-with-beam-python</code>.</p>
+</blockquote>
+<div class="sl-heading-wrapper level-h2"><h2 id="in-one-picture">In one picture</h2><a class="sl-anchor-link" href="#in-one-picture"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “In one picture”</span></a></div>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-167/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-167/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">team's Python job (unchanged)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  --runner=invaract_beam.InvaractRunner --invaract_contract=...</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">▼</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">invaract_beam (Python, beam-adapter/python)          ← thin: no checking logic at all</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  pipeline.to_runner_api()  →  pipeline.pb (a temporary file)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  java -jar invaract-beam-checker.jar --pipeline=pipeline.pb --invaract_&#x3C;setting>=...</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">▼</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">PortableCheck (Scala, beam-adapter)                  ← the checker: exit 0 pass, 1 refused, 2 not checked</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  PortablePipeline: proto → BeamStep tree (Java coders rehydrated, display data with namespaces)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  BeamTranslator(steps, PythonSteps)             ← the same translator as Java pipelines, with Python's IO catalogue</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">│  BeamCheck(..., BeamCapabilities.python)        ← the same check, with the Python adapter's declaration</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">▼</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">exit 0 → the package hands the pipeline to --invaract_delegate (DataflowRunner, DirectRunner, ...)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">else  → ContractViolation / CheckNotRun is raised; nothing runs</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="team&#x27;s Python job (unchanged)   │  --runner=invaract_beam.InvaractRunner --invaract_contract=...   ▼invaract_beam (Python, beam-adapter/python)          ← thin: no checking logic at all   │  pipeline.to_runner_api()  →  pipeline.pb (a temporary file)   │  java -jar invaract-beam-checker.jar --pipeline=pipeline.pb --invaract_<setting>=...   ▼PortableCheck (Scala, beam-adapter)                  ← the checker: exit 0 pass, 1 refused, 2 not checked   │  PortablePipeline: proto → BeamStep tree (Java coders rehydrated, display data with namespaces)   │  BeamTranslator(steps, PythonSteps)             ← the same translator as Java pipelines, with Python&#x27;s IO catalogue   │  BeamCheck(..., BeamCapabilities.python)        ← the same check, with the Python adapter&#x27;s declaration   ▼exit 0 → the package hands the pipeline to --invaract_delegate (DataflowRunner, DirectRunner, ...)else  → ContractViolation / CheckNotRun is raised; nothing runs"><div></div></button></div></figure></div>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-decisions-and-why-they-keep-it-easy-to-maintain">The decisions, and why they keep it easy to maintain</h2><a class="sl-anchor-link" href="#the-decisions-and-why-they-keep-it-easy-to-maintain"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The decisions, and why they keep it easy to maintain”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>Decision</th><th>Why</th></tr></thead><tbody><tr><td>D1</td><td><strong>A Python wrapper runner</strong> (<code dir="auto">--runner=invaract_beam.InvaractRunner</code>) is the hook, a pre-submit gate.</td><td>The Java adapter’s design. It sees every pipeline, whatever the runner (Dataflow’s Python runner does not go through a job service).</td></tr><tr><td>D2</td><td><strong>All checking is in Scala; the Python package only bridges.</strong></td><td>One place for the logic, held to the module’s coverage, mutation and MiMa gates. The Python package is ~150 lines with no decision in it: it forwards flags, writes a file, runs a program and reads its exit status.</td></tr><tr><td>D3</td><td><strong>One translator for both SDKs</strong> (<code dir="auto">BeamTranslator</code>, parametrised by a <code dir="auto">StepCatalogue</code>). A Python pipeline becomes the same <code dir="auto">BeamStep</code> tree a Java one does.</td><td>The walk, what fails closed, unknown steps keeping the reads beneath them, steps that only report on writes (D14 of the Java adapter): written and tested once. Only “which steps are reads and writes” differs, and that is the catalogue (<code dir="auto">JavaSteps</code>, <code dir="auto">PythonSteps</code>).</td></tr><tr><td>D4</td><td><strong>The bridge is a separate program per submission</strong> (<code dir="auto">java -jar</code>), not a service or a native image.</td><td>The least machinery. A check takes under a second (0.9 s measured on a recorded pipeline). Java 11+ where jobs are submitted is the cost, stated in the declaration.</td></tr><tr><td>D5</td><td><strong>The Python catalogue keys on the source and sink classes</strong>, not on transform names: every Python read is an <code dir="auto">iobase.Read</code> whose <code dir="auto">source</code> item names its source class, and every file read or write states <code dir="auto">file_pattern</code> published by that class.</td><td>A short table (<code dir="auto">PythonSteps.FileSources</code>, <code dir="auto">FileSinks</code>) covers every file format; a new SDK transform built on a known source or sink needs no change.</td></tr><tr><td>D6</td><td><strong>Read a write’s columns from what it states</strong>: a Parquet write’s pyarrow schema (<code dir="auto">PyArrowSchemas</code>), an Avro write’s schema, a BigQuery load’s schema, else the data’s row schema (<code dir="auto">SchemaCoder</code>, rehydrated from the proto). No Python-side helper.</td><td>Everything the checks need is in the portable form; a helper reading private Python attributes would be a second, untested place that breaks on SDK releases.</td></tr><tr><td>D7</td><td><strong>Transformation-shape rules are unsupported.</strong></td><td>Python filters and joins are code. A contract with such a rule is refused with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> before anything else (<code dir="auto">VerificationPipeline.requireSupported</code>, which both Beam adapters now call first).</td></tr><tr><td>D8</td><td><strong>The settings are spelled <code dir="auto">--invaract_&#x3C;snake_case></code></strong> and the package forwards each one unchanged; the checker refuses one it does not know (exit 2).</td><td>A setting means the same on every engine. <code dir="auto">InvaractConf.All</code> is the list; three tests tie the Java options, the checker and the Python flags to it (see “Maintaining it”).</td></tr><tr><td>D9</td><td><strong>CI runs real Python pipelines</strong> through the real package and checker (<code dir="auto">beam-python</code> job), and the translator’s unit tests run on <strong>recorded protos</strong>, so <code dir="auto">sbt test</code> needs no Python.</td><td>Fast unit tests everywhere; the end-to-end proof where Python is installed.</td></tr><tr><td>D10</td><td><strong>Release later</strong>: the checker jar is <code dir="auto">sbt assembly</code> in <code dir="auto">beam-adapter</code>; the package installs from the repository.</td><td>No release steps to maintain before there is a user; PyPI and a jar asset are a follow-up once the shape has settled.</td></tr><tr><td>D11</td><td><strong>A check-only mode for CI</strong> (<code dir="auto">--invaract_check_only=true</code>): the pipeline is checked and handed to no runner; <code dir="auto">run()</code> returns <code dir="auto">CheckedOnly</code> (finished, no metrics), the delegate is not created, and the checker is told (<code dir="auto">--check_only=true</code>) so events carry <code dir="auto">engineDetails.checkOnly</code>.</td><td>The Java adapter’s D22, in the bridge’s one place for runner behaviour. It is a runner flag, not a setting forwarded to the checker, because it decides what the runner does after the verdict.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="where-things-are">Where things are</h2><a class="sl-anchor-link" href="#where-things-are"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Where things are”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>What</th><th>Where</th></tr></thead><tbody><tr><td>The translator, shared with Java pipelines</td><td><code dir="auto">beam-adapter/src/main/scala/.../BeamTranslator.scala</code></td></tr><tr><td>The step catalogues</td><td><code dir="auto">StepCatalogue.scala</code> (<code dir="auto">JavaSteps</code>), <code dir="auto">PythonSteps.scala</code></td></tr><tr><td>Reading the portable form</td><td><code dir="auto">PortablePipeline.scala</code></td></tr><tr><td>pyarrow schemas</td><td><code dir="auto">PyArrowSchemas.scala</code></td></tr><tr><td>The checker program</td><td><code dir="auto">PortableCheck.scala</code> (<code dir="auto">PythonConfigSource</code> spells the settings)</td></tr><tr><td>What differs from a Java pipeline</td><td><code dir="auto">BeamFrontEnd.scala</code> (<code dir="auto">BeamFrontEnd.Python</code>: the engine name, the step catalogue, the declaration and the advice, kept together)</td></tr><tr><td>What a refusal advises</td><td><code dir="auto">BeamAdvice.scala</code> (<code dir="auto">BeamAdvice.Python</code>: the settings as Python spells them, the Python guide)</td></tr><tr><td>The declaration</td><td><code dir="auto">beam-adapter/src/main/resources/invaract-capabilities-beam-python.yaml</code></td></tr><tr><td>The Python package</td><td><code dir="auto">beam-adapter/python/invaract_beam/</code> (<code dir="auto">runner.py</code>, <code dir="auto">options.py</code>), tests in <code dir="auto">beam-adapter/python/tests/</code></td></tr><tr><td>Recorded pipelines (test fixtures)</td><td><code dir="auto">beam-adapter/src/test/resources/portable/*.pb</code>, made by <code dir="auto">beam-adapter/python/tests/record_fixtures.py</code></td></tr><tr><td>Conformance</td><td><code dir="auto">BeamPythonConformanceAdapter</code>/<code dir="auto">Spec</code> (Scala) running <code dir="auto">python/tests/conformance_job.py</code>; baseline <code dir="auto">conformance-baseline-beam-python.txt</code></td></tr><tr><td>Attested claims</td><td><code dir="auto">BeamPythonAttachSpec</code>, <code dir="auto">BeamPythonAttestedClaimsSpec</code>, the team’s job <code dir="auto">python/tests/example_job.py</code></td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="maintaining-it">Maintaining it</h2><a class="sl-anchor-link" href="#maintaining-it"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Maintaining it”</span></a></div>
+<ul>
+<li><strong>A new neutral setting</strong> (added to <code dir="auto">InvaractConf</code> and <code dir="auto">InvaractConf.All</code>): <code dir="auto">ConfigSourceSpec</code> fails until it is in <code dir="auto">All</code>;
+then <code dir="auto">PortableCheckSpec</code> fails until it is a Beam option (<code dir="auto">InvaractBeamOptions</code> and <code dir="auto">BeamConfigSource</code>) and a flag of the
+Python package (<code dir="auto">SETTINGS</code> in <code dir="auto">python/invaract_beam/options.py</code>, each with its help text), naming each file. A setting that only an adapter checking
+after the job reads (<code dir="auto">failOnMissingOutput</code>) is left out of <code dir="auto">BeamSettings.Names</code>.</li>
+<li><strong>Python SDK releases tested</strong>: <code dir="auto">beam.python.verified</code> (<!-- generate-version-docs:BEGIN beam.python.list -->2.68.0, 2.71.0, 2.74.0 and 2.77.0<!-- generate-version-docs:END -->). 2.68.0 is the floor: the
+first release whose <code dir="auto">WriteToParquet</code> takes <code dir="auto">triggering_frequency</code>, which the streaming scenarios need.</li>
+<li><strong>A new Python SDK release</strong>: add it to the <code dir="auto">beam-python</code> job’s <code dir="auto">beam-python-version</code> matrix in
+<code dir="auto">.github/workflows/test.yml</code>. Each run there records the test pipelines afresh with its release (<code dir="auto">record_fixtures.py</code>)
+before the tests read them, so a renamed source or sink class, display key or coder shows up as a failing
+<code dir="auto">PythonStepsSpec</code> assertion on that release. Once a run passes, add the release to <code dir="auto">beam.python.verified</code> in
+<code dir="auto">supported-beam-versions.properties</code> (version-matrix-drift-check fails if a listed release is not in the matrix). To move
+the committed recordings to it, re-record them (the script’s docstring has the command), run <code dir="auto">sbt test</code> and set
+<code dir="auto">beam.python.primary</code>. Recordings are not byte-for-byte reproducible (the SDK makes up new ids each time), so a re-recording
+always shows as changed files.</li>
+<li><strong>The checker’s own Beam release</strong> is <code dir="auto">beam.primary</code>, like the Java adapter’s; it reads the portable form whichever Python
+SDK made it, which is what the matrix above checks.</li>
+<li><strong>A new IO</strong>: if it is built on a file source or sink, add the class to <code dir="auto">PythonSteps.FileSources</code>/<code dir="auto">FileSinks</code>; otherwise add a
+case to <code dir="auto">sourceRead</code> or <code dir="auto">write</code>, record a fixture for it in <code dir="auto">record_fixtures.py</code>, and assert its translation in
+<code dir="auto">PythonStepsSpec</code>. Until then it fails closed: a read is not located, a write ending the pipeline is refused.</li>
+<li><strong>A change to the translator</strong> is a change to both adapters: run both conformance suites (<code dir="auto">BeamConformanceSpec</code>, and
+<code dir="auto">BeamPythonConformanceSpec</code> with <code dir="auto">INVARACT_TEST_PYTHON</code> set).</li>
+<li><strong>Running the Python suites locally</strong>: <code dir="auto">INVARACT_TEST_PYTHON=&#x3C;python with apache-beam[gcp] and pytest> sbt "testOnly *BeamPython*"</code>;
+without it they are canceled. That interpreter must not have <code dir="auto">invaract_beam</code> installed (the suites put it on <code dir="auto">PYTHONPATH</code>,
+and one shows a job where it is missing); CI builds the wheel to check the packaging instead of installing it. <code dir="auto">cd beam-adapter/python &#x26;&#x26; python -m pytest</code> runs the package’s own tests.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="engine-investigation">Engine investigation</h2><a class="sl-anchor-link" href="#engine-investigation"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Engine investigation”</span></a></div>
+<p>The survey (docs/BEAM_PYTHON_ADAPTER_SURVEY.md, sections 2, 3 and 10) is the investigation; the probes it lists were made
+permanent as the recorded fixtures. What building it added:</p>
+<ul>
+<li>The portable form a <code dir="auto">Pipeline.run()</code> hands the runner has been round-tripped through the proto by Beam itself
+(<code dir="auto">test_runner_api</code>), so a runner sees exactly what the checker reads.</li>
+<li>A coder Java does not know is rehydrated as <code dir="auto">UnknownCoderWrapper</code> rather than failing; the adapter treats it as no coder.</li>
+<li>A protocol buffer map has no order, so a step’s inputs and outputs are sorted by tag.</li>
+<li>The Python SDK’s root step wraps the whole pipeline; its children are not named under it (Beam names a part
+<code dir="auto">&#x3C;step>/&#x3C;part></code>), which is how it is told from a Java composite with no URN.</li>
+<li>A file stream (<code dir="auto">fileio.MatchContinuously</code>) keeps its pattern in pickled code: it is a read that is not located.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="capability-ledger">Capability ledger</h2><a class="sl-anchor-link" href="#capability-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Capability ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Capability</th><th>Declared</th><th>Evidence</th></tr></thead><tbody><tr><td><code dir="auto">read.batch</code></td><td>supported</td><td>conformance scenarios (<code dir="auto">BeamPythonConformanceSpec</code>); <code dir="auto">PythonStepsSpec</code></td></tr><tr><td><code dir="auto">read.streaming</code></td><td>partial</td><td>streaming scenarios pass with the read unlocated (<code dir="auto">MatchContinuously</code>); Pub/Sub located (<code dir="auto">PythonStepsSpec</code>)</td></tr><tr><td><code dir="auto">write.batch</code></td><td>supported</td><td>conformance scenarios; <code dir="auto">PythonStepsSpec</code></td></tr><tr><td><code dir="auto">write.streaming</code></td><td>supported</td><td>streaming scenarios (windowed <code dir="auto">WriteToText</code>/<code dir="auto">WriteToParquet</code>)</td></tr><tr><td><code dir="auto">write.rowLevelDml</code></td><td>not-applicable</td><td>Beam has none</td></tr><tr><td><code dir="auto">write.stateChange</code></td><td>not-applicable</td><td>Beam has none</td></tr><tr><td><code dir="auto">check.inputExistence</code></td><td>supported</td><td>scenarios 15, 16, 22, 23</td></tr><tr><td><code dir="auto">check.location</code></td><td>supported</td><td>scenarios 2, 20, 51</td></tr><tr><td><code dir="auto">check.outputsWritten</code></td><td>supported</td><td>scenario 21</td></tr><tr><td><code dir="auto">check.schema</code></td><td>partial</td><td>scenarios 3, 4, 12-14; dictionaries and untyped fields have none (<code dir="auto">PythonStepsSpec</code>)</td></tr><tr><td><code dir="auto">check.nestedTypes</code></td><td>supported</td><td>scenarios 28, 29; <code dir="auto">PyArrowSchemasSpec</code></td></tr><tr><td><code dir="auto">check.format</code></td><td>partial</td><td>scenarios 24, 25</td></tr><tr><td><code dir="auto">check.saveMode</code></td><td>partial</td><td>scenarios 26, 27 (BigQuery)</td></tr><tr><td><code dir="auto">check.catalogRegistration</code></td><td>partial</td><td>scenarios 10, 11 (BigQuery)</td></tr><tr><td><code dir="auto">rules.dml</code></td><td>not-applicable</td><td>—</td></tr><tr><td><code dir="auto">rules.planShape</code></td><td>unsupported</td><td>scenarios 30-37 refused safely</td></tr><tr><td><code dir="auto">rules.custom</code></td><td>unsupported</td><td>—</td></tr><tr><td><code dir="auto">analysis.staticDataQuality</code></td><td>unsupported</td><td>scenarios 40-42 refused safely</td></tr><tr><td><code dir="auto">analysis.roleConsistency</code></td><td>unsupported</td><td>scenarios 43, 44 refused safely</td></tr><tr><td><code dir="auto">analysis.fingerprint</code></td><td>unsupported</td><td>scenarios 38, 39 skipped</td></tr><tr><td><code dir="auto">analysis.functionCatalog</code></td><td>unsupported</td><td>—</td></tr><tr><td><code dir="auto">analysis.sensitivityPropagation</code></td><td>unsupported</td><td>scenario 47 skipped</td></tr><tr><td><code dir="auto">lineage.columnLevel</code></td><td>unsupported</td><td>scenarios 45, 46 skipped</td></tr><tr><td><code dir="auto">lineage.boundaryResolution</code></td><td>not-applicable</td><td>scenarios 48, 49 skipped</td></tr><tr><td><code dir="auto">policy.organizational</code></td><td>supported</td><td><code dir="auto">BeamPythonAttachSpec</code></td></tr><tr><td><code dir="auto">config.zeroCodeInstall</code></td><td>partial</td><td><code dir="auto">BeamPythonAttachSpec</code> (a real Python job; the limits too)</td></tr><tr><td><code dir="auto">config.locationRefs</code></td><td>supported</td><td><code dir="auto">BeamPythonAttachSpec</code></td></tr><tr><td><code dir="auto">config.contractRegistry</code></td><td>supported</td><td><code dir="auto">BeamPythonAttachSpec</code></td></tr><tr><td><code dir="auto">reporting.notifications</code></td><td>supported</td><td>every scenario reads the checker’s events</td></tr><tr><td><code dir="auto">reporting.dryRunInference</code></td><td>partial</td><td><code dir="auto">BeamPythonAttachSpec</code> (a real Python job)</td></tr><tr><td><code dir="auto">failClosed.unverifiableWrites</code></td><td>partial</td><td>scenario 52; <code dir="auto">PythonStepsSpec</code></td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="operation-surface">Operation surface</h2><a class="sl-anchor-link" href="#operation-surface"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Operation surface”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Step</th><th>Treated as</th></tr></thead><tbody><tr><td><code dir="auto">ReadFromParquet</code>, <code dir="auto">ReadFromText</code>, <code dir="auto">ReadFromAvro</code>, <code dir="auto">ReadFromTFRecord</code></td><td>a located read (the pattern’s folder)</td></tr><tr><td><code dir="auto">ReadFromBigQuery</code> (table, either method)</td><td>a located read in the <code dir="auto">bigquery</code> catalog</td></tr><tr><td><code dir="auto">ReadFromBigQuery</code> (query)</td><td>a read that is not located</td></tr><tr><td><code dir="auto">ReadFromPubSub</code></td><td>a located read (topic or subscription)</td></tr><tr><td><code dir="auto">ReadFromCsv</code>/<code dir="auto">ReadFromJson</code> (pandas), <code dir="auto">fileio.MatchFiles</code>/<code dir="auto">MatchContinuously</code>, <code dir="auto">beam.Impulse</code>, an unknown source, a Java transform used from Python</td><td>a read that is not located</td></tr><tr><td>a template parameter as a path</td><td>a read that is not located; a write that is refused</td></tr><tr><td><code dir="auto">WriteToParquet</code>, <code dir="auto">WriteToText</code>, <code dir="auto">WriteToAvro</code>, <code dir="auto">WriteToTFRecord</code></td><td>a located write (pattern prefix)</td></tr><tr><td><code dir="auto">WriteToBigQuery</code> (a table)</td><td>a located write with its disposition and, for file loads, its schema</td></tr><tr><td><code dir="auto">WriteToBigQuery</code> (a computed table)</td><td>refused</td></tr><tr><td><code dir="auto">WriteToPubSub</code></td><td>a located write</td></tr><tr><td><code dir="auto">WriteToCsv</code>/<code dir="auto">WriteToJson</code> (pandas), <code dir="auto">fileio.WriteToFiles</code>, a function with side effects</td><td>a step that ends the pipeline: refused unless trusted or reading only what writes report</td></tr><tr><td><code dir="auto">beam.Create</code>, <code dir="auto">TestStream</code>, <code dir="auto">PeriodicImpulse</code></td><td>data the job makes</td></tr><tr><td><code dir="auto">beam.Flatten</code></td><td>a union (not a combine)</td></tr><tr><td><code dir="auto">CoGroupByKey</code>, a side input</td><td>a combine the shape rules cannot see into (they are unsupported anyway)</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="type-mapping">Type mapping</h2><a class="sl-anchor-link" href="#type-mapping"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Type mapping”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Source</th><th>Contract type</th></tr></thead><tbody><tr><td>pyarrow <code dir="auto">int8/16/32/64</code>, <code dir="auto">float</code>, <code dir="auto">double</code>, <code dir="auto">bool</code>, <code dir="auto">string</code>, <code dir="auto">binary</code>, <code dir="auto">date32/64</code>, <code dir="auto">time32/64</code></td><td><code dir="auto">byte/short/integer/long</code>, <code dir="auto">float</code>, <code dir="auto">double</code>, <code dir="auto">boolean</code>, <code dir="auto">string</code>, <code dir="auto">binary</code>, <code dir="auto">date</code>, <code dir="auto">time</code></td></tr><tr><td>pyarrow <code dir="auto">timestamp[unit, tz=...]</code> / <code dir="auto">timestamp[unit]</code></td><td><code dir="auto">timestamp</code> / <code dir="auto">timestamp_ntz</code></td></tr><tr><td>pyarrow <code dir="auto">decimal128(p, s)</code> (p ≤ 38)</td><td><code dir="auto">decimal(p,s)</code></td></tr><tr><td>pyarrow <code dir="auto">list&#x3C;item: T></code>, <code dir="auto">struct&#x3C;...></code>, <code dir="auto">map&#x3C;K, V></code>, <code dir="auto">dictionary&#x3C;values=T, ...></code></td><td><code dir="auto">array&#x3C;T></code>, <code dir="auto">struct&#x3C;...></code>, <code dir="auto">map&#x3C;K,V></code>, <code dir="auto">T</code></td></tr><tr><td>pyarrow <code dir="auto">uint*</code>, <code dir="auto">halffloat</code>, <code dir="auto">duration</code>, a wider decimal</td><td>their own name (equal only to themselves)</td></tr><tr><td>Beam row schemas, Avro and BigQuery schemas</td><td>as the Java adapter (<code dir="auto">BeamSchemas</code>)</td></tr></tbody></table>
+<p>A column is nullable unless pyarrow says <code dir="auto">not null</code>, a Beam row field is not nullable, or a BigQuery field is <code dir="auto">REQUIRED</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="friction-log">Friction log</h2><a class="sl-anchor-link" href="#friction-log"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Friction log”</span></a></div>
+<ol>
+<li>A dynamically created <code dir="auto">NamedTuple</code> does not survive the round trip <code dir="auto">Pipeline.run()</code> makes through the portable form, so a
+job that types rows built at run time should use <code dir="auto">RowTypeConstraint</code> (the conformance jobs do).</li>
+<li>The core’s remediation text for <code dir="auto">UNVERIFIABLE_WRITE</code> named Spark’s <code dir="auto">FailClosedCommands</code> and <code dir="auto">SparkPlanAdapter</code>, which
+misled both Beam adapters. Fixed: the adapter supplies it (<code dir="auto">UnverifiableOperation</code>); <code dir="auto">BeamAdvice</code> holds the Beam advice,
+with the setting spelled and the guide named for the SDK the pipeline was written with.</li>
+<li>Python’s in-process runner is now Prism, which it downloads once (<code dir="auto">~/.apache_beam/cache/prism</code>); a machine without network
+access needs it there before the conformance run.</li>
+<li>BigQuery has no in-memory stand-in in Python, so the BigQuery scenarios hand the checked pipeline to a runner that runs
+nothing (<code dir="auto">conformance_job.CheckOnlyRunner</code>); the check precedes the hand-over either way, as it does for streams.</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="unverified-items">Unverified items</h2><a class="sl-anchor-link" href="#unverified-items"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified items”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Item</th><th>Cheapest check</th></tr></thead><tbody><tr><td>Dataflow Flex Template Python launcher images have Java 11+</td><td><code dir="auto">java -version</code> in the launcher image</td></tr><tr><td>Beam YAML pipelines launched by <code dir="auto">apache_beam.yaml.main</code> honour <code dir="auto">--runner</code></td><td>run one with the runner</td></tr></tbody></table></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/BEAM_PYTHON_ADAPTER.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
