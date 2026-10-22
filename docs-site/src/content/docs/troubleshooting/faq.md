@@ -17,7 +17,7 @@ package installs with `pip` straight from the repository
 ### Which engines does Invaract work with?
 
 Apache Spark 3.5 and Apache Beam, for pipelines written in Java or Python. Each engine
-checks a slightly different set of things; [Engine Capabilities](/reference/engine-capabilities/)
+checks a slightly different set of things; [What Each Engine Checks](/reference/what-each-engine-checks/)
 lists them side by side, and a contract that relies on something an engine can't check is
 refused rather than half-checked. Another engine needs its own adapter: the
 transformation IR the checks run on is engine-independent (see

@@ -82,6 +82,14 @@ object VerificationPipeline {
     * the validation event for a pass or a rejection alike. An adapter that publishes events supplies it;
     * `runId` remains for an adapter that knows only a run id, and is taken from `job` when not given.
     */
+  /** Why no fingerprint is computed although `computeFingerprint` is on: the adapter declares it cannot compute one. `None`
+    * when one is computed, or none was asked for. */
+  private[verification] def fingerprintSkipped(options: VerificationOptions, capabilities: Option[AdapterCapabilities]): Option[String] =
+    capabilities.filter(c => options.computeFingerprint && c.supportOf(Capability.AnalysisFingerprint) == Support.Unsupported).map { c =>
+      s"computeFingerprint is on, but the ${c.adapter} adapter does not compute fingerprints" +
+        c.entryOf(Capability.AnalysisFingerprint).note.fold("")(n => s" ($n)") + ", so this check publishes none"
+    }
+
   def verifyWrite(
       contract: Contract,
       write: => CheckedWrite,
@@ -137,8 +145,13 @@ object VerificationPipeline {
     // conditional DELETE's predicate, is real transformation-defining
     // behavior that ir.Plan alone never captures. Only the Extracted case has
     // an actual RowMutation to pass.
+    // A fingerprint is not a contract requirement, so an adapter that declares it unsupported does not refuse the write
+    // (CapabilityCheck); it is not computed either, since that adapter's plan would give one that misleads (Beam's
+    // graph cannot see inside the functions a step runs). Said once, at WARN, rather than left as a missing field.
+    val skipped = fingerprintSkipped(options, capabilities)
+    skipped.foreach(logger.warn)
     val fingerprints =
-      if (options.computeFingerprint) {
+      if (options.computeFingerprint && skipped.isEmpty) {
         val mutation = checked.rowMutation.collect { case MutationClassification.Extracted(_, m) => m }
         // Disclosed, not silently absorbed: a boundary that stayed unresolved
         // can only be fingerprinted as an opaque node, and a resolution that

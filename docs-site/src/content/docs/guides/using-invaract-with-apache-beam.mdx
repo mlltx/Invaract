@@ -22,7 +22,7 @@ schema transforms (`Filter`, `Join`, `CoGroup`, `Group`). It recognises reads
 and writes of **Parquet, Avro, text, CSV and TFRecord files, BigQuery tables, Kafka topics,
 JDBC tables and Pub/Sub topics**, batch or streaming. A contract that relies on something the
 adapter cannot check is refused with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed
-unchecked. The full list is in [Engine Capabilities](/reference/engine-capabilities/).
+unchecked. The full list is in [What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
 ## What a job needs
@@ -206,9 +206,11 @@ deployment keeps its data; declare an absolute location to pin one.
 - Transformation-shape rules (required filter, join or group-by columns, no cross join) are
   checked where the pipeline uses Beam's schema transforms; see
   [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/#on-apache-beam).
-- The Beam adapter does not support static data-quality proofs, role consistency, fingerprints
-  and column lineage. A contract that needs one is refused with `UNSUPPORTED_CONTRACT_FEATURE`,
-  naming it.
+- The Beam adapter does not support static data-quality proofs or role consistency: turning
+  either on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE`, naming it. It produces no
+  fingerprints or column lineage either; with `--invaractComputeFingerprint=true` the pipeline
+  runs and a warning says no fingerprint was computed. See
+  [What Each Engine Checks](/reference/what-each-engine-checks/) for the full list.
 
 ## Steps that only report
 
@@ -275,7 +277,8 @@ and the summary are logged.
 
 ## Related
 
-- [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [What Each Engine Checks](/reference/what-each-engine-checks/): what each engine checks and what it cannot, in plain words.
+- [Engine Capabilities](/reference/engine-capabilities/): the same, per capability, with the adapters' own notes.
 - [Configuration Settings](/reference/configuration/): every `--invaract...` option, with its Spark and Python spelling.
 - [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the adapter recognizes.
 - [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/): `ref://` locations, here via `--invaractLocationMap`.

@@ -4,7 +4,8 @@
 #
 # Every capability in verification-core's `Capability` vocabulary must be declared here
 # (AdapterCapabilities.parse refuses a file that leaves one out): an adapter that cannot do
-# something says so, with a reason. Anything other than `supported` needs a `note`.
+# something says so, with a reason. Anything other than `supported` needs a `note` (for contributors)
+# and a `summary` (one plain sentence for users: the "What Each Engine Checks" page, written by EngineGuidePage).
 #
 # Generated with every capability `unsupported` - the safe default, which makes a contract that relies on
 # one fail with UNSUPPORTED_CONTRACT_FEATURE instead of passing unchecked. Move a capability to `supported`

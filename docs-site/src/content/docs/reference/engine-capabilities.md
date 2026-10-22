@@ -157,7 +157,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which opaque functions hide.
 - `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
 - `config.zeroCodeInstall` — partial: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
-- `reporting.dryRunInference` — partial: Inputs and outputs and their schemas can be inferred where the graph states them; a text write of strings gets a draft output that declares no columns. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the graph states them; one with none (a text write of strings) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
 - `failClosed.unverifiableWrites` — partial: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.
 
 ### beam-python
@@ -186,7 +186,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which pickled functions hide.
 - `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
 - `config.zeroCodeInstall` — partial: --runner=invaract_beam.InvaractRunner and the --invaract_* flags on the job's command line, with the invaract_beam package installed and Java 11 or later where the job is submitted. A job that sets its runner in its own code, or does not pass its command line to Beam, bypasses it; a job submitted without the package, or without Java, does not start.
-- `reporting.dryRunInference` — partial: Inputs and outputs and their schemas are inferred where the pipeline states them; a write whose columns cannot be told gets a draft output that declares none. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the pipeline states them; one whose columns cannot be told (a ReadFromParquet of dictionaries) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
 - `failClosed.unverifiableWrites` — partial: A step that ends the pipeline without being a recognised write is refused, unless it reads only what a write reports or the platform trusts it (--invaract_trusted_steps). A function that writes to an outside system in the middle of the pipeline is invisible to any check made before it runs.
 
 ### spark

@@ -4,13 +4,15 @@
 #
 # Every capability in verification-core's `Capability` vocabulary must be declared here
 # (AdapterCapabilities.parse refuses a file that leaves one out): an adapter that cannot do
-# something says so, with a reason. Anything other than `supported` needs a `note`.
+# something says so, with a reason. Anything other than `supported` needs a `note` (for contributors)
+# and a `summary` (one plain sentence for users: the "What Each Engine Checks" page, written by EngineGuidePage).
 #
 # Keep this honest, not flattering: `partial` and `unsupported` are the point of the file. A
 # change to what the adapter recognizes or checks belongs in the same PR as the line it changes
 # here (and the connector write-ups under docs/connectors/).
 adapter: spark
 engine: Apache Spark 3.5
+guide: /guides/installing-the-enforcement-rule/
 enforcement:
   point: in-engine-blocking
   note: >-
@@ -32,6 +34,7 @@ capabilities:
     docs: SPARK_ADAPTER.md
   write.streaming:
     status: partial
+    summary: "Streaming writes are checked for file and Delta Lake streams; a connector without a streaming sink of its own cannot be written to as a stream at all."
     note: Recognized for file and Delta streaming sinks (WriteToStream). Connectors that do not implement a streaming sink at all (for example ClickHouse) cannot be written to by Spark itself.
     docs: connectors/delta.md
   write.rowLevelDml:
@@ -48,10 +51,12 @@ capabilities:
     note: Also scoped per output through derivedFrom; a read hidden behind an unresolved lineage boundary is reported as unverifiable, not missing.
   check.location:
     status: partial
+    summary: "Locations are matched by path. A CREATE TABLE AS SELECT into a new Hive table, and ClickHouse tables, have known gaps in how their location is worked out."
     note: Declared locations are matched by normalized path suffix. A CTAS with no pre-existing physical path (Hive) has a known, documented location-resolution gap, and ClickHouse reads and writes report locations in different formats.
     docs: SPARK_ADAPTER.md
   check.outputsWritten:
     status: partial
+    summary: "A declared output the job never writes is found only when the job ends, after its other writes have happened. It is reported then, and with `spark.invaract.failOnMissingOutput=true` the job also exits with a failure."
     note: Spark is checked one write at a time, as each runs, so a declared output never written is found only when the application ends. It is reported then (a FAILED validation and an error in the driver log) after the job's other writes have happened; with spark.invaract.failOnMissingOutput=true the driver also exits with status 1.
   check.schema:
     status: supported
@@ -70,6 +75,7 @@ capabilities:
 
   rules.dml:
     status: partial
+    summary: "Checked in full for Delta Lake and Iceberg copy-on-write tables. On an Iceberg merge-on-read table, an `allowed_update_columns` rule cannot be checked, so the UPDATE is refused rather than let through."
     note: Fully verified for Delta and for Iceberg copy-on-write. Iceberg merge-on-read UPDATE cannot have its changed columns extracted, so allowed_update_columns on it fails closed (RULE_UNVERIFIABLE_DML) rather than passing.
     docs: connectors/iceberg.md
   rules.planShape:
@@ -94,10 +100,12 @@ capabilities:
     status: supported
   lineage.columnLevel:
     status: partial
+    summary: "A user-defined function is a black box: an output column it computes is traced only to the columns passed into it."
     note: A user-defined function body is opaque; it is translated to an explicit UDF node over its declared arguments, and constructs the translator has no case for degrade to an UnknownPlan with a diagnostic.
     docs: TRANSFORMATION_IR.md
   lineage.boundaryResolution:
     status: partial
+    summary: "A checkpoint or cache made after Invaract was installed is seen through. One made before, or one Spark has dropped from its cache, hides what is behind it."
     note: .checkpoint() and cached relations are resolved back to the work behind them when the enforcement rule saw it; a boundary created before the rule was installed, or an evicted or ambiguous one, stays opaque and is reported as unverifiable.
     docs: SPARK_ADAPTER.md
 

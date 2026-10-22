@@ -401,7 +401,7 @@ notification sink, so an adapter only installs the plan it gets back. A new neut
 `invaract-capabilities-<adapter>.yaml` (a status for every `Capability` in
 `verification-core`; an undeclared capability is a parse error). A new engine-neutral
 check, rule or analysis means a new `Capability`, which forces every adapter to take a
-position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
+position; regenerate the docs-site matrix and the user page "What Each Engine Checks" with `./dev/capabilities` (a drift test in
 `adapter-testkit` fails otherwise; the kit generates it because the page also says how the
 conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
 

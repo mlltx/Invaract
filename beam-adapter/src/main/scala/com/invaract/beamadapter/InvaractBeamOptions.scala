@@ -55,7 +55,7 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractRejectUndeclaredFields: String
   def setInvaractRejectUndeclaredFields(value: String): Unit
 
-  @Description("true: compute a semantic fingerprint of the job (the Beam adapter declares this unsupported, so a contract run with it is refused).")
+  @Description("true: compute a semantic fingerprint of the job (the Beam adapter declares this unsupported, so none is computed and a warning says so).")
   def getInvaractComputeFingerprint: String
   def setInvaractComputeFingerprint(value: String): Unit
 

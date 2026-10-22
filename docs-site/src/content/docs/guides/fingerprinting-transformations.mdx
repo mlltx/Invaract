@@ -16,7 +16,7 @@ translated logic into a deterministic hash, so a later revision of the same job 
 compared against it.
 
 <Aside type="note" title="Spark only">
-A fingerprint is computed from the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `computeFingerprint` on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE` before it runs.
+A fingerprint is computed from the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `computeFingerprint` on doesn't stop the pipeline; it publishes no fingerprint, and a warning in the log says why. A fingerprint of the graph alone would miss the logic inside its steps.
 </Aside>
 
 <Aside type="note" title="This is a hash, not a diff">

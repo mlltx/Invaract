@@ -277,6 +277,15 @@ declares nothing unsupported, so no Spark verdict changes; the check exists for 
 differs from what the declarations generate, so editing a declaration without regenerating (or editing
 the page by hand) fails the `verification-core` tests — in CI, with no separate job.
 
+**The user page.** The same run writes `reference/what-each-engine-checks.md` (`EngineGuidePage`, in the
+kit): the same facts for people who use Invaract, in plain words. Each capability's title, what it does
+and what a user loses without it come from the kit's `CapabilityGuide` (`CapabilityGuideTest` fails
+until a new capability has an entry); each adapter's own gaps come from its declaration, where every
+capability not fully `supported` carries a `summary:` (one sentence for a user, beside the
+contributor-facing `note`) and the file names its install guide as `guide:`. `AdapterCapabilities.parse`
+ignores both keys; `EngineGuidePage` refuses a declaration missing a summary, and `EngineGuidePageSpec`
+is its drift check.
+
 **Tests.** `CapabilitySpec` (parsing, every rejection path), `CapabilityCheckSpec` (each relied-on
 shape, each side of every condition), `CapabilityMatrixSpec` (rendering and drift),
 `SparkCapabilitiesSpec` (Spark's declaration loads, is complete, and a broken one fails closed), and a

@@ -71,5 +71,5 @@ silently let an unrecognized Delta write through with no verification at all).
 - You're on an engine other than Spark or Beam (Flink, a warehouse's own SQL, dbt). The IR
   is engine-independent, but no adapter for those exists yet.
 - You need a check Invaract can't make on your engine, such as row-level DML rules on Beam:
-  see [Engine Capabilities](/reference/engine-capabilities/). A contract that relies on one is
+  see [What Each Engine Checks](/reference/what-each-engine-checks/). A contract that relies on one is
   refused, not silently half-checked.

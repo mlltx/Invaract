@@ -21,7 +21,7 @@ SETTINGS = {
     "org_policy_overlays": "Comma-separated paths of further organizational policy layers.",
     "reject_undeclared_inputs": "true: a read of a dataset the contract does not declare is blocked.",
     "reject_undeclared_fields": "true: an output column the contract does not declare is blocked.",
-    "compute_fingerprint": "true: compute a semantic fingerprint (declared unsupported for Python pipelines, so a run with it is refused).",
+    "compute_fingerprint": "true: compute a semantic fingerprint (declared unsupported for Python pipelines, so none is computed and a warning says so).",
     "static_data_quality": "true: prove the contract's value constraints (declared unsupported for Python pipelines, so a run with it is refused).",
     "role_consistency": "true: check each input's declared role (declared unsupported for Python pipelines, so a run with it is refused).",
     "trusted_steps": "Comma-separated names of steps the platform trusts not to move governed data (* for any run of characters).",

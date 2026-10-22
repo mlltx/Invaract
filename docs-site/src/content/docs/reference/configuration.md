@@ -44,11 +44,13 @@ Settings that switch something on take `true` or `false`, and are off unless set
 | Trusted steps | — | `--invaractTrustedSteps` | `--invaract_trusted_steps` | Comma-separated names of steps that end the pipeline without writing governed data, such as a metrics step. `*` matches any run of characters. Such a step is let through instead of refused. | [Beam Java](/guides/using-invaract-with-apache-beam/) |
 | Fail on missing output | `spark.invaract.failOnMissingOutput` | — | — | `true`: a job that ends without writing an output its contract declares exits with a failure status. | [Install on Spark](/guides/installing-the-enforcement-rule/#every-declared-output-must-be-written) |
 
-On Beam, static data quality, role consistency and fingerprinting are not supported yet.
-If you turn one on, the pipeline is refused before it runs; it is never run with the check
-silently skipped. Beam doesn't need `failOnMissingOutput`, because it sees the whole
-pipeline before it runs: a missing output refuses the pipeline up front (`MISSING_OUTPUT`).
-See [Engine Capabilities](/reference/engine-capabilities/) for what each engine can check.
+On Beam, static data quality and role consistency are not supported yet. If you turn one on,
+the pipeline is refused before it runs; it is never run with the check silently skipped.
+Fingerprints aren't supported on Beam either, but a fingerprint is a report, not a check: with
+`computeFingerprint` on, the pipeline runs and publishes no fingerprint, and a warning in the
+log says why. Beam doesn't need `failOnMissingOutput`, because it sees the whole pipeline
+before it runs: a missing output refuses the pipeline up front (`MISSING_OUTPUT`). See
+[What Each Engine Checks](/reference/what-each-engine-checks/) for what each engine can do.
 
 ## Reporting
 

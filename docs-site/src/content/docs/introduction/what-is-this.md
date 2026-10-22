@@ -41,7 +41,7 @@ Data contract + Spark job or Beam pipeline
 Beyond schema and location, a contract can declare rules about the transformation itself,
 such as grouping by the right key or never joining without a condition, and, on Spark, rules
 that constrain row-level `MERGE`/`UPDATE`/`DELETE` statements. Not every check is available
-on every engine: [Engine Capabilities](/reference/engine-capabilities/) has the full table.
+on every engine: [What Each Engine Checks](/reference/what-each-engine-checks/) has the full table.
 
 ## What it verifies today
 
