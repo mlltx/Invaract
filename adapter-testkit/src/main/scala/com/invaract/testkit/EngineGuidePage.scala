@@ -128,7 +128,7 @@ object EngineGuidePage {
               out.append(s"**$heading**\n\n")
               caps.foreach { c =>
                 out.append(s"- ${link(c)}: ${e.summaries(c)}")
-                if (support == Support.Unsupported) out.append(s" ${CapabilityGuide.withoutIt(c)}")
+                if (support == Support.Unsupported) out.append(s" ${CapabilityGuide.shortWithoutIt(c)}")
                 out.append("\n")
               }
               out.append("\n")

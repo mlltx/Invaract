@@ -18,13 +18,17 @@ import com.invaract.verification.{Capability, CapabilityCategory, EnforcementPoi
   * @param withoutIt what the user loses on an engine that does not, for a capability that does not guard the contract
   *   (one that does always says the same: the job is refused - see `EngineGuidePage`).
   * @param guide the docs-site page that shows it, as a root-relative link.
+  * @param refusedWhen for a capability that guards the contract, what makes a job need it: the contract relying on it,
+  *   or, for an opt-in analysis, a setting being turned on.
   */
-final case class CapabilityExplained(title: String, what: String, withoutIt: String, guide: Option[String])
+final case class CapabilityExplained(title: String, what: String, withoutIt: String, guide: Option[String], refusedWhen: String)
 
 object CapabilityGuide {
 
-  private def e(title: String, what: String, withoutIt: String = "", guide: String = "") =
-    CapabilityExplained(title, what, withoutIt, Option(guide).filter(_.nonEmpty))
+  private val ContractRelies = "your contract relies on it"
+
+  private def e(title: String, what: String, withoutIt: String = "", guide: String = "", refusedWhen: String = ContractRelies) =
+    CapabilityExplained(title, what, withoutIt, Option(guide).filter(_.nonEmpty), refusedWhen)
 
   /** The plain heading for each category of capabilities. */
   val categoryTitles: Map[CapabilityCategory, String] = Map(
@@ -66,7 +70,7 @@ object CapabilityGuide {
       WriteBatch -> e(
         "Batch writes",
         "Checks every batch write against the contract before the data is written.",
-        "A batch write it does not recognize is refused (see the safety net below), not passed unchecked.",
+        "A batch write it does not recognize is refused, not passed unchecked.",
         "/reference/connector-support/"
       ),
       WriteStreaming -> e(
@@ -145,12 +149,14 @@ object CapabilityGuide {
       AnalysisStaticDataQuality -> e(
         "Proves value constraints",
         "Proves from the job's own logic that a column always meets its declared constraint (never null, one of a set of values, in a range), before any row is written. Turned on with the `staticDataQuality` setting.",
-        guide = "/guides/verifying-static-data-quality/"
+        guide = "/guides/verifying-static-data-quality/",
+        refusedWhen = "you turn on `staticDataQuality`"
       ),
       AnalysisRoleConsistency -> e(
         "Datasets are used as their declared type says",
         "Checks that each dataset is used the way its declared type (`SOURCE`, `CONTROL`, `DATA_ASSET`) says. Turned on with the `roleConsistency` setting.",
-        guide = "/guides/declaring-input-and-output-types/"
+        guide = "/guides/declaring-input-and-output-types/",
+        refusedWhen = "you turn on `roleConsistency`"
       ),
       AnalysisFingerprint -> e(
         "Fingerprints the transformation's logic",
@@ -161,7 +167,7 @@ object CapabilityGuide {
       AnalysisFunctionCatalog -> e(
         "Recognizes built-in functions",
         "Knows which of the engine's built-in functions give a different answer on each run (random numbers, the current time), so fingerprints say so and compare across engines.",
-        "Matters only for fingerprints, which this engine does not produce.",
+        "Only fingerprints use it.",
         "/guides/fingerprinting-transformations/"
       ),
       AnalysisSensitivityPropagation -> e(
@@ -231,6 +237,10 @@ object CapabilityGuide {
     * so nothing is ever silently half-checked; the others say what goes missing. */
   def withoutIt(capability: Capability): String =
     if (capability.enforcesContract)
-      "If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked."
+      s"If ${of(capability).refusedWhen}, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked."
     else of(capability).withoutIt
+
+  /** The same, short, for a list of one engine's gaps: what happens there, in a clause. */
+  def shortWithoutIt(capability: Capability): String =
+    if (capability.enforcesContract) s"Refused if ${of(capability).refusedWhen}." else of(capability).withoutIt
 }

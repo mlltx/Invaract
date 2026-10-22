@@ -28,16 +28,22 @@ class CapabilityGuideTest extends AnyFunSuite {
     assert(anchors.distinct.size == anchors.size)
   }
 
-  test("a check that guards the contract says the job is refused; any other says what goes missing") {
+  test("a check that guards the contract says the job is refused, and when; any other says what goes missing") {
     Capability.all.foreach { c =>
-      val without = CapabilityGuide.withoutIt(c)
+      val (without, short) = (CapabilityGuide.withoutIt(c), CapabilityGuide.shortWithoutIt(c))
+      val when = CapabilityGuide.of(c).refusedWhen
       if (c.enforcesContract) {
-        assert(without.contains("UNSUPPORTED_CONTRACT_FEATURE") && without.contains("refused"), c.id)
+        assert(without == s"If $when, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked.", c.id)
+        assert(short == s"Refused if $when.", c.id)
       } else {
-        assert(without == CapabilityGuide.of(c).withoutIt, c.id)
+        assert(without == CapabilityGuide.of(c).withoutIt && short == without, c.id)
         assert(without.nonEmpty && !without.contains("UNSUPPORTED_CONTRACT_FEATURE"), c.id)
       }
     }
+    // an opt-in analysis is refused when it is turned on, not because the contract mentions it
+    assert(CapabilityGuide.of(Capability.AnalysisStaticDataQuality).refusedWhen == "you turn on `staticDataQuality`")
+    assert(CapabilityGuide.of(Capability.AnalysisRoleConsistency).refusedWhen == "you turn on `roleConsistency`")
+    assert(CapabilityGuide.of(Capability.CheckSchema).refusedWhen == "your contract relies on it")
   }
 
   test("guide links are root-relative pages, as the docs site writes them") {

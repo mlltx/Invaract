@@ -105,7 +105,7 @@ class EngineGuidePageSpec extends AnyFunSuite {
     assert(section.indexOf("**Checked in part**") < section.indexOf("**Not checked**"))
     assert(section.indexOf("**Not checked**") < section.indexOf("**Does not apply**"))
     assert(section.contains(s": Only some shapes.\n"), "a partial check gives its summary alone")
-    assert(section.contains(s": Not on this engine. ${CapabilityGuide.withoutIt(Capability.RulesCustom)}\n"))
+    assert(section.contains(s": Not on this engine. ${CapabilityGuide.shortWithoutIt(Capability.RulesCustom)}\n"))
     assert(section.contains(s": The engine has no such thing.\n"))
     assert(!section.contains("contributor detail"), "the contributor note stays on the capability matrix")
   }
