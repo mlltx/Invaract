@@ -27,6 +27,19 @@ class ConfigSourceSpec extends AnyFunSuite {
     assert(source.describe(InvaractConf.OrgPolicyOverlays) == "spark.invaract.orgPolicyOverlays")
   }
 
+  test("flag is false when unset, reads true and false in any case with spaces around, and refuses anything else") {
+    def flag(value: String) = ConfigSource.flag(ConfigSource.fromMap(Map("dryRun" -> value)), "dryRun")
+    assert(!ConfigSource.flag(ConfigSource.empty, "dryRun"))
+    assert(flag("true") && flag("TRUE") && flag(" True\t"))
+    assert(!flag("false") && !flag("FALSE") && !flag(" false "))
+    List("yes", "1", "", "truee", "on").foreach { bad =>
+      val e = intercept[IllegalArgumentException](flag(bad))
+      assert(e.getMessage == s"'dryRun' must be true or false, not '$bad'.", bad)
+    }
+    val spark = ConfigSource.prefixed("spark.invaract.")(Map("spark.invaract.dryRun" -> "y").get)
+    assert(intercept[IllegalArgumentException](ConfigSource.flag(spark, "dryRun")).getMessage == "'spark.invaract.dryRun' must be true or false, not 'y'.")
+  }
+
   test("All lists every setting InvaractConf names, once: an adapter's spelling of the settings is checked against it") {
     val declared = InvaractConf.getClass.getDeclaredMethods.toList
       .filter(m => m.getParameterCount == 0 && m.getReturnType == classOf[String])

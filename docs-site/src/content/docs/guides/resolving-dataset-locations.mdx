@@ -127,13 +127,22 @@ literal string `"ref://..."`, instead of a clear error naming the reference.
 
 ## Unresolvable references fail closed, before the first check runs
 
-If an id has no entry in the location map — or `spark.invaract.locationMap` was never set
-and no explicit resolver was called either — resolution throws
-`LocationResolutionException` immediately:
+If `spark.invaract.locationMap` was never set (and no explicit resolver was called
+either), resolution throws `LocationResolutionException` immediately, saying what to set:
 
 ```
-Contract declares 'ref://orders-input' but no LocationResolver was configured for this job.
+The contract declares 'ref://orders-input', but no location map is set: set 'spark.invaract.locationMap' to a .properties file with a line 'orders-input=<real location>'.
 ```
+
+If the map is set but has no line for the id, the error names the file and lists the ids it
+does map, so a misspelt id is easy to spot:
+
+```
+The contract declares 'ref://orders-input', but the location map '/etc/invaract/locations.properties' (named by 'spark.invaract.locationMap') has no line for 'orders-input'; the ids it maps are: orders-output, order-input.
+```
+
+A `spark.invaract.locationMap` that names a file that isn't there fails the same way, before
+any write: `'spark.invaract.locationMap' names '/etc/invaract/locations.properties', which is not a file that exists.`
 
 There's no silent fallback to a stale or placeholder location — a misconfigured job never
 gets far enough to write anything.

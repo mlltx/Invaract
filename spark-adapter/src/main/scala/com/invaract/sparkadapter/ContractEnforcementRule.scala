@@ -154,7 +154,7 @@ object ContractEnforcementRule {
   val LocationMapConfKey = "spark.invaract.locationMap"
 
   /** The resolver `resolveContractLocations` builds when
-    * `LocationMapConfKey` isn't set on `session` - `NoOpLocationResolver`,
+    * `LocationMapConfKey` isn't set on `session` resolves nothing,
     * so a contract with no `ref://` locations is completely unaffected
     * (this whole mechanism is invisible to it) and one that does declare a
     * reference fails immediately with a clear, actionable message instead

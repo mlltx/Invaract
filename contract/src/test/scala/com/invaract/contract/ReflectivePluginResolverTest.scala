@@ -60,8 +60,15 @@ class ReflectivePluginResolverTest extends AnyFunSuite {
     assert(ResolverFlags.pluginConstructed == 1)
   }
 
-  test("a missing class, an abstract class and a class with no no-arg constructor are all 'Could not instantiate'") {
-    List(s"$pkg.DoesNotExist", s"$pkg.AbstractResolverTestPlugin", s"$pkg.NoDefaultConstructorPlugin").foreach { name =>
+  test("a missing class is reported as not found, with what to check, not as a constructor problem") {
+    val name = s"$pkg.DoesNotExist"
+    val e = intercept[IllegalArgumentException](resolver.resolve(name))
+    assert(e.getMessage == s"Class '$name' was not found: check the name, and that its jar is on the job's classpath")
+    assert(e.getCause.isInstanceOf[ClassNotFoundException])
+  }
+
+  test("an abstract class and a class with no no-arg constructor are both 'Could not instantiate'") {
+    List(s"$pkg.AbstractResolverTestPlugin", s"$pkg.NoDefaultConstructorPlugin").foreach { name =>
       val e = intercept[IllegalArgumentException](resolver.resolve(name))
       assert(e.getMessage.contains("Could not instantiate"), name)
       assert(e.getMessage.contains(name), name)

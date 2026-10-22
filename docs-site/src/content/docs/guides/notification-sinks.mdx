@@ -37,7 +37,7 @@ sink.property.path=/var/log/invaract/events.jsonl
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `sink.enabled` | No (default `false`) | Master switch. Every other key is ignored when this is `false`. |
+| `sink.enabled` | No (default `false`) | Master switch: `true` or `false`. Every other key is ignored when this is `false`. Any other value is refused, so a typo never silently turns the sink off. |
 | `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
 | `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
 

@@ -5,7 +5,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.contract.Contract
 import com.invaract.ir.UnknownPlan
-import com.invaract.verification.{ContractViolationException, InvaractConf, VerificationPipeline}
+import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, VerificationPipeline}
 import com.invaract.verification.notification.{JobInfo, NotificationSink}
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd}
@@ -106,7 +106,7 @@ private[sparkadapter] object DeclaredOutputs {
     }
 
   private def failOnMissingOutput(session: SparkSession): Boolean =
-    SparkConfigSource(session).get(InvaractConf.FailOnMissingOutput).exists(_.trim.equalsIgnoreCase("true"))
+    ConfigSource.flag(SparkConfigSource(session), InvaractConf.FailOnMissingOutput)
 
   /** Decides `outputs` (once) and logs a declared output never written; never throws into Spark's listener bus. */
   private[sparkadapter] def report(outputs: DeclaredOutputs): Option[ContractViolationException] =

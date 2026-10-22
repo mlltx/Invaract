@@ -167,6 +167,17 @@ well-formed. `ContractValidator` collects every issue in one pass:
 Validation recurses into nested struct fields, so a warning on a deeply nested field
 reports its full dotted path (e.g. `outputs[0].schema.address.zip`).
 
+A warning about a field type, a format or a save mode that is one or two letters away from a
+known one ends with a suggestion (`Did you mean 'parquet'?`). For a contract read from a file
+there is one more warning: a key Invaract doesn't read but that is spelt close to one it does
+(`nulable` for `nullable`, `input` for `inputs`), since such a key is otherwise ignored and
+the setting it was meant to be keeps its default. Other unknown keys, including the Open Data
+Contract Standard's own, are kept without a warning.
+
+An error refuses every write the contract governs (on Beam, the whole pipeline, before it runs). Warnings don't stop anything: they are logged once
+when a job starts with the contract, each starting `Invaract: contract <id>@<version>:` (see
+[Something in the contract seems to be ignored](/troubleshooting/common-problems/#something-in-the-contract-seems-to-be-ignored)).
+
 ## Sensitivity tags
 
 ```yaml

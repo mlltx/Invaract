@@ -18,7 +18,9 @@ settings have the same meaning on every engine. Each engine spells them its own 
 On Spark, Invaract itself is installed with
 `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`; on
 Beam, by the `--runner` above. The settings below then apply. Every setting is optional.
-Settings that switch something on take `true` or `false`, and are off unless set to `true`.
+Settings that switch something on take `true` or `false` (in any case), and are off unless
+set to `true`. Any other value, such as `yes`, is refused when the job starts, with an error
+naming the setting.
 
 ## Choosing what to enforce
 

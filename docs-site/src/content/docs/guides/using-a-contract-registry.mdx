@@ -87,7 +87,9 @@ spark-submit \
 
 `registry://customer_orders@2.1.0` names an exact version; `registry://customer_orders@latest`
 resolves to whatever the registry currently considers the latest registered version for
-that id.
+that id. Both parts are needed: a reference without a version, such as `registry://customer_orders`,
+is refused when the job starts with
+`'registry://customer_orders' is not a valid contract reference: write it as 'registry://<id>@<version>' (the version may be 'latest').`
 
 <Aside type="tip" title="invaract-registry-client is only needed via --jars, not compiled in">
 `spark-adapter` has no compile-time dependency on `registry-client` — resolving a

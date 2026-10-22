@@ -52,8 +52,12 @@ class ContractReferenceSpec extends AnyFunSuite with BeforeAndAfterEach {
     assert(FakeRegistryClient.calls.isEmpty)
   }
 
-  test("a malformed reference is treated as a path, so it fails as a missing file, not as a registry error") {
-    intercept[Exception](ContractReference.resolve("registry://no_version", ConfigSource.empty))
+  test("a malformed reference says how a reference is written, rather than failing as a missing file") {
+    for (bad <- List("registry://no_version", "registry://@2.1.0", "registry://")) {
+      val e = intercept[IllegalArgumentException](ContractReference.resolve(bad, ConfigSource.empty))
+      assert(e.getMessage == s"'$bad' is not a valid contract reference: write it as 'registry://<id>@<version>' (the version may be 'latest').", bad)
+    }
+    assert(FakeRegistryClient.calls.isEmpty)
   }
 
   // --- resolve: through the registry client ---
