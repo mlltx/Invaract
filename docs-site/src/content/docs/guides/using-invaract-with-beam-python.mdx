@@ -18,8 +18,9 @@ and types come out, and in which format. It cannot read what your own Python fun
 transformation-shape rules (`required_filter_columns`, `required_join_columns`,
 `required_group_by`, `forbid_cross_join`) are refused with `UNSUPPORTED_CONTRACT_FEATURE` rather
 than checked. It recognises reads and writes of **Parquet, Avro, text and TFRecord files, BigQuery
-tables and Pub/Sub topics**. The full list is in [Engine Capabilities](/reference/engine-capabilities/)
-(the `beam-python` column).
+tables and Pub/Sub topics**. Static data-quality proofs and role consistency are refused the same
+way if you turn them on; fingerprints are not produced. The full list, in plain words, is in
+[What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
 ## How it works
@@ -317,6 +318,7 @@ submitted without Java stops with `CheckNotRun`.
 ## Related
 
 - [Configuration Settings](/reference/configuration/): every `--invaract_...` flag, with its Spark and Java spelling.
-- [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [What Each Engine Checks](/reference/what-each-engine-checks/): what each engine checks and what it cannot, in plain words.
+- [Engine Capabilities](/reference/engine-capabilities/): the same, per capability, with the adapters' own notes.
 - [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the checker recognizes.
 - [Common Problems](/troubleshooting/common-problems/#beam-python-checknotrun): what each `CheckNotRun` message means.

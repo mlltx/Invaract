@@ -110,6 +110,7 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
+						{ label: 'What Each Engine Checks', slug: 'reference/what-each-engine-checks' },
 						{ label: 'Contract Format', slug: 'reference/contract-format' },
 						{ label: 'Configuration Settings', slug: 'reference/configuration' },
 						{ label: 'Connector Support', slug: 'reference/connector-support' },

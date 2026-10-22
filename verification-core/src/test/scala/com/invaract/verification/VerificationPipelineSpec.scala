@@ -392,6 +392,20 @@ class VerificationPipelineSpec extends AnyFunSuite {
     fp.outputs.foreach { case (name, output) => assert(ex.getMessage.contains(s"    $name: ${output.combined.value}\n"), name) }
   }
 
+  test("computeFingerprint: an adapter that declares fingerprints unsupported publishes none, and the write still goes on") {
+    def fingerprinted(caps: Option[AdapterCapabilities]): Boolean = {
+      val sink = new TestNotificationSink
+      VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(computeFingerprint = true), Some(sink), None, caps)
+      val Seq(event) = validationEvents(sink)
+      assert(event.status == "PASSED", "a fingerprint is not a contract requirement, so its absence never refuses the write")
+      event.fingerprints.isDefined
+    }
+    assert(!fingerprinted(Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("unsupported", Some("would mislead"))))))))
+    assert(fingerprinted(Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("partial", Some("some shapes"))))))))
+    assert(fingerprinted(Some(CapabilityFixtures.parsed(Map.empty))), "a supported declaration computes one")
+    assert(fingerprinted(None), "no declaration, no capability check")
+  }
+
   test("explain: a fingerprint with no per-output entries prints only the overall hash") {
     val noOutputs = com.invaract.fingerprint.TransformationFingerprinter.fingerprint(Write(DatasetRef("out/report"), Read(DatasetRef(orders))), None)
     val result = VerificationResult.of("pipe@1.0.0", List(Violations.missingInput(contract.inputs.head, nudgeTowardDerivedFrom = false)), fingerprints = Some(noOutputs))

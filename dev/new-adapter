@@ -62,7 +62,8 @@ def capability_rows(repo):
 
 def capabilities_block(repo, engine_display):
     return "\n".join(
-        f"  {cap}:\n    status: unsupported\n    note: Not yet investigated for {engine_display}." for cap in capability_ids(repo)
+        f"  {cap}:\n    status: unsupported\n    summary: Not checked on {engine_display} yet.\n    note: Not yet investigated for {engine_display}."
+        for cap in capability_ids(repo)
     )
 
 

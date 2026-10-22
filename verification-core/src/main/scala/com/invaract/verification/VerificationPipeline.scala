@@ -137,8 +137,18 @@ object VerificationPipeline {
     // conditional DELETE's predicate, is real transformation-defining
     // behavior that ir.Plan alone never captures. Only the Extracted case has
     // an actual RowMutation to pass.
+    // A fingerprint is not a contract requirement, so an adapter that declares it unsupported does not refuse the write
+    // (CapabilityCheck); it is not computed either, since that adapter's plan would give one that misleads (Beam's
+    // graph cannot see inside the functions a step runs). Said once, at WARN, rather than left as a missing field.
+    val fingerprintUnsupported = capabilities.filter(_.supportOf(Capability.AnalysisFingerprint) == Support.Unsupported)
+    if (options.computeFingerprint) fingerprintUnsupported.foreach { c =>
+      logger.warn(
+        s"computeFingerprint is on, but the ${c.adapter} adapter does not compute fingerprints" +
+          c.entryOf(Capability.AnalysisFingerprint).note.fold("")(n => s" ($n)") + ", so this check publishes none"
+      )
+    }
     val fingerprints =
-      if (options.computeFingerprint) {
+      if (options.computeFingerprint && fingerprintUnsupported.isEmpty) {
         val mutation = checked.rowMutation.collect { case MutationClassification.Extracted(_, m) => m }
         // Disclosed, not silently absorbed: a boundary that stayed unresolved
         // can only be fingerprinted as an opaque node, and a resolution that

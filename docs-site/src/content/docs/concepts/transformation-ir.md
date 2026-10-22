@@ -24,7 +24,7 @@ only needs to translate into the same IR, not reimplement verification. That is 
 Apache Beam adapters work: they translate a pipeline's graph into the same IR, so the same
 contract is checked by the same code on both engines. What an engine's description of a
 job leaves out (a Beam step written as a function, for instance) is what that engine can't
-check: see [Engine Capabilities](/reference/engine-capabilities/).
+check: see [What Each Engine Checks](/reference/what-each-engine-checks/).
 
 ## What gets translated
 

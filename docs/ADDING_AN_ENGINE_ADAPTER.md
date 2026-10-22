@@ -251,7 +251,9 @@ Everything `CLAUDE.md` asks of an engine module applies to the new one:
 - coverage: measure, then pin `coverageMinimumStmtTotal`/`Branch` a few points under;
 - scoped mutation testing: at least 70% on the files you wrote, written to be mutation-resistant the first time;
 - API compatibility: after the first release, `mimaPreviousArtifacts` names it; before, it is empty;
-- `./dev/capabilities` to regenerate the engine-capabilities page, and the user documentation (`docs-site`) for
+- `./dev/capabilities` to regenerate the engine-capabilities page and the user page "What Each Engine Checks" (every capability
+  the adapter does not fully support needs a `summary:` line, one plain sentence for users, beside its `note`; the
+  file's `guide:` names the adapter's install guide), and the user documentation (`docs-site`) for
   anything a user of the engine would need: how to install it, what it verifies, what it does not;
 - the External Attachability Requirement: every capability a job can turn on is reachable through the engine's own
   configuration surface, or the declaration says it is not;

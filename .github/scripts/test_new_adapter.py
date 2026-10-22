@@ -80,14 +80,15 @@ class Generated(unittest.TestCase):
         self.assertEqual(c.check_adapter_uses_kit(root, [{"name": self.name}]), [])
         self.assertEqual(c.check_adapter(root, {"name": self.name, "role": "adapter", "capabilities": "invaract-capabilities-demo.yaml"}), [])
 
-    def test_every_capability_is_declared_and_unsupported_with_a_note(self):
+    def test_every_capability_is_declared_unsupported_with_a_summary_and_a_note(self):
         declaration = self.read("src/main/resources/invaract-capabilities-demo.yaml")
         ids = na.capability_ids(REPO)
         with open(os.path.join(REPO, "verification-core", "src", "main", "scala", "com", "invaract", "verification", "Capability.scala")) as f:
             vocabulary = re.findall(r'= Capability\("([^"]+)"', f.read())
         self.assertEqual(sorted(ids), sorted(vocabulary), "the generator must declare exactly the capabilities the vocabulary has")
         for cap in ids:
-            self.assertRegex(declaration, rf"  {re.escape(cap)}:\n    status: unsupported\n    note: Not yet investigated for Demo\.")
+            # the summary is what the user page (EngineGuidePage) shows for a capability that is not supported
+            self.assertRegex(declaration, rf"  {re.escape(cap)}:\n    status: unsupported\n    summary: Not checked on Demo yet\.\n    note: Not yet investigated for Demo\.")
         self.assertIn("point: observe-only", declaration)
 
     def test_the_publishing_block_is_taken_from_the_kit(self):
