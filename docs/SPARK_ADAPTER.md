@@ -1028,10 +1028,10 @@ ends each scenario's job with `DeclaredOutputs.finishAll`, which is how `declare
   all the way through to the fully generic `UnknownPlan` translation, not
   even the `catalogTable` fallback) but correct about the conclusion (a
   real, previously-untested gap). Both the read side and two real write-
-  side false-rejection bugs are now fixed; one known, documented,
-  unfixed location-resolution gap remains for CTAS with no pre-existing
-  physical path — see "Hive support" for the full writeup and both
-  coverage ledgers.
+  side false-rejection bugs are now fixed, and so is the location gap
+  for a managed table's CTAS (the outer command resolves
+  `defaultTablePath`, as the V1 data-source CTAS does) — see
+  docs/connectors/hive.md for the full writeup and both coverage ledgers.
 - **DataFrameWriterV2/SQL `MERGE INTO`/`DELETE`/`UPDATE` writes are not
   recognized** — `.save(path)`-style writes (`SaveIntoDataSourceCommand`)
   and `.saveAsTable(...)` against a new V1 table
@@ -3267,9 +3267,11 @@ be inline, each with its own spec:
   `OutputChecker` (location, the output a write is checked against, missing outputs), the
   state-change check for Iceberg `CALL`s (`StateChangeInfo.tableName`), static data quality,
   role consistency, sensitivity propagation and the listener's `datasetType`. The reason is
-  Spark itself: it reports a table that exists by its files and a table a write is creating
-  (Hive, DSv2: Delta, Iceberg) by its qualified identifier - the "CTAS location gap" in
-  docs/connectors/hive.md and delta.md - and the table name is the same in both. The insert
+  Spark itself: it reports a table that exists by its files and a table a DSv2 write is
+  creating (Delta, Iceberg) by its qualified identifier - its create and the write inside it
+  both do, so they agree, but a contract declaring the path matches neither (docs/connectors/delta.md)
+  - and the table name is the same in both. (Hive's managed CTAS used to be the same; it now
+  resolves `defaultTablePath`, docs/connectors/hive.md.) The insert
   Spark runs inside a new data-source table's `CreateDataSourceTableAsSelectCommand` carries no
   `CatalogTable` at all, so `TableCreations` hands it the identity the outer command's check
   saw (noted only once that check passed, claimed once, at most `Capacity` waiting).

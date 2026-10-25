@@ -174,20 +174,14 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("writeto_existing_tbl").count() == 0, "no rejected write should have committed any data")
   }
 
-  // Translation-only, not a full PASS/FAIL enforcement pair: a genuinely
-  // new table created with NO explicit path (unlike every existing
-  // .saveAsTable() precedent test, which always supplies .option("path", ...))
-  // hits a pre-existing, CreateDataSourceTableAsSelectCommand-general
-  // (not Parquet-specific) nuance - the outer command's location falls
-  // back to the qualified catalog identifier (no physical path exists yet
-  // at plan-construction time, confirmed via this file's own
-  // "No storage location on new table" diagnostic), while the nested
-  // InsertIntoHadoopFsRelationCommand's location is the real physical
-  // path - the two don't match unless an explicit path is given, the same
-  // "shared pitfall" class already documented for Delta/Iceberg's
-  // StagedTable case, just not attempted here (out of scope for this
-  // pass; every enforcement PASS/FAIL pair in this file uses an explicit
-  // path, sidestepping it, matching prior precedent).
+  // Translation-only: a genuinely new table created with NO explicit path
+  // (every .saveAsTable() enforcement pair in this file supplies
+  // .option("path", ...)). The outer CreateDataSourceTableAsSelectCommand
+  // resolves the path Spark creates the table at (`defaultTablePath`), the
+  // same path the nested InsertIntoHadoopFsRelationCommand writes; that
+  // nested insert carries no table of its own and is given it by
+  // TableCreations. ContractEnforcementRuleSpec's "a contract naming a table
+  // as default/<table>" test enforces both writes for real.
   test(".writeTo(...).using(\"parquet\").create() on a new table reuses the existing CreateDataSourceTableAsSelectCommand translation") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)
