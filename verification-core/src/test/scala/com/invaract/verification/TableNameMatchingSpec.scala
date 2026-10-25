@@ -133,6 +133,21 @@ class TableNameMatchingSpec extends AnyFunSuite {
     assert(!verify(contract(List(satisfied), List(ds("out", "gold/out"))), writeOf(ordersRead)).exists(_.violationType == ViolationType.InputCatalogMismatch))
   }
 
+  test("when two reads match one input, the first read's catalog and schema are the ones checked") {
+    val silver = CatalogIdentity(catalogName = Some("spark_catalog"), namespace = List("silver"), table = Some("orders"))
+    val first = Read(DatasetRef(Files), catalog = Some(orders))
+    val second = Read(DatasetRef("/elsewhere/gold/orders"), catalog = Some(silver))
+    val plan = Write(DatasetRef("gold/out"), Join(first, second, JoinType.Inner, None))
+    val required = Dataset("orders", "gold/orders", None, Schema(List(Field("id", "integer"))), catalog = Some(CatalogRequirement(required = true, namespace = List("gold"))))
+    val c = contract(List(required), List(ds("out", "gold/out")))
+    val schemas = List(Files -> LogicalSchema(List(LogicalField("id", IntegerType))), "/elsewhere/gold/orders" -> LogicalSchema(List(LogicalField("id", StringType))))
+    val violations = verify(c, plan, schemas).map(_.violationType)
+    assert(!violations.contains(ViolationType.InputCatalogMismatch), violations.toString)
+    assert(!violations.contains(ViolationType.InputFieldTypeMismatch), violations.toString)
+    val reversed = verify(c, Write(DatasetRef("gold/out"), Join(second, first, JoinType.Inner, None)), schemas.reverse).map(_.violationType)
+    assert(reversed.contains(ViolationType.InputCatalogMismatch) && reversed.contains(ViolationType.InputFieldTypeMismatch), reversed.toString)
+  }
+
   // --- outputs ---
 
   private val two = List(ds("a", "gold/orders"), ds("b", "silver/orders"))
