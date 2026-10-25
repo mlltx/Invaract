@@ -110,11 +110,20 @@ file. A value Invaract can't read is never quietly taken to mean `false`.
 
 ## A location doesn't match even though it "looks right"
 
-Locations are matched by normalized suffix, not exact string equality — see
-[Reference → Contract Format](/reference/contract-format/#location-matching).
-If a match still fails, double-check for a typo in the declared path relative to where
-your job actually runs from, since the suffix match still requires a real path-boundary
-match, not a substring anywhere in the string.
+A declared location matches the place the job reads or writes when it is that place, or the
+end of it starting at a `/`; slashes, a `file:` prefix and `s3a://`/`s3://` don't matter. See
+[Reference → Contract Format](/reference/contract-format/#location-matching) for the rule and
+examples. The usual reasons it still doesn't match:
+
+- **Case.** `Orders` doesn't match `/data/orders`.
+- **A full path against a cluster URL.** `/data/orders` doesn't match
+  `hdfs://nn:8020/data/orders`: write `data/orders`, or the whole URL.
+- **A dotted table name.** `gold.orders` is one segment and never matches the table. Write
+  `gold/orders` (see [Tables](/reference/contract-format/#tables)).
+- **A partition's folder.** A job that reads `/data/orders/date=2024-01-01` reads that folder,
+  not `orders`.
+
+The violation names the location the job actually used, so compare the two from there.
 
 ## `ClassNotFoundException: ...SupportsNonDeterministicExpression` installing the enforcement rule
 

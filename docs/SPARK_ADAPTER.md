@@ -1079,9 +1079,13 @@ relative location (`"demo/input/sample.csv"`); Spark reports an absolute
 `file:` URI at runtime (`"file:/home/user/.../demo/input/sample.csv"` —
 confirmed empirically earlier in this doc). Comparing with `==` would fail
 every real run for a reason unrelated to actual contract compliance, so
-locations are matched by normalized suffix instead (strip the `file:`
-scheme; a declared location matches if it equals, or is a path-boundary
-suffix of, the actual one).
+locations are matched by normalized suffix instead (both sides in
+`contract.Locations`' canonical form - no `file:` scheme, no repeated or
+trailing slashes, `s3a://` as `s3://` - then a declared location matches if
+it equals, or is a path-boundary suffix of, the actual one). A read or write
+of a catalog table also answers to its table name, `catalog/namespace/table`
+(`LocationMatching.namesOf`), so a contract can name the table; see
+"`StructuralVerifier` internals" below.
 
 **Nullability** is checked directionally, not by equality: a contract
 requiring non-null (`nullable: false`) is violated by an actual column
@@ -3246,8 +3250,29 @@ be inline, each with its own spec:
   every read in four separate loops (missing, undeclared, schema, catalog) — quadratic in
   contract size × plan size. Measured on one machine with a replica of the old loops: 3,000
   declared inputs and 3,000 reads, ~1.1 s of matching per checked write before, ~24 ms for the
-  whole of `verify` after (200 inputs: 13 ms vs 6 ms). The matching *rule* is unchanged;
-  `LocationMatchingSpec` checks the index against the old rule on thousands of generated paths.
+  whole of `verify` after (200 inputs: 13 ms vs 6 ms). `LocationMatchingSpec` checks the index
+  against the rule written out directly on thousands of generated paths.
+
+  **The canonical form** both sides are put in is `contract.Locations.canonical`, shared with
+  `CrossContractValidator`, `ContractDraftMerger` and the organizational policy so two
+  comparisons of locations can never disagree: `\` to `/`, `file:` dropped (either side),
+  URL scheme lower-cased with one store's spellings folded (`s3a`/`s3n` to `s3`, `abfss` to
+  `abfs`, `wasbs` to `wasb`), empty and `.` segments dropped. Case and `..` stay.
+
+  **A dataset answers to more than its location.** `LocationMatching.namesOf(location,
+  catalog)` is the reported location plus, for a read or write that resolved to a catalog
+  table (`ir.CatalogIdentity` with a `table`), its table name in `fromParts` form
+  (`spark_catalog/gold/orders`). Every place a declared location is paired with a dataset uses
+  it: `InputChecker` (missing, undeclared, schema and catalog, through `PlanFacts.namesOf`),
+  `OutputChecker` (location, the output a write is checked against, missing outputs), the
+  state-change check for Iceberg `CALL`s (`StateChangeInfo.tableName`), static data quality,
+  role consistency, sensitivity propagation and the listener's `datasetType`. The reason is
+  Spark itself: it reports a table that exists by its files and a table a write is creating
+  (Hive, DSv2: Delta, Iceberg) by its qualified identifier - the "CTAS location gap" in
+  docs/connectors/hive.md and delta.md - and the table name is the same in both. The insert
+  Spark runs inside a new data-source table's `CreateDataSourceTableAsSelectCommand` carries no
+  `CatalogTable` at all, so `TableCreations` hands it the identity the outer command's check
+  saw (noted only once that check passed, claimed once, at most `Capacity` waiting).
 - **`PlanFacts`** gathers an `ir.Plan`'s reads, unknown nodes, aggregates, joins and
   filters in one iterative pre-order pass. `ContractEnforcementRule` builds one per checked
   write and hands it to `StructuralVerifier`, `PlanRuleVerifier` (previously one full walk

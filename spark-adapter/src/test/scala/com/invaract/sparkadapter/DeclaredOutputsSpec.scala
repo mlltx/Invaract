@@ -88,6 +88,29 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     assert(none.get.getMessage.contains("the job's writes: none)"), "and says so when there were none")
   }
 
+  test("a write recorded with its table counts for an output that names the table; the plan still shows where it landed") {
+    val c = ContractParser.parse(
+      """id: t
+        |version: "1.0.0"
+        |outputs:
+        |  - { name: report, location: gold/report, schema: { fields: [ { name: id, type: long } ] } }
+        |  - { name: audit, location: gold/audit, schema: { fields: [ { name: id, type: long } ] } }
+        |""".stripMargin
+    )
+    def write(table: String, catalog: Boolean) = com.invaract.ir.Write(
+      com.invaract.ir.DatasetRef(s"file:/warehouse/gold.db/$table"),
+      com.invaract.ir.UnknownPlan("query"),
+      catalog = if (catalog) Some(com.invaract.ir.CatalogIdentity(catalogName = Some("spark_catalog"), namespace = List("gold"), table = Some(table))) else None
+    )
+    val outputs = new DeclaredOutputs(c, None, None, None)
+    outputs.record(write("report", catalog = true))
+    outputs.record(write("audit", catalog = false))
+    assert(outputs.locations == List("file:/warehouse/gold.db/report", "file:/warehouse/gold.db/audit"), "where each write landed, not its table name")
+    val missing = outputs.finish()
+    assert(missing.exists(_.result.violations.map(_.location) == List(Some("gold/audit"))), "only the write without its table cannot match a table name")
+    assert(missing.get.getMessage.contains("the job's writes: file:/warehouse/gold.db/report, file:/warehouse/gold.db/audit)"))
+  }
+
   test("an exit hook waits on the job only under failOnMissingOutput=true") {
     def attached(setting: Option[String]): Boolean = {
       val out = Files.createTempDirectory("declared-outputs-conf")

@@ -65,8 +65,9 @@ private[invaract] object RoleConsistencyVerifier {
       // looking the qualifiers up in an index of the declared locations rather
       // than testing every input against every qualifier.
       val inputIndex = LocationIndex(contract.inputs.zipWithIndex.map { case (input, i) => input.location -> i })
-      val contributing: Set[Int] = outputContributingQualifiers.flatMap(inputIndex.matchingIndices)
-      val referenced: Set[Int] = conditionReferencedQualifiers.flatMap(inputIndex.matchingIndices)
+      // A read's location answers to its table name too (`PlanFacts.namesOf`), as it does for the input checks.
+      val contributing: Set[Int] = outputContributingQualifiers.flatMap(l => inputIndex.matchingIndicesOf(facts.namesOf(l)))
+      val referenced: Set[Int] = conditionReferencedQualifiers.flatMap(l => inputIndex.matchingIndicesOf(facts.namesOf(l)))
       contract.inputs.zipWithIndex.flatMap { case (input, i) => checkInput(input, contributing.contains(i), referenced.contains(i)) }
     case _ => Nil
   }

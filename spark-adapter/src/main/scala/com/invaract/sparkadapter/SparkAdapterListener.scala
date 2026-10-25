@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.StructuralVerifier
+import com.invaract.verification.{LocationMatching, OutputChecker}
 import com.invaract.contract.{Contract, Dataset, DatasetType}
 import com.invaract.verification.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
 
@@ -84,10 +84,10 @@ class SparkAdapterListener(
       contract.map(_.outputs).getOrElse(Nil)
     )
 
-  /** `location` (as Spark itself reports it for a completed write) against
-    * `contractOutputs`' own declared locations, via the same
-    * `StructuralVerifier.locationsMatch` predicate the check rule uses to
-    * match a contract-declared location against a real plan — never a
+  /** `location` (as Spark itself reports it for a completed write), and the
+    * table name `catalog` gives it, against `contractOutputs`' own declared
+    * locations, via the same `OutputChecker.matchOutput` the check rule uses
+    * to match a contract-declared location against a real write — never a
     * second, independent comparison. Takes the *first* matching output's
     * own declared `datasetType` (`.find`, not `.filter`), the identical
     * "whichever is declared first" resolution `StructuralVerifier`'s own
@@ -97,8 +97,8 @@ class SparkAdapterListener(
     * different answer to the same ambiguity. `None` when nothing matches
     * at all, or when the matched output declares no `type:`.
     */
-  private def datasetTypeFor(location: String): Option[DatasetType] =
-    contractOutputs.find(output => StructuralVerifier.locationsMatch(output.location, location)).flatMap(_.datasetType)
+  private def datasetTypeFor(location: String, catalog: Option[com.invaract.ir.CatalogIdentity]): Option[DatasetType] =
+    OutputChecker.matchOutput(contractOutputs, LocationMatching.namesOf(location, catalog)).flatMap(_.datasetType)
 
   /** The most recently captured write's translation, if any query with a
     * write command at its root has executed since this listener was
@@ -157,7 +157,7 @@ class SparkAdapterListener(
             operation = info.operation,
             catalog = info.catalogIdentity.map(CatalogInfo.from),
             partitionColumns = info.partitionColumns,
-            datasetType = datasetTypeFor(info.location),
+            datasetType = datasetTypeFor(info.location, info.catalogIdentity),
             job = Some(DryRunReporter.jobInfoOf(qe.sparkSession))
           )
         )

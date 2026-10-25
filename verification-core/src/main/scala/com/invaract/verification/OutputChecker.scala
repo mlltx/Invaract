@@ -43,6 +43,18 @@ private[invaract] object OutputChecker {
   def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
     outputs.find(o => LocationMatching.matches(o.location, actualLocation))
 
+  /** The same, for a write that answers to several `names` (its location and, for a catalog table, its table name -
+    * `LocationMatching.namesOf`): the first declared output matching any of them. */
+  def matchOutput(outputs: List[Dataset], names: List[String]): Option[Dataset] =
+    outputs.find(o => LocationMatching.matchesAny(o.location, names))
+
+  /** `expectedOutputFor`, for a write that answers to several `names`. */
+  def expectedOutputFor(outputs: List[Dataset], names: List[String]): Option[Dataset] =
+    if (outputs.size == 1) Some(outputs.head) else matchOutput(outputs, names)
+
+  /** Every name `write` answers to (`LocationMatching.namesOf`). */
+  def namesOf(write: Write): List[String] = LocationMatching.namesOf(write.dataset.location, write.catalog)
+
   /** Every output-side finding for `plan`, in report order. A plan with no
     * `Write` leaves every declared output unsatisfied (`MISSING_OUTPUT`, one
     * each); a `Write` is checked as described on each step below.
@@ -59,7 +71,8 @@ private[invaract] object OutputChecker {
   private[invaract] def missingOutputs(outputs: List[Dataset]): List[Violation] =
     outputs.map(Violations.missingOutput)
 
-  /** One `MISSING_OUTPUT` per declared output that none of a job's writes lands on (`writeLocations`, by the same
+  /** One `MISSING_OUTPUT` per declared output that none of a job's writes lands on (`writeLocations`: every name the
+    * job's writes answer to - each write's location and, for a catalog table, its table name - by the same
     * `LocationMatching` rule). A single-output contract that the job writes anywhere is not missing its output: the write is
     * checked against that output (`expectedOutputFor`) and a wrong location is reported there, as
     * `OUTPUT_LOCATION_MISMATCH`, rather than twice. */
@@ -68,13 +81,14 @@ private[invaract] object OutputChecker {
     else outputs.filterNot(o => writeLocations.exists(l => LocationMatching.matches(o.location, l))).map(Violations.outputNeverWritten)
 
   private def checkWrite(contract: Contract, write: Write, outputSchema: LogicalSchema, options: VerificationOptions, caseSensitive: Boolean): List[Violation] = {
-    val location = locationFinding(contract.outputs, write.dataset.location)
+    val names = namesOf(write)
+    val location = locationFinding(contract.outputs, names, write.dataset.location)
     // A single-output contract checks format/saveMode/catalog/schema against its
     // only declared output whether or not the location itself matches (see
     // `expectedOutputFor`). A multi-output contract has no such default: if the
     // write's location doesn't identify which declared output it belongs to,
     // there is no non-ambiguous output left to check the rest against.
-    val rest = expectedOutputFor(contract.outputs, write.dataset.location) match {
+    val rest = expectedOutputFor(contract.outputs, names) match {
       case None => Nil
       case Some(expectedOutput) =>
         formatFinding(expectedOutput, write.format, write.dataset.location) ++
@@ -87,7 +101,11 @@ private[invaract] object OutputChecker {
 
   /** `OUTPUT_LOCATION_MISMATCH` when no declared output's location matches the write. */
   private[invaract] def locationFinding(outputs: List[Dataset], actualLocation: String): List[Violation] =
-    matchOutput(outputs, actualLocation) match {
+    locationFinding(outputs, List(actualLocation), actualLocation)
+
+  /** The same, for a write that answers to several `names`; the violation reports `actualLocation`. */
+  private[invaract] def locationFinding(outputs: List[Dataset], names: List[String], actualLocation: String): List[Violation] =
+    matchOutput(outputs, names) match {
       case Some(_) => Nil
       case None    => List(Violations.outputLocationMismatch(outputs.map(_.location), actualLocation))
     }

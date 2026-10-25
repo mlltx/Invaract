@@ -189,6 +189,16 @@ this one write shape — neither attempted here, consistent with the
 Parquet precedent of leaving the analogous gap as documented future work
 rather than a scope-widening fix.
 
+**Closed for a contract that names the table.** A declared location also
+matches a read or write's table name (`LocationMatching.namesOf`: its
+`CatalogIdentity` as `spark_catalog/default/<table>`), and both nested
+commands carry that identity, so a contract declaring `default/<table>`
+(or `<table>`) matches the outer command's qualified identifier and the
+inner insert's physical path alike, for a new table and for an overwrite
+onto an existing one (`HiveConnectorSpec`'s "a contract naming the table"
+PASS/FAIL pair). The gap below still applies to a contract that declares
+the table's physical path.
+
 **This gap is narrower than it first reads — it does not apply to an
 EXTERNAL table created via `.option("path", ...)`.** Confirmed directly
 (a real probe, then promoted into a permanent test — see "External

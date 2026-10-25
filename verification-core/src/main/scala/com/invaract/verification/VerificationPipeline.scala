@@ -232,10 +232,26 @@ object VerificationPipeline {
       sink: Option[NotificationSink] = None,
       runId: Option[String] = None,
       job: Option[JobInfo] = None
+  ): Unit = verifyStateChange(contract, description, location, Nil, resultingSchema, caseSensitive, options, sink, runId, job)
+
+  /** The same, for an operation on a catalog table that also answers to `tableNames` (`LocationMatching.tableName`): a
+    * declared output naming the table governs it, as it governs a write to that table, whatever `location` the engine
+    * reports for the operation. */
+  def verifyStateChange(
+      contract: Contract,
+      description: String,
+      location: String,
+      tableNames: List[String],
+      resultingSchema: LogicalSchema,
+      caseSensitive: Boolean,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo]
   ): Unit = {
     // Same reasoning as verifyWrite: verifyStateChange assumes a structurally sound contract too.
     requireValidContract(contract, sink, runId, job)
-    val result = StructuralVerifier.verifyStateChange(contract, location, resultingSchema, options, caseSensitive)
+    val result = StructuralVerifier.verifyStateChange(contract, location, tableNames, resultingSchema, options, caseSensitive)
     publishValidation(contract, result, sink, runId, job)
     if (!result.passed) {
       // No ir.Plan translation exists for a state change (there's no query to

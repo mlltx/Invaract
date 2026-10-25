@@ -3,6 +3,9 @@
 
 package com.invaract.verification
 
+import com.invaract.contract.Locations
+import com.invaract.ir.CatalogIdentity
+
 /** The one definition of "does a contract's declared location match a location the
   * engine reported" - `StructuralVerifier.locationsMatch` and `normalizeLocation`
   * delegate here, and `LocationIndex` below is built from the same two pure functions,
@@ -16,10 +19,10 @@ package com.invaract.verification
   * not know about engines; it only compares canonical strings, which is what lets one
   * contract mean the same thing on every adapter.
   *
-  * The rule: strip a `file:` scheme from the actual side (the one URL-style prefix a
-  * local-file engine reports) and turn `\` into `/` on both sides (a contract authored
-  * on Windows still matches forward-slash paths), then a declared location matches if
-  * it equals the actual one or is a `/`-boundary suffix of it. So an absolute declared
+  * The rule: put both sides in `contract.Locations`' canonical form (`\` becomes `/`, a
+  * `file:` scheme is dropped, `s3a://` is `s3://`, repeated, trailing and `./` segments go -
+  * see there), then a declared location matches if it equals the actual one or is a
+  * `/`-boundary suffix of it. So an absolute declared
   * location (`/data/orders`, `gs://bucket/orders`) matches only that exact location,
   * while a relative one (`orders`, `sales/orders`) matches any location that ends in
   * it - deliberately, so a contract need not know a deployment's root. The consequence
@@ -50,19 +53,34 @@ private[invaract] object LocationMatching {
     else trimmed
   }
 
-  /** The declared side only needs separators normalized; it is authored, not
-    * reported by Spark, so it never carries a `file:` scheme to strip.
-    */
-  def normalizeDeclared(declared: String): String = declared.replace('\\', '/')
+  /** A declared location in canonical form (`contract.Locations.canonical`). */
+  def normalizeDeclared(declared: String): String = Locations.canonical(declared)
 
-  /** The bare, OS-agnostic form of a location as Spark itself reports it. */
-  def normalizeActual(actual: String): String = actual.stripPrefix("file:").replace('\\', '/')
+  /** A location an engine reported, in the same canonical form: the two sides are put in one form, so how either is spelt
+    * never decides a match. */
+  def normalizeActual(actual: String): String = Locations.canonical(actual)
 
   def matchesNormalized(normalizedDeclared: String, normalizedActual: String): Boolean =
     normalizedActual == normalizedDeclared || normalizedActual.endsWith("/" + normalizedDeclared)
 
   def matches(declared: String, actual: String): Boolean =
     matchesNormalized(normalizeDeclared(declared), normalizeActual(actual))
+
+  /** The name a catalog table goes by, whatever location the engine reports for it: its catalog, namespace and table
+    * joined by `fromParts` (`spark_catalog/gold/orders`), so a contract can name the table (`gold/orders`, or just `orders`)
+    * rather than where its files happen to be. `None` for an identity with no table. */
+  def tableName(catalog: CatalogIdentity): Option[String] =
+    catalog.table.map(table => fromParts(catalog.catalogName.toSeq ++ catalog.namespace :+ table))
+
+  /** Every name a dataset answers to: the location the engine reported and, for a catalog table, its table name. A
+    * declared location matches the dataset when it matches any of them. An engine reports one table two ways (Spark: the
+    * table's files for an existing table, its qualified name for one being created), and the table name is the same in
+    * both, so a contract that names the table matches either way. */
+  def namesOf(location: String, catalog: Option[CatalogIdentity]): List[String] =
+    (location :: catalog.flatMap(tableName).toList).distinct
+
+  /** `declared` against every one of a dataset's `names` (`namesOf`). */
+  def matchesAny(declared: String, names: Seq[String]): Boolean = names.exists(matches(declared, _))
 
   /** The text after the last `/`. A declared location can only match an actual
     * one that ends with it, so the two always share this segment — which is what
@@ -100,6 +118,14 @@ private[invaract] final class LocationIndex[A] private (private val entries: Vec
   def first(actual: String): Option[A] = matchingIndices(actual).headOption.map(entries(_)._2)
 
   def matchesAny(actual: String): Boolean = matchingIndices(actual).nonEmpty
+
+  /** Positions (ascending, each once) of every entry whose declared location matches any of a dataset's `names`
+    * (`LocationMatching.namesOf`). */
+  def matchingIndicesOf(names: Seq[String]): Vector[Int] = names.flatMap(matchingIndices).distinct.sorted.toVector
+
+  def firstOf(names: Seq[String]): Option[A] = matchingIndicesOf(names).headOption.map(entries(_)._2)
+
+  def matchesAnyOf(names: Seq[String]): Boolean = names.exists(matchesAny)
 }
 
 private[invaract] object LocationIndex {

@@ -46,9 +46,11 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Eight policy types are interpreted today — not everything an organization needs, though:
-   see [Write your own policy type](#write-your-own-policy-type) below for a type outside
-   this set, with no Invaract source change or release needed.
+2. Eleven policy types are interpreted today, all listed in
+   [Reference → Organizational Policy Format](/reference/org-policy-format/#policy-types); the
+   ones most policies start from are below. That's not everything an organization needs,
+   though: see [Write your own policy type](#write-your-own-policy-type) below for a type
+   outside this set, with no Invaract source change or release needed.
 
    | Type | Properties | Checks |
    |---|---|---|
@@ -58,6 +60,7 @@ how every job runs today. Everything below only applies once a platform attaches
    | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
    | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` (a string or a list), matched case-insensitively. |
    | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+   | `require_absolute_location` | `catalogs` (optional) | The dataset's `location` is a URL or a path from the root, never a relative location that matches anything ending in it. See [Pin every location](#common-organizational-policy-patterns) below. |
    | `require_dataset_type` | `types` (optional) | The dataset declares a `type` at all, optionally pinned to one of `types` (a string or a list). See [Declare Input and Output Types](/guides/declaring-input-and-output-types/#make-it-mandatory-with-an-organizational-policy). |
    | `require_extension_if` | `ifKey`/`thenKey` (required), `ifValue`/`thenValue` (optional) | A conditional `require_extension` — only once the contract satisfies `ifKey` must it also satisfy `thenKey`. See [Conditional requirements](#conditional-requirements-require_extension_if) below. |
 
@@ -374,7 +377,7 @@ one-line YAML edit instead of a failed production job.
 
 ## Common organizational policy patterns
 
-The ten policy types above compose into most standardization an organization actually
+The policy types above compose into most standardization an organization actually
 wants to enforce. A few real-world patterns, each a complete, working rule:
 
 **Cost attribution.** Every contract must be attributable to a cost center, so nothing
@@ -395,6 +398,17 @@ leaving that decision undocumented until a storage bill or an audit forces the q
   type: require_extension
   key: retentionDays
   description: "Every contract must declare its data's retention period, in days."
+```
+
+**Pin every location.** A relative location (`orders`) matches any location ending in it, so
+a contract can't tell one team's `orders` from another's. Require every location to be a URL
+or a path from the root, and allow tables named in full from your catalog:
+
+```yaml
+- id: absolute-locations
+  type: require_absolute_location
+  catalogs: [spark_catalog]
+  description: "Name each dataset by its full URL, path or catalog table name."
 ```
 
 **Regulatory basis.** Every contract must record the legal basis it relies on to process
@@ -524,7 +538,7 @@ for the full design, including the `requireRegistration` loose/strict knob:
 
 ```yaml
 controlTables:
-  - location: control.watermark_state
+  - location: control/watermark_state
     owner: streaming-team
     requiredFields: [watermark_ts, run_id]
 
@@ -536,7 +550,7 @@ policies:
 
 ## Write your own policy type
 
-The ten built-in types cover a lot of ground, but they're a closed set — an
+The eleven built-in types cover a lot of ground, but they're a closed set — an
 organization's own vocabulary ("every dataset must carry an `approvedBy` extension
 matching one of these three names," "every output's location must fall under one of
 these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a

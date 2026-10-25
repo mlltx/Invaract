@@ -453,7 +453,7 @@ object ContractEnforcementRule {
       job: Option[JobInfo] = None
   ): Unit = verifyOrThrow(contract, analyzedPlan, options, sink, applicationId, checkpointRegistry, capabilities, job, _ => ())
 
-  /** `verifyOrThrow`, telling `written` the location of every write it checks (`DeclaredOutputs.record`). */
+  /** `verifyOrThrow`, telling `written` every write it checks (`DeclaredOutputs.record`). */
   private[sparkadapter] def verifyOrThrow(
       contract: Contract,
       analyzedPlan: LogicalPlan,
@@ -463,7 +463,7 @@ object ContractEnforcementRule {
       checkpointRegistry: Option[CheckpointRegistry],
       capabilities: Option[AdapterCapabilities],
       job: Option[JobInfo],
-      written: String => Unit
+      written: com.invaract.ir.Write => Unit
   ): Unit = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
@@ -475,11 +475,12 @@ object ContractEnforcementRule {
     // transformation.
     val (plan, resolutionDiagnostics) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
     val translatedRaw = SparkPlanAdapter.translate(plan)
-    val translated = translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
+    // The insert inside a new-table `.saveAsTable()` gets the table it is filling (see `TableCreations`).
+    val translated = translatedRaw.copy(plan = TableCreations.claim(translatedRaw.plan), diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
       case w: com.invaract.ir.Write =>
-        written(w.dataset.location)
+        written(w)
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
         // describes the same (checkpoint-resolved) plan this check does.
         SparkAdapterListener.stash(analyzedPlan, translated)
@@ -491,6 +492,12 @@ object ContractEnforcementRule {
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
         VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
+        // Passed: if this creates a data-source table, the insert Spark runs next fills it (see `TableCreations`).
+        plan match {
+          case _: org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand =>
+            w.catalog.foreach(TableCreations.expect(w.dataset.location, _))
+          case _ => ()
+        }
       case _ =>
         // Checked before the fail-closed Command catch-all below: a recognized
         // state-changing CALL (nine procedures - see StateChangingCallSupport)
@@ -504,6 +511,7 @@ object ContractEnforcementRule {
               contract,
               s"CALL ${info.callName}(...) targeting '${info.location}'",
               info.location,
+              info.tableName.toList,
               SparkSchemas.toLogicalSchema(info.resultingSchema),
               SQLConf.get.caseSensitiveAnalysis,
               options,

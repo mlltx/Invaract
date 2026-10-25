@@ -180,6 +180,27 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(spark.catalog.tableExists(tableName.stripPrefix("local.")) || spark.table(tableName).count() == 5)
   }
 
+  test("PASS: a contract naming the table as db/<table> governs its creation (reported by its identifier) and an append (by its files)") {
+    val tableName = "local.db.ctas_named_tbl"
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: db/ctas_named_tbl
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.range(3).writeTo(tableName).create() // must not throw
+      spark.range(3, 5).writeTo(tableName).append() // must not throw
+    }
+    assert(spark.table(tableName).count() == 5)
+  }
+
   test("FAIL: .writeTo(...).create() violating its contract is aborted before any table is created") {
     val tableName = "local.db.ctas_fail_tbl"
     val expectedLocation = tableName

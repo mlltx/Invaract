@@ -340,6 +340,43 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // inside a CreateHiveTableAsSelectCommand for the append-via-saveAsTable
   // form. ---
 
+  // --- The CTAS gap above, closed for a contract that names the table: every write to a Hive table carries the table's
+  // catalog identity, and a declared location matches its table name (`spark_catalog/default/<table>`) as well as its
+  // location, so `default/<table>` matches the outer command (the qualified identifier) and the nested insert (the
+  // physical path) alike - for a new table and for an overwrite onto an existing one. ---
+
+  private def namedTableContract(table: String) =
+    s"""id: enforcement_demo
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: default/$table
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: long
+       |        - name: value
+       |          type: long
+       |""".stripMargin
+
+  test("PASS: a contract naming the table governs a NEW Hive table's CTAS and an OVERWRITE onto it, both nested commands") {
+    spark.sql("DROP TABLE IF EXISTS hive_ctas_named_tbl")
+    withContract(namedTableContract("hive_ctas_named_tbl")) {
+      df().write.format("hive").saveAsTable("hive_ctas_named_tbl") // new table: must not throw
+      df().write.format("hive").mode("overwrite").saveAsTable("hive_ctas_named_tbl") // overwrite: must not throw
+    }
+    assert(spark.table("hive_ctas_named_tbl").count() == 2)
+  }
+
+  test("FAIL: a contract naming another table rejects a NEW Hive table's CTAS before the table exists") {
+    spark.sql("DROP TABLE IF EXISTS hive_ctas_unnamed_tbl")
+    val ex = withContract(namedTableContract("some_other_tbl")) {
+      intercept[ContractViolationException](df().write.format("hive").saveAsTable("hive_ctas_unnamed_tbl"))
+    }
+    assert(ex.result.violations.map(_.violationType).contains(ViolationType.OutputLocationMismatch))
+    assert(!spark.catalog.tableExists("hive_ctas_unnamed_tbl"))
+  }
+
   test("translates .insertInto() with saveMode=append (not overwrite)") {
     spark.sql("CREATE TABLE hive_insertinto_append_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
     val listener = new SparkAdapterListener

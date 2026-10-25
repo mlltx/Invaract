@@ -49,8 +49,10 @@ private[invaract] object InputChecker {
     val all = Declared(contract.inputs)
     val scoped = if (scopedOutput.isEmpty) all else Declared(contract.inputsFor(scopedOutput.get))
     val readLocations = facts.reads.map(_.dataset.location).distinct
+    // A read answers to its location and, for a catalog table, its table name (`LocationMatching.namesOf`).
+    val namesOf = facts.namesOf
 
-    val declaredButNotRead = notRead(scoped, readLocations)
+    val declaredButNotRead = notRead(scoped, readLocations.flatMap(namesOf))
     val (missing, unverifiable) = classifyUnread(declaredButNotRead, facts.unknownPlans, scopedOutput, contract.outputs.size, lineageBoundaryTypes)
 
     // An in-place row change (DELETE / UPDATE / MERGE) reads the table it changes: that read is the change
@@ -63,15 +65,17 @@ private[invaract] object InputChecker {
           val normalized = LocationMatching.normalizeActual(target)
           readLocations.filterNot(loc => LocationMatching.normalizeActual(loc) == normalized)
         }
-        undeclaredReads(candidates, all, scoped, scopedOutput)
+        undeclaredReads(candidates, all, scoped, scopedOutput, namesOf)
       }
-    val schema = schemaFindings(all, inputSchemas, options.rejectUndeclaredFields, caseSensitive)
+    // A supplied schema is keyed by its read's location; it applies to an input matching any name of that read.
+    val schemasByName = inputSchemas.flatMap { case (location, schema) => namesOf(location).map(_ -> schema) }
+    val schema = schemaFindings(all, schemasByName, options.rejectUndeclaredFields, caseSensitive)
     val catalog = catalogFindings(all, facts.reads)
 
     Findings(missing ++ undeclared ++ schema ++ catalog, unverifiable)
   }
 
-  /** The scoped declared inputs none of `readLocations` matches. */
+  /** The scoped declared inputs none of `readLocations` matches (each read's every name, `LocationMatching.namesOf`). */
   private[invaract] def notRead(scoped: Declared, readLocations: List[String]): List[Dataset] = {
     val read: Set[Int] = readLocations.flatMap(scoped.index.matchingIndices).toSet
     scoped.inputs.zipWithIndex.collect { case (input, i) if !read.contains(i) => input }
@@ -124,11 +128,22 @@ private[invaract] object InputChecker {
     * input - so it gets its own wording.
     */
   private[invaract] def undeclaredReads(readLocations: List[String], all: Declared, scoped: Declared, scopedOutput: Option[Dataset]): List[Violation] =
+    undeclaredReads(readLocations, all, scoped, scopedOutput, List(_))
+
+  /** The same, where a read at a location answers to every one of `namesOf(location)`: it is declared when a declared
+    * input matches any of them. */
+  private[invaract] def undeclaredReads(
+      readLocations: List[String],
+      all: Declared,
+      scoped: Declared,
+      scopedOutput: Option[Dataset],
+      namesOf: String => List[String]
+  ): List[Violation] =
     readLocations
-      .filterNot(scoped.index.matchesAny)
+      .filterNot(loc => scoped.index.matchesAnyOf(namesOf(loc)))
       .map { loc =>
         val notThisOutputsInput = for {
-          declared <- all.index.first(loc)
+          declared <- all.index.firstOf(namesOf(loc))
           output   <- scopedOutput
         } yield (declared, output)
         notThisOutputsInput match {
@@ -162,14 +177,15 @@ private[invaract] object InputChecker {
 
   /** Catalog findings, read side: each `ir.Read` already carries its own resolved
     * `CatalogIdentity` (populated at translation time), matched to a declared
-    * input by location - the first read (in plan order) whose location matches.
+    * input by location or table name - the first read (in plan order) that matches.
     * An input with no matching read at all was already reported as `MISSING_INPUT`:
     * nothing more useful to say about its catalog identity.
     */
   private[invaract] def catalogFindings(all: Declared, reads: List[Read]): List[Violation] = {
     val readForInput: Map[Int, Read] =
       reads.foldLeft(Map.empty[Int, Read]) { (acc, read) =>
-        all.index.matchingIndices(read.dataset.location).foldLeft(acc)((m, i) => if (m.contains(i)) m else m + (i -> read))
+        all.index.matchingIndicesOf(LocationMatching.namesOf(read.dataset.location, read.catalog))
+          .foldLeft(acc)((m, i) => if (m.contains(i)) m else m + (i -> read))
       }
     all.inputs.zipWithIndex.flatMap { case (input, i) =>
       (input.catalog, readForInput.get(i)) match {

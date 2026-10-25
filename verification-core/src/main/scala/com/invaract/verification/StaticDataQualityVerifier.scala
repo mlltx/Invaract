@@ -46,8 +46,8 @@ private[invaract] object StaticDataQualityVerifier {
 
   /** The same check over a plan whose shape `ContractEnforcementRule` already gathered (see `PlanFacts`). */
   def verify(contract: Contract, facts: PlanFacts): List[DataQualityCheckResult] = facts.plan match {
-    case plan @ Write(dataset, _, _, _, _) =>
-      contract.outputs.find(o => StructuralVerifier.locationsMatch(o.location, dataset.location)) match {
+    case plan: Write =>
+      OutputChecker.matchOutput(contract.outputs, OutputChecker.namesOf(plan)) match {
         case None => Nil
         case Some(output) =>
           val axioms = buildAxioms(contract, facts)
@@ -150,7 +150,7 @@ private[invaract] object StaticDataQualityVerifier {
     val inputIndex = LocationIndex(contract.inputs.map(i => i.location -> i))
     facts.reads.flatMap { read =>
       val scope = read.alias.getOrElse(read.dataset.location)
-      inputIndex.first(read.dataset.location) match {
+      inputIndex.firstOf(LocationMatching.namesOf(read.dataset.location, read.catalog)) match {
         case Some(input) => input.schema.fields.map(f => ColumnRef(f.name, Some(scope)) -> fieldAxiomState(f))
         case None         => Nil
       }
