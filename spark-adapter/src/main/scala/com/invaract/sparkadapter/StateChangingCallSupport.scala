@@ -3,6 +3,7 @@
 
 package com.invaract.sparkadapter
 
+import com.invaract.verification.LocationMatching
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -16,7 +17,9 @@ import org.apache.spark.sql.types.{StructField, StructType}
   * is carried through only for error messages - the check itself never
   * branches on which procedure produced this value.
   */
-private[sparkadapter] case class StateChangeInfo(callName: String, location: String, resultingSchema: StructType)
+/** @param tableName the table's name in the canonical parts form (`LocationMatching.tableName`), which a contract can
+  *   name it by as it would for a write to that table. */
+private[sparkadapter] case class StateChangeInfo(callName: String, location: String, resultingSchema: StructType, tableName: Option[String] = None)
 
 /** Verification support for Iceberg `CALL` procedures that change a table's
   * *current* committed state without a Spark write ever occurring. Nine
@@ -217,7 +220,14 @@ private[sparkadapter] object StateChangingCallSupport {
     val table = tableCatalog.loadTable(identifier)
     val currentSchema = schemaOf(table)
 
-    Some(StateChangeInfo(callName, location = s"${tableCatalog.name()}.$tableArg", resultingSchema = currentSchema))
+    Some(
+      StateChangeInfo(
+        callName,
+        location = s"${tableCatalog.name()}.$tableArg",
+        resultingSchema = currentSchema,
+        tableName = Some(LocationMatching.fromParts(tableCatalog.name() +: identifier.namespace() :+ identifier.name()))
+      )
+    )
   }
 
   private def extractSnapshotTable(plan: LogicalPlan): Option[StateChangeInfo] = {
@@ -251,7 +261,12 @@ private[sparkadapter] object StateChangingCallSupport {
     val sourceSchema = schemaOf(sourceCatalog.loadTable(sourceIdentifier))
     val location = (destCatalog.name() +: destIdentifier.namespace() :+ destIdentifier.name()).mkString(".")
 
-    Some(StateChangeInfo("snapshot", location, sourceSchema))
+    Some(
+      StateChangeInfo(
+        "snapshot", location, sourceSchema,
+        tableName = Some(LocationMatching.fromParts(destCatalog.name() +: destIdentifier.namespace() :+ destIdentifier.name()))
+      )
+    )
   }
 
   private def schemaOf(table: org.apache.spark.sql.connector.catalog.Table): StructType =

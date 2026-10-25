@@ -648,8 +648,14 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       val root = analyzed.getClass.getSimpleName
       assert(StructuralVerifier.collectReads(reported.plan).size == 1, s"$root: ${com.invaract.ir.PlanPrinter.render(reported.plan)}")
       assert(StructuralVerifier.collectUnknownPlans(reported.plan).isEmpty, root)
-      // ... and it is exactly what the rule itself saw for that plan.
-      assert(reported.plan == SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan).plan, root)
+      // ... and it is exactly what the rule itself saw for that plan: its translation, where the insert inside a
+      // new-table create also names the table it fills (TableCreations), which its own plan cannot.
+      val fresh = SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan).plan
+      val withoutClaim = (reported.plan, fresh) match {
+        case (w: com.invaract.ir.Write, f: com.invaract.ir.Write) if f.catalog.isEmpty => w.copy(catalog = None)
+        case (p, _)                                                                     => p
+      }
+      assert(withoutClaim == fresh, root)
     }
 
   test("a CTAS-style .saveAsTable() after a checkpoint: BOTH write plans (outer CreateDataSourceTableAsSelectCommand, inner insert) are resolved") {
@@ -657,6 +663,11 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       df.write.option("path", out).mode("overwrite").saveAsTable("lw_ctas_tbl")
     }
     assertEveryWritePlanResolved(writes)
+    // Both name the table: the outer from its own plan, the inner insert through TableCreations.
+    writes.foreach { case (analyzed, reported) =>
+      val table = reported.plan match { case w: com.invaract.ir.Write => w.catalog.flatMap(_.table); case _ => None }
+      assert(table.contains("lw_ctas_tbl"), analyzed.getClass.getSimpleName)
+    }
   }
 
   test("a .format(\"delta\").save() after a checkpoint (SaveIntoDataSourceCommand): the write plan is resolved") {
@@ -1639,6 +1650,63 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the .saveAsTable() write must be aborted, not merely reported as failed")
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // A contract can name a catalog table (`default/<table>`) rather than where its files are. Spark reports the two
+  // writes a new-table `.saveAsTable()` makes differently - the outer create by the table's qualified name
+  // (`spark_catalog.default.<table>`), the inner insert by its files under the warehouse - and an append to the existing
+  // table by its files again. Each carries the table's catalog identity - the inner insert of a new table through
+  // `TableCreations` - so the table name matches all three.
+  private def tableContract(location: String, input: Option[String] = None) =
+    s"""id: table_names
+       |version: "1.0.0"
+       |${input.fold("")(in => s"inputs:\n  - name: src\n    location: $in\n")}outputs:
+       |  - name: out
+       |    location: $location
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: long
+       |""".stripMargin
+
+  test("PASS: a contract naming a table as default/<table> governs its creation and a later append, however Spark reports each") {
+    spark.sql("DROP TABLE IF EXISTS named_out_tbl")
+    withContract(tableContract("default/named_out_tbl")) {
+      spark.range(3).write.mode("overwrite").saveAsTable("named_out_tbl") // a new table: must not throw
+      spark.range(3, 5).write.mode("append").saveAsTable("named_out_tbl") // the existing table: must not throw
+    }
+    assert(spark.table("named_out_tbl").count() == 5)
+  }
+
+  test("PASS: a contract naming a Delta table as default/<table> governs the write that creates it, reported by its qualified name") {
+    spark.sql("DROP TABLE IF EXISTS named_delta_tbl")
+    withContract(tableContract("default/named_delta_tbl")) {
+      spark.range(3).write.format("delta").mode("overwrite").saveAsTable("named_delta_tbl") // a new table: must not throw
+      spark.range(3, 5).write.format("delta").mode("append").saveAsTable("named_delta_tbl") // the existing table: must not throw
+    }
+    assert(spark.table("named_delta_tbl").count() == 5)
+  }
+
+  test("FAIL: a write to a table other than the one the contract names is rejected as a location mismatch") {
+    spark.sql("DROP TABLE IF EXISTS unnamed_out_tbl")
+    val ex = withContract(tableContract("default/named_out_tbl")) {
+      intercept[ContractViolationException](spark.range(3).write.mode("overwrite").saveAsTable("unnamed_out_tbl"))
+    }
+    assert(ex.result.violations.map(_.violationType).contains(ViolationType.OutputLocationMismatch))
+    assert(!spark.catalog.tableExists("unnamed_out_tbl"), "the write must be aborted before the table exists")
+  }
+
+  test("PASS: an input named as default/<table> is found when the job reads that table") {
+    spark.sql("DROP TABLE IF EXISTS named_in_tbl")
+    spark.range(3).write.saveAsTable("named_in_tbl")
+    val outputPath = scratchDir.resolve("named_in_out").toString
+    withContract(tableContract(outputPath, Some("default/named_in_tbl")), VerificationOptions(rejectUndeclaredInputs = true)) {
+      spark.table("named_in_tbl").write.mode("overwrite").parquet(outputPath) // must not throw: read, and declared
+    }
+    val ex = withContract(tableContract(outputPath, Some("default/other_in_tbl")), VerificationOptions(rejectUndeclaredInputs = true)) {
+      intercept[ContractViolationException](spark.table("named_in_tbl").write.mode("overwrite").parquet(outputPath))
+    }
+    assert(ex.result.violations.map(_.violationType).toSet == Set(ViolationType.MissingInput, ViolationType.UndeclaredInput))
   }
 
   // Delta as an INPUT, not an output — a different code path from every

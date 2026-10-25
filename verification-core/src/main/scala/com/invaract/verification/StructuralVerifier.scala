@@ -227,7 +227,7 @@ private[invaract] object StructuralVerifier {
     // is "for". A plan with no Write (or a multi-output write matching no
     // declared output) has no output to scope by and keeps every input.
     val scopedOutput: Option[Dataset] = facts.plan match {
-      case Write(dataset, _, _, _, _) => OutputChecker.expectedOutputFor(contract.outputs, dataset.location)
+      case write: Write => OutputChecker.expectedOutputFor(contract.outputs, OutputChecker.namesOf(write))
       case _                          => None
     }
 
@@ -273,8 +273,19 @@ private[invaract] object StructuralVerifier {
     resultingSchema: LogicalSchema,
     options: VerificationOptions = VerificationOptions(),
     caseSensitive: Boolean = false
+  ): VerificationResult = verifyStateChange(contract, location, Nil, resultingSchema, options, caseSensitive)
+
+  /** The same, for an operation on a catalog table that also answers to `tableNames` (`LocationMatching.tableName`): it
+    * is the contract's concern when a declared output matches its location or any of them, as a write to that table would. */
+  private[invaract] def verifyStateChange(
+    contract: Contract,
+    location: String,
+    tableNames: List[String],
+    resultingSchema: LogicalSchema,
+    options: VerificationOptions,
+    caseSensitive: Boolean
   ): VerificationResult =
-    OutputChecker.matchOutput(contract.outputs, location) match {
+    OutputChecker.matchOutput(contract.outputs, (location :: tableNames).distinct) match {
       case None => VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
       case Some(expectedOutput) =>
         val schemaViolations =

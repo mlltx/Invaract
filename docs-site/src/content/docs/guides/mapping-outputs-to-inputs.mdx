@@ -21,21 +21,21 @@ would be rejected with a `MISSING_INPUT` for each.
 ```yaml
 inputs:
   - name: orders
-    location: bronze.orders
+    location: bronze/orders
     schema: { fields: [{ name: order_id, type: string }] }
   - name: customers
-    location: bronze.customers
+    location: bronze/customers
     schema: { fields: [{ name: customer_id, type: string }] }
   - name: events
-    location: bronze.events
+    location: bronze/events
     schema: { fields: [{ name: event_id, type: string }] }
 outputs:
   - name: orders_summary
-    location: gold.orders_summary
+    location: gold/orders_summary
     derivedFrom: [orders, customers]
     schema: { fields: [{ name: order_id, type: string }] }
   - name: audit_log
-    location: gold.audit_log
+    location: gold/audit_log
     derivedFrom: [events]
     schema: { fields: [{ name: event_id, type: string }] }
 ```
@@ -55,11 +55,11 @@ declares `derivedFrom`, Invaract checks it against **only that output's inputs**
 | The write never reads an input that only a *different* output lists | Nothing — it is not expected here. |
 | The write reads a declared input its output does **not** list, and [`rejectUndeclaredInputs`](/guides/installing-the-enforcement-rule/) is on | `UNDECLARED_INPUT`, naming the input and the output. |
 
-For example, if `audit_log` were written by a job that also read `bronze.orders`, and
+For example, if `audit_log` were written by a job that also read `bronze/orders`, and
 `rejectUndeclaredInputs` is enabled, the write is rejected with:
 
 ```text
-plan reads 'bronze.orders' (input 'orders'), which this contract declares but not as a source of output 'audit_log' (its derivedFrom lists 'events')
+plan reads 'bronze/orders' (input 'orders'), which this contract declares but not as a source of output 'audit_log' (its derivedFrom lists 'events')
 ```
 
 ## Leaving it out, and `[]`

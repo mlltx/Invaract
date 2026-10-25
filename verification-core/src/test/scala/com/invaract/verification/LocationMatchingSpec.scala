@@ -3,17 +3,19 @@
 
 package com.invaract.verification
 
+import com.invaract.contract.Locations
+
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.util.Random
 
 class LocationMatchingSpec extends AnyFunSuite {
 
-  // The rule exactly as `StructuralVerifier.locationsMatch` was written before it
-  // moved to `LocationMatching`: the reference every indexed lookup must agree with.
+  // The rule written out directly - both sides canonical, then equal or a `/`-boundary suffix: the reference every
+  // indexed lookup must agree with.
   private def reference(declared: String, actual: String): Boolean = {
-    val d = declared.replace('\\', '/')
-    val a = actual.stripPrefix("file:").replace('\\', '/')
+    val d = Locations.canonical(declared)
+    val a = Locations.canonical(actual)
     a == d || a.endsWith("/" + d)
   }
 
@@ -30,7 +32,6 @@ class LocationMatchingSpec extends AnyFunSuite {
     assert(!LocationMatching.matches("orders", "s3://b/xorders"))
     assert(!LocationMatching.matches("data/out", "out"))
     assert(!LocationMatching.matches("a/orders", "b/orders"))
-    assert(!LocationMatching.matches("out", "data/out/"))
     assert(!LocationMatching.matches("/data/out", "s3://b/data/out"))
   }
 
@@ -56,10 +57,26 @@ class LocationMatchingSpec extends AnyFunSuite {
     assert(!LocationMatching.matches("other/table", canonical))
   }
 
-  test("matches: the file: scheme is only stripped from the actual side, not the declared one") {
-    assert(!LocationMatching.matches("file:/data/out", "/data/out"))
+  test("matches: the file: scheme is dropped from either side") {
+    assert(LocationMatching.matches("file:/data/out", "/data/out"))
+    assert(LocationMatching.matches("file:///data/out", "file:/data/out"))
     assert(LocationMatching.normalizeActual("file:/data/out") == "/data/out")
-    assert(LocationMatching.normalizeDeclared("file:/data/out") == "file:/data/out")
+    assert(LocationMatching.normalizeDeclared("file:/data/out") == "/data/out")
+  }
+
+  test("matches: how either side is spelt does not decide a match - trailing, repeated and ./ segments, store aliases") {
+    assert(LocationMatching.matches("orders", "/data/orders/"))
+    assert(LocationMatching.matches("orders/", "/data/orders"))
+    assert(LocationMatching.matches("data//orders", "/x/data/orders"))
+    assert(LocationMatching.matches("./data/orders", "/x/./data/orders"))
+    assert(LocationMatching.matches("s3://bucket/orders", "s3a://bucket/orders"))
+    assert(LocationMatching.matches("S3A://bucket/orders/", "s3n://bucket//orders"))
+    // what still decides a match: case, the store, the bucket, and where an absolute location starts
+    assert(!LocationMatching.matches("Orders", "/data/orders"))
+    assert(!LocationMatching.matches("s3://bucket/orders", "gs://bucket/orders"))
+    assert(!LocationMatching.matches("s3://bucket/orders", "s3a://other/orders"))
+    assert(!LocationMatching.matches("/data/orders", "hdfs://nn:8020/data/orders"))
+    assert(LocationMatching.matches("data/orders", "hdfs://nn:8020/data/orders"))
   }
 
   test("matchesNormalized and lastSegment") {
@@ -101,7 +118,8 @@ class LocationMatchingSpec extends AnyFunSuite {
   test("LocationIndex handles degenerate locations: empty, trailing slash, backslashes") {
     val index = LocationIndex(Seq("" -> 0, "dir/" -> 1, "w\\x" -> 2))
     assert(index.matchingIndices("") == Vector(0))
-    assert(index.matchingIndices("a/dir/") == Vector(0, 1))
+    assert(index.matchingIndices("a/dir/") == Vector(1))
+    assert(index.matchingIndices("a/dir") == Vector(1))
     assert(index.matchingIndices("file:/p/w/x") == Vector(2))
   }
 

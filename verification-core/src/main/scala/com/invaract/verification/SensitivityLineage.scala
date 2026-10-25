@@ -46,7 +46,7 @@ object SensitivityLineage {
     * preserving and 1:1 with `lineage`.
     */
   def propagate(lineage: List[ColumnLineage], contract: Contract): List[SensitiveColumnLineage] =
-    propagateResolving(lineage, contract, identity)
+    propagateResolving(lineage, contract, List(_))
 
   /** The same propagation, computed from `plan` itself: `Lineage.trace(plan)`, with each traced
     * source's qualifier resolved to the location of the `Read` it stands for through `plan`'s own
@@ -58,15 +58,19 @@ object SensitivityLineage {
     * stays unresolved (and so untagged) rather than guessed.
     */
   def propagate(plan: Plan, contract: Contract): List[SensitiveColumnLineage] =
-    propagateResolving(Lineage.trace(plan), contract, PlanRuleVerifier.locationResolver(plan))
+  {
+    val facts = PlanFacts.of(plan)
+    // A source's qualifier resolves to its read's location, which answers to its table name too (`PlanFacts.namesOf`).
+    propagateResolving(Lineage.trace(plan), contract, qualifier => facts.namesOf(facts.locationResolver(qualifier)))
+  }
 
   private def propagateResolving(
       lineage: List[ColumnLineage],
       contract: Contract,
-      locationOf: String => String
+      namesOf: String => List[String]
   ): List[SensitiveColumnLineage] = {
     val taggedFields = taggedInputFields(contract)
-    lineage.map(cl => SensitiveColumnLineage(cl, cl.sources.flatMap(tagsFor(_, taggedFields, locationOf))))
+    lineage.map(cl => SensitiveColumnLineage(cl, cl.sources.flatMap(tagsFor(_, taggedFields, namesOf))))
   }
 
   /** Every (dataset, field) pair among `contract.inputs` whose field
@@ -86,12 +90,12 @@ object SensitivityLineage {
     * all (e.g. a self-join alias, or a plain untagged column), simply
     * contributes no tags rather than guessing.
     */
-  private def tagsFor(source: ColumnRef, taggedFields: List[(Dataset, Field)], locationOf: String => String): Set[String] =
+  private def tagsFor(source: ColumnRef, taggedFields: List[(Dataset, Field)], namesOf: String => List[String]): Set[String] =
     source.qualifier match {
       case None => Set.empty
       case Some(qualifier) =>
         taggedFields.collect {
-          case (dataset, field) if field.name == source.name && StructuralVerifier.locationsMatch(dataset.location, locationOf(qualifier)) =>
+          case (dataset, field) if field.name == source.name && LocationMatching.matchesAny(dataset.location, namesOf(qualifier)) =>
             field.sensitivityTags
         }.flatten.toSet
     }

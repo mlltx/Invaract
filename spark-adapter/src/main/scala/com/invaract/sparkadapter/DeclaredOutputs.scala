@@ -4,8 +4,8 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.Contract
-import com.invaract.ir.UnknownPlan
-import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, VerificationPipeline}
+import com.invaract.ir.{UnknownPlan, Write}
+import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, OutputChecker, VerificationPipeline}
 import com.invaract.verification.notification.{JobInfo, NotificationSink}
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd}
@@ -36,14 +36,22 @@ private[sparkadapter] final class DeclaredOutputs(
     applicationId: Option[String],
     job: Option[JobInfo]
 ) {
-  private val written = new ConcurrentLinkedQueue[String]()
+  /** Each write recorded: where it landed, and every name it answers to (`LocationMatching.namesOf`). */
+  private val written = new ConcurrentLinkedQueue[(String, List[String])]()
   private var outcome: Option[Option[ContractViolationException]] = None
 
   /** A write the enforcement rule checked, wherever it landed. */
-  def record(location: String): Unit = written.add(location)
+  def record(location: String): Unit = written.add(location -> List(location))
+
+  /** A write the enforcement rule checked: a declared output naming its table counts as written, as one naming its
+    * location does (`OutputChecker.namesOf`). */
+  def record(write: Write): Unit = written.add(write.dataset.location -> OutputChecker.namesOf(write))
 
   /** The locations recorded so far, each once, in the order first written. */
-  def locations: List[String] = written.asScala.toList.distinct
+  def locations: List[String] = written.asScala.toList.map(_._1).distinct
+
+  /** Every name the recorded writes answer to, each once. */
+  private def names: List[String] = written.asScala.toList.flatMap(_._2).distinct
 
   /** Whether every declared output was written, decided once: the first call publishes the FAILED validation (when one
     * is due) and later calls return the same answer without publishing again. */
@@ -56,7 +64,7 @@ private[sparkadapter] final class DeclaredOutputs(
     val writes = locations
     try {
       VerificationPipeline.requireOutputsWritten(
-        contract, writes, UnknownPlan(s"the job's writes: ${if (writes.isEmpty) "none" else writes.mkString(", ")}", "SparkApplication"), sink, applicationId, job
+        contract, names, UnknownPlan(s"the job's writes: ${if (writes.isEmpty) "none" else writes.mkString(", ")}", "SparkApplication"), sink, applicationId, job
       )
       None
     } catch { case e: ContractViolationException => Some(e) }

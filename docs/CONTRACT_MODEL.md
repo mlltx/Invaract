@@ -1062,12 +1062,12 @@ Same three-layer split as the contract model itself, all in `contract/`
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
   warnViolations)`. Every rule — built-in or custom — is evaluated through
   the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
-  checks `builtinEvaluators` (nine of the ten built-in types, each an
+  checks `builtinEvaluators` (ten of the eleven built-in types, each an
   ordinary `CustomPolicyEvaluator` compiled into this module) before
   falling back to `policy.customPolicyTypes` for a `ruleType` outside that
   set — see "Custom policy types" below for the full mechanism, and its
   own note on why a built-in type always wins a naming collision. The
-  tenth built-in type, `require_control_registration`, is special-cased in
+  remaining built-in type, `require_control_registration`, is special-cased in
   `evaluateRule` ahead of that dispatch instead, since it needs
   `policy.controlTables` — data no `CustomPolicyEvaluator` can see through
   `evaluate(contract, rule)` alone — see "Control table registration"
@@ -1131,6 +1131,19 @@ grow to cover:
   no properties at all: there's nothing to configure beyond "this dataset
   must have one," so unlike every other type here, `interpret` can never
   fail on malformed properties for it.
+- **`require_absolute_location`** (optional `catalogs`) — a dataset's
+  `location` must name one place on its own: `Locations.isAbsolute` (a URL,
+  a path from the root or a Windows drive path, after `Locations.canonical`),
+  never a relative location, which matches any location ending in it (see
+  docs-site's "Location matching") and so cannot tell two teams' `.../orders`
+  apart. `catalogs` (scalar or list, same coercion as `formats`) names
+  catalogs a location may start with instead, so a table named in full
+  (`spark_catalog/gold/orders`) passes and `gold/orders` does not; the first
+  segment is compared case-insensitively, as Spark compares catalog names. An
+  explicit empty `catalogs` is malformed. Evaluated on the contract a job
+  enforces, after `ref://` resolution (`VerificationSetup` resolves before it
+  enforces policy); a lint of a contract file sees an unresolved `ref://`,
+  which `isAbsolute` counts as a URL, so the lint lets it through.
 - **`require_dataset_type`** (optional `types`) — a dataset must declare a
   `type` (`DATA_ASSET`/`SOURCE`/`CONTROL` — see "Input and Output Types"
   above) at all; if `types` is also set (a single scalar or a YAML list,
@@ -1216,8 +1229,8 @@ built-in type is, without re-deriving it from each evaluator's own body:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
   `field_naming_convention`, `require_format`, `require_dataset_description`,
-  `require_dataset_type`, `forbid_control_sensitivity_tags`, and
-  `require_control_registration`. Each narrows to `scopedDatasets(contract,
+  `require_dataset_type`, `forbid_control_sensitivity_tags`,
+  `require_control_registration` and `require_absolute_location`. Each narrows to `scopedDatasets(contract,
   rule)` (`datasetsInScope(contract, rule.scope)`, further filtered by
   `rule.when`) and checks each dataset independently, producing a
   `PolicyViolation` with `dataset = Some(name)` per offending dataset.
@@ -1240,7 +1253,7 @@ that was never about any one dataset.
 
 ### Custom policy types (`CustomPolicyEvaluator`)
 
-The ten built-in types above are deliberately closed — but an
+The eleven built-in types above are deliberately closed — but an
 organization's own policy vocabulary isn't limited to them. `OrgPolicy`
 carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
 a `PolicyRule.ruleType` this document uses to the fully-qualified class
@@ -1269,11 +1282,11 @@ with zero change to any governed job's own source.
 
 There is nothing special about *most* built-in types' evaluation
 mechanism — `OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
-`builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering nine
-of the ten built-in types, each an ordinary `CustomPolicyEvaluator`, built
+`builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering ten
+of the eleven built-in types, each an ordinary `CustomPolicyEvaluator`, built
 via the private `interpreted` helper — see that method's own doc for why —
 compiled into this module) before ever consulting `customPolicyTypes`.
-The tenth, `require_control_registration`, needs `OrgPolicy.controlTables`
+The eleventh, `require_control_registration`, needs `OrgPolicy.controlTables`
 — data the `CustomPolicyEvaluator` trait has no way to receive — so
 `evaluateRule` checks for it by name before ever reaching this map; see
 "Control table registration" below. This is why

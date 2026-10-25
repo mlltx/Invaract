@@ -189,6 +189,16 @@ this one write shape — neither attempted here, consistent with the
 Parquet precedent of leaving the analogous gap as documented future work
 rather than a scope-widening fix.
 
+**Closed for a contract that names the table.** A declared location also
+matches a read or write's table name (`LocationMatching.namesOf`: its
+`CatalogIdentity` as `spark_catalog/default/<table>`), and both nested
+commands carry that identity, so a contract declaring `default/<table>`
+(or `<table>`) matches the outer command's qualified identifier and the
+inner insert's physical path alike, for a new table and for an overwrite
+onto an existing one (`HiveConnectorSpec`'s "a contract naming the table"
+PASS/FAIL pair). The gap below still applies to a contract that declares
+the table's physical path.
+
 **This gap is narrower than it first reads — it does not apply to an
 EXTERNAL table created via `.option("path", ...)`.** Confirmed directly
 (a real probe, then promoted into a permanent test — see "External
@@ -594,7 +604,7 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | Streaming read (`readStream`) | 🚫 **N/A — no such mechanism exists** | No streaming source implementation exists for the Hive table format. Not attempted; genuinely nothing to test against. |
 | Change-data-feed / incremental read | 🚫 **N/A — no such mechanism exists** | No CDC mechanism exists for Hive tables. Nothing to translate. |
 | `.save(path)` | 🚫 **N/A — rejected by Spark itself** | `df.write.format("hive").save(path)` is rejected outright by Spark (`Hive data source can only be used with tables`) — confirmed via the Spark documentation this module's Phase 0 investigation checked; Hive is `.saveAsTable()`-only by design. Not a translation gap. |
-| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation for MANAGED tables only** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. A genuinely new **external** table (`.option("path", ...)`) is fully covered — the outer command resolves the real physical path immediately, confirmed by a dedicated `HiveConnectorSpec` PASS test (see "External tables"). Only a new **managed** table (no explicit path) retains the documented gap — see "Known limitation" above. Next step for the managed case: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change) or accept the qualified identifier as an equally valid declared `location`, neither attempted here. |
+| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation for MANAGED tables only** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. A genuinely new **external** table (`.option("path", ...)`) is fully covered — the outer command resolves the real physical path immediately, confirmed by a dedicated `HiveConnectorSpec` PASS test (see "External tables"). Only a new **managed** table (no explicit path) retains the documented gap, and only for a contract that declares the table's physical path: a contract naming the table (`default/<table>`) matches both nested commands through their catalog identity (`LocationMatching.namesOf`; `HiveConnectorSpec`'s "a contract naming the table" PASS/FAIL pair) — see "Known limitation" above. Next step for a path-declaring contract: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change), not attempted here. |
 | `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Same two commands, confirmed to agree on the real physical path for append mode specifically. `HiveConnectorSpec`'s PASS/FAIL pair. |
 | `.insertInto(...)` | ✅ **Covered — closed this pass** | `InsertIntoHiveTable`. `HiveConnectorSpec`'s PASS/FAIL pair, plus a dedicated translation test confirming `INSERT OVERWRITE`'s save mode. |
 | `.writeTo(...)` (DataFrameWriterV2) | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | `Cannot write into v1 table` — the default `spark_catalog` isn't a `SupportsWrite` V2 catalog for Hive tables. `HiveConnectorSpec`'s test. |
@@ -625,7 +635,9 @@ that one row's gap is a tested, documented limitation with a concrete
 next step, not a silent one. Two real bugs were found and fixed (the
 `HiveTableRelation` read gap, the static-partition schema gap); one real
 gap was found and left open with a standing regression test proving it's
-still there (CTAS/overwrite location resolution); everything else was a
+still there (CTAS/overwrite location resolution - since closed for a
+contract that names the table rather than its physical path, by matching
+a declared location against a dataset's table name); everything else was a
 genuine confirmation, not an assumption carried over from Delta/Iceberg/
 Parquet's own onboarding. A later, external-tables-focused pass added 10
 more tests confirming external Hive-SerDe/datasource-provider/Delta

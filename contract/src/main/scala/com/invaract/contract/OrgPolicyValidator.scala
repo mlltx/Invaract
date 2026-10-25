@@ -251,6 +251,7 @@ object OrgPolicyValidator {
     case PolicyType.RequireDatasetType     => " (if 'types' is set, expected a non-empty list of DATA_ASSET/SOURCE/CONTROL - omit 'types' entirely to require any declared type)"
     case PolicyType.ForbidControlSensitivityTags => " (if 'tags' is set, expected a non-empty list of strings - omit 'tags' entirely to use the default pii/financial set)"
     case PolicyType.RequireControlRegistration => " (if 'requireRegistration' is set, expected a boolean - omit it entirely to default to true)"
+    case PolicyType.RequireAbsoluteLocation => " (if 'catalogs' is set, expected a non-empty list of catalog names - omit it entirely to allow none)"
     case _                                 => ""
   }
 

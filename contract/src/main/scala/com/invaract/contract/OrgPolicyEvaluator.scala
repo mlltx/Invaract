@@ -203,7 +203,7 @@ object OrgPolicyEvaluator {
       customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
     }
 
-  /** Nine of `PolicyType.All`'s ten built-in types, each an ordinary
+  /** Ten of `PolicyType.All`'s eleven built-in types, each an ordinary
     * `CustomPolicyEvaluator` — the identical trait a third party's own
     * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
     * about a built-in type's *evaluation* is privileged anymore; what
@@ -247,6 +247,10 @@ object OrgPolicyEvaluator {
     },
     PolicyType.RequireFormat -> interpreted { case (contract, rule, InterpretedPolicy.RequireFormat(formats)) =>
       scopedDatasets(contract, rule).flatMap(checkRequireFormat(rule, _, formats))
+    },
+    PolicyType.RequireAbsoluteLocation -> interpreted {
+      case (contract, rule, InterpretedPolicy.RequireAbsoluteLocation(catalogs)) =>
+        scopedDatasets(contract, rule).flatMap(checkRequireAbsoluteLocation(rule, _, catalogs))
     },
     PolicyType.RequireDatasetDescription -> interpreted {
       case (contract, rule, InterpretedPolicy.RequireDatasetDescription) =>
@@ -393,6 +397,29 @@ object OrgPolicyEvaluator {
           s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare " +
             s"a format of one of [$allowedList], but it does not$actualSuffix.",
           s"Set dataset '${dataset.name}''s format to one of: $allowedList."
+        )
+      )
+    }
+  }
+
+  private def checkRequireAbsoluteLocation(rule: PolicyRule, dataset: Dataset, catalogs: List[String]): List[PolicyViolation] = {
+    val location = Locations.canonical(dataset.location)
+    val firstSegment = location.takeWhile(_ != '/')
+    val inACatalog = location.contains('/') && catalogs.exists(_.equalsIgnoreCase(firstSegment))
+    if (Locations.isAbsolute(location) || inACatalog) Nil
+    else {
+      val orTable = if (catalogs.isEmpty) "" else s", or a table named in full from its catalog (${catalogs.map(c => s"'$c/...'").mkString(", ")})"
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare an absolute " +
+            s"location (a URL such as 's3://bucket/orders', or a path from the root such as '/data/orders'$orTable), but " +
+            s"'${dataset.location}' is relative: it matches any location that ends in it.",
+          s"Write dataset '${dataset.name}''s location in full, as the URL or path it is stored at" +
+            (if (catalogs.isEmpty) "." else s", or as '<catalog>/<namespace>/<table>' with one of: ${catalogs.mkString(", ")}.")
         )
       )
     }

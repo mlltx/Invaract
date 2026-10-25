@@ -245,6 +245,16 @@ object PolicyType {
     */
   val RequireControlRegistration = "require_control_registration"
 
+  /** Every dataset's location must name one place on its own: a URL (`s3://bucket/orders`) or a path from the root
+    * (`/data/orders`), never a relative location (`orders`, `sales/orders`), which matches any location ending in it and
+    * so cannot tell two teams' `.../orders` apart (`Locations.isAbsolute`). Optional `catalogs`: catalog names (e.g.
+    * `spark_catalog`) a location may also start with - `spark_catalog/gold/orders` names one table in full, where
+    * `gold/orders` is a relative name that matches it in any catalog. Checked on the contract a job enforces, after its
+    * `ref://` locations are resolved; a lint of a contract file, which has nothing to resolve them with, takes a
+    * `ref://` location as satisfying the rule.
+    */
+  val RequireAbsoluteLocation = "require_absolute_location"
+
   val All: Set[String] = Set(
     RequireCatalog,
     RequireField,
@@ -255,7 +265,8 @@ object PolicyType {
     RequireExtensionIf,
     RequireDatasetType,
     ForbidControlSensitivityTags,
-    RequireControlRegistration
+    RequireControlRegistration,
+    RequireAbsoluteLocation
   )
 
   /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
@@ -340,6 +351,10 @@ object InterpretedPolicy {
     */
   case class RequireControlRegistration(requireRegistration: Boolean) extends DatasetPolicy
 
+  /** @param catalogs catalog names a location may start with instead of being absolute (a table named in full); empty
+    *   when the rule sets none. */
+  case class RequireAbsoluteLocation(catalogs: List[String]) extends DatasetPolicy
+
   /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
     *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
     *   `thenValue` to be checked at all. A contract not satisfying this
@@ -412,6 +427,11 @@ case class PolicyRule(
       PolicyRule.parseStringList(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case PolicyType.RequireDatasetDescription =>
       Some(InterpretedPolicy.RequireDatasetDescription)
+    case PolicyType.RequireAbsoluteLocation =>
+      properties.get("catalogs") match {
+        case None => Some(InterpretedPolicy.RequireAbsoluteLocation(Nil))
+        case some => PolicyRule.parseStringList(some).filter(_.nonEmpty).map(InterpretedPolicy.RequireAbsoluteLocation)
+      }
     case PolicyType.RequireDatasetType =>
       properties.get("types") match {
         case None => Some(InterpretedPolicy.RequireDatasetType(None))

@@ -49,6 +49,16 @@ private[invaract] final class PlanFacts private (
     (filterRefs ++ joinRefs).toSet
   }
 
+  /** Every name the dataset at a read location answers to (`LocationMatching.namesOf`): the location itself and the table
+    * name of each read there that resolved to a catalog table. A location no read reports answers to itself only - a
+    * qualifier that `locationResolver` could not resolve, say. */
+  lazy val namesOf: String => List[String] = {
+    val byLocation: Map[String, List[String]] = reads.groupBy(_.dataset.location).map { case (location, at) =>
+      location -> (location :: at.flatMap(r => r.catalog.flatMap(LocationMatching.tableName))).distinct
+    }
+    location => byLocation.getOrElse(location, List(location))
+  }
+
   /** Turns a lineage/condition `ColumnRef.qualifier` into the location of the
     * `Read` it stands for — see `PlanRuleVerifier.locationResolver` for why that
     * resolution exists and why an ambiguous scope is left unresolved.

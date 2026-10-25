@@ -29,17 +29,17 @@ below for how a platform team turns this from optional into required.
 ```yaml
 inputs:
   - name: customer
-    location: gold.customer_master
+    location: gold/customer_master
     type: DATA_ASSET
   - name: vendor_feed
-    location: bronze.vendor_feed
+    location: bronze/vendor_feed
     type: SOURCE
   - name: processing_calendar
-    location: control.processing_calendar
+    location: control/processing_calendar
     type: CONTROL
 outputs:
   - name: customer_position
-    location: gold.customer_position
+    location: gold/customer_position
     type: DATA_ASSET
 ```
 
@@ -72,7 +72,7 @@ about ownership and responsibility, not about `format`/`catalog`.
 ```yaml
 outputs:
   - name: result
-    location: gold.result
+    location: gold/result
     type: SOURCE # ContractValidator warns: a SOURCE can't be your own output
 ```
 
@@ -122,7 +122,7 @@ produce.
 ```yaml
 inputs:
   - name: processing_calendar
-    location: control.processing_calendar
+    location: control/processing_calendar
     type: CONTROL
     schema:
       fields:
@@ -212,7 +212,7 @@ filter/join condition — for you to review before deciding what to declare:
 ```yaml
 inputs:
   - name: input_1
-    location: control.processing_calendar
+    location: control/processing_calendar
     schema:
       fields:
         - name: as_of_date

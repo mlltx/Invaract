@@ -163,10 +163,7 @@ object ContractDraftMerger {
 
   private def distinctSchemas(datasets: List[Dataset]): List[Schema] = datasets.map(_.schema).distinct
 
-  private def normalize(location: String): String = {
-    val slashed = location.trim.replace('\\', '/').stripPrefix("file:")
-    if (slashed.length > 1) slashed.stripSuffix("/") else slashed
-  }
+  private def normalize(location: String): String = Locations.canonical(location)
 
   /** A name per location: derived from it, with `_2`, `_3`, ... on a clash, in the order given. */
   private def uniqueNames(locations: List[String]): Map[String, String] =

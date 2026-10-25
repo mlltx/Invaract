@@ -95,12 +95,11 @@ object CrossContractValidator {
           "consistently across both contracts."
     )
 
-  /** Both sides here are contract-declared locations (never a raw
-    * Spark-reported one), so the only real-world variation to tolerate is a
-    * Windows-authored path's backslashes — unlike
-    * `StructuralVerifier.locationsMatch`, there is no `"file:"` scheme or
-    * suffix-boundary case to handle, since neither side ever comes from an
-    * actual Spark plan. `private[contract]`, not `private`: `TypeGuaranteeValidator`'s
+  /** Both sides here are contract-declared locations, compared exactly in
+    * `Locations`' canonical form (so `s3a://b/x/` and `s3://b/x` are one place)
+    * - unlike `StructuralVerifier.locationsMatch`, there is no suffix-boundary
+    * case, since neither side ever comes from an actual engine plan.
+    * `private[contract]`, not `private`: `TypeGuaranteeValidator`'s
     * own cross-contract checks need the identical comparison and reuse this
     * rather than a second copy.
     */
@@ -110,5 +109,5 @@ object CrossContractValidator {
     * this directly as a group-by key (rather than an O(n^2) pairwise
     * `sameLocation` scan) when bucketing declarations by physical location.
     */
-  private[contract] def normalize(location: String): String = location.trim.replace('\\', '/')
+  private[contract] def normalize(location: String): String = Locations.canonical(location)
 }
