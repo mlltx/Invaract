@@ -102,7 +102,13 @@ libraryDependencies ++= Seq(
   // Beam's Kafka IO depends on Confluent's schema-registry client, which is not on Maven Central (and not needed to
   // construct a KafkaIO graph), so it is left out.
   ("org.apache.beam" % "beam-sdks-java-io-kafka" % beamVersion % "test").excludeAll(ExclusionRule("io.confluent")),
-  "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
+  // 3.9.1 -> 3.9.2: CVE-2026-33558 - with DEBUG logging enabled, kafka-clients'
+  // NetworkClient logs full request/response contents (which can include SASL
+  // credentials and SCRAM salts); affected 0.11.0-3.9.1/4.0.0, fixed 3.9.2/4.0.1.
+  // Default log level is INFO, so this is a hardening bump, not a reachable
+  // issue in this module's own tests. Test scope only - a job under check never
+  // resolves this jar (docs/BEAM_ADAPTER.md, D2).
+  "org.apache.kafka" % "kafka-clients" % "3.9.2" % "test",
   "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test",
   "org.apache.beam" % "beam-sdks-java-io-csv" % beamVersion % "test",
   // Beam SQL, whose queries can read and write through tables they define themselves (CREATE EXTERNAL TABLE)
@@ -112,6 +118,18 @@ libraryDependencies ++= Seq(
   // supported-beam-versions.properties, so the line follows the Beam release under test.
   "org.apache.beam" % s"beam-runners-flink-$flinkLine" % beamVersion % "test"
 )
+
+// at.yawk.lz4:lz4-java: kafka-clients 3.9.2 declares it as a runtime-scope
+// transitive dependency (org.lz4:lz4-java is relocated to this community fork
+// on Maven Central - confirmed via its own relocation POM), and four advisories
+// affect everything through 1.11.1 (GHSA-4v53-57pg-c464, GHSA-gm45-99xc-r7wv,
+// GHSA-343h-94h5-c4wr, GHSA-mcr4-qmvw-px4g - unbounded allocation/CPU-GC
+// amplification/stack overflow/temp-dir races on attacker-controlled compressed
+// input). Same coordinate and version (1.11.4, not 1.12.0 - see spark-adapter's
+// own comment for why) spark-adapter and notification-kafka already pin for the
+// identical kafka-clients transitive. Test scope only here, same as kafka-clients
+// above, so this pin never reaches a job under check.
+dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
