@@ -1408,6 +1408,56 @@ code-change, the same pattern §7a/§7b/§7c record for `protobuf-java`/
 `jackson-mapper-asl`. Add this module to the "walk the rest of the bucket"
 checklist item in §8.
 
+## 7q. `beam-adapter`'s second finding: `bcprov-jdk18on`, from a real Dependabot alert
+
+Unlike §7p (derived by hand from `build.sbt` plus a real `dependencyTree`
+run, with no Dependabot alert text in hand), this one started from an
+actual alert: Dependabot flagged `org.bouncycastle:bcprov-jdk18on` 1.80,
+naming all four of its real routes into this module's graph —
+`hadoop-client`/`hadoop-common` 3.4.1 (Hadoop's own Credential Provider/
+SSL support) and `beam-sdks-java-io-google-cloud-platform`/
+`beam-sdks-java-extensions-sql` 2.77.0 (their own TLS/crypto needs) — all
+four already test-scope in `beam-adapter/build.sbt`, confirmed again via
+`sbt Test/dependencyTree` (1.80 the sole resolved winner, no sibling
+`bcpkix-jdk18on`/`bcutil-jdk18on` anywhere in this module's graph).
+
+**CVE-2026-8763** (CWE-295, CVSS 9.3 Critical): a trailing dot in an
+`rfc822Name`/URI name constraint lets `PkixNameConstraintValidator` accept
+a certificate its issuer's constraints should have rejected — enabling
+impersonation or MITM against whatever validates certificates through it.
+Affected `< 1.85`, fixed in Bouncy Castle for Java 1.85 (`bc-java` tag
+`r1rv85`).
+
+| Artifact | Module | Before | After | CVE |
+|---|---|---|---|---|
+| `org.bouncycastle:bcprov-jdk18on` | `beam-adapter` (test scope) | 1.80 | 1.85.2 | CVE-2026-8763 |
+
+**Pinned to 1.85.2, not the bare-minimum 1.85** — the same "take every
+examined fix for the release line, not just the floor" judgment §7n's
+`lz4-java` pin already used, applied the other way: 1.85.2's own one
+listed defect fix (AES-256/CBC under the `id_aes256_CBC` OID silently
+deriving a 192-bit key from a password instead of 256-bit) is unrelated
+to CVE-2026-8763 but already published and already checked — ordinary
+`SecretKeySpec` use (what a TLS/JCE-provider path here would do) is
+unaffected, so there is no "could in theory break some users" caveat like
+the one that kept §7n at `1.11.4` instead of `lz4-java`'s own `1.12.0`.
+1.86 exists on Maven Central (confirmed via the real
+`maven-metadata.xml`), but `bouncycastle.org`'s release notes were not a
+reachable host from this environment to examine its contents against —
+so, per this same file's own standard (check before trusting, don't
+assume "latest" is safe), the pin stops at 1.85.2, the newest release
+this pass could actually examine, not the newest release that exists.
+
+**Verified**: `sbt Test/dependencyTree` shows `bcprov-jdk18on:1.85.2` as
+the sole resolved version everywhere it appears (no eviction, no
+conflict), and `sbt test` passes with the override in place: 360
+succeeded, 0 failed, 26 canceled, all tests passed (a different
+canceled/run split than §7p's 311/0/75 run — this one picked up the
+Python conformance suites that need `INVARACT_TEST_PYTHON`, an
+environment difference between the two runs, not a regression from this
+change). No code in `src/main/scala` changed, so neither Mutation Testing
+nor Coverage Gating apply here either.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1492,6 +1542,14 @@ checklist item in §8.
       gRPC IO modules pull a very large transitive tree) still needs the
       full batch-by-batch walk below, same as `spark-adapter` got in
       §7a-§7l.
+- [x] Fix `beam-adapter`'s `bcprov-jdk18on` alert (this change) — see
+      §7q: the first of this module's findings to start from a real
+      Dependabot alert rather than hand-derived research. CVE-2026-8763
+      (CWE-295, CVSS 9.3 Critical, name-constraints bypass), reaching this
+      module through `hadoop-client`/`hadoop-common` and two of Beam's own
+      GCP/SQL IO modules (all test scope). 1.80 → 1.85.2. Confirmed via
+      `dependencyTree` (single resolved version, no conflicts) and a real
+      `sbt test` run (360 passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

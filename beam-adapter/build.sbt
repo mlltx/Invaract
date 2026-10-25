@@ -131,6 +131,27 @@ libraryDependencies ++= Seq(
 // above, so this pin never reaches a job under check.
 dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 
+// org.bouncycastle:bcprov-jdk18on: a transitive of hadoop-client/hadoop-common
+// (3.4.1's own Hadoop Credential Provider / SSL support) and of Beam's
+// beam-sdks-java-io-google-cloud-platform/beam-sdks-java-extensions-sql (their
+// own TLS/crypto needs) - all four test-scope here, confirmed via
+// `sbt Test/dependencyTree` (1.80 is the resolved winner; nothing in this
+// module's graph needs it at compile scope). CVE-2026-8763 (CWE-295, CVSS 9.3
+// Critical): a trailing dot in an rfc822Name/URI name constraint lets
+// PkixNameConstraintValidator accept a certificate its issuer's constraints
+// should have rejected, enabling impersonation/MITM against whatever validates
+// certs through it. Affected < 1.85, fixed in 1.85 (bc-java tag r1rv85).
+// Pinned to 1.85.2, not the bare-minimum 1.85: its own one listed defect fix
+// (AES-256/CBC under the id_aes256_CBC OID silently deriving a 192-bit key
+// from a password instead of 256-bit) is unrelated to this CVE but already
+// published and already examined - ordinary SecretKeySpec use (what any TLS/
+// JCE-provider path here would do) is unaffected, so there is no equivalent
+// "could in theory break some users" caveat the lz4-java 1.12.0 case above
+// had. 1.86 exists on Maven Central but its release notes were not reachable
+// to examine, so this pin deliberately stops at the most recent release this
+// change actually checked, per this file's own precedent.
+dependencyOverrides += "org.bouncycastle" % "bcprov-jdk18on" % "1.85.2"
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
