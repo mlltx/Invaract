@@ -46,6 +46,25 @@ class InputOutputCheckerSpec extends AnyFunSuite {
     assert(OutputChecker.missingOutputs(Nil).isEmpty)
   }
 
+  test("unwrittenOutputs: every declared output no write lands on, in declaration order, matched as every location is") {
+    val a = ds("a", "gold/a")
+    val b = ds("b", "gold/b")
+    val vs = OutputChecker.unwrittenOutputs(List(a, b), List("file:/w/gold/a"))
+    assert(vs.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some("gold/b"))))
+    assert(vs.head.message == "the job never writes declared output 'b' (gold/b)")
+    assert(vs.head.remediation == "Add a write to 'gold/b' to the job, or remove output 'b' from the contract if the job no longer produces it.")
+    assert(OutputChecker.unwrittenOutputs(List(a, b), List("gold/b", "gold/a")).isEmpty, "every output written")
+    assert(OutputChecker.unwrittenOutputs(List(a, b), Nil).map(_.location) == List(Some("gold/a"), Some("gold/b")), "a job that writes nothing")
+    assert(OutputChecker.unwrittenOutputs(List(a, b), List("gold/elsewhere")).size == 2, "a write elsewhere writes neither")
+  }
+
+  test("unwrittenOutputs: a single-output contract written anywhere is checked for its location by the write, not here") {
+    val only = ds("only", "gold/only")
+    assert(OutputChecker.unwrittenOutputs(List(only), List("gold/typo")).isEmpty)
+    assert(OutputChecker.unwrittenOutputs(List(only), Nil).map(_.location) == List(Some("gold/only")), "but never written at all is missing")
+    assert(OutputChecker.unwrittenOutputs(Nil, List("gold/x")).isEmpty)
+  }
+
   test("locationFinding: nothing when a declared output matches; otherwise single- vs multi-output wording") {
     assert(OutputChecker.locationFinding(List(ds("a", "gold/a")), "file:/w/gold/a").isEmpty)
     val single = OutputChecker.locationFinding(List(ds("a", "gold/a")), "gold/typo").head

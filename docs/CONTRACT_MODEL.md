@@ -108,7 +108,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`. Matched case-insensitively; any other value is a `ContractParser` hard failure (a closed three-value set, unlike `format`'s open vocabulary). Absent by default — see "Input and Output Types" below for the full model, including how an organizational policy can make it mandatory. |
 | `derivedFrom` | no | Outputs only: the `name`s of the contract's declared `inputs` this output is built from — see "Output-to-input lineage" below. Absent (the default) means every declared input; `[]` means none. |
-| `schema.fields` | yes | List of fields (at least one). |
+| `schema.fields` | no | List of fields. A dataset with no `schema` (or no fields) declares no columns: its content is not governed, schema checks skip it (`SchemaChecker.check`), and `ContractValidator` warns. |
 
 A dataset's `catalog` block, when present:
 
@@ -159,7 +159,11 @@ Each field has:
 
 Known types (validator warns, does not error, on anything else):
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`,
-`boolean`, `date`, `timestamp`, `binary`, `struct`, `array`, `map`.
+`boolean`, `date`, `timestamp`, `timestamp_ntz`, `binary`, `time`, `json`, `geography`,
+`interval`, `struct`, `array`, `map`. The validator also warns (never errors) on a `saveMode`,
+dataset `format` or `catalog.technology` outside the canonical vocabularies
+(`SaveModes`, `Formats`, `CatalogTechnologies`): the sets are open, but only an adapter reporting
+exactly the declared string can match another name.
 
 #### Logical types (`LogicalType`)
 
@@ -330,7 +334,7 @@ call, rather than stopping at the first:
 ```scala
 val result = ContractValidator.validate(contract)
 result.isValid    // true iff no Errors (warnings are still allowed)
-result.errors     // Duplicate names, empty schemas, empty outputs, ...
+result.errors     // Duplicate names, empty outputs, ...
 result.warnings   // Unrecognized types, required+nullable both true, ...
 ```
 
@@ -341,7 +345,7 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | No `outputs` declared | Error |
 | Empty/missing dataset `name` or `location` | Error |
 | Duplicate dataset name within `inputs` or `outputs` | Error |
-| Schema with zero fields | Error |
+| Dataset with no `schema`, or a schema with zero fields (its columns are not checked) | Warning |
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
@@ -455,11 +459,11 @@ The schema is deliberately not a 1:1 mirror of every rule the Scala
 implementation enforces — it sits between two layers:
 
 - **Mirrors `ContractParser`'s hard failures** (`ContractParseException`):
-  `id`/`version` presence and shape, a dataset's `name`/`location`/
-  `schema`, a field's `name`/`type`, a schema's `fields` key.
+  `id`/`version` presence and shape, a dataset's `name`/`location`,
+  a field's `name`/`type`, a present schema's `fields` key. A dataset may
+  leave `schema` out, or list no fields, to declare no columns.
 - **Mirrors `ContractValidator`'s Error-level checks**, not just the bare
-  parser, in two places: `outputs` is required and non-empty, and a
-  schema's `fields` array must be non-empty — a document that merely
+  parser: `outputs` is required and non-empty — a document that merely
   parses but is immediately rejected by validation isn't a useful
   "valid contract" for this schema's purpose either.
 - **Does not attempt** duplicate-name detection (dataset names, field
@@ -859,7 +863,8 @@ registry listing) is out of scope for this module — `CrossContractLintCli`
 covers the common "lint a directory of contract files" case:
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
+# run from the repository root; file paths are relative to contract/, or absolute
+cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
 ```
 
 ### Type guarantee checks
@@ -886,7 +891,7 @@ typeGuarantees:
 ```
 
 ```bash
-sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
 ```
 
 `TypeGuaranteeCheck` is the extension point — `def check(contracts:
@@ -1626,8 +1631,8 @@ evaluation a job pays for at session-build time can also run as a
 standalone check with nothing but a JVM:
 
 ```
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
-sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
 ```
 
 Recursively lints every `*.yaml`/`*.yml` contract under a directory (or a

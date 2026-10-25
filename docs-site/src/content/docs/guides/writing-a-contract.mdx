@@ -58,7 +58,9 @@ inputs:
   location declared here still matches, by suffix — see
   [Contract Format](/reference/contract-format/#location-matching).
 - `format` — optional, e.g. `csv`, `parquet`, `delta`.
-- `schema.fields` — at least one field, each with a `name` and `type`.
+- `schema.fields` — the fields, each with a `name` and `type`. A dataset whose content no
+  contract governs (a folder of rejected text lines, say) can leave `schema` out: its columns are
+  then not checked, and validation warns so the omission is never an accident.
 
 ## Declare outputs
 
@@ -157,17 +159,22 @@ doesn't act on them yet.
 
 ## Validate as you write
 
-Point your editor at the JSON Schema so you get inline validation and autocomplete (this
-works with the [YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
-VS Code extension, already configured for this repo):
+Point your editor at the contract's JSON Schema for inline validation and autocomplete. With
+the [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) (the VS
+Code YAML extension, among others), put this comment at the top of the contract:
 
 ```yaml
-# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+# yaml-language-server: $schema=https://mlltx.github.io/Invaract/schemas/contract/invaract-contract.schema.json
 id: my_contract
 # ...
 ```
 
-Every contract under `demo/contracts/` carries this comment already.
+The schema is published at
+[https://mlltx.github.io/Invaract/schemas/contract/invaract-contract.schema.json](https://mlltx.github.io/Invaract/schemas/contract/invaract-contract.schema.json),
+from the same file the contract parser is tested against. It checks a contract's shape (the
+required keys, the field types); the parser and validator still decide the rest, such as
+duplicate names. Inside a clone of this repository, the contracts under `demo/contracts/` use
+the relative path `../../contract/schema/invaract-contract.schema.json` instead.
 
 ## Full reference
 

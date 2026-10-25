@@ -5,7 +5,7 @@ sidebar:
   order: 7
 ---
 
-<!-- GENERATED from each adapter's invaract-capabilities-<adapter>.yaml by CapabilityMatrix (verification-core). Do not edit by hand: change the declaration and run ./dev/capabilities. -->
+<!-- GENERATED from each adapter's invaract-capabilities-<adapter>.yaml and the conformance scenarios (adapter-testkit). Do not edit by hand: change the declaration and run ./dev/capabilities. -->
 
 Invaract checks a data transformation against a contract through an *engine adapter*. Every adapter
 declares, for every capability below, whether it is supported, partly supported, unsupported, or does
@@ -24,81 +24,170 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Adapter | Engine | Enforcement point |
 |---|---|---|
+| `beam` | Apache Beam (Java SDK) | Gates before the job is submitted — A wrapper runner, named by --runner, receives the constructed pipeline in run(), reads its graph (before any step executes), verifies it against the contract, and either throws (the pipeline is never submitted) or hands it to the real runner. Nothing inside a running pipeline is intercepted. |
+| `beam-python` | Apache Beam (Python SDK) | Gates before the job is submitted — A wrapper runner, named by --runner=invaract_beam.InvaractRunner, receives the constructed pipeline in run_pipeline(), writes its portable form (the language-neutral description every Beam SDK produces) to a file, and runs the Java checker on it before any step executes; the pipeline is handed to the real runner only if the checker lets it through. Nothing inside a running pipeline is intercepted. |
 | `spark` | Apache Spark 3.5 | Blocks inside the engine, before the operation executes — A SparkSessionExtensions check rule runs on the analyzed plan and aborts the write before it executes (ContractEnforcementRule); a QueryExecutionListener additionally reports completed writes. |
 
 ## Capability matrix
 
 ### Operations an adapter recognizes
 
-| Capability | What it means | spark |
-|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | ✅ |
-| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | ✅ |
-| `write.streaming` | A streaming write is recognized and checked against the contract. | ◐ |
-| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | ✅ |
-| `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (48) | ✅ | ✅ | ✅ |
+| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (49) | ✅ | ✅ | ✅ |
+| `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ◐ |
+| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | ✅ |
+| `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | ✅ |
 
 ### Structural checks
 
-| Capability | What it means | spark |
-|---|---|---|
-| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | ✅ |
-| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | ◐ |
-| `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | ✅ |
-| `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | ✅ |
-| `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | ✅ |
-| `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | ✅ |
-| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | verified (10) | ✅ | ✅ | ✅ |
+| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | verified (4) | ✅ | ✅ | ◐ |
+| `check.outputsWritten` | A job that never writes a declared output is refused (MISSING_OUTPUT). | verified (1) | ✅ | ✅ | ◐ |
+| `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (7) | ◐ | ◐ | ✅ |
+| `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ | ✅ | ✅ |
+| `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ |
+| `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ |
+| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ |
 
 ### Rules
 
-| Capability | What it means | spark |
-|---|---|---|
-| `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | ◐ |
-| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | ✅ |
-| `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | verified (2) | — | — | ◐ |
+| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (8) | ◐ | ✖ | ✅ |
+| `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | attested | ✖ | ✖ | ✅ |
 
 ### Analysis and lineage
 
-| Capability | What it means | spark |
-|---|---|---|
-| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | ✅ |
-| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | ✅ |
-| `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | ✅ |
-| `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | ✅ |
-| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | ✅ |
-| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | ◐ |
-| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | ◐ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | verified (3) | ✖ | ✖ | ✅ |
+| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | verified (2) | ✖ | ✖ | ✅ |
+| `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | verified (2) | ✖ | ✖ | ✅ |
+| `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | verified (2) | ✖ | ✖ | ✅ |
+| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | verified (1) | ✖ | ✖ | ✅ |
+| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | verified (2) | ✖ | ✖ | ◐ |
+| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | verified (2) | — | — | ◐ |
 
 ### Governance
 
-| Capability | What it means | spark |
-|---|---|---|
-| `policy.organizational` | Organizational policy layers are enforced on the contract itself. | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `policy.organizational` | Organizational policy layers are enforced on the contract itself. | attested | ✅ | ✅ | ✅ |
 
 ### Attaching it to a job
 
-| Capability | What it means | spark |
-|---|---|---|
-| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | ✅ |
-| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | ✅ |
-| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ✅ |
+| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | attested | ✅ | ✅ | ✅ |
+| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | attested | ✅ | ✅ | ✅ |
 
 ### Reporting
 
-| Capability | What it means | spark |
-|---|---|---|
-| `reporting.notifications` | Validation and write events are published to a notification sink. | ✅ |
-| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | ✅ |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `reporting.notifications` | Validation and write events are published to a notification sink. | verified (2) | ✅ | ✅ | ✅ |
+| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | attested | ◐ | ◐ | ✅ |
 
 ### Fail-closed behaviour
 
-| Capability | What it means | spark |
+| Capability | What it means | Suite check | beam | beam-python | spark |
+|---|---|---|---|---|---|
+| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | verified (1) | ◐ | ◐ | ✅ |
+
+## What the conformance suite checks
+
+The *Suite check* column says how far a declaration is verified rather than taken on trust.
+
+- **verified** — scenarios run as real jobs on every adapter that declares the capability, and each must come out as the declaration promises.
+- **attested** — no job can check it by its nature; the adapter's own tests carry it.
+- **gap** — a job could check it, but the suite cannot yet; a declaration of support is a claim only.
+
+Attested:
+
+- `write.stateChange` — a state change is not a read-transform-write job; each engine has its own
+- `rules.custom` — a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one
+- `policy.organizational` — applied to the contract at session start, not part of a job
+- `config.zeroCodeInstall` — how an adapter attaches to a job is engine-specific, not a job
+- `config.locationRefs` — how an adapter attaches to a job is engine-specific, not a job
+- `config.contractRegistry` — how an adapter attaches to a job is engine-specific, not a job
+- `reporting.dryRunInference` — dry-run mode is a mode of installing, not a job
+
+## Conformance results
+
+The suite has 55 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+
+| Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | ✅ |
+| `beam` | 44 | 55 |
+| `beam-python` | 44 | 55 |
+| `spark` | 55 | 55 |
 
 ## Notes
+
+### beam
+
+- `read.batch` — supported: For the reads whose source the graph states - TextIO, AvroIO, ParquetIO and TFRecordIO reads, FileIO.match() and the readFiles() that read what it matches, BigQueryIO tables, KafkaIO topics, JdbcIO tables and plain single-table queries, PubsubIO topics. A read from outside the pipeline that states no location (a BigQuery or complex JDBC query, Read.from a source it does not know, patterns the job computes) is still seen: a declared input it may hide is reported unverifiable rather than missing, and with rejectUndeclaredInputs the write is refused.
+- `read.streaming` — supported: The same reads, unbounded - FileIO.match().continuously(), TextIO.read().watchForNewFiles(), KafkaIO, PubsubIO. The graph is the same before submission whether a collection is bounded or not, so a stream is checked like a batch; the conformance kit's streaming scenarios run one to completion on the in-process runner.
+- `write.batch` — supported: File writes (TextIO, AvroIO, TFRecordIO, FileIO.write with the Parquet, Avro and text sinks), BigQueryIO tables, KafkaIO topics, JdbcIO plain INSERT INTO one table, PubsubIO topics. A terminal step it does not recognise, or one whose destination the job computes per element (dynamic destinations), is refused as unverifiable (failClosed.unverifiableWrites).
+- `write.streaming` — supported: Windowed file writes, BigQueryIO, KafkaIO and PubsubIO writes of an unbounded collection, checked as their batch forms are.
+- `write.rowLevelDml` — not-applicable: Beam has no row-level MERGE, UPDATE or DELETE; a pipeline reads collections and writes new output.
+- `write.stateChange` — not-applicable: Beam has no operation that commits a schema change without writing rows.
+- `check.location` — supported: TextIO states its read pattern as given but its write prefix as an absolute path, so both are normalised; a FileIO write states no location in its display data, so its output directory is read from FileIO.Write by reflection (Beam 2.77.0; a write it cannot read is refused as unverifiable).
+- `check.outputsWritten` — supported: The whole pipeline is known before it runs, so a declared output that no recognised write lands on refuses the job before anything starts.
+- `check.schema` — partial: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare; its write is refused unless the output declares no columns.
+- `check.nestedTypes` — supported: Beam ROW, ARRAY and MAP, and Avro records, arrays and maps, map to struct, array and map wherever a schema is known.
+- `check.format` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
+- `check.saveMode` — partial: BigQueryIO writes state one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File, Kafka, JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
+- `check.catalogRegistration` — partial: A BigQueryIO table is registered in the bigquery catalog under its project, dataset and table, and is checked as such (on the read side too). File, Kafka and JDBC datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
+- `rules.dml` — not-applicable: There is no row-level DML in Beam.
+- `rules.planShape` — partial: Read from Beam's schema transforms - Filter.create().whereFieldName(s), Group.byFieldNames/byFieldIds (with or without aggregation) and Group.globally(), Join (inner, outer, broadcast) and CoGroup - whose fields are read by reflection from members the version matrix checks on every Beam release; a Beam SQL query's GROUP BY and JOIN are built from these and are seen too. A filter, grouping or join written as code (Filter.by, a DoFn, GroupByKey, CoGroupByKey), or a SQL WHERE (compiled into code), is opaque: a required_* rule is not met by it, and under forbid_cross_join a step that combines several collections in code refuses the write as unverifiable, as does a schema transform whose fields cannot be read under any of these rules.
+- `rules.custom` — unsupported: Custom rule verifiers are given a row-level change to judge, and Beam has none.
+- `analysis.staticDataQuality` — unsupported: Proving a property of an output column needs to see how it is computed; functions in Beam are opaque Java code.
+- `analysis.roleConsistency` — unsupported: Needs column-level usage, which the graph does not give.
+- `analysis.fingerprint` — unsupported: A fingerprint of the graph alone would not capture the logic inside functions and would mislead.
+- `analysis.functionCatalog` — unsupported: Beam jobs call Java methods, not named engine functions.
+- `analysis.sensitivityPropagation` — unsupported: Needs column-level lineage.
+- `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which opaque functions hide.
+- `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
+- `config.zeroCodeInstall` — partial: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
+- `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the graph states them; one with none (a text write of strings) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `failClosed.unverifiableWrites` — partial: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.
+
+### beam-python
+
+- `read.batch` — supported: Every read the Python SDK states a source for: the file reads (ReadFromParquet, ReadFromText, ReadFromAvro, ReadFromTFRecord), BigQuery tables (both read methods), Pub/Sub topics and subscriptions. A read that states no location (a BigQuery query, a CSV read through pandas, a source class it does not know, files matched by fileio, a template parameter, a Java transform used from Python) is still seen: a declared input it may hide is reported unverifiable rather than missing, and with rejectUndeclaredInputs the write is refused.
+- `read.streaming` — partial: A Pub/Sub read is located by its topic. A file stream (fileio.MatchContinuously) states no file pattern in the pipeline's portable form, so it is a read that is not located: a declared input it may be is reported unverifiable, not checked. A stream is otherwise translated as a batch is.
+- `write.batch` — supported: File writes (WriteToParquet, WriteToText, WriteToAvro, WriteToTFRecord), BigQuery tables, Pub/Sub topics. A step that ends the pipeline without being one of these (a CSV write through pandas, fileio.WriteToFiles, a function with side effects), or a BigQuery write whose table the job computes, is refused as unverifiable (failClosed.unverifiableWrites).
+- `write.streaming` — supported: A windowed file write, a BigQuery write and a Pub/Sub write of an unbounded collection are the same steps as their batch forms, and are checked as they are.
+- `write.rowLevelDml` — not-applicable: Beam has no row-level MERGE, UPDATE or DELETE; a pipeline reads collections and writes new output.
+- `write.stateChange` — not-applicable: Beam has no operation that commits a schema change without writing rows.
+- `check.location` — supported: A read is the folder its file pattern reads; a write is its file pattern up to the shard template (the prefix a Java TextIO write is located by); a BigQuery table is project/dataset/table.
+- `check.outputsWritten` — supported: The whole pipeline is known before it runs, so a declared output that no recognised write lands on refuses the job before anything starts.
+- `check.schema` — partial: Known where the write states the schema its files are written with (a Parquet write's pyarrow schema, an Avro write's record schema, a BigQuery load's table schema) or the data carries a Beam row schema (typed rows, ReadFromParquet with as_rows=True). Python dictionaries, and a row schema with an untyped field (a computed beam.Select field), have no columns to compare; such a write is refused unless the output declares no columns.
+- `check.nestedTypes` — supported: pyarrow lists, structs and maps, Avro records, arrays and maps, BigQuery RECORD and REPEATED fields and Beam row, array and map fields map to struct, array and map wherever a schema is known.
+- `check.format` — partial: The format is the sink the write uses (parquet, avro, tfrecord, text). A text write cannot tell csv from json from plain text.
+- `check.saveMode` — partial: A BigQuery write states one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
+- `check.catalogRegistration` — partial: A BigQuery table is registered in the bigquery catalog under its project, dataset and table (on the read side too). File and Pub/Sub datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
+- `rules.dml` — not-applicable: There is no row-level DML in Beam.
+- `rules.planShape` — unsupported: Python's filters and joins are code (beam.Filter takes a function, a join is CoGroupByKey) and a beam.GroupBy's keys are held only in pickled Python, so the portable form states no filter, join or grouping column. A contract with a transformation-shape rule is refused with UNSUPPORTED_CONTRACT_FEATURE before the job starts.
+- `rules.custom` — unsupported: Custom rule verifiers are given a row-level change to judge, and Beam has none.
+- `analysis.staticDataQuality` — unsupported: Proving a property of an output column needs to see how it is computed; functions in a Python pipeline are pickled Python code.
+- `analysis.roleConsistency` — unsupported: Needs column-level usage, which the portable form does not give.
+- `analysis.fingerprint` — unsupported: A fingerprint of the pipeline's shape alone would not capture the logic inside its functions and would mislead.
+- `analysis.functionCatalog` — unsupported: Python pipelines call Python functions, not named engine functions.
+- `analysis.sensitivityPropagation` — unsupported: Needs column-level lineage.
+- `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which pickled functions hide.
+- `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
+- `config.zeroCodeInstall` — partial: --runner=invaract_beam.InvaractRunner and the --invaract_* flags on the job's command line, with the invaract_beam package installed and Java 11 or later where the job is submitted. A job that sets its runner in its own code, or does not pass its command line to Beam, bypasses it; a job submitted without the package, or without Java, does not start.
+- `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the pipeline states them; one whose columns cannot be told (a ReadFromParquet of dictionaries) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `failClosed.unverifiableWrites` — partial: A step that ends the pipeline without being a recognised write is refused, unless it reads only what a write reports or the platform trusts it (--invaract_trusted_steps). A function that writes to an outside system in the middle of the pipeline is invisible to any check made before it runs.
 
 ### spark
 
@@ -110,6 +199,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 - `write.stateChange` — supported: Nine Iceberg CALL procedures that commit a schema change are checked against the contract. ([details](https://github.com/mlltx/Invaract/blob/main/docs/connectors/iceberg.md))
 - `check.inputExistence` — supported: Also scoped per output through derivedFrom; a read hidden behind an unresolved lineage boundary is reported as unverifiable, not missing.
 - `check.location` — partial: Declared locations are matched by normalized path suffix. A CTAS with no pre-existing physical path (Hive) has a known, documented location-resolution gap, and ClickHouse reads and writes report locations in different formats. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
+- `check.outputsWritten` — partial: Spark is checked one write at a time, as each runs, so a declared output never written is found only when the application ends. It is reported then (a FAILED validation and an error in the driver log) after the job's other writes have happened; with spark.invaract.failOnMissingOutput=true the driver also exits with status 1.
 - `check.schema` — supported: Column names follow spark.sql.caseSensitive.
 - `check.nestedTypes` — supported: array, map and struct are compared structurally, ignoring nullability inside a container.
 - `check.catalogRegistration` — supported: Hive, Delta and Iceberg catalog registrations are recognized. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))

@@ -1,10 +1,16 @@
 #!/bin/bash
-# Regenerates the engine capability matrix page (docs-site: reference/engine-capabilities)
-# from every adapter's own declaration, <module>/src/main/resources/invaract-capabilities-<adapter>.yaml.
+# Regenerates the engine capability matrix page (docs-site: reference/engine-capabilities) and the
+# user-facing "What Each Engine Checks" page (reference/what-each-engine-checks) from every adapter's
+# own declaration, <module>/src/main/resources/invaract-capabilities-<adapter>.yaml. The second page
+# takes its plain words from adapter-testkit's CapabilityGuide and each declaration's `summary:` lines.
 #
-# The page is GENERATED - never edit it by hand. verification-core's CapabilityMatrixSpec fails
+# The page is GENERATED - never edit it by hand. adapter-testkit's CapabilityMatrixPageSpec fails
 # (in `sbt test`, so in CI and ./dev/build too) when the committed page differs from what this
-# produces, with this command in the failure message; that is the drift check.
+# produces, with this command in the failure message; that is the drift check. The kit generates it
+# (not verification-core) because the page also says how the conformance scenarios check each
+# capability, and only the kit knows the scenarios.
+#
+# Needs verification-core published locally (./dev/build does it).
 #
 # Adding an adapter: give its module a declaration file named as above (AdapterCapabilities.parse
 # refuses one that leaves any capability undeclared), then run this script and commit the result.
@@ -16,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 OUTPUT="docs-site/src/content/docs/reference/engine-capabilities.md"
+GUIDE_OUTPUT="docs-site/src/content/docs/reference/what-each-engine-checks.md"
 
 DECLARATIONS=()
 while IFS= read -r f; do
@@ -27,5 +34,6 @@ if [ "${#DECLARATIONS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-(cd verification-core && sbt -batch "runMain com.invaract.verification.CapabilityMatrix ../$OUTPUT ${DECLARATIONS[*]}")
-echo "Wrote $OUTPUT from ${#DECLARATIONS[@]} adapter declaration(s)."
+(cd adapter-testkit && sbt -batch "runMain com.invaract.testkit.CapabilityMatrixPage ../$OUTPUT ${DECLARATIONS[*]}" \
+  "runMain com.invaract.testkit.EngineGuidePage ../$GUIDE_OUTPUT ${DECLARATIONS[*]}")
+echo "Wrote $OUTPUT and $GUIDE_OUTPUT from ${#DECLARATIONS[@]} adapter declaration(s)."

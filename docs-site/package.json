@@ -7,10 +7,10 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
+    "dev": "node scripts/sync-contract-schemas.mjs && astro dev",
+    "start": "node scripts/sync-contract-schemas.mjs && astro dev",
     "check:schemas": "node scripts/check-schemas.mjs",
-    "prebuild": "node scripts/check-schemas.mjs",
+    "prebuild": "node scripts/sync-contract-schemas.mjs && node scripts/check-schemas.mjs",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"

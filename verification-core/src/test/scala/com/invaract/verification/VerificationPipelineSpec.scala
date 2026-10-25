@@ -5,8 +5,8 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
 import com.invaract.contract.LogicalType.{IntegerType, LongType}
-import com.invaract.ir.{ColumnRef, ColumnReference, DatasetRef, DeleteScope, NamedExpr, Plan, Project, Read, RowMutation, UnknownPlan, Write}
-import com.invaract.verification.notification.{ContractValidationEvent, TestNotificationSink}
+import com.invaract.ir.{ColumnRef, ColumnReference, DatasetRef, DeleteScope, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, RowMutation, UnknownPlan, Write}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, TestNotificationSink}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -118,6 +118,77 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(ex.getMessage.contains("2. [MISSING_OUTPUT_FIELD]"))
   }
 
+  private val twoOutputs = ContractParser.parse(
+    """id: pipe2
+      |version: "1.0.0"
+      |outputs:
+      |  - { name: report, location: out/report }
+      |  - { name: audit, location: out/audit }
+      |""".stripMargin
+  )
+
+  test("requireOutputsWritten: a job that writes every declared output goes on, publishing nothing") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.requireOutputsWritten(twoOutputs, List("file:/w/out/report", "out/audit"), UnknownPlan("job"), Some(sink))
+    assert(sink.events.isEmpty)
+  }
+
+  test("requireOutputsWritten: a declared output the job never writes refuses the job, publishing one FAILED event first") {
+    val sink = new TestNotificationSink
+    val job = JobInfo(engine = Some("test"))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireOutputsWritten(twoOutputs, List("out/report"), UnknownPlan("the job's writes"), Some(sink), None, Some(job))
+    }
+    assert(ex.result.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some("out/audit"))))
+    assert(ex.getMessage.contains("the job never writes declared output 'audit' (out/audit)") && ex.getMessage.contains("the job's writes"))
+    assert(validationEvents(sink).map(e => (e.status, e.job.flatMap(_.engine))) == List(("FAILED", Some("test"))))
+  }
+
+  test("requireOutputsWritten: an invalid contract is rejected as one, before outputs are looked at") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireOutputsWritten(ContractParser.parse("id: bad\nversion: \"1.0.0\"\n"), Nil, UnknownPlan("job"))
+    }
+    assert(ex.result.violations.forall(_.violationType == ViolationType.InvalidContract))
+  }
+
+  test("requireSupported: a contract that relies only on what the adapter supports goes on, publishing nothing") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.requireSupported(contract, VerificationOptions(), CapabilityFixtures.parsed(Map.empty), UnknownPlan("job"), Some(sink))
+    assert(sink.events.isEmpty)
+  }
+
+  test("requireSupported: one the adapter cannot check is refused before any write, with every unsupported requirement, one FAILED event first") {
+    val caps = CapabilityFixtures.parsed(Map(
+      "check.location" -> (("unsupported", Some("no locations here"))),
+      "check.inputExistence" -> (("unsupported", Some("no reads here")))
+    ))
+    val sink = new TestNotificationSink
+    val job = JobInfo(engine = Some("test"))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(contract, VerificationOptions(), caps, UnknownPlan("the job"), Some(sink), None, Some(job))
+    }
+    assert(ex.result.violations.map(_.violationType).distinct == List(ViolationType.UnsupportedContractFeature))
+    assert(ex.result.violations.size == CapabilityCheck.violations(contract, VerificationOptions(), caps).size && ex.result.violations.size >= 2)
+    assert(ex.getMessage.contains("the job"))
+    assert(validationEvents(sink).map(e => (e.status, e.job.flatMap(_.engine))) == List(("FAILED", Some("test"))))
+  }
+
+  test("requireSupported: an option the adapter declares unsupported is refused too") {
+    val caps = CapabilityFixtures.parsed(Map("analysis.staticDataQuality" -> (("unsupported", Some("no proofs here")))))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(contract, VerificationOptions(staticDataQuality = true), caps, UnknownPlan("job"))
+    }
+    assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnsupportedContractFeature))
+    VerificationPipeline.requireSupported(contract, VerificationOptions(), caps, UnknownPlan("job"))
+  }
+
+  test("requireSupported: an invalid contract is rejected as one") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(ContractParser.parse("id: bad\nversion: \"1.0.0\"\n"), VerificationOptions(), CapabilityFixtures.parsed(Map.empty), UnknownPlan("job"))
+    }
+    assert(ex.result.violations.forall(_.violationType == ViolationType.InvalidContract))
+  }
+
   test("verifyWrite: an invalid contract is rejected BEFORE the adapter is asked to build the write") {
     val invalid = ContractParser.parse("id: bad\nversion: \"1.0.0\"\n") // no outputs
     var built = false
@@ -201,6 +272,54 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(v.location.contains("out/report"))
   }
 
+  // An in-place change reads the table it changes. That read is the change itself, not an input the job
+  // draws on, so `rejectUndeclaredInputs` must not report it - but a read-modify-write that is NOT a row
+  // mutation, and any other dataset read alongside the target, are still real undeclared inputs.
+  private val noInputs = contract.copy(inputs = Nil, outputs = contract.outputs.map(_.copy(derivedFrom = None)))
+  private val strictInputs = VerificationOptions(rejectUndeclaredInputs = true)
+  private val filteredDelete = Some(MutationClassification.Extracted(MutationKind.Delete, RowMutation(delete = DeleteScope.Conditional(Literal(true, "boolean")))))
+  private val selfRead: Plan = Write(DatasetRef("out/report"), Read(DatasetRef("out/report")))
+
+  private def undeclaredInputs(result: => Unit): List[String] =
+    try { result; Nil }
+    catch { case e: ContractViolationException => e.result.violations.filter(_.violationType == ViolationType.UndeclaredInput).map(_.location.getOrElse("")) }
+
+  test("DML: the table an in-place change reads is not an undeclared input") {
+    val found = undeclaredInputs(
+      VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead, rowMutation = filteredDelete), strictInputs)
+    )
+    assert(found == Nil)
+  }
+
+  test("DML: the same read-modify-write that is not a row mutation is still an undeclared input") {
+    val found = undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead), strictInputs))
+    assert(found == List("out/report"))
+  }
+
+  test("DML: an in-place Unverifiable change is in place too, so its own read is not undeclared either") {
+    val unverifiable = Some(MutationClassification.Unverifiable(MutationKind.Merge))
+    assert(undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead, rowMutation = unverifiable), strictInputs)) == Nil)
+  }
+
+  test("DML: another dataset read alongside the target (a MERGE source) is still an undeclared input") {
+    val merge: Plan = Write(DatasetRef("out/report"), Join(Read(DatasetRef("out/report")), Read(DatasetRef("in/other")), JoinType.Inner, None))
+    val found = undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = merge, rowMutation = filteredDelete), strictInputs))
+    assert(found == List("in/other"))
+  }
+
+  test("DML: the target is matched the way every location is, so a file: prefix and separators do not hide it") {
+    val prefixed: Plan = Write(DatasetRef("out/report"), Read(DatasetRef("file:out\\report")))
+    assert(undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = prefixed, rowMutation = filteredDelete), strictInputs)) == Nil)
+  }
+
+  test("DML: a declared input that is the target is still matched, so excluding the self-read cannot make it 'missing'") {
+    val targetAsInput = noInputs.copy(inputs = List(com.invaract.contract.Dataset(
+      "tbl", "out/report", None, com.invaract.contract.Schema(List(com.invaract.contract.Field("id", "long")))
+    )))
+    val result = undeclaredInputs(VerificationPipeline.verifyWrite(targetAsInput, checked(plan = selfRead, rowMutation = filteredDelete), strictInputs))
+    assert(result == Nil)
+  }
+
   test("DML: an Unverifiable DELETE fails closed only when a declared rule is about DELETE") {
     val unverifiable = Some(MutationClassification.Unverifiable(MutationKind.Delete))
     val ex = intercept[ContractViolationException] {
@@ -271,6 +390,31 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(fp.outputs.nonEmpty)
     assert(ex.getMessage.contains("  outputs:\n"))
     fp.outputs.foreach { case (name, output) => assert(ex.getMessage.contains(s"    $name: ${output.combined.value}\n"), name) }
+  }
+
+  test("computeFingerprint: an adapter that declares fingerprints unsupported publishes none, and the write still goes on") {
+    def fingerprinted(caps: Option[AdapterCapabilities]): Boolean = {
+      val sink = new TestNotificationSink
+      VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(computeFingerprint = true), Some(sink), None, caps)
+      val Seq(event) = validationEvents(sink)
+      assert(event.status == "PASSED", "a fingerprint is not a contract requirement, so its absence never refuses the write")
+      event.fingerprints.isDefined
+    }
+    assert(!fingerprinted(Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("unsupported", Some("would mislead"))))))))
+    assert(fingerprinted(Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("partial", Some("some shapes"))))))))
+    assert(fingerprinted(Some(CapabilityFixtures.parsed(Map.empty))), "a supported declaration computes one")
+    assert(fingerprinted(None), "no declaration, no capability check")
+  }
+
+  test("computeFingerprint: the warning says which adapter and why, only when a fingerprint was asked for and is not computed") {
+    val unsupported = Some(CapabilityFixtures.parsed(Map("analysis.fingerprint" -> (("unsupported", Some("would mislead"))))))
+    val on = VerificationOptions(computeFingerprint = true)
+    assert(VerificationPipeline.fingerprintSkipped(on, unsupported).contains(
+      "computeFingerprint is on, but the toy adapter does not compute fingerprints (would mislead), so this check publishes none"
+    ))
+    assert(VerificationPipeline.fingerprintSkipped(VerificationOptions(), unsupported).isEmpty, "none asked for, nothing to say")
+    assert(VerificationPipeline.fingerprintSkipped(on, Some(CapabilityFixtures.parsed())).isEmpty, "supported: one is computed")
+    assert(VerificationPipeline.fingerprintSkipped(on, None).isEmpty)
   }
 
   test("explain: a fingerprint with no per-output entries prints only the overall hash") {
@@ -362,19 +506,22 @@ class VerificationPipelineSpec extends AnyFunSuite {
 
   // --- rejectUnverifiableWrite -----------------------------------------------------------------
 
+  private val merge = UnverifiableOperation("MergeIntoCommand", "'MergeIntoCommand' may write data unseen", "Translate it.")
+
   test("rejectUnverifiableWrite: always throws UNVERIFIABLE_WRITE naming the operation, after publishing FAILED") {
     val sink = new TestNotificationSink
     val ex = intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "MergeIntoCommand", UnknownPlan("a merge"), Some(sink), Some("app-2"))
+      VerificationPipeline.rejectUnverifiableWrite(contract, merge, UnknownPlan("a merge"), Some(sink), Some("app-2"))
     }
     assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     assert(ex.result.violations.head.message.contains("MergeIntoCommand"))
+    assert(ex.result.violations.head.remediation == merge.remediation, "the adapter's remediation, not one the core supplies")
     assert(ex.getMessage.contains("UnknownPlan(a merge)"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
     assert(validationEvents(sink).head.runId.contains("app-2"))
     // and without a sink it still throws
     intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "X", UnknownPlan("y"))
+      VerificationPipeline.rejectUnverifiableWrite(contract, UnverifiableOperation("X", "x", "r"), UnknownPlan("y"))
     }
   }
 
@@ -386,5 +533,95 @@ class VerificationPipelineSpec extends AnyFunSuite {
     VerificationPipeline.publishValidation(withMeta, VerificationResult.of("pipe@1.0.0", Nil), Some(sink), None)
     assert(validationEvents(sink).head.metadata == Map("team" -> "payments"))
     VerificationPipeline.publishValidation(withMeta, VerificationResult.of("pipe@1.0.0", Nil), None, None)
+  }
+
+  // --- job: which engine and job produced the events ----------------------------------------------
+
+  private val job = JobInfo(runId = Some("run-9"), jobId = Some("orders_nightly"), engine = Some("toy"), engineVersion = Some("1.2"))
+
+  test("job: a passing write's event names the engine and job, and carries no job when none was given") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(sink), job = Some(job))
+    assert(validationEvents(sink).map(_.job) == List(Some(job)))
+    val bare = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(bare))
+    assert(validationEvents(bare).map(_.job) == List(None))
+  }
+
+  test("job: a rejected write's FAILED event names the job too") {
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(contract, checked(output = Cols().add("id", LongType, nullable = false)), VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(e => e.status -> e.job) == List("FAILED" -> Some(job)))
+  }
+
+  test("job: the run id is taken from the job when no run id is given, and an explicit run id wins") {
+    val fromJob = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(fromJob), job = Some(job))
+    assert(validationEvents(fromJob).head.runId.contains("run-9"))
+    val explicit = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(explicit), runId = Some("explicit"), job = Some(job))
+    assert(validationEvents(explicit).head.runId.contains("explicit"))
+    val noRun = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(noRun), job = Some(job.copy(runId = None)))
+    assert(validationEvents(noRun).head.runId.isEmpty)
+  }
+
+  test("job: a state change's event names the job, on a pass and a rejection") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.verifyStateChange(contract, "CALL x(...)", "out/report", goodOutput, caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyStateChange(contract, "CALL x(...)", "out/report", Cols(), caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(e => e.status -> e.job) == List("PASSED" -> Some(job), "FAILED" -> Some(job)))
+  }
+
+  test("job: an unverifiable write's FAILED event names the job") {
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.rejectUnverifiableWrite(contract, merge, UnknownPlan("a merge"), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(_.job) == List(Some(job)))
+  }
+
+  test("job: an invalid contract's rejection names the job, on the write path and the state-change path") {
+    val invalid = ContractParser.parse("id: bad\nversion: \"1.0.0\"\n")
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(invalid, checked(), VerificationOptions(), Some(sink), job = Some(job))
+    }
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyStateChange(invalid, "CALL x(...)", "out/report", goodOutput, caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(_.job) == List(Some(job), Some(job)))
+  }
+
+  // --- plans that share nodes ------------------------------------------------------------------
+
+  // A plan an engine that describes a job as a graph hands over (Beam: a collection read by two branches that
+  // later rejoin): 40 steps, each two branches over the same node below, so 2^40 paths from the write to the read.
+  private def rejoining(steps: Int): Plan =
+    Write(
+      DatasetRef("out/report"),
+      (1 to steps).foldLeft[Plan](Read(DatasetRef(orders))) { (below, i) =>
+        UnknownPlan(s"Flatten $i", "Flatten", List(UnknownPlan(s"Left $i", "ParDo", List(below)), UnknownPlan(s"Right $i", "ParDo", List(below))))
+      }
+    )
+
+  test("verifyWrite: a plan whose branches rejoin many times is checked node by node, not path by path") {
+    val sink = new TestNotificationSink
+    val options = VerificationOptions(staticDataQuality = true, roleConsistency = true)
+    VerificationPipeline.verifyWrite(contract, checked(plan = rejoining(40)), options, Some(sink))
+    assert(validationEvents(sink).map(_.status) == List("PASSED"))
+  }
+
+  test("rejectUnverifiableWrite: the explanation of a plan whose branches rejoin draws each shared step once") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.rejectUnverifiableWrite(contract, UnverifiableOperation("X", "x", "r"), rejoining(40))
+    }
+    assert(ex.getMessage.contains("UnknownPlan(Flatten 40)"))
+    assert(ex.getMessage.contains(com.invaract.ir.PlanPrinter.ShownAbove))
+    assert(ex.getMessage.length < 100000, ex.getMessage.length) // about 25 KB; drawn as a tree it would be 2^40 lines
   }
 }

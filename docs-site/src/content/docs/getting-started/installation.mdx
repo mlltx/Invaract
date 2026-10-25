@@ -25,15 +25,18 @@ skips building from source entirely.
 | Tool | Version | Needed for |
 |---|---|---|
 | JDK | 21 | Building and running every module |
-| sbt | 1.9.8 (`contract`/`plugin`/`runner`), 1.11.7 (`ir`/`spark-adapter`) | Building each module |
-| Apache Spark | 3.5.7 | Running a real job via `spark-submit` |
+| sbt | Any recent sbt launcher; each module pins its own version (1.9.8 or 1.11.7) and sbt fetches it | Building each module |
+| Apache Spark | 3.5.9 | Running a real job via `spark-submit` |
 | Node.js | 20 | The results web UI (`web/`) |
+| Python | 3.9 or later, with `apache-beam` | Only for Beam Python pipelines |
 
 You don't need to install these by hand if you use Codespaces — its dev container
 provisions all of them automatically.
 
-See [Spark Version Support](/reference/spark-version-support/) for the full range of Spark
-3.5.x patches actually verified, not just this default.
+See [Engine Version Support](/reference/spark-version-support/) for the full range of Spark
+3.5.x patches and Beam releases actually verified, not just these defaults. If you only need
+Beam, you can skip Spark: see [Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/)
+or [Beam Python pipelines](/guides/using-invaract-with-beam-python/).
 
 ## Set up
 
@@ -56,10 +59,10 @@ See [Spark Version Support](/reference/spark-version-support/) for the full rang
    ./cs install sbt
    ```
 
-3. Install Apache Spark 3.5.7 and put `spark-submit` on your `PATH`:
+3. Install Apache Spark 3.5.9 and put `spark-submit` on your `PATH`:
 
    ```bash
-   SPARK_VERSION="3.5.7"
+   SPARK_VERSION="3.5.9"
    HADOOP_VERSION="3"
    wget "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz"
    tar -xzf "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" -C /opt
@@ -99,7 +102,7 @@ with `sbt test` and hit an `InaccessibleObjectException`, see
    Open the repository on GitHub and choose **Code → Codespaces → Create codespace**.
 
 2. Wait for the dev container to provision. `.devcontainer/post-create.sh` installs sbt,
-   Apache Spark 3.5.7, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
+   Apache Spark 3.5.9, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
    further to configure.
 
 3. Confirm the toolchain is ready:

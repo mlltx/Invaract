@@ -76,13 +76,14 @@ object ViolationType {
   val MissingInputCatalogRegistration = "MISSING_INPUT_CATALOG_REGISTRATION"
   val InputCatalogMismatch = "INPUT_CATALOG_MISMATCH"
 
-  /** Not produced by `StructuralVerifier` itself — this is
-    * `ContractEnforcementRule`'s fail-closed response when a Spark command
-    * looks like it writes or otherwise mutates data (it's `Command`-shaped
-    * and not on the known-safe list) but `SparkPlanAdapter` has no
-    * translation for it, so it was never actually checked against the
-    * contract. See `ContractEnforcementRule`'s "Fail-closed on unverifiable
-    * writes" doc.
+  /** Not produced by `StructuralVerifier` itself — an adapter's fail-closed
+    * response (`VerificationPipeline.rejectUnverifiableWrite`) to an operation
+    * that may write or otherwise change data but that it cannot check against
+    * the contract: on Spark, a `Command`-shaped plan not on the known-safe list
+    * that `SparkPlanAdapter` has no translation for (see
+    * `ContractEnforcementRule`'s "Fail-closed on unverifiable writes" doc); on
+    * Beam, a step that ends the pipeline without being a recognised write, or a
+    * write that does not state what the contract asks of it.
     */
   val UnverifiableWrite = "UNVERIFIABLE_WRITE"
 
@@ -204,6 +205,21 @@ object ViolationType {
     */
   val RoleConsistencyViolation = "ROLE_CONSISTENCY_VIOLATION"
 }
+
+/** An operation an adapter cannot check against a contract, as
+  * `VerificationPipeline.rejectUnverifiableWrite` refuses it
+  * (`ViolationType.UnverifiableWrite`). Every part is the adapter's own,
+  * since only the adapter knows its engine's names, settings and docs.
+  *
+  * @param name the engine's own name for the operation (Spark: the command's
+  *   class; Beam: the step's name), reported as the violation's `actual`.
+  * @param problem what the operation is and why it cannot be checked, as one
+  *   sentence without its full stop ("'X' looks like it may write ..., but
+  *   Invaract has no translation for it").
+  * @param remediation what the job's owner can do about it, in the engine's
+  *   own terms (the setting to change, the page to read).
+  */
+final case class UnverifiableOperation(name: String, problem: String, remediation: String)
 
 /** The three-state verdict `RoleConsistencyVerifier` reaches for one
   * dataset's declared `com.invaract.contract.DatasetType` against its

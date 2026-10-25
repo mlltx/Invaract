@@ -21,7 +21,7 @@ class CustomPolicyEvaluatorFactoryTest extends AnyFunSuite {
     val e = intercept[IllegalArgumentException] {
       CustomPolicyEvaluatorFactory.resolve("com.invaract.contract.NoSuchClassAtAll")
     }
-    assert(e.getMessage.contains("Could not instantiate"))
+    assert(e.getMessage.contains("was not found"))
   }
 
   test("resolve throws IllegalArgumentException for a class without a public no-arg constructor") {

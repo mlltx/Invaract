@@ -359,6 +359,29 @@ class ContractParserTest extends AnyFunSuite {
     assert(ContractParser.parse(yaml).rules.head.interpret.isEmpty)
   }
 
+  test("a dataset with no schema declares no columns, and is written back without one") {
+    val yaml =
+      """id: dead_letters
+        |version: "1.0.0"
+        |outputs:
+        |  - name: rejected
+        |    location: out/rejected
+        |    format: text
+        |  - name: report
+        |    location: out/report
+        |    schema:
+        |      fields:
+        |        - { name: id, type: long }
+        |""".stripMargin
+    val c = ContractParser.parse(yaml)
+    assert(c.outputs.map(_.schema.fields.map(_.name)) == List(Nil, List("id")))
+    val written = ContractParser.write(c)
+    assert(written.split("\n").count(_.trim == "schema:") == 1, "only the dataset with columns has a schema")
+    assert(ContractParser.parse(written) == c)
+    assert(ContractParser.parse(yaml.replace("    format: text\n", "    format: text\n    schema:\n      fields: []\n")).outputs.head.schema == Schema(Nil),
+      "an empty field list says the same")
+  }
+
   test("parseFile should raise ContractParseException for a missing file") {
     val ex = intercept[ContractParseException] {
       ContractParser.parseFile(fixture("does_not_exist.yaml"))

@@ -14,6 +14,10 @@ with no contract at all, and Invaract prints one back — built from the job's r
 and outputs — that you can copy into a file, review, and use with
 [the enforcement rule](/guides/installing-the-enforcement-rule/) from then on.
 
+<Aside type="note" title="On Apache Beam">
+Dry-run mode works on Beam too: `--invaractDryRun=true` (Java) or `--invaract_dry_run=true` (Python), and with check-only mode it reports the contract a pipeline needs without running it. See the [Java](/guides/using-invaract-with-apache-beam/#dry-run-mode) and [Python](/guides/using-invaract-with-beam-python/#dry-run-mode) guides. This page shows the Spark side.
+</Aside>
+
 <Aside type="note" title="A starting point, not a finished contract">
 Dry-run mode infers *structure* — locations, formats, save mode, field names/types/
 nullability — never business rules. It has no way to know your MERGE must always match
@@ -33,7 +37,7 @@ intend before treating it as a finished document.
    ./dev/dry-run
    ```
 
-   This builds all 5 modules the same way `./dev/test` does, then runs `DemoJobHarness`
+   This builds every module the same way `./dev/test` does, then runs the demo job
    with `--dry-run` and no contract argument at all.
 
 2. ### Read the inferred contract
@@ -189,7 +193,8 @@ that doesn't pass its own write isn't something to promote.
 ### What's in an event
 
 Real events, from a real `spark-sql` run with the settings above (the file paths are the
-run's own). The first is a write dry-run mode inferred a contract for; its `contractYaml` is
+run's own; the transformation's `fingerprints` are trimmed from the first, see
+[Fingerprint a Transformation](/guides/fingerprinting-transformations/) for their shape). The first is a write dry-run mode inferred a contract for; its `contractYaml` is
 the draft itself, and `selfCheck` says it would pass enforcement:
 
 ```json
@@ -218,60 +223,7 @@ the draft itself, and `selfCheck` says it would pass enforcement:
   "selfCheckViolations": [],
   "reason": null,
   "eventId": "0fb8a74380802ca79d89483118bcec8c0a6d2e52972ff4d7a7d1c565a8934fc3",
-  "fingerprints": {
-    "outputs": {
-      "id": {
-        "expression": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "5ab5867724e4d491890b27e81e156c2519f82d72aaf998e142a424bdede7b458"
-        },
-        "lineage": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "8700f1b3b1049f806346155f3714120b6bcff12a4b8d5e7ff7a062c09f09c18c"
-        },
-        "combined": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "7435d6bcb31305eb9e4329cdccb9f1d398fb5a77d5ecd5168c17a78931047599"
-        },
-        "nonDeterministic": false
-      },
-      "doubled": {
-        "expression": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "d14b6bfaca780f0f5ecf2863c7303da26f0f002cbc8f0c1aa34c0b647cb9a4b8"
-        },
-        "lineage": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "20570e2e08bd252d482e40c326be931d4359711d34ff624ebd7ede2e048cdbf3"
-        },
-        "combined": {
-          "version": 2,
-          "algorithm": "SHA-256",
-          "value": "20631bdb3f13ff80eab770b5e521aca364ee052021457cfac8bfbdf7544b16c8"
-        },
-        "nonDeterministic": false
-      }
-    },
-    "rowMutation": null,
-    "version": 2,
-    "inputs": {
-      "file:/tmp/invaract-example/data/orders.csv#0": {
-        "version": 2,
-        "algorithm": "SHA-256",
-        "value": "ea575f3ccf4ed51aed7a96de9b02af16adfbb5cc8120b95d2d04f29cf26ab4f7"
-      }
-    },
-    "overall": {
-      "version": 2,
-      "algorithm": "SHA-256",
-      "value": "01a4f49d7329136bca7a0e3aa03976a3cf6732bc8b18b5c52e9c42bf9b3d249e"
-    }
-  },
+  "fingerprints": {"...": "the transformation's fingerprint, trimmed here: see Fingerprint a Transformation"},
   "diagnostics": [],
   "status": "INFERRED",
   "selfCheck": "PASSED",
@@ -384,7 +336,7 @@ Two kinds of metadata, kept apart on purpose:
 | Conf prefix | Describes | Where it lands |
 | --- | --- | --- |
 | `spark.invaract.contract.metadata.<key>=<value>` | The **contract**: owner, team, source system, a ticket. | The draft's `extensions:` block, and every event's `metadata`. |
-| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, and nowhere else. |
+| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, dry-run and enforcement alike, and nowhere else. |
 
 The run-level facts stay out of the contract because a contract outlives the run: a run id
 in a promoted contract would be stale the next night. The contract-level ones ride in the
@@ -471,7 +423,8 @@ through the answer like this.
    portable, and add the rules dry-run can't infer, as in
    [Write a Contract](/guides/writing-a-contract/).
 6. **Switch to enforcement**: replace `spark.invaract.dryRun=true` with
-   `spark.invaract.contract=<your reviewed contract>`. The strict toggles
+   `spark.invaract.contract=<your reviewed contract>`. The enforcement events carry the same
+   `job` (`engine`, `jobId`, `attributes`), so the job's dry run and its enforced runs can be followed together. The strict toggles
    (`rejectUndeclaredInputs`, `rejectUndeclaredFields`) are off by default; turn them on later,
    once the job has run clean.
 

@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractValidator, LogicalSchema}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir
 import com.invaract.ir.PlanPrinter
-import com.invaract.verification.notification.{ContractValidationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, NotificationSink}
 
 import org.slf4j.LoggerFactory
 
@@ -77,16 +77,29 @@ object VerificationPipeline {
     * adapter declares `Unsupported` is rejected with `UNSUPPORTED_CONTRACT_FEATURE`
     * rather than passing a requirement nothing verified (see `CapabilityCheck`);
     * `None` skips the check.
+    *
+    * `job` identifies the engine and job (see `JobInfo`) and rides on every event this publishes -
+    * the validation event for a pass or a rejection alike. An adapter that publishes events supplies it;
+    * `runId` remains for an adapter that knows only a run id, and is taken from `job` when not given.
     */
+  /** Why no fingerprint is computed although `computeFingerprint` is on: the adapter declares it cannot compute one. `None`
+    * when one is computed, or none was asked for. */
+  private[verification] def fingerprintSkipped(options: VerificationOptions, capabilities: Option[AdapterCapabilities]): Option[String] =
+    capabilities.filter(c => options.computeFingerprint && c.supportOf(Capability.AnalysisFingerprint) == Support.Unsupported).map { c =>
+      s"computeFingerprint is on, but the ${c.adapter} adapter does not compute fingerprints" +
+        c.entryOf(Capability.AnalysisFingerprint).note.fold("")(n => s" ($n)") + ", so this check publishes none"
+    }
+
   def verifyWrite(
       contract: Contract,
       write: => CheckedWrite,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
       runId: Option[String] = None,
-      capabilities: Option[AdapterCapabilities] = None
+      capabilities: Option[AdapterCapabilities] = None,
+      job: Option[JobInfo] = None
   ): Unit = {
-    requireValidContract(contract, sink, runId)
+    requireValidContract(contract, sink, runId, job)
     val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
     val checked = write
 
@@ -97,8 +110,12 @@ object VerificationPipeline {
     // Every rule/data-quality finding below is about this write.
     val writeLocation = PlanRuleVerifier.writeLocation(planFacts)
 
+    // A row-level change (DELETE / UPDATE / MERGE) happens in place: the table it reads is the one it changes.
+    val inPlaceTarget = if (checked.rowMutation.isDefined) writeLocation else None
     val structuralResult =
-      StructuralVerifier.verify(contract, planFacts, checked.inputSchemas, checked.outputSchema, options, checked.caseSensitive, checked.lineageBoundaryTypes)
+      StructuralVerifier.verify(
+        contract, planFacts, checked.inputSchemas, checked.outputSchema, options, checked.caseSensitive, checked.lineageBoundaryTypes, inPlaceTarget
+      )
 
     // Checked alongside (never instead of) StructuralVerifier's own checks.
     // `Extracted` runs the normal rule check; `Unverifiable` (the adapter
@@ -128,8 +145,13 @@ object VerificationPipeline {
     // conditional DELETE's predicate, is real transformation-defining
     // behavior that ir.Plan alone never captures. Only the Extracted case has
     // an actual RowMutation to pass.
+    // A fingerprint is not a contract requirement, so an adapter that declares it unsupported does not refuse the write
+    // (CapabilityCheck); it is not computed either, since that adapter's plan would give one that misleads (Beam's
+    // graph cannot see inside the functions a step runs). Said once, at WARN, rather than left as a missing field.
+    val skipped = fingerprintSkipped(options, capabilities)
+    skipped.foreach(logger.warn)
     val fingerprints =
-      if (options.computeFingerprint) {
+      if (options.computeFingerprint && skipped.isEmpty) {
         val mutation = checked.rowMutation.collect { case MutationClassification.Extracted(_, m) => m }
         // Disclosed, not silently absorbed: a boundary that stayed unresolved
         // can only be fingerprinted as an opaque node, and a resolution that
@@ -163,7 +185,7 @@ object VerificationPipeline {
       roleConformanceResults,
       structuralResult.unverifiableInputs
     )
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -208,16 +230,70 @@ object VerificationPipeline {
       caseSensitive: Boolean,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      runId: Option[String] = None
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
   ): Unit = {
     // Same reasoning as verifyWrite: verifyStateChange assumes a structurally sound contract too.
-    requireValidContract(contract, sink, runId)
+    requireValidContract(contract, sink, runId, job)
     val result = StructuralVerifier.verifyStateChange(contract, location, resultingSchema, options, caseSensitive)
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     if (!result.passed) {
       // No ir.Plan translation exists for a state change (there's no query to
       // translate): a plain description stands in for the rendered plan tree.
       throw new ContractViolationException(result, explain(contract, ir.UnknownPlan(description), result))
+    }
+  }
+
+  /** Refuses a whole job that never writes one of the contract's declared outputs (`MISSING_OUTPUT`, one per output; see
+    * `OutputChecker.unwrittenOutputs`). For an adapter that sees every write of a job before any runs (Beam's pipeline):
+    * call it once, with the location of every write the job makes, before checking the writes themselves, so a refused job
+    * publishes one FAILED validation and nothing else. An adapter that checks one write at a time cannot know a write will
+    * never come, and declares `check.outputsWritten` unsupported instead. Does nothing when every output is written.
+    *
+    * @param writeLocations where the job's writes land, as the adapter reports them
+    * @param translatedPlan the job as the adapter translated it, rendered in the explanation
+    */
+  def requireOutputsWritten(
+      contract: Contract,
+      writeLocations: List[String],
+      translatedPlan: ir.Plan,
+      sink: Option[NotificationSink] = None,
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
+  ): Unit = {
+    requireValidContract(contract, sink, runId, job)
+    val missing = OutputChecker.unwrittenOutputs(contract.outputs, writeLocations)
+    if (missing.nonEmpty) {
+      val result = VerificationResult.of(s"${contract.id}@${contract.version}", missing)
+      publishValidation(contract, result, sink, runId, job)
+      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
+    }
+  }
+
+  /** Refuses `contract` before any write is judged when it relies on something `capabilities` declares unsupported (see
+    * `CapabilityCheck`): one FAILED validation with `UNSUPPORTED_CONTRACT_FEATURE` for each such requirement. `verifyWrite`
+    * makes the same check for each write; an adapter that sees the whole job before it runs calls this first, so a contract it
+    * cannot check is refused for that reason, and not for whichever of its writes it happens to judge first (a write refused as
+    * unverifiable would otherwise hide that the contract asks for something the adapter never checks). Does nothing when the
+    * adapter supports everything the contract relies on.
+    *
+    * @param translatedPlan the job as the adapter translated it, rendered in the explanation
+    */
+  def requireSupported(
+      contract: Contract,
+      options: VerificationOptions,
+      capabilities: AdapterCapabilities,
+      translatedPlan: ir.Plan,
+      sink: Option[NotificationSink] = None,
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
+  ): Unit = {
+    requireValidContract(contract, sink, runId, job)
+    val unsupported = CapabilityCheck.violations(contract, options, capabilities)
+    if (unsupported.nonEmpty) {
+      val result = VerificationResult.of(s"${contract.id}@${contract.version}", unsupported)
+      publishValidation(contract, result, sink, runId, job)
+      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
     }
   }
 
@@ -226,21 +302,22 @@ object VerificationPipeline {
     * it was never actually checked against the contract. Always throws -
     * `ViolationType.UnverifiableWrite`.
     *
-    * @param operation the engine's own name for the operation (Spark: the
-    *   command's class name), named in the violation.
+    * @param operation the operation, in the adapter's own words: its name,
+    *   why it cannot be checked, and what the job's owner can do about it.
     * @param translatedPlan what the adapter did produce for it (typically an
     *   `ir.UnknownPlan`), rendered in the explanation.
     */
   def rejectUnverifiableWrite(
       contract: Contract,
-      operation: String,
+      operation: UnverifiableOperation,
       translatedPlan: ir.Plan,
       sink: Option[NotificationSink] = None,
-      runId: Option[String] = None
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
   ): Nothing = {
     val violation = Violations.unverifiableWrite(operation, s"${contract.id}@${contract.version}")
     val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     throw new ContractViolationException(result, explain(contract, translatedPlan, result))
   }
 
@@ -249,7 +326,12 @@ object VerificationPipeline {
     * type whose class cannot be resolved - the check every other rejection in
     * this object assumes has already passed.
     */
-  private[invaract] def requireValidContract(contract: Contract, sink: Option[NotificationSink], runId: Option[String]): Unit = {
+  private[invaract] def requireValidContract(
+      contract: Contract,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo] = None
+  ): Unit = {
     val validation = ContractValidator.validate(contract)
     // ContractValidator only checks customRuleTypes's shape (empty key/class
     // name, collision with a built-in RuleType) - it lives in `contract`, which
@@ -269,7 +351,7 @@ object VerificationPipeline {
         Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
       }
       val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
-      publishValidation(contract, result, sink, runId)
+      publishValidation(contract, result, sink, runId, job)
       // Reads as a plain sentence rather than a parenthesized fragment:
       // PlanPrinter already wraps an UnknownPlan as "UnknownPlan(<description>)",
       // so an inner "(...)" too would render as a confusing doubled "((...))".
@@ -284,7 +366,8 @@ object VerificationPipeline {
       contract: Contract,
       result: VerificationResult,
       sink: Option[NotificationSink],
-      runId: Option[String]
+      runId: Option[String],
+      job: Option[JobInfo] = None
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -294,11 +377,13 @@ object VerificationPipeline {
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
-          runId = runId,
+          // an adapter that knows the job but not a separate run id still reports the run
+          runId = runId.orElse(job.flatMap(_.runId)),
           fingerprints = result.fingerprints,
           dataQuality = result.dataQuality,
           roleConformance = result.roleConformance,
-          unverifiableInputs = result.unverifiableInputs
+          unverifiableInputs = result.unverifiableInputs,
+          job = job
         )
       )
     }

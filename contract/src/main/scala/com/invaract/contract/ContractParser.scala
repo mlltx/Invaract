@@ -21,9 +21,18 @@ import scala.collection.JavaConverters._
 object ContractParser {
 
   def parse(yamlText: String): Contract = {
-    val raw = loadMap(newSafeYaml().load[Any](yamlText), "contract")
+    val raw = loadMap(yamlSyntax(newSafeYaml().load[Any](yamlText)), "contract")
     parseContract(raw)
   }
+
+  /** A YAML syntax error as a `ContractParseException`, keeping SnakeYAML's own description, which says where (line and
+    * column) and what it expected. */
+  private def yamlSyntax[T](load: => T): T =
+    try load
+    catch {
+      case e: org.yaml.snakeyaml.error.YAMLException =>
+        throw new ContractParseException(s"The contract is not valid YAML: ${e.getMessage.trim}", e)
+    }
 
   def parseFile(path: String): Contract = parseFile(new File(path))
 
@@ -35,7 +44,7 @@ object ContractParser {
     try {
       parseStream(stream)
     } catch {
-      case e: ContractParseException => throw e
+      case e: ContractParseException => throw new ContractParseException(s"${file.getPath}: ${e.getMessage}", e)
       case e: Exception =>
         throw new ContractParseException(s"Failed to parse contract file: ${file.getPath}", e)
     } finally {
@@ -44,7 +53,7 @@ object ContractParser {
   }
 
   def parseStream(stream: InputStream): Contract = {
-    val raw = loadMap(newSafeYaml().load[Any](stream), "contract")
+    val raw = loadMap(yamlSyntax(newSafeYaml().load[Any](stream)), "contract")
     parseContract(raw)
   }
 
@@ -115,7 +124,7 @@ object ContractParser {
     m.put("name", dataset.name)
     m.put("location", dataset.location)
     dataset.format.foreach(m.put("format", _))
-    m.put("schema", schemaToJava(dataset.schema))
+    if (dataset.schema.fields.nonEmpty) m.put("schema", schemaToJava(dataset.schema))
     dataset.saveMode.foreach(m.put("saveMode", _))
     dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
     dataset.description.foreach(m.put("description", _))
@@ -175,8 +184,67 @@ object ContractParser {
     m
   }
 
+  private val ContractKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions", "customRuleTypes")
+  private val DatasetKeys = Set("name", "location", "format", "saveMode", "catalog", "description", "type", "derivedFrom", "schema")
+  private val CatalogKeys = Set("required", "technology", "catalogName", "location", "namespace", "table")
+  private val SchemaKeys = Set("fields")
+  private val FieldKeys = Set("name", "type", "required", "nullable", "sensitivityTags", "properties", "constraints")
+
+  /** Keys the Open Data Contract Standard defines that Invaract does not read. They are never reported as a typo of one
+    * it does (ODCS's `roles` is not a misspelt `rules`). */
+  private val OdcsKeys = Set(
+    "apiVersion", "kind", "tenant", "domain", "dataProduct", "servers", "team", "roles", "support", "price",
+    "slaProperties", "slaDefaultElement", "tags", "customProperties", "contractCreatedTs", "authoritativeDefinitions",
+    "quality", "physicalName", "physicalType", "logicalType", "logicalTypeOptions", "businessName", "title", "unique",
+    "primaryKey", "primaryKeyPosition", "partitioned", "partitionKeyPosition", "classification", "examples",
+    "criticalDataElement", "encryptedName", "transformSourceObjects", "transformLogic", "transformDescription",
+    "dataGranularityDescription"
+  )
+
+  /** A warning for every key in the document that Invaract does not read but that is spelt close to one it does
+    * (`nulable` for `nullable`, `input` for `inputs`): such a key is otherwise ignored without a word, and the setting it
+    * was meant to be silently keeps its default. Other unknown keys are left alone - a contract may carry anything ODCS or
+    * its authors define. A document that does not parse has no warnings here; `parse` reports why.
+    */
+  def unknownKeyWarnings(yamlText: String): List[ValidationIssue] = {
+    def mapOf(value: Any): Map[String, Any] = value match {
+      case m: java.util.Map[_, _] => m.asScala.toMap.map { case (k, v) => String.valueOf(k) -> v }
+      case _                      => Map.empty
+    }
+    def listOf(value: Any): List[Any] = value match {
+      case l: java.util.List[_] => l.asScala.toList
+      case _                    => Nil
+    }
+    def near(path: String, raw: Map[String, Any], known: Set[String]): List[ValidationIssue] =
+      raw.keys.toList.sorted.filterNot(k => known(k) || OdcsKeys(k)).flatMap { key =>
+        Suggestions.closest(key, known).map { suggestion =>
+          val at = if (path.isEmpty) key else s"$path.$key"
+          ValidationIssue(ValidationSeverity.Warning, at, s"Unknown key '$key' is ignored. Did you mean '$suggestion'?")
+        }
+      }
+    def fields(path: String, raw: Any): List[ValidationIssue] =
+      listOf(raw).zipWithIndex.flatMap { case (item, idx) =>
+        val field = mapOf(item)
+        near(s"$path[$idx]", field, FieldKeys) ++ fields(s"$path[$idx].properties", field.getOrElse("properties", null))
+      }
+    def datasets(path: String, raw: Any): List[ValidationIssue] =
+      listOf(raw).zipWithIndex.flatMap { case (item, idx) =>
+        val at = s"$path[$idx]"
+        val dataset = mapOf(item)
+        val schema = mapOf(dataset.getOrElse("schema", null))
+        near(at, dataset, DatasetKeys) ++
+          near(s"$at.catalog", mapOf(dataset.getOrElse("catalog", null)), CatalogKeys) ++
+          near(s"$at.schema", schema, SchemaKeys) ++
+          fields(s"$at.schema.fields", schema.getOrElse("fields", null))
+      }
+    val root =
+      try mapOf(newSafeYaml().load[Any](yamlText))
+      catch { case _: org.yaml.snakeyaml.error.YAMLException => Map.empty[String, Any] }
+    near("", root, ContractKeys) ++ datasets("inputs", root.getOrElse("inputs", null)) ++ datasets("outputs", root.getOrElse("outputs", null))
+  }
+
   private def parseContract(raw: Map[String, Any]): Contract = {
-    val knownKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions", "customRuleTypes")
+    val knownKeys = ContractKeys
 
     val id = requireString(raw, "id", "contract")
     val version = ContractVersion.parse(requireString(raw, "version", "contract"))
@@ -224,11 +292,9 @@ object ContractParser {
     // alone can't tell those two apart (both yield Nil), so presence is
     // decided separately first.
     val derivedFrom = optValue(raw, "derivedFrom").map(_ => optStringList(raw, "derivedFrom", context))
-    val schemaRaw = raw.getOrElse(
-      "schema",
-      throw new ContractParseException(s"Missing 'schema' in $context")
-    )
-    val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
+    // No `schema` declares no columns: the dataset's content is not governed (a dead-letter folder of text lines, a log
+    // export), and its columns are not checked. ContractValidator warns, so it is never mistaken for a schema left out.
+    val schema = raw.get("schema").fold(Schema(Nil))(schemaRaw => parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema"))
     Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom)
   }
 
@@ -359,9 +425,10 @@ object ContractParser {
   private def optBoolean(raw: Map[String, Any], key: String, context: String): Option[Boolean] =
     optValue(raw, key).map {
       case b: java.lang.Boolean => b.booleanValue()
-      case s: String            => s.toBoolean
+      case s: String if s.trim.equalsIgnoreCase("true")  => true
+      case s: String if s.trim.equalsIgnoreCase("false") => false
       case other =>
-        throw new ContractParseException(s"Expected boolean for '$context.$key', got: $other")
+        throw new ContractParseException(s"Expected true or false for '$context.$key', got: $other")
     }
 
   /** Parses an optional YAML list-of-strings key into a `Set[String]`,

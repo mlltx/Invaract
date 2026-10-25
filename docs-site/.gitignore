@@ -16,3 +16,6 @@ npm-debug.log*
 
 # macOS-specific files
 .DS_Store
+
+# published copy of contract/schema/, made by scripts/sync-contract-schemas.mjs
+public/schemas/contract/

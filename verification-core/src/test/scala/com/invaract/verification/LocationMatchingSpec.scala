@@ -136,4 +136,41 @@ class LocationMatchingSpec extends AnyFunSuite {
     }
     assert(index.matchingIndices("s3://bucket/warehouse/db1/table2").isEmpty)
   }
+
+  test("fromParts joins the parts with '/', trimming whitespace and one pair of backticks or double quotes") {
+    assert(LocationMatching.fromParts(Seq("proj", "ds", "orders")) == "proj/ds/orders")
+    assert(LocationMatching.fromParts(Seq("`proj`", " ds ", "\"orders\"")) == "proj/ds/orders")
+    assert(LocationMatching.fromParts(Seq("orders")) == "orders")
+    assert(LocationMatching.fromParts(Nil) == "")
+  }
+
+  test("fromParts drops empty parts, including a part that is only quotes around nothing") {
+    assert(LocationMatching.fromParts(Seq("", "ds", "  ", "orders")) == "ds/orders")
+    assert(LocationMatching.fromParts(Seq("``", "ds", "\"\"", "orders")) == "ds/orders")
+  }
+
+  test("fromParts unquotes only a matching pair, only at the ends, and leaves inner quotes alone") {
+    assert(LocationMatching.fromParts(Seq("`a")) == "`a")
+    assert(LocationMatching.fromParts(Seq("a`")) == "a`")
+    assert(LocationMatching.fromParts(Seq("`a\"")) == "`a\"")
+    assert(LocationMatching.fromParts(Seq("a`b")) == "a`b")
+    assert(LocationMatching.fromParts(Seq("`")) == "`")
+    assert(LocationMatching.fromParts(Seq("` a `")) == "a")
+  }
+
+  test("BigQuery-shaped names: a dataset-qualified declaration matches the table in any project, a project-qualified one pins it") {
+    val actual = LocationMatching.fromParts(Seq("proj", "ds", "orders"))
+    val otherProject = LocationMatching.fromParts(Seq("other", "ds", "orders"))
+    assert(LocationMatching.matches("ds/orders", actual))
+    assert(LocationMatching.matches("ds/orders", otherProject))
+    assert(LocationMatching.matches("proj/ds/orders", actual))
+    assert(!LocationMatching.matches("proj/ds/orders", otherProject))
+    assert(!LocationMatching.matches("ds/orders", LocationMatching.fromParts(Seq("proj", "ds2", "orders"))))
+    assert(!LocationMatching.matches("ds/orders", LocationMatching.fromParts(Seq("proj", "xds", "orders"))))
+  }
+
+  test("a dotted declaration is one segment, so it does not match the parts-built name (write it with '/')") {
+    assert(!LocationMatching.matches("proj.ds.orders", LocationMatching.fromParts(Seq("proj", "ds", "orders"))))
+    assert(LocationMatching.matches("proj.ds.orders", "proj.ds.orders"))
+  }
 }

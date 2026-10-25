@@ -102,6 +102,40 @@ if [ -x /opt/spark/bin/spark-submit ]; then
   } >> "$CLAUDE_ENV_FILE"
 fi
 
+# --- The Beam Python SDK, for beam-adapter's Python suites ------------------
+#
+# Without it those suites (the Python conformance scenarios, PortableCheckSpec, ...) cancel themselves with "python3
+# cannot import apache_beam", so a change to the Python adapter was only ever tested in CI. The SDK release is the one
+# the recorded test pipelines are made with (beam.python.primary), installed in a virtual environment of its own (the
+# system Python is the OS's), and named to the suites with INVARACT_TEST_PYTHON. The package itself is not installed:
+# the suites put beam-adapter/python on PYTHONPATH, and one of them needs a Python where it is not installed. Pip
+# is upgraded first: pip 24 has been seen to hang resolving some releases.
+BEAM_PYTHON_VENV="/opt/invaract-beam-python"
+BEAM_PYTHON_VERSION="$(sed -n 's/^beam.python.primary=//p' "$CLAUDE_PROJECT_DIR/beam-adapter/src/main/resources/supported-beam-versions.properties" 2>/dev/null)"
+if [ -n "$BEAM_PYTHON_VERSION" ]; then
+  if [ "$("$BEAM_PYTHON_VENV/bin/python" -c 'import apache_beam, pyarrow, pytest; print(apache_beam.__version__)' 2>/dev/null)" = "$BEAM_PYTHON_VERSION" ]; then
+    echo "Beam Python SDK $BEAM_PYTHON_VERSION already present: $BEAM_PYTHON_VENV"
+  else
+    echo "Installing the Beam Python SDK $BEAM_PYTHON_VERSION into $BEAM_PYTHON_VENV..."
+    for i in 1 2 3; do
+      if python3 -m venv "$BEAM_PYTHON_VENV" \
+        && "$BEAM_PYTHON_VENV/bin/python" -m pip install -q --upgrade pip \
+        && "$BEAM_PYTHON_VENV/bin/python" -m pip install -q "apache-beam[gcp,dataframe]==$BEAM_PYTHON_VERSION" pytest; then
+        break
+      fi
+      echo "  Beam Python SDK install attempt $i failed, retrying..."
+      sleep $((i * 10))
+    done
+  fi
+  if "$BEAM_PYTHON_VENV/bin/python" -c 'import apache_beam, pyarrow' 2>/dev/null; then
+    # for the session's commands, and for this script's own warm-up of beam-adapter below
+    export INVARACT_TEST_PYTHON="$BEAM_PYTHON_VENV/bin/python"
+    echo "export INVARACT_TEST_PYTHON=\"$INVARACT_TEST_PYTHON\"" >> "$CLAUDE_ENV_FILE"
+  else
+    echo "WARNING: could not install the Beam Python SDK - beam-adapter's Python suites will cancel themselves" >&2
+  fi
+fi
+
 if command -v sbt &> /dev/null; then
   echo "sbt: $(sbt --version 2>&1 | tail -1)"
 fi
@@ -170,6 +204,7 @@ if command -v sbt &> /dev/null; then
   warm_module "verification-core" "compile test assembly publishLocal"
   warm_module "adapter-testkit" "compile test publishLocal"
   warm_module "spark-adapter" "compile test assembly publishLocal"
+  warm_module "beam-adapter" "compile test publishLocal"
   warm_module "runner" "compile assembly"
 fi
 

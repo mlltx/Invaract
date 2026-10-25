@@ -283,15 +283,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       - name: Mutation test ir
         if: github.event_name != 'pull_request'
@@ -354,15 +347,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # fingerprint's build.sbt resolves ir as a real libraryDependency
       # against its own published coordinate (no aggregating root
@@ -431,15 +417,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # verification-core's build.sbt resolves contract, ir and fingerprint as
       # real libraryDependencies against their published coordinates (no
@@ -488,6 +467,121 @@ jobs:
         with:
           name: mutation-report-verification-core
           path: verification-core/target/stryker4s-report/**
+          if-no-files-found: warn
+
+  # adapter-testkit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4): the conformance kit defines what
+  # "conformant" means, so it is mutation-tested like the code it judges. Spark-free, fast suite
+  # (the reference adapter), so like verification-core it runs whole-module on pushes and
+  # incrementally on a PR. The break threshold is the one in adapter-testkit/build.sbt.
+  mutation-testing-adapter-testkit:
+    name: Mutation testing (adapter-testkit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      # The kit's build.sbt resolves verification-core (and through it contract, ir and
+      # fingerprint) as published libraryDependencies - the shared action publishes them.
+      - name: Publish the engine modules locally (the kit's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Mutation test adapter-testkit
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: cd adapter-testkit && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
+
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          # Scenarios.scala is excluded from mutation (adapter-testkit/build.sbt says why: the injected code pushes its
+          # object initialiser past the JVM method-size limit), and a --mutate on the command line overrides that
+          # setting, so the file is dropped from the changed list here too.
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "adapter-testkit/src/main/scala/" | grep '\.scala$' | grep -v 'testkit/Scenarios\.scala$' | sed "s|^adapter-testkit/||" || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "=== adapter-testkit: no changed files under src/main/scala, skipping ==="
+          else
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== adapter-testkit: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd adapter-testkit && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-adapter-testkit
+          path: adapter-testkit/target/stryker4s-report/**
+          if-no-files-found: warn
+
+  # beam-adapter (docs/BEAM_ADAPTER.md): the Apache Beam adapter. It has no Spark dependency, so like
+  # adapter-testkit and verification-core it skips the Spark cache sequence and runs its own suite (Beam's
+  # in-process DirectRunner) whole-module on pushes and incrementally on a PR. The break threshold is the
+  # one in beam-adapter/build.sbt.
+  mutation-testing-beam-adapter:
+    name: Mutation testing (beam-adapter)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      # beam-adapter's build.sbt resolves contract, ir, verification-core and (in tests) the kit as published
+      # libraryDependencies - the shared action publishes them.
+      - name: Publish the engine modules locally (beam-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Mutation test beam-adapter
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: cd beam-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
+
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "beam-adapter/src/main/scala/" | grep '\.scala$' | sed "s|^beam-adapter/||" || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "=== beam-adapter: no changed files under src/main/scala, skipping ==="
+          else
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== beam-adapter: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd beam-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-beam-adapter
+          path: beam-adapter/target/stryker4s-report/**
           if-no-files-found: warn
 
   # spark-adapter's own whole-module Stryker run was, by itself, the real
@@ -610,7 +704,7 @@ jobs:
           - name: shard-8
             files: "src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala"
           - name: shard-9
-            files: "src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala,src/main/scala/com/invaract/sparkadapter/DeclaredOutputs.scala"
           - name: shard-10
             files: "src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/DryRunReporter.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala"
     steps:
@@ -619,15 +713,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       - name: Cache Spark distribution
         id: cache-spark
@@ -712,15 +799,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       - name: Cache Spark distribution
         id: cache-spark
@@ -913,6 +993,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       engine: ${{ steps.detect.outputs.engine }}
+      # beam-adapter has its own matrix (beam-version-matrix), re-run by a change to it or to what it is built from; a
+      # change to beam-adapter alone does not re-run the Spark/Delta/Iceberg matrices (modules.json, sparkMatrix)
+      beam: ${{ steps.detect.outputs.beam }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -925,18 +1008,26 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "beam=true" >> "$GITHUB_OUTPUT"
             echo "Not a pull request: version matrices always run."
             exit 0
           fi
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- spark-adapter verification-core .github/workflows/test.yml)
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit spark-adapter .github/workflows/test.yml .github/actions)
           if [ -n "$CHANGED" ]; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "Engine files changed, version matrices will run:"
             echo "$CHANGED"
           else
             echo "engine=false" >> "$GITHUB_OUTPUT"
-            echo "No spark-adapter / verification-core / workflow change: version matrices skipped."
+            echo "No engine module (contract, ir, fingerprint, verification-core, adapter-testkit, spark-adapter) or workflow change: version matrices skipped."
+          fi
+          # the Beam matrix: beam-adapter and what it is built from (not spark-adapter)
+          BEAM_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit beam-adapter .github/workflows/test.yml .github/actions)
+          if [ -n "$BEAM_CHANGED" ]; then
+            echo "beam=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "beam=false" >> "$GITHUB_OUTPUT"
           fi
 
   spark-version-matrix:
@@ -984,15 +1075,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # spark-adapter's build.sbt resolves ir and contract as real
       # libraryDependencies against their own published coordinate (no
@@ -1062,15 +1146,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # spark-adapter's build.sbt resolves contract/ir as real
       # libraryDependencies against their own published coordinate (not
@@ -1130,15 +1207,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # spark-adapter's build.sbt resolves contract/ir as real
       # libraryDependencies against their own published coordinate (not
@@ -1155,6 +1225,101 @@ jobs:
         run: |
           cd spark-adapter
           sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec *MultiCatalogQualifierSpec"
+
+  beam-version-matrix:
+    name: Beam version compatibility (beam-adapter, ${{ matrix.beam-version }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.beam == 'true'
+    # beam-adapter's own suite (the 51 conformance scenarios as real pipelines on the in-process DirectRunner, the attach
+    # tests and the unit tests) against more than the one Beam release its build.sbt compiles against. The adapter reads a
+    # FileIO write's destination and sink from non-public members of FileIO.Write and recognises IO transforms by class
+    # name; a release that changes either makes those writes fail closed, and this matrix is where that shows up first.
+    # Beam is `provided`/test-scope in beam-adapter/build.sbt, overridable through INVARACT_TEST_BEAM_VERSION, so no Beam
+    # install is needed. The releases CI has evidence for are listed in
+    # beam-adapter/src/main/resources/supported-beam-versions.properties (version-matrix-drift-check keeps the two in step).
+    strategy:
+      fail-fast: false
+      matrix:
+        beam-version: ["2.60.0", "2.65.0", "2.70.0", "2.77.0"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally (beam-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Test beam-adapter against Beam ${{ matrix.beam-version }}
+        shell: bash
+        env:
+          INVARACT_TEST_BEAM_VERSION: ${{ matrix.beam-version }}
+        run: cd beam-adapter && sbt test
+
+  beam-python:
+    name: Beam Python adapter (beam-adapter's Python suites, SDK ${{ matrix.beam-python-version }})
+    runs-on: ubuntu-latest
+    # a run takes about ten minutes; the cap stops an install that pip's resolver cannot settle from holding a runner
+    timeout-minutes: 60
+    needs: changes
+    if: needs.changes.outputs.beam == 'true'
+    # docs/BEAM_PYTHON_ADAPTER.md. First the Python package's own tests (pytest), then beam-adapter's suites that read Python
+    # pipelines: the unit tests on recorded pipelines, the conformance kit's scenarios (BeamPythonConformanceSpec), the attach
+    # tests and the attested claims. They run strictly here (INVARACT_CONFORMANCE_STRICT): without this job's Python
+    # environment the live suites are canceled, as in every other beam-adapter run, and this is the job where a missing
+    # environment is a failure.
+    #
+    # One run per Python SDK release a team may write its pipelines with. The pipelines the unit tests read
+    # (src/test/resources/portable) are recorded afresh with that release first, so a renamed source or sink class, display
+    # key or coder shows up as a failing assertion on the release that renamed it. The checker is this commit's beam-adapter,
+    # built against beam.primary's Java libraries whatever the SDK, as the released checker jar is. The releases CI has
+    # evidence for are beam.python.verified in supported-beam-versions.properties (version-matrix-drift-check keeps the two
+    # in step); the committed recordings are made with beam.python.primary. 2.68.0 is the first Python SDK whose
+    # WriteToParquet takes triggering_frequency, which a streaming file write needs.
+    strategy:
+      fail-fast: false
+      matrix:
+        beam-python-version: ["2.68.0", "2.71.0", "2.74.0", "2.77.0"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally (beam-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The package is built, not installed: the suites below put it on PYTHONPATH, and one of them shows a job on a machine
+      # where it is not installed, which an installed package would make impossible.
+      - name: Install the Python SDK ${{ matrix.beam-python-version }}, and build the package
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "apache-beam[gcp,dataframe]==${{ matrix.beam-python-version }}" pytest
+          python -m pip wheel --no-deps -w "$RUNNER_TEMP/wheel" beam-adapter/python
+
+      - name: Record the test pipelines with this SDK
+        shell: bash
+        run: cd "$(mktemp -d)" && python "$GITHUB_WORKSPACE/beam-adapter/python/tests/record_fixtures.py" "$GITHUB_WORKSPACE/beam-adapter/src/test/resources/portable"
+
+      - name: Test the Python package
+        shell: bash
+        run: cd beam-adapter/python && python -m pytest -q
+
+      - name: Run the Python pipelines through the checker
+        shell: bash
+        run: |
+          export INVARACT_TEST_PYTHON="$(command -v python)"
+          export INVARACT_CONFORMANCE_STRICT=true
+          cd beam-adapter && sbt "testOnly *PortablePipelineSpec *PythonStepsSpec *PortableCheckSpec *BeamAdviceSpec *BeamPythonConformanceSpec *BeamPythonAttachSpec *BeamPythonAttestedClaimsSpec"
 
   version-matrix-drift-check:
     name: Version matrix drift check
@@ -1223,12 +1388,16 @@ jobs:
               return [v.strip().strip('"') for v in array_match.group(1).split(",") if v.strip()]
 
           props = parse_properties("spark-adapter/src/main/resources/supported-versions.properties")
+          # beam-adapter keeps its own list: the Beam releases its suite has passed on
+          props.update(parse_properties("beam-adapter/src/main/resources/supported-beam-versions.properties"))
           workflow_path = ".github/workflows/test.yml"
 
           checks = [
               ("spark", "spark-version-matrix", "spark-version"),
               ("delta", "delta-version-matrix", "delta-version"),
               ("iceberg", "iceberg-version-matrix", "iceberg-version"),
+              ("beam", "beam-version-matrix", "beam-version"),
+              ("beam.python", "beam-python", "beam-python-version"),
           ]
 
           drifted = False
@@ -1256,7 +1425,9 @@ jobs:
     # dev/generate-version-docs regenerates the "Supported versions"
     # sections of docs-site/src/content/docs/reference/spark-version-
     # support.mdx, connector-support.mdx, and docs/COMPATIBILITY.md from
-    # supported-versions.properties (see that file's own header comment,
+    # supported-versions.properties, and the Beam release lists in the Beam
+    # guides and design docs from supported-beam-versions.properties (see
+    # each file's own header comment,
     # and dev/generate-version-docs's own comment for the exact scope - the
     # investigative prose around each table stays hand-written, only the
     # version enumeration and status badges are generated). This job runs
@@ -1290,6 +1461,17 @@ jobs:
         shell: bash
         run: cd .github/scripts && python3 -m unittest -v test_runner_loss
 
+      # modules.json is the one list of the repository's sbt modules; every file that keeps its own
+      # (the CI loops, the release steps, dev/build, the warm-up list, the dependency graph, the mutation
+      # jobs) must agree with it, and each adapter must run the conformance kit. See check_modules.py.
+      - name: Unit-test check_modules.py and dev/new-adapter
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_check_modules test_new_adapter
+
+      - name: Module registry check (modules.json against every file that lists modules)
+        shell: bash
+        run: python3 .github/scripts/check_modules.py
+
       - name: memwatch.sh passes the wrapped command's exit status through
         shell: bash
         run: |
@@ -1300,6 +1482,34 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 7 || { echo "expected exit status 7, got $status"; exit 1; }
+
+  adapter-scaffold-check:
+    name: Adapter scaffold check (dev/new-adapter builds and passes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # dev/new-adapter generates the skeleton a new engine adapter starts from (docs/ADDING_AN_ENGINE_ADAPTER.md).
+    # A template nobody builds rots: it would drift from the kit's API or the sibling modules' versions and
+    # then fail the first person who used it. So every run generates a skeleton into a scratch directory
+    # (without registering it) and builds and tests it against the modules as they are now. As generated, every
+    # capability is declared unsupported, so every conformance scenario is canceled and the build passes; what
+    # fails here is a template that no longer compiles.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules and the conformance kit locally
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Generate a skeleton
+        shell: bash
+        run: python3 dev/new-adapter scaffoldcheck --display ScaffoldCheck --out "$RUNNER_TEMP/scaffold"
+
+      - name: Build and test the skeleton
+        shell: bash
+        run: cd "$RUNNER_TEMP/scaffold/scaffoldcheck-adapter" && sbt test
 
   api-compatibility:
     name: API compatibility (contract, ir, fingerprint, verification-core, spark-adapter)
@@ -1344,15 +1554,8 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base-ref
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # The base ref's modules are published into an ISOLATED Ivy home, the PR head's into the
       # default one. They used to share one cache, so a module whose dependency set changed had to
@@ -1373,7 +1576,7 @@ jobs:
         run: |
           BASE_IVY="$RUNNER_TEMP/ivy-base"
           mkdir -p "$BASE_IVY"
-          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter beam-adapter; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, skipping ==="
               continue
@@ -1386,7 +1589,7 @@ jobs:
         shell: bash
         run: |
           BASE_IVY="$RUNNER_TEMP/ivy-base"
-          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter beam-adapter; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare ==="
             else
@@ -1434,15 +1637,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # Dependency order, same as api-compatibility's own loop: contract/ir
       # have no cross-module dependency, fingerprint depends on ir alone,
@@ -1471,7 +1667,7 @@ jobs:
       - name: Coverage gate each module
         shell: bash
         run: |
-          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter beam-adapter; do
             echo "=== $module: coverage test + report (coverageFailOnMinimum enforces this module's own thresholds) ==="
             (cd "$module" && sbt "coverage; test; coverageReport")
           done
@@ -1508,15 +1704,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # Reuses the same build entrypoint the `test` job uses, in the same
       # dependency order (contract, ir, plugin concurrently, then
@@ -1545,10 +1734,9 @@ jobs:
           # last command in its pipeline), which is always 0 - masking a
           # real `sbt makeBom` failure and letting this step pass silently.
           set -o pipefail
-          # See dependency-graph.yml for why this list is also spelled out
-          # there - kept in sync by hand, not derived from a shared source.
+          # Every module in modules.json; check_modules.py fails when this list drifts from it.
           pids=()
-          for m in contract ir fingerprint verification-core plugin spark-adapter runner notification-kafka; do
+          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter beam-adapter runner notification-kafka registry-client; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -1577,10 +1765,13 @@ jobs:
             contract/target/*.bom.json
             ir/target/*.bom.json
             fingerprint/target/*.bom.json
+            verification-core/target/*.bom.json
+            adapter-testkit/target/*.bom.json
             plugin/target/*.bom.json
             spark-adapter/target/*.bom.json
             runner/target/*.bom.json
             notification-kafka/target/*.bom.json
+            registry-client/target/*.bom.json
             web/sbom.json
           if-no-files-found: error
 
@@ -1598,15 +1789,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'sbt'
-
-      - name: Set up sbt
-        uses: sbt/setup-sbt@v1
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
 
       # notification-kafka needs spark-adapter's assembly jar (for
       # NotificationSink/NotificationEvent) via unmanagedJars - unchanged.
@@ -1630,15 +1814,35 @@ jobs:
         run: cd notification-kafka && sbt test
         shell: bash
 
+  registry-client:
+    name: Build and test registry-client
+    runs-on: ubuntu-latest
+    # registry-client (docs/CONTRACT_REGISTRY.md) is opt-in and not built by dev/build, so nothing else
+    # compiles it: it pinned a contract version that no longer existed, and could not build at all, without
+    # any check noticing. A single Linux leg is enough (no Spark, no platform-specific code).
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish contract locally (registry-client's libraryDependency)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Test registry-client
+        run: cd registry-client && sbt test
+        shell: bash
+
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

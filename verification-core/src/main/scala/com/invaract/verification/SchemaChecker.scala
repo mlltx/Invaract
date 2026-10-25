@@ -97,7 +97,10 @@ private[invaract] object SchemaChecker {
       rejectUndeclaredFields: Boolean,
       caseSensitive: Boolean
   ): List[Violation] =
-    checkFields(contractFields, actualSchema.fields, "", side, location, rejectUndeclaredFields, caseSensitive)
+    // a dataset that declares no fields does not govern its content (ContractValidator warns): nothing to compare, and no
+    // column of it is "undeclared"
+    if (contractFields.isEmpty) Nil
+    else checkFields(contractFields, actualSchema.fields, "", side, location, rejectUndeclaredFields, caseSensitive)
 
   private def key(name: String, caseSensitive: Boolean): String = LogicalType.nameKey(name, caseSensitive)
 

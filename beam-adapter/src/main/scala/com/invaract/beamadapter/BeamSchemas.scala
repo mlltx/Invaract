@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invaract Contributors
+
+package com.invaract.beamadapter
+
+import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
+import org.apache.beam.sdk.coders.{
+  BigEndianIntegerCoder, BigEndianLongCoder, BigEndianShortCoder, BooleanCoder, ByteArrayCoder, ByteCoder, Coder, DoubleCoder, FloatCoder,
+  KvCoder, NullableCoder, StringUtf8Coder, VarIntCoder, VarLongCoder
+}
+import org.apache.beam.sdk.schemas.Schema.{FieldType, TypeName}
+import org.apache.beam.sdk.schemas.{Schema => BeamSchema}
+import org.yaml.snakeyaml.Yaml
+
+import scala.collection.JavaConverters._
+import scala.util.Try
+
+/** What a collection's columns are, in the contract's terms: from the Beam row schema when the collection has one, from
+  * the Avro schema its coder carries (a Parquet or Avro read yields Avro records), or, for key-value pairs of plain values (what
+  * a Kafka read without metadata yields and a Kafka write takes), the columns `key` and `value`, as Kafka and Spark name them. Both mappings follow
+  * docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md; a type with no neutral equivalent becomes `OtherType`, which equals only itself,
+  * so a mismatch stays visible instead of being papered over by a lossy guess.
+  *
+  * The Avro schema is read from its JSON text (a JSON document is also a YAML one, and the contract module already reads
+  * YAML), so this adapter does not need Avro on its own classpath: a job that never touches Avro is unaffected.
+  */
+private[beamadapter] object BeamSchemas {
+
+  /** The columns of `collection`, or `None` when it exposes none (a collection of plain Java objects). */
+  def of(collection: BeamCollection): Option[LogicalSchema] =
+    collection.rowSchema.map(fromBeam).orElse(collection.coder.flatMap(fromCoder))
+
+  def fromBeam(schema: BeamSchema): LogicalSchema =
+    LogicalSchema(schema.getFields.asScala.toList.map(f => LogicalField(f.getName, beamType(f.getType), f.getType.getNullable)))
+
+  private def beamType(t: FieldType): LogicalType = t.getTypeName match {
+    case TypeName.BYTE     => LogicalType.ByteType
+    case TypeName.INT16    => LogicalType.ShortType
+    case TypeName.INT32    => LogicalType.IntegerType
+    case TypeName.INT64    => LogicalType.LongType
+    case TypeName.FLOAT    => LogicalType.FloatType
+    case TypeName.DOUBLE   => LogicalType.DoubleType
+    case TypeName.STRING   => LogicalType.StringType
+    case TypeName.BOOLEAN  => LogicalType.BooleanType
+    case TypeName.BYTES    => LogicalType.BinaryType
+    // a Beam DECIMAL carries no precision or scale, so no neutral decimal(p,s) can be claimed for it
+    case TypeName.DECIMAL  => LogicalType.OtherType("decimal")
+    // Beam's primitive DATETIME is an instant (a Joda DateTime), so it is a timestamp, not a local date-time
+    case TypeName.DATETIME => LogicalType.TimestampType
+    case TypeName.ARRAY | TypeName.ITERABLE => LogicalType.ArrayType(beamType(t.getCollectionElementType))
+    case TypeName.MAP      => LogicalType.MapType(beamType(t.getMapKeyType), beamType(t.getMapValueType))
+    case TypeName.ROW      => LogicalType.StructType(fromBeam(t.getRowSchema).fields)
+    case TypeName.LOGICAL_TYPE => logicalType(t.getLogicalType)
+    case other             => LogicalType.OtherType(other.name().toLowerCase)
+  }
+
+  /** Beam's logical types by identifier (`beam:logical_type:<name>:v1`, `Enum` for an enumeration), as Beam SQL and the schema
+    * transforms use them: the date and time types, a fixed-precision decimal (its precision and scale are the type's argument), and
+    * the string and bytes types that only bound a length. Any other identifier keeps it: a type the adapter cannot name is never
+    * guessed from its base type. */
+  private def logicalType(lt: BeamSchema.LogicalType[_, _]): LogicalType = lt.getIdentifier match {
+    case "beam:logical_type:date:v1"                                         => LogicalType.DateType
+    case "beam:logical_type:time:v1"                                         => LogicalType.TimeType
+    case "beam:logical_type:datetime:v1"                                     => LogicalType.TimestampNtzType
+    case "beam:logical_type:micros_instant:v1" | "beam:logical_type:nanos_instant:v1" | "beam:logical_type:millis_instant:v1" =>
+      LogicalType.TimestampType
+    case "beam:logical_type:fixed_decimal:v1" => decimalOf(lt).getOrElse(LogicalType.OtherType("fixed_decimal"))
+    case "beam:logical_type:fixed_char:v1" | "beam:logical_type:var_char:v1" | "beam:logical_type:uuid:v1" | "Enum" => LogicalType.StringType
+    case "beam:logical_type:fixed_bytes:v1" | "beam:logical_type:var_bytes:v1"                                    => LogicalType.BinaryType
+    case other => LogicalType.OtherType(other)
+  }
+
+  /** A fixed-precision decimal's precision and scale: from its argument row when Beam gives one, otherwise from the two fields
+    * `FixedPrecisionNumeric` keeps them in (it returns no argument in the releases tested). `None` when neither can be read, so the
+    * column is not given a precision nobody stated. */
+  private def decimalOf(lt: BeamSchema.LogicalType[_, _]): Option[LogicalType] = {
+    def fromArgument = Try(lt.getArgument[org.apache.beam.sdk.values.Row]).toOption.flatMap(Option(_))
+      .flatMap(arg => Try(LogicalType.DecimalType(arg.getInt32("precision").intValue, arg.getInt32("scale").intValue)).toOption)
+    def fromFields = Try {
+      def field(name: String): Int = Reflection.field(lt, name).asInstanceOf[java.lang.Integer].intValue
+      LogicalType.DecimalType(field("precision"), field("scale"))
+    }.toOption
+    fromArgument.orElse(fromFields)
+  }
+
+  /** The Avro schema `coder` carries, as the contract's columns. An Avro coder exposes it as `getSchema` (an
+    * `org.apache.avro.Schema`, read here through its JSON form, so no Avro class is needed by this module). */
+  private def fromCoder(coder: Coder[_]): Option[LogicalSchema] = coder match {
+    case kv: KvCoder[_, _] =>
+      for { (k, kn) <- plainValue(kv.getKeyCoder); (v, vn) <- plainValue(kv.getValueCoder) } yield
+        LogicalSchema(List(LogicalField("key", k, kn), LogicalField("value", v, vn)))
+    case _ => fromAvroCoder(coder)
+  }
+
+  /** The type of a plain value its coder encodes, and whether it may be null; `None` for anything else (an object). */
+  private def plainValue(coder: Coder[_]): Option[(LogicalType, Boolean)] = coder match {
+    case n: NullableCoder[_] => plainValue(n.getValueCoder).map { case (t, _) => (t, true) }
+    case _: StringUtf8Coder                       => Some((LogicalType.StringType, false))
+    case _: VarLongCoder | _: BigEndianLongCoder  => Some((LogicalType.LongType, false))
+    case _: VarIntCoder | _: BigEndianIntegerCoder => Some((LogicalType.IntegerType, false))
+    case _: BigEndianShortCoder                   => Some((LogicalType.ShortType, false))
+    case _: ByteCoder                             => Some((LogicalType.ByteType, false))
+    case _: DoubleCoder                           => Some((LogicalType.DoubleType, false))
+    case _: FloatCoder                            => Some((LogicalType.FloatType, false))
+    case _: BooleanCoder                          => Some((LogicalType.BooleanType, false))
+    case _: ByteArrayCoder                        => Some((LogicalType.BinaryType, false))
+    case _                                        => None
+  }
+
+  private def fromAvroCoder(coder: Coder[_]): Option[LogicalSchema] =
+    Try(Option(Reflection.call(coder, "getSchema")).map(_.toString)).toOption.flatten.flatMap(fromAvroJson)
+
+  /** The columns of an Avro record schema given as JSON, or `None` when it is not a record. */
+  def fromAvroJson(json: String): Option[LogicalSchema] =
+    // anything that is not a well-formed record (not JSON, no `fields`) is "no columns", never an exception into the job's launch
+    Try(new Yaml().load[AnyRef](json) match {
+      case record: java.util.Map[_, _] if record.get("type") == "record" => Some(recordSchema(record.asInstanceOf[java.util.Map[String, AnyRef]]))
+      case _                                                             => None
+    }).toOption.flatten
+
+  private def recordSchema(record: java.util.Map[String, AnyRef]): LogicalSchema =
+    LogicalSchema(record.get("fields").asInstanceOf[java.util.List[java.util.Map[String, AnyRef]]].asScala.toList.map { f =>
+      val (dataType, nullable) = avroType(f.get("type"))
+      LogicalField(f.get("name").toString, dataType, nullable)
+    })
+
+  /** `(type, nullable)` of an Avro type: a union with `null` is that type, nullable; anything else is not nullable. */
+  private def avroType(avro: AnyRef): (LogicalType, Boolean) = avro match {
+    case name: String => (primitive(name), name == "null")
+    case union: java.util.List[_] =>
+      val branches = union.asScala.toList.map(_.asInstanceOf[AnyRef])
+      val nonNull = branches.filterNot(_ == "null")
+      val nullable = nonNull.size != branches.size
+      nonNull match {
+        case single :: Nil => (avroType(single)._1, nullable)
+        case _             => (LogicalType.OtherType("union"), nullable)
+      }
+    case complex: java.util.Map[_, _] => (complexType(complex.asInstanceOf[java.util.Map[String, AnyRef]]), false)
+    case _                            => (LogicalType.OtherType("unknown"), false)
+  }
+
+  private def primitive(name: String): LogicalType = name match {
+    case "boolean" => LogicalType.BooleanType
+    case "int"     => LogicalType.IntegerType
+    case "long"    => LogicalType.LongType
+    case "float"   => LogicalType.FloatType
+    case "double"  => LogicalType.DoubleType
+    case "bytes"   => LogicalType.BinaryType
+    case "string"  => LogicalType.StringType
+    // a bare name that is not a primitive is a reference to a named type defined elsewhere in the schema
+    case other     => LogicalType.OtherType(other)
+  }
+
+  private def complexType(t: java.util.Map[String, AnyRef]): LogicalType = {
+    def asInt(key: String, default: Int): Int = Option(t.get(key)).map(_.toString.toInt).getOrElse(default)
+    (t.get("type"), Option(t.get("logicalType")).map(_.toString)) match {
+      case ("record", _) => LogicalType.StructType(recordSchema(t).fields)
+      case ("array", _)  => LogicalType.ArrayType(avroType(t.get("items"))._1)
+      case ("map", _)    => LogicalType.MapType(LogicalType.StringType, avroType(t.get("values"))._1)
+      case ("enum", _)   => LogicalType.StringType
+      case (_, Some("decimal"))                                             => LogicalType.DecimalType(asInt("precision", 38), asInt("scale", 0))
+      case (_, Some("date"))                                                => LogicalType.DateType
+      case (_, Some("time-millis" | "time-micros"))                         => LogicalType.TimeType
+      case (_, Some("timestamp-millis" | "timestamp-micros"))               => LogicalType.TimestampType
+      case (_, Some("local-timestamp-millis" | "local-timestamp-micros"))   => LogicalType.TimestampNtzType
+      case (_, Some("uuid"))                                                => LogicalType.StringType
+      case ("fixed", _)                                                     => LogicalType.BinaryType
+      // `{"type": "long"}` and the like: a primitive written as an object
+      case (name: String, _) => primitive(name)
+      case _                 => LogicalType.OtherType("unknown")
+    }
+  }
+
+  /** The columns of a BigQuery table schema given as JSON (`{"fields":[{"name":..,"type":..,"mode":..,"fields":[..]}]}`, the form
+    * `BigQueryIO.write().withSchema(...)` publishes), mapped as docs/MULTI_ENGINE_ADAPTERS.md's type table says; `None` when it is not
+    * a table schema (a schema the job computes per destination is published as text, not JSON). */
+  def fromBigQueryJson(json: String): Option[LogicalSchema] =
+    Try(new Yaml().load[AnyRef](json) match {
+      case schema: java.util.Map[_, _] =>
+        Option(schema.asInstanceOf[java.util.Map[String, AnyRef]].get("fields")).collect { case fields: java.util.List[_] => bigQueryFields(fields) }
+      case _ => None
+    }).toOption.flatten
+
+  private def bigQueryFields(fields: java.util.List[_]): LogicalSchema =
+    LogicalSchema(fields.asScala.toList.map { f =>
+      val field = f.asInstanceOf[java.util.Map[String, AnyRef]]
+      val mode = Option(field.get("mode")).map(_.toString.toUpperCase).getOrElse("NULLABLE")
+      val element = bigQueryType(field)
+      // REPEATED is an array that is never null itself (BigQuery stores an empty array); REQUIRED is not nullable
+      if (mode == "REPEATED") LogicalField(field.get("name").toString, LogicalType.ArrayType(element), nullable = false)
+      else LogicalField(field.get("name").toString, element, nullable = mode != "REQUIRED")
+    })
+
+  private def bigQueryType(field: java.util.Map[String, AnyRef]): LogicalType = {
+    def asInt(key: String): Option[Int] = Option(field.get(key)).flatMap(v => Try(v.toString.toInt).toOption)
+    Option(field.get("type")).map(_.toString.toUpperCase).getOrElse("") match {
+      case "STRING"               => LogicalType.StringType
+      case "BYTES"                => LogicalType.BinaryType
+      case "INTEGER" | "INT64"    => LogicalType.LongType
+      case "FLOAT" | "FLOAT64"    => LogicalType.DoubleType
+      case "BOOLEAN" | "BOOL"     => LogicalType.BooleanType
+      case "NUMERIC"              => LogicalType.DecimalType(asInt("precision").getOrElse(38), asInt("scale").getOrElse(9))
+      // a BIGNUMERIC wider than the neutral decimal's 38 digits has no neutral equivalent
+      case "BIGNUMERIC" | "BIGDECIMAL" =>
+        (asInt("precision"), asInt("scale")) match {
+          case (Some(p), s) if p <= 38 => LogicalType.DecimalType(p, s.getOrElse(0))
+          case _                       => LogicalType.OtherType("bignumeric")
+        }
+      case "DATE"                 => LogicalType.DateType
+      case "DATETIME"             => LogicalType.TimestampNtzType
+      case "TIME"                 => LogicalType.TimeType
+      case "TIMESTAMP"            => LogicalType.TimestampType
+      case "JSON"                 => LogicalType.JsonType
+      case "GEOGRAPHY"            => LogicalType.GeographyType
+      case "INTERVAL"             => LogicalType.IntervalType
+      case "RECORD" | "STRUCT"    =>
+        Option(field.get("fields")).collect { case nested: java.util.List[_] => LogicalType.StructType(bigQueryFields(nested).fields) }
+          .getOrElse(LogicalType.OtherType("struct"))
+      case other                  => LogicalType.OtherType(other.toLowerCase)
+    }
+  }
+}

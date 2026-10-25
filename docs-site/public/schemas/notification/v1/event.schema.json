@@ -112,7 +112,7 @@
       }
     },
     "JobInfo": {
-      "description": "Where a dry-run event came from.",
+      "description": "Where an event came from: which engine and which job.",
       "type": "object",
       "required": ["attributes"],
       "properties": {
@@ -140,7 +140,7 @@
       "description": "A write (or state-changing CALL) was checked against a contract. status is PASSED or FAILED.",
       "allOf": [{ "$ref": "#/$defs/Envelope" }],
       "type": "object",
-      "required": ["contract", "status", "violations", "metadata", "runId", "fingerprints", "dataQuality", "roleConformance", "unverifiableInputs"],
+      "required": ["contract", "status", "violations", "metadata", "runId", "fingerprints", "dataQuality", "roleConformance", "unverifiableInputs", "job"],
       "properties": {
         "eventType": { "const": "CONTRACT_VALIDATION" },
         "contract": { "type": "string", "description": "id@version" },
@@ -151,16 +151,17 @@
         "fingerprints": { "oneOf": [{ "$ref": "#/$defs/TransformationFingerprint" }, { "type": "null" }] },
         "dataQuality": { "type": "array", "items": { "$ref": "#/$defs/DataQualityCheckResult" } },
         "roleConformance": { "type": "array", "items": { "$ref": "#/$defs/RoleConformanceCheckResult" } },
-        "unverifiableInputs": { "type": "array", "items": { "$ref": "#/$defs/UnverifiableInput" } }
+        "unverifiableInputs": { "type": "array", "items": { "$ref": "#/$defs/UnverifiableInput" } },
+        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }], "description": "Which engine and which job produced the event (engine, engineVersion, jobId, runId, attributes). null only if the adapter supplied none." }
       }
     },
     "WriteEvent": {
-      "description": "A write Spark actually executed successfully.",
+      "description": "A write the engine actually executed successfully.",
       "allOf": [{ "$ref": "#/$defs/Envelope" }],
       "type": "object",
       "required": [
         "contract", "location", "format", "saveMode", "schema", "metadata", "durationMs", "rowCount", "bytesWritten",
-        "fileCount", "runId", "deltaVersion", "icebergSnapshotId", "operation", "catalog", "partitionColumns", "datasetType"
+        "fileCount", "runId", "deltaVersion", "icebergSnapshotId", "operation", "catalog", "partitionColumns", "datasetType", "job"
       ],
       "properties": {
         "eventType": { "const": "WRITE" },
@@ -187,14 +188,15 @@
         "operation": { "type": ["string", "null"], "description": "merge, update or delete for row-level DML; otherwise null." },
         "catalog": { "oneOf": [{ "$ref": "#/$defs/CatalogInfo" }, { "type": "null" }] },
         "partitionColumns": { "type": "array", "items": { "type": "string" } },
-        "datasetType": { "type": ["string", "null"], "description": "DATA_ASSET, SOURCE or CONTROL, if the contract declares one for this output." }
+        "datasetType": { "type": ["string", "null"], "description": "DATA_ASSET, SOURCE or CONTROL, if the contract declares one for this output." },
+        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }], "description": "Which engine and which job produced the event (engine, engineVersion, jobId, runId, attributes). null only if the adapter supplied none." }
       }
     },
     "JobSummaryEvent": {
       "description": "Aggregate over the events a SummarizingNotificationSink saw (enforcement mode).",
       "allOf": [{ "$ref": "#/$defs/Envelope" }],
       "type": "object",
-      "required": ["totalWrites", "checksPassed", "checksFailed", "totalViolations", "durationMs", "metadata", "runId"],
+      "required": ["totalWrites", "checksPassed", "checksFailed", "totalViolations", "durationMs", "metadata", "runId", "job"],
       "properties": {
         "eventType": { "const": "JOB_SUMMARY" },
         "totalWrites": { "type": "integer" },
@@ -203,7 +205,8 @@
         "totalViolations": { "type": "integer" },
         "durationMs": { "type": "integer" },
         "metadata": { "type": "object" },
-        "runId": { "type": ["string", "null"] }
+        "runId": { "type": ["string", "null"] },
+        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }], "description": "Which engine and which job produced the event (engine, engineVersion, jobId, runId, attributes). null only if the adapter supplied none." }
       }
     },
     "ContractInferenceEvent": {

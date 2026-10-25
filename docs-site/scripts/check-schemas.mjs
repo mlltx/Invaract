@@ -43,6 +43,17 @@ for (const eventType of perType.keys()) {
   if (!seen.has(eventType)) failures.push(`no example published for ${eventType}`);
 }
 
+// The contract and organizational-policy schemas (published from contract/schema/ by
+// sync-contract-schemas.mjs, which prebuild runs first) must compile under strict mode too.
+const contractSchemas = join(root, '..', '..', 'contract');
+for (const file of readdirSync(contractSchemas).filter((f) => f.endsWith('.schema.json')).sort()) {
+  try {
+    new Ajv2020({ strict: true, allowUnionTypes: true }).compile(JSON.parse(readFileSync(join(contractSchemas, file), 'utf8')));
+  } catch (e) {
+    failures.push(`contract/${file}: ${e.message}`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(`check-schemas: ${failures.length} problem(s)\n  ${failures.join('\n  ')}`);
   process.exit(1);

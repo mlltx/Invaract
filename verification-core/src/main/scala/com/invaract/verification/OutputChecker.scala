@@ -59,6 +59,14 @@ private[invaract] object OutputChecker {
   private[invaract] def missingOutputs(outputs: List[Dataset]): List[Violation] =
     outputs.map(Violations.missingOutput)
 
+  /** One `MISSING_OUTPUT` per declared output that none of a job's writes lands on (`writeLocations`, by the same
+    * `LocationMatching` rule). A single-output contract that the job writes anywhere is not missing its output: the write is
+    * checked against that output (`expectedOutputFor`) and a wrong location is reported there, as
+    * `OUTPUT_LOCATION_MISMATCH`, rather than twice. */
+  def unwrittenOutputs(outputs: List[Dataset], writeLocations: List[String]): List[Violation] =
+    if (outputs.size == 1 && writeLocations.nonEmpty) Nil
+    else outputs.filterNot(o => writeLocations.exists(l => LocationMatching.matches(o.location, l))).map(Violations.outputNeverWritten)
+
   private def checkWrite(contract: Contract, write: Write, outputSchema: LogicalSchema, options: VerificationOptions, caseSensitive: Boolean): List[Violation] = {
     val location = locationFinding(contract.outputs, write.dataset.location)
     // A single-output contract checks format/saveMode/catalog/schema against its

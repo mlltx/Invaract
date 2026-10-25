@@ -6,8 +6,7 @@ sidebar:
 ---
 
 These scripts, under `dev/`, are how you build, exercise, and demonstrate Invaract from
-a cloned repository today — there's no published package yet (see
-[Installation](/getting-started/installation/)).
+a cloned repository (see [Installation](/getting-started/installation/)).
 
 | Command | Purpose |
 |---|---|
@@ -15,6 +14,7 @@ a cloned repository today — there's no published package yet (see
 | `./dev/build` | Build every module's jar, in dependency order, without running the demo job. |
 | `./dev/dry-run` | Run the demo job with no contract at all, and print one inferred from its actual inputs/outputs. See [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). |
 | `./dev/location-provider-demo` | Run the demo job against a contract whose input location is a `ref://` reference, resolved at startup from a location map. See [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/). |
+| `./dev/catalog-registration-demo` | A narrated walkthrough of catalog registration: three real Spark sessions against an embedded Hive metastore, one per scenario, printing every event published. See [Require Catalog Registration](/guides/requiring-catalog-registration/). |
 | `./dev/registry-demo` | Start a real invaract-registry server, register a contract into it, and run the demo job against a `registry://<id>@<version>` reference resolved from that server. See [Use a Contract Registry](/guides/using-a-contract-registry/). |
 | `./dev/regression` | Contract regression pack — proves a satisfied contract executes and a violated one is aborted before any output is written. See [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/). |
 | `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed. |
@@ -22,13 +22,33 @@ a cloned repository today — there's no published package yet (see
 
 ## Per-module commands
 
-Run from inside a module's directory (`contract`, `ir`, `spark-adapter`, `fingerprint`, or
-`plugin`):
+Each module is its own sbt build; there is no build at the repository root. Run these from
+inside a module's directory (`contract`, `ir`, `fingerprint`, `verification-core`,
+`spark-adapter`, `beam-adapter`, `plugin`, ...):
 
 | Command | Purpose |
 |---|---|
-| `sbt test` | Run that module's unit test suite in isolation. |
-| `sbt stryker` | Run mutation testing (`ir`/`spark-adapter`/`fingerprint`) — a code-quality check for contributors, not something a user of the engine needs to run. |
+| `sbt test` | Run that module's test suite in isolation. |
+| `sbt assembly` | Build the module's jar. In `beam-adapter`, this builds the checker jar Beam Python pipelines need, `target/scala-2.12/invaract-beam-checker-0.1.0.jar`. |
+
+## Contract command-line tools
+
+These check contracts without running any job, which makes them useful in a contracts
+repository's own CI. Run them from the repository root; file paths are relative to
+`contract/`, or absolute.
+
+| Command | Purpose | Guide |
+|---|---|---|
+| `cd contract && sbt "runMain com.invaract.contract.cli.MergeDraftsCli --id <id> --version <version> <drafts-dir>"` | Merge the dry-run drafts of a job with several writes into one contract. | [Dry-run mode](/guides/dry-run-mode/#merging-drafts-from-a-job-with-several-writes) |
+| `cd contract && sbt "runMain com.invaract.contract.cli.OrgPolicyLintCli <org-policy.yaml> <contracts-dir>"` | Check every contract in a directory against an organizational policy. | [Enforce an organizational policy](/guides/enforcing-organizational-policy/) |
+| `cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli <contracts-dir>"` | Check that contracts which feed each other agree on the dataset types between them. | [Declare input and output types](/guides/declaring-input-and-output-types/) |
+
+For example, from a real run against the demo's own contracts:
+
+```text
+$ cd contract && sbt "runMain com.invaract.contract.cli.CrossContractLintCli ../demo/contracts/"
+[ OK ] 10 contract(s) checked, no cross-contract issues found
+```
 
 ## Direct `spark-submit` invocation
 

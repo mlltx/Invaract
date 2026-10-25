@@ -1,18 +1,18 @@
 ---
 title: Connector Support
-description: Which Spark data sources Invaract recognizes, and what's checked for each.
+description: Which data sources and sinks Invaract recognizes on Spark and on Apache Beam, and what's checked for each.
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Invaract only verifies a write it can translate into a recognized `ir.Write` (see
-[The Transformation IR](/concepts/transformation-ir/)). A write shape it
-doesn't recognize is rejected outright rather than silently passed — see
+Invaract only verifies a write it recognizes: it has to know where the write lands, in what
+format, and with which columns (see [The Transformation IR](/concepts/transformation-ir/)).
+A write it doesn't recognize is rejected rather than silently passed — see
 [Fail-Closed by Default](/concepts/fail-closed/).
 
-## Supported connectors
+## Spark connectors
 
 | Connector | Reads | Writes | Row-level DML (`MERGE`/`UPDATE`/`DELETE`) | Tested library versions | Notes |
 |---|---|---|---|---|---|
@@ -30,10 +30,10 @@ Spark itself rejects those statements before any plan reaches Invaract, so there
 nothing to verify there.
 
 **Tested library versions** are CI-enforced, not aspirational — every push runs
-`spark-adapter`'s Delta/Iceberg-touching specs against each version listed. See
-`docs/connectors/delta.md` and `docs/connectors/iceberg.md`'s "Version compatibility"
-sections in the repository for the full mechanism, including which versions were
-deliberately excluded and why.
+Invaract's Delta and Iceberg tests against each version listed. The
+[Delta](https://github.com/mlltx/Invaract/blob/main/docs/connectors/delta.md) and
+[Iceberg](https://github.com/mlltx/Invaract/blob/main/docs/connectors/iceberg.md) notes in the
+repository say which versions were left out, and why.
 
 ## Recognized Spark write commands
 
@@ -45,6 +45,7 @@ regardless of which connector issued it:
 | `InsertIntoHadoopFsRelationCommand` | `df.write.parquet(...)`, `.csv(...)`, `.avro(...)` and similar file-format writes |
 | `SaveIntoDataSourceCommand` | `df.write.format("delta").save(...)`, and any other `CreatableRelationProvider`-based `.save(...)` |
 | `CreateDataSourceTableAsSelectCommand` | `df.write.saveAsTable(...)` / `CREATE TABLE ... AS SELECT` against a new table |
+| `WriteToStream` | `df.writeStream...start()`: a Structured Streaming query, checked once when it starts |
 
 Most new connectors need **zero new recognition code** — any connector built on
 `CreatableRelationProvider`'s `.save(...)` convention is already covered by
@@ -61,8 +62,31 @@ is **rejected** — `UNVERIFIABLE_WRITE` — rather than silently allowed throug
 violation vocabulary.
 
 <Aside type="tip">
-Streaming writes and DataSourceV2 catalog writes outside the shapes above currently fall
-into this fail-closed path too — support for a specific connector or write shape you
-need may already exist or be straightforward to add. Check the project's issue tracker
-or open one.
+A DataSourceV2 catalog write outside the shapes above falls into this fail-closed path too.
+Support for the connector you need may be straightforward to add: check the project's
+[issue tracker](https://github.com/mlltx/Invaract/issues) or open an issue.
 </Aside>
+
+## Apache Beam IOs
+
+The Beam adapter checks a pipeline before it runs, so it knows a read or a write by the IO
+transform the pipeline uses.
+
+| IO | Java pipelines | Python pipelines | Format checked as |
+|---|---|---|---|
+| Parquet | ✅ `ParquetIO` | ✅ `ReadFromParquet`, `WriteToParquet` | `parquet` |
+| Avro | ✅ `AvroIO` | ✅ `ReadFromAvro`, `WriteToAvro` | `avro` |
+| Text | ✅ `TextIO` | ✅ `ReadFromText`, `WriteToText` | `text`, `csv` or `json` (a text write can't tell them apart) |
+| CSV | ✅ `CsvIO.writeRows`; a read is `TextIO` then `CsvIO.parseRows` | `ReadFromCsv` is seen but has no location; `WriteToCsv` is refused | `csv` |
+| TFRecord | ✅ `TFRecordIO` | ✅ `ReadFromTFRecord`, `WriteToTFRecord` | `tfrecord` |
+| Files | ✅ `FileIO.match`, `FileIO.write`, `FileIO.writeDynamic` | Reads without a location (`MatchFiles`); `fileio.WriteToFiles` is refused | the sink's format |
+| BigQuery | ✅ tables (a query has no location) | ✅ tables (a query has no location) | `bigquery`, with its save mode |
+| Kafka | ✅ `KafkaIO` | — | `kafka` |
+| JDBC | ✅ `JdbcIO` | — | `jdbc` |
+| Pub/Sub | ✅ topics and subscriptions | ✅ topics and subscriptions | — |
+
+How each IO's location is written in a contract, and what Invaract can't tell from it, is in
+the guide for each SDK: [Java](/guides/using-invaract-with-apache-beam/#how-locations-are-written-in-a-contract)
+and [Python](/guides/using-invaract-with-beam-python/#where-locations-come-from). A step that
+ends the pipeline without being one of these writes is refused as `UNVERIFIABLE_WRITE`, unless
+a platform names it as a [trusted step](/reference/configuration/#making-the-checks-stricter).

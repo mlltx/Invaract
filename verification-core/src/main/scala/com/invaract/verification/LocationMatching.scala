@@ -28,6 +28,28 @@ package com.invaract.verification
   */
 private[invaract] object LocationMatching {
 
+  /** The canonical form of a name an engine addresses by parts rather than by path: BigQuery's
+    * `project`, `dataset`, `table`, a Hive-style `database`, `table`, a Beam resource's segments.
+    * Each part loses surrounding whitespace and one pair of backticks or double quotes (the
+    * quoting the engine's own SQL uses), empty parts are dropped, and the rest are joined with
+    * `/`: `Seq("proj", "ds", "orders")` is `proj/ds/orders`. An adapter calls this where it
+    * reports a location, so every adapter spells it the same way and a contract author writes the
+    * same form: `ds/orders` matches that table in any project, `proj/ds/orders` only in `proj`.
+    *
+    * A part is taken as given - the adapter splits the engine's identifier by the engine's own
+    * rules (a BigQuery legacy project id can contain `.` and `:`), because only the engine knows
+    * where one part ends.
+    */
+  def fromParts(parts: Seq[String]): String =
+    parts.map(unquote).filter(_.nonEmpty).mkString("/")
+
+  private def unquote(part: String): String = {
+    val trimmed = part.trim
+    if (trimmed.length >= 2 && ((trimmed.head == '`' && trimmed.last == '`') || (trimmed.head == '"' && trimmed.last == '"')))
+      trimmed.substring(1, trimmed.length - 1).trim
+    else trimmed
+  }
+
   /** The declared side only needs separators normalized; it is authored, not
     * reported by Spark, so it never carries a `file:` scheme to strip.
     */

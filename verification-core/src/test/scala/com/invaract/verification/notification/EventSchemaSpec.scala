@@ -47,14 +47,14 @@ class EventSchemaSpec extends AnyFunSuite {
       "demo@1.0.0", "FAILED", List(violation), 1L, Map("owner" -> "team-a", "n" -> 3), Some("app-1"), Some(transformation),
       List(DataQualityCheckResult("id", "NOT NULL", DataQualityVerdict.Guaranteed)),
       List(RoleConformanceCheckResult("orders", DatasetType.Source, RoleConformanceVerdict.Conforms, "read and used")),
-      List(UnverifiableInput("orders", "/in", List("LogicalRDD")))
+      List(UnverifiableInput("orders", "/in", List("LogicalRDD"))), Some(job)
     ),
     WriteEvent(
       Some("demo@1.0.0"), "file:/out", Some("parquet"), Some("overwrite"), List(WriteFieldInfo("id", "long", nullable = true)), 2L,
       Map("owner" -> "team-a"), 12L, Some(10L), Some(1024L), Some(1L), Some("app-1"), Some(3L), Some(99L), Some("merge"),
-      Some(CatalogInfo(Some("iceberg"), Some("local"), Some("/wh"), List("db"), Some("t"))), List("dt"), Some(DatasetType.Control)
+      Some(CatalogInfo(Some("iceberg"), Some("local"), Some("/wh"), List("db"), Some("t"))), List("dt"), Some(DatasetType.Control), Some(job)
     ),
-    JobSummaryEvent(1L, 2L, 3L, 4L, 5L, 6L, Map("k" -> "v"), Some("app-1")),
+    JobSummaryEvent(1L, 2L, 3L, 4L, 5L, 6L, Map("k" -> "v"), Some("app-1"), Some(job)),
     ContractInferenceEvent(
       "INFERRED_DEGRADED", Some("why"), Some("/out"), Some("id: x\nversion: 0.1.0"), Some("FAILED"), List(violation), List("d"),
       Some(transformation), job, 7L, Map("team" -> "data-eng")
@@ -170,7 +170,7 @@ class EventSchemaSpec extends AnyFunSuite {
     json.remove("eventId")
     json.remove("schemaVersion")
     val content = json.fieldNames().asScala.toList.sorted
-    assert(content == List("contract", "dataQuality", "eventType", "fingerprints", "metadata", "roleConformance", "runId", "status", "timestamp", "unverifiableInputs", "violations"))
+    assert(content == List("contract", "dataQuality", "eventType", "fingerprints", "job", "metadata", "roleConformance", "runId", "status", "timestamp", "unverifiableInputs", "violations"))
   }
 
   test("contractDigest is the SHA-256 of contractYaml (null without one), and identical drafts have identical digests") {

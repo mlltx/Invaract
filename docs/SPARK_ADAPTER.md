@@ -956,7 +956,60 @@ existing test asserted the *negative* case (a non-write action leaving
 captured" side). Fixed by adding exactly that test rather than leaving it
 undetected — see "Mutation testing" below for the resulting score.
 
+## Trust model: class names
+
+Three settings name a class that Invaract instantiates reflectively, and who can set each decides how much
+to trust it:
+
+| Where the name comes from | Setting | Who controls it |
+|---|---|---|
+| The contract | `customRuleTypes` (and an organizational policy's `customPolicyTypes`) | whoever can change the contract: a repository, or a registry's publishers |
+| Platform configuration | `sink.class` / `deadLetter.class` in the notification properties, `spark.invaract.registryClientClass` | whoever sets the job's `--conf` and files |
+
+Both kinds of lookup load the class **without initializing it**, check that it implements the expected
+interface, and only then construct it (`ReflectivePluginResolver`, `NotificationSinkFactory.instantiate`), so
+naming an unrelated class on the classpath runs none of its code. A class that does implement the interface is
+real code running in the driver: a contract is therefore an input to trust like the job's jar, and a registry
+that serves contracts must authenticate its publishers. The registry client class is instantiated without this
+check because it can only come from platform configuration, never from a contract.
+
+## Declared outputs never written (`DeclaredOutputs`)
+
+A contract that declares an output promises the job writes it (`check.outputsWritten`). Spark checks each write as it
+runs, from that write's own plan, and builds no plan of the whole job: when one write is checked, a later write has no
+plan yet, and the driver code may never reach it (an `if`, an exception, a loop). So a declared output never written is
+known only when the job ends, and Spark declares the capability `partial`.
+
+`ContractEnforcementRule.forContract` (and so `InvaractSparkSessionExtension`) records the location of every write it
+checks, in one `DeclaredOutputs` per application and contract, shared by every session that enforces the contract. A
+`SparkListener` decides it at application end: `VerificationPipeline.requireOutputsWritten` with every recorded location,
+which publishes a FAILED `ContractValidationEvent` with one `MISSING_OUTPUT` per declared output nothing landed on and
+logs the explanation as an error. The job's other writes have happened by then; nothing is blocked.
+
+With `spark.invaract.failOnMissingOutput=true` (`InvaractConf.FailOnMissingOutput`) the driver also exits with status 1
+(`DeclaredOutputs.ExitStatus`), so a scheduler or CI step running the job sees it fail and stops what depends on it. The
+exit is made by a Hadoop `ShutdownHookManager` hook at priority 0, after Spark's own shutdown (40) and the file systems'
+close (10); it calls `Runtime.halt`, which ends any other JVM shutdown hook still running (the last log lines can be
+lost). In YARN cluster mode a failed attempt may be retried (`spark.yarn.maxAppAttempts`), which runs the job again. A
+write Invaract cannot see (an RDD `saveAsTextFile`) is not recorded, so its output counts as never written.
+`DeclaredOutputsSpec` runs a real job in a JVM of its own and reads its exit status. The conformance kit's Spark runner
+ends each scenario's job with `DeclaredOutputs.finishAll`, which is how `declared-output-never-written` conforms on Spark.
+
 ## Known limitations
+
+- **A new V1 data-source table created with `.saveAsTable()` fails a `catalog.required` contract.** Spark
+  plans it as an outer `CreateDataSourceTableAsSelectCommand` (which carries the table's catalog identity)
+  and a nested `InsertIntoHadoopFsRelationCommand` (which does not: its `catalogTable` is `None`). Both
+  reach the check rule, so a contract whose output declares `catalog: {required: true}` rejects the nested
+  insert with `MISSING_OUTPUT_CATALOG_REGISTRATION` although the write is registered. An append onto a table
+  that already exists is unaffected (the nested insert then carries the table), and so are Delta and
+  Iceberg, whose atomic create goes through DSv2. Found by the conformance kit's
+  `catalog-required-output-registered` scenario, whose Spark runner therefore creates the table first and
+  checks only the append. The failure is closed (a false rejection, never a false pass).
+- **A path-based Delta `DELETE`/`UPDATE`/`MERGE` (`delta.`/path``) has no catalog storage location.** The
+  write's location is a best-effort rendering of the target plan (with a diagnostic), so a contract that
+  declares the output's location rejects it with `OUTPUT_LOCATION_MISMATCH`. A catalog-registered Delta
+  table is unaffected, which is why the conformance kit's DML scenarios run on one.
 
 - **No `SparkSessionExtensions`-based capture.** Only a `DataFrame`'s own
   `.queryExecution` or a registered `QueryExecutionListener` are used to
@@ -1471,7 +1524,11 @@ along on every event, without a second, parallel metadata vocabulary.
 **Both events also carry `runId: Option[String]`** (named `applicationId` before the
 event format went engine-neutral) — the owning `SparkSession`'s `sparkContext.applicationId`, so a consumer aggregating
 events from many concurrent jobs (or many runs of the same job over time)
-can group by run without inventing its own correlation ID.
+can group by run without inventing its own correlation ID. Both also carry
+`job: Option[JobInfo]` - the engine (`"spark"`), its version, the job's stable `jobId`
+(`spark.invaract.jobId`), the run and the `spark.invaract.job.metadata.*` attributes, the
+same object the dry-run events carry (`DryRunReporter.jobInfoOf`). `JobSummaryEvent` carries
+the job of the events it summarizes.
 `ContractValidationEvent` gets it from the `SparkSession` captured by
 `ContractEnforcementRule.forContract`'s closure at rule-installation time;
 `WriteEvent` gets it from `qe.sparkSession` on the `QueryExecution`
@@ -2117,6 +2174,10 @@ real `FileNotificationSink`.
 
 `com.invaract.sparkadapter.registry`
 (`spark-adapter/src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala`)
+is Spark's face of `com.invaract.verification.ContractReference`
+(verification-core, which holds the engine-neutral parsing, client loading
+and fetch; this object supplies Spark's spelling of `registryUrl` and
+`registryClientClass` and keeps its names and signatures). It
 answers the same shape of question "Location resolution" above answers
 for a `Dataset.location`, but for `spark.invaract.contract`'s own value:
 instead of naming a file path, it can name a contract living in a
@@ -2147,8 +2208,11 @@ repo — this module never depends on it directly).
   `NotificationSink` — the one difference is there is no shared trait to
   cast to here (that would itself be a compile-time dependency), so the
   two methods actually needed (`configure`, `get`/`getLatest`) are
-  invoked via plain `java.lang.reflect.Method.invoke` instead of a
-  virtual call. Their return type, `com.invaract.contract.Contract`, is a
+  found and invoked via plain `java.lang.reflect.Method` instead of a
+  virtual call. The class is loaded without being initialised and is
+  constructed only after it is shown to have those methods (and a
+  `Contract` return type), so naming an unrelated class on the classpath
+  runs none of its code. Their return type, `com.invaract.contract.Contract`, is a
   safe direct cast either way, since `contract` is already a real
   dependency of both this module and `registry-client`.
 - A job that never sets `spark.invaract.registryUrl` or uses a
@@ -3189,6 +3253,19 @@ be inline, each with its own spec:
   write and hands it to `StructuralVerifier`, `PlanRuleVerifier` (previously one full walk
   per declared rule), `StaticDataQualityVerifier` and `RoleConsistencyVerifier`. Order is the
   same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
+  A node with children that several parents share (an adapter for a graph-shaped engine, such
+  as Beam, hands over such plans; Spark's translation never does) is visited once, by
+  reference, so the walk is linear in the graph rather than in its paths; a node with no
+  children (a read) is still listed each time it is reached, so a table read on both sides of
+  a join stays two reads and a tree's lists are unchanged.
+- **Lineage, the property analysis and the fingerprint** resolve each column name once per
+  plan node (`ir.IdentityMemo`; docs/TRANSFORMATION_IR.md's "A plan is a graph"). Before,
+  a column defined from itself twice, repeated (`withColumn("v", col("v") + col("v"))`
+  22 times), took about 4 s each in lineage and the property analysis, doubling per step,
+  and its fingerprint inlined `2^k` copies of the bottom definition: reachable from an
+  ordinary Spark job with `staticDataQuality`, `roleConsistency`, sensitivity propagation
+  or `computeFingerprint` on. Now about 2 ms, and the fingerprint is a per-node hash
+  (fingerprint version 4).
 
 `StructuralVerifier.scala` was one 1,200-line file holding the result model, the violation
 vocabulary, `verify` (a ~230-line method) and the catalog checks. It is now an orchestrator over:

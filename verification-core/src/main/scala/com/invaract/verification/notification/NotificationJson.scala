@@ -3,6 +3,8 @@
 
 package com.invaract.verification.notification
 
+import scala.collection.JavaConverters._
+
 /** Renders a `NotificationEvent` as JSON for the built-in sinks
   * (`LoggingNotificationSink`/`FileNotificationSink`/`HttpNotificationSink`)
   * — a small, dependency-free encoder in the same hand-rolled style
@@ -63,7 +65,8 @@ object NotificationJson {
         "fingerprints" -> e.fingerprints.map(_.toMap),
         "dataQuality" -> e.dataQuality.map(_.toMap),
         "roleConformance" -> e.roleConformance.map(_.toMap),
-        "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap)
+        "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap),
+        "job" -> e.job.map(_.toMap)
       )
     case e: WriteEvent =>
       Map(
@@ -85,7 +88,8 @@ object NotificationJson {
         "operation" -> e.operation,
         "catalog" -> e.catalog.map(_.toMap),
         "partitionColumns" -> e.partitionColumns,
-        "datasetType" -> e.datasetType.map(_.name)
+        "datasetType" -> e.datasetType.map(_.name),
+        "job" -> e.job.map(_.toMap)
       )
     case e: JobSummaryEvent =>
       Map(
@@ -97,7 +101,8 @@ object NotificationJson {
         "totalViolations" -> e.totalViolations,
         "durationMs" -> e.durationMs,
         "metadata" -> e.metadata,
-        "runId" -> e.runId
+        "runId" -> e.runId,
+        "job" -> e.job.map(_.toMap)
       )
     case e: ContractInferenceEvent =>
       Map(
@@ -130,9 +135,10 @@ object NotificationJson {
   }
 
   /** Recursively renders any value `fields` above can produce — `Map`/`List`/
-    * `Option`/`String`/`Number`/`Boolean`/`null` — the same value shapes
-    * `Violation.toMap` and `Contract.extensions` (SnakeYAML-sourced) ever
-    * carry.
+    * `Option`/`String`/`Number`/`Boolean`/`null`, and the `java.util.Map`/
+    * `java.util.List` SnakeYAML leaves below the first level of
+    * `Contract.extensions` — the value shapes `Violation.toMap` and a
+    * contract's extensions ever carry.
     */
   def anyToJson(obj: Any): String = render(obj, sortKeys = false)
 
@@ -142,11 +148,12 @@ object NotificationJson {
   private def canonicalJson(obj: Any): String = render(obj, sortKeys = true)
 
   private def render(obj: Any, sortKeys: Boolean): String = obj match {
-    case m: Map[_, _] =>
-      val entries = if (sortKeys) m.toList.sortBy(_._1.toString) else m.toList
-      "{" + entries.map { case (k, v) => s""""${escape(k.toString)}": ${render(v, sortKeys)}""" }.mkString(", ") + "}"
-    case it: Iterable[_] =>
-      "[" + it.map(render(_, sortKeys)).mkString(", ") + "]"
+    case m: Map[_, _] => renderObject(m.toList, sortKeys)
+    // a contract's extensions hold SnakeYAML's own collections below their first level (a YAML mapping
+    // under `description:` is a java.util.Map), so they render as JSON too, not as their toString
+    case m: java.util.Map[_, _] => renderObject(m.asScala.toList, sortKeys)
+    case it: Iterable[_] => renderArray(it, sortKeys)
+    case it: java.lang.Iterable[_] => renderArray(it.asScala, sortKeys)
     case Some(v) => render(v, sortKeys)
     case None => "null"
     case s: String => quote(s)
@@ -155,6 +162,13 @@ object NotificationJson {
     case null => "null"
     case other => quote(other.toString)
   }
+
+  private def renderObject(entries: List[(Any, Any)], sortKeys: Boolean): String = {
+    val ordered = if (sortKeys) entries.sortBy(_._1.toString) else entries
+    "{" + ordered.map { case (k, v) => s""""${escape(k.toString)}": ${render(v, sortKeys)}""" }.mkString(", ") + "}"
+  }
+
+  private def renderArray(items: Iterable[_], sortKeys: Boolean): String = "[" + items.map(render(_, sortKeys)).mkString(", ") + "]"
 
   private def quote(s: String): String = "\"" + escape(s) + "\""
 

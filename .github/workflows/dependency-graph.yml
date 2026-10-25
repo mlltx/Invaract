@@ -6,7 +6,7 @@ name: Dependency Graph
 # on its own (unlike pom.xml or package-lock.json) - without this, Dependabot
 # silently sees zero Scala dependencies no matter what dependabot.yml says.
 #
-# Runs on push to main only, not on PRs: the dependency graph represents
+# Runs on push to main (or by hand), not on PRs: the dependency graph represents
 # the current state of the default branch, and submitting a snapshot per
 # PR branch would just create noise (see scalacenter/sbt-dependency-submission's
 # own usage docs).
@@ -14,6 +14,8 @@ on:
   push:
     branches:
       - main
+  # by hand, to check a change to this workflow on a branch before it reaches main
+  workflow_dispatch:
 
 # scalacenter/sbt-dependency-submission POSTs a snapshot via GitHub's
 # Dependency Submission API, which needs `contents: write` on the
@@ -32,11 +34,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Kept in sync by hand with the module list in test.yml's `sbom`
-        # job (and, transitively, dev/build's own dependency order) -
-        # there's no single source of truth across the three, so a new
-        # module added to one needs the same edit made in the others.
-        module: [contract, ir, fingerprint, verification-core, plugin, runner, spark-adapter, notification-kafka]
+        # Every module in modules.json - .github/scripts/check_modules.py (CI's "Module registry
+        # check") fails when this list and the registry disagree.
+        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, beam-adapter, notification-kafka, registry-client]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -51,43 +51,18 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # fingerprint resolves ir, and spark-adapter/runner resolve
-      # contract/ir/fingerprint (and, for runner, spark-adapter too), all
-      # as real libraryDependencies against their published coordinates,
-      # not unmanagedJars (see fingerprint/build.sbt's, spark-adapter/
-      # build.sbt's, and runner/build.sbt's own comments) - each matrix leg
-      # here is an independent job/checkout, so unlike dev/build's single
-      # ordered run, this needs its own publishLocal of every such
-      # dependency before the submission step can resolve them, the same
-      # fix already applied to every spark-adapter-building job in
-      # test.yml. No-op for contract/plugin/notification-kafka, which have
-      # no such dependency to publish first.
-      #
-      # fingerprint originally wasn't included in this condition - its own
-      # "Submit fingerprint dependencies" step failed with the identical
-      # "Error downloading com.invaract:invaract-ir_2.12" ResolveException
-      # spark-adapter/runner's jobs already guard against, confirmed on a
-      # real run (2026-09-12) against main, since this workflow only
-      # triggers on a push to main and fingerprint's own real dependency on
-      # ir predates that run.
-      - name: Publish local dependencies for ${{ matrix.module }}
-        if: matrix.module == 'fingerprint' || matrix.module == 'verification-core' || matrix.module == 'spark-adapter' || matrix.module == 'runner'
-        run: |
-          if [ "${{ matrix.module }}" = "fingerprint" ]; then
-            cd ir && sbt -batch publishLocal && cd ..
-          fi
-          if [ "${{ matrix.module }}" = "verification-core" ] || [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
-            cd contract && sbt -batch publishLocal && cd ..
-            cd ir && sbt -batch publishLocal && cd ..
-            cd fingerprint && sbt -batch publishLocal && cd ..
-          fi
-          if [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
-            cd verification-core && sbt -batch publishLocal && cd ..
-            cd adapter-testkit && sbt -batch publishLocal && cd ..
-          fi
-          if [ "${{ matrix.module }}" = "runner" ]; then
-            cd spark-adapter && sbt -batch publishLocal && cd ..
-          fi
+      # Every module after contract resolves some of the engine modules (contract, ir, fingerprint, verification-core,
+      # adapter-testkit) by their published coordinates, not unmanagedJars, and each matrix leg is its own checkout, so they are
+      # published locally first - with the same cached action test.yml uses, which is a cache hit when they have not changed. It
+      # runs for every leg rather than a hand-kept list of which module needs which: that list was missed when beam-adapter
+      # joined the matrix, and its leg failed on every run from then on with "Error downloading com.invaract:invaract-contract_2.12".
+      - name: Publish the engine modules locally
+        uses: ./.github/actions/publish-engine-modules
+
+      # runner also resolves spark-adapter
+      - name: Publish spark-adapter locally (runner's dependency)
+        if: matrix.module == 'runner'
+        run: cd spark-adapter && sbt -batch publishLocal
 
       - name: Submit ${{ matrix.module }} dependencies
         uses: scalacenter/sbt-dependency-submission@v3

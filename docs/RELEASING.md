@@ -12,12 +12,14 @@ not before.
 
 ## What gets published
 
-Six modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
-`spark-adapter`. The first five plus `spark-adapter` are the verification engine CLAUDE.md's
+Seven modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit`,
+`spark-adapter` and `beam-adapter` (the Apache Beam adapter; it depends on `contract`, `ir` and
+`verification-core`, and on the kit in tests, so it is released after them and is independent of
+`spark-adapter`). The first five plus `spark-adapter` are the verification engine CLAUDE.md's
 "What's the product" section describes, and `spark-adapter`'s published POM depends on all the
 others, so a release that left any of them out would be unresolvable. `adapter-testkit` is
 test-scope infrastructure, but it is what a third-party adapter compiles its conformance tests
-against, and `spark-adapter` itself lists it as a test dependency. All six have Maven Central
+against, and `spark-adapter` itself lists it as a test dependency. All seven have Maven Central
 publishing settings in their `build.sbt`/`project/*.sbt` (identical, copied from `ir`).
 
 `plugin`, `runner`, `demo`, and `web` are the example harness — never
@@ -116,7 +118,7 @@ project's Sonatype account.
    ```
    This triggers `.github/workflows/release.yml`, which builds, signs, and
    releases `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit`, then
-   `spark-adapter` in that order (order matters: each module's own `libraryDependencies` resolve
+   `spark-adapter` and `beam-adapter` in that order (order matters: each module's own `libraryDependencies` resolve
    the earlier ones from the same runner's local Ivy cache — see
    `spark-adapter/build.sbt`'s comment on that dependency, and
    `dev/build`'s matching local-build pattern). `contract`'s step
@@ -141,6 +143,16 @@ project's Sonatype account.
     at the top of this file) — this is the step that actually makes the
     release visible to a real Invaract user, per CLAUDE.md's Documentation
     Policy.
+
+## Dry run on every publishing change
+
+`.github/workflows/release-dry-run.yml` runs on any pull request that touches a `build.sbt`, a
+`project/*.sbt`, `release.yml` or this file. It creates a throwaway GPG key, runs `publishLocal` and
+`publishSigned` for all six modules in `release.yml`'s order, and checks that each produced a staged
+bundle with a jar, a sources jar, a javadoc jar and a POM, each with a `.asc` signature. It uses no
+secrets and uploads nothing, so it proves the build and signing configuration works; it cannot prove
+Sonatype accepts the namespace, the real key or the credentials (the one-time setup above), which only a
+real release does.
 
 ## Local dry run
 

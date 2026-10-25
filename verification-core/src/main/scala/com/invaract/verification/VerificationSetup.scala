@@ -5,8 +5,8 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParseException, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
 import com.invaract.ir
-import com.invaract.verification.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
-import com.invaract.verification.notification.NotificationSink
+import com.invaract.verification.location.{ContractLocationResolution, LocationRef, LocationResolutionException, LocationResolver, StaticMapLocationResolver}
+import com.invaract.verification.notification.{JobInfo, NotificationSink}
 
 /** Everything an engine adapter does once, at session/job start, to turn
   * configuration into the contract and `VerificationOptions` it will enforce -
@@ -30,15 +30,37 @@ import com.invaract.verification.notification.NotificationSink
   */
 object VerificationSetup {
 
-  /** The resolver built when `locationMap` isn't configured: `NoOpLocationResolver`,
-    * so a contract with no `ref://` locations is completely unaffected and one
-    * that does declare a reference fails immediately with a clear, actionable
-    * message instead of a confusing downstream `MissingInput`/`OutputLocationMismatch`.
+  /** The steps `config` says the platform trusts (`InvaractConf.TrustedSteps`): what an adapter does not refuse as an
+    * unverifiable step that ends the job. */
+  def trustedSteps(config: ConfigSource): TrustedSteps = TrustedSteps.from(config)
+
+  /** `ref://<id>` locations in `contract`, resolved from the `.properties` file `locationMap` names. A contract with
+    * no `ref://` locations is completely unaffected, set or not; one that does declare a reference fails immediately,
+    * naming the setting and the id (and, with a map set, the ids it does map), instead of a confusing downstream
+    * `MissingInput`/`OutputLocationMismatch` against the literal `ref://...`.
     */
   def resolveContractLocations(contract: Contract, config: ConfigSource): Contract = {
+    val setting = config.describe(InvaractConf.LocationMap)
     val resolver: LocationResolver = config.get(InvaractConf.LocationMap) match {
-      case Some(path) => StaticMapLocationResolver.fromPropertiesFile(path)
-      case None       => NoOpLocationResolver
+      case Some(path) =>
+        if (!new java.io.File(path).isFile) {
+          throw new LocationResolutionException(s"'$setting' names '$path', which is not a file that exists.")
+        }
+        val map = StaticMapLocationResolver.fromPropertiesFile(path)
+        id =>
+          if (map.ids.contains(id)) map.resolve(id)
+          else {
+            val known = if (map.ids.isEmpty) "it maps no ids at all" else "the ids it maps are: " + map.ids.toList.sorted.mkString(", ")
+            throw new LocationResolutionException(
+              s"The contract declares '${LocationRef.Scheme}$id', but the location map '$path' (named by '$setting') has no line for '$id'; $known."
+            )
+          }
+      case None =>
+        id =>
+          throw new LocationResolutionException(
+            s"The contract declares '${LocationRef.Scheme}$id', but no location map is set: set '$setting' to a .properties file " +
+              s"with a line '$id=<real location>'."
+          )
     }
     ContractLocationResolution.resolve(contract, resolver)
   }
@@ -51,7 +73,7 @@ object VerificationSetup {
     * never be silently turned off by a key's mere absence.
     */
   def resolveVerificationOptions(options: VerificationOptions, config: ConfigSource): VerificationOptions = {
-    def flag(name: String): Boolean = config.get(name).exists(_.toBoolean)
+    def flag(name: String): Boolean = ConfigSource.flag(config, name)
     options.copy(
       rejectUndeclaredInputs = options.rejectUndeclaredInputs || flag(InvaractConf.RejectUndeclaredInputs),
       rejectUndeclaredFields = options.rejectUndeclaredFields || flag(InvaractConf.RejectUndeclaredFields),
@@ -103,7 +125,8 @@ object VerificationSetup {
       options: VerificationOptions,
       config: ConfigSource,
       sink: Option[NotificationSink],
-      runId: Option[String]
+      runId: Option[String],
+      job: Option[JobInfo] = None
   ): (Contract, VerificationOptions) =
     resolveOrgPolicyLayers(config) match {
       case Nil => (contract, options)
@@ -122,7 +145,7 @@ object VerificationSetup {
         if (evaluation.hasBlockingViolations) {
           val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
-          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId, job)
           // No parenthesized fragment here: PlanPrinter renders UnknownPlan as
           // "UnknownPlan(<description>)" verbatim - wrapping the description in
           // its own parens too produced a confusing doubled "((...))".
@@ -139,7 +162,7 @@ object VerificationSetup {
             s"${governedContract.id}@${governedContract.version}",
             evaluation.warnViolations.map(toViolation(governedContract, _))
           )
-          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId, job)
         }
 
         (governedContract, governedOptions)

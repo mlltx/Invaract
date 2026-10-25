@@ -27,6 +27,19 @@ trait ConfigSource {
 
 object ConfigSource {
 
+  /** The on/off setting `name`: `false` when unset, `true` or `false` when set to either (any case, surrounding space
+    * ignored). Any other value is refused with an error naming the setting as the engine spells it, rather than read as
+    * `false`: `dryRun=yes` silently enforcing, or `rejectUndeclaredFields=1` silently not, would be worse than failing.
+    */
+  def flag(config: ConfigSource, name: String): Boolean =
+    config.get(name).exists { raw =>
+      raw.trim.toLowerCase match {
+        case "true"  => true
+        case "false" => false
+        case _       => throw new IllegalArgumentException(s"'${config.describe(name)}' must be true or false, not '$raw'.")
+      }
+    }
+
   /** Nothing configured. */
   val empty: ConfigSource = new ConfigSource {
     def get(name: String): Option[String] = None
@@ -60,4 +73,29 @@ object InvaractConf {
   val RoleConsistency = "roleConsistency"
   val OrgPolicy = "orgPolicy"
   val OrgPolicyOverlays = "orgPolicyOverlays"
+  /** `"true"` makes a job that never wrote an output its contract declares exit with a failure status, for an adapter
+    * that finds that only once the job has ended (Spark). An adapter that sees the whole job first refuses it instead. */
+  val FailOnMissingOutput = "failOnMissingOutput"
+  /** Comma-separated names of the steps a platform trusts not to move governed data (`TrustedSteps`): a step that ends a job
+    * without being a write the adapter recognises is not refused when named here. `*` stands for any run of characters. */
+  val TrustedSteps = "trustedSteps"
+
+  // What `AttachSetup` reads to decide what a job is attached to, and how.
+  /** The contract to enforce: a file path, or a `registry://<id>@<version>` reference (`ContractReference`). */
+  val Contract = "contract"
+  /** `"true"` runs dry-run mode, which needs no contract at all. */
+  val DryRun = "dryRun"
+  /** Path to a notification-sink `.properties` file. */
+  val NotifyConfig = "notifyConfig"
+  /** Base URL of the contract registry a `registry://` reference is fetched from. */
+  val RegistryUrl = "registryUrl"
+  /** Class name of the registry client to load, overriding the default. */
+  val RegistryClientClass = "registryClientClass"
+
+  /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
+    * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
+  val All: List[String] = List(
+    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
+    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, FailOnMissingOutput, TrustedSteps
+  )
 }

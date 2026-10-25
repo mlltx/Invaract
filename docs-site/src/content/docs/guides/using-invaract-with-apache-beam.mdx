@@ -1,0 +1,286 @@
+---
+title: Use Invaract with Apache Beam
+description: Check a Beam pipeline against a data contract before it is submitted, and switch that on from the command line without changing the job.
+sidebar:
+  order: 16
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide checks an [Apache Beam](https://beam.apache.org/) pipeline against a data contract
+**before the pipeline is submitted**, and shows how a platform team turns that on from the
+command line for a job whose source it does not own. The contract is the same YAML you
+[write for Spark](/guides/writing-a-contract/); only the way Invaract reaches the job is
+different. For a pipeline written in **Python**, see
+[Use Invaract with Beam Python Pipelines](/guides/using-invaract-with-beam-python/).
+
+<Aside type="caution" title="What this does and does not check">
+The Beam adapter reads the *shape* of a pipeline: where it reads, where it writes, which
+columns and types come out, and in which format. It cannot read what your own functions do to
+values. It sees which columns a filter, join or grouping uses only when it is one of Beam's
+schema transforms (`Filter`, `Join`, `CoGroup`, `Group`). It recognises reads
+and writes of **Parquet, Avro, text, CSV and TFRecord files, BigQuery tables, Kafka topics,
+JDBC tables and Pub/Sub topics**, batch or streaming. A contract that relies on something the
+adapter cannot check is refused with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed
+unchecked. The full list is in [What Each Engine Checks](/reference/what-each-engine-checks/).
+</Aside>
+
+## What a job needs
+
+The job must build its options from its command line the way any Beam job does
+(`PipelineOptionsFactory.fromArgs(args)`) and must **not** choose its own runner in code.
+Beam is a `provided` dependency of the adapter: the job brings its own Beam. The adapter is
+tested with Beam {/* generate-version-docs:BEGIN beam.list */}2.60.0, 2.65.0, 2.70.0 and 2.77.0{/* generate-version-docs:END */}.
+
+Add the `invaract-beam-adapter` jar to the job's classpath, then name the runner and the
+contract:
+
+```bash
+java -cp job.jar:invaract-beam-adapter.jar com.example.Job \
+  --runner=Invaract \
+  --invaractContract=contracts/orders_report.yaml
+```
+
+`InvaractRunner` receives the finished pipeline before anything has started, checks it, and
+hands it to the real runner. By default that is the `DirectRunner`; name another with
+`--invaractDelegate=<runner>` and give it its own options as usual, for example
+`--invaractDelegate=FlinkRunner --flinkMaster=...` (`--runner=com.invaract.beamadapter.InvaractRunner`
+works too, if you prefer the full class name). The settings (`--invaractContract`, `--invaractLocationMap`,
+`--invaractNotifyConfig`, `--invaractOrgPolicy`, `--invaractRejectUndeclaredInputs`, `--invaractTrustedSteps`,
+`--invaractRegistryUrl`, ...) are Beam options like any other, found by Beam without any code
+in the job.
+
+## A pipeline that keeps to its contract
+
+Given this contract, for a job that reads `in/orders` and writes `out/report`:
+
+```yaml
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: in/orders
+    format: parquet
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: amount, type: long }
+outputs:
+  - name: report
+    location: out/report
+    format: parquet
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: amount, type: long }
+```
+
+the flags above let the job run to completion and write its files. Nothing is printed unless
+you [configure a notification sink](/guides/notification-sinks/): then a `ContractValidationEvent`
+with status `PASSED` is published, naming engine `beam`, the Beam version and the job name.
+
+## A pipeline that does not
+
+If the same job writes to a different folder, the pipeline is never submitted and the job
+fails with the same four-part explanation Spark gives. This is the real output of the
+unmodified example job in the adapter's tests (the job's folder shortened to `<job folder>`):
+
+```text
+Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+What the contract expects:
+  input  'orders' at in/orders: id: long, amount: long (optional)
+  output 'report' at out/report: id: long, amount: long (optional)
+What the plan contains:
+  Write(<job folder>/out/elsewhere, format=parquet)
+  ?? Read(<job folder>/in/orders)
+Why it violates the contract (1 violation):
+  1. [OUTPUT_LOCATION_MISMATCH] contract declares output location 'out/report' but the plan writes to '<job folder>/out/elsewhere'
+How to correct it:
+  1. Write to 'out/report' instead, or update the contract's declared output location to '<job folder>/out/elsewhere' if this location change is intentional.
+```
+
+Nothing was written: the check happens in `run`, before the pipeline is handed on.
+
+Under "What the plan contains", a collection that feeds more than one step (a branch that is
+merged again later, or used on both sides of a join) is drawn in full, with the steps that
+produce it, the first time. Each later place it feeds is a single line ending `(shown above)`,
+so the explanation stays short however many times a pipeline splits and rejoins. A read on its
+own is one line, so it is simply repeated.
+
+## Every declared output must be written
+
+A contract that declares an output promises the job writes it. Because the whole pipeline is
+known before it runs, a pipeline that never writes one of its contract's outputs is refused
+before anything starts, with one `MISSING_OUTPUT` violation per output nothing lands on, as in
+`the job never writes declared output 'audit' (out/audit)`. Write it, or take it out of the
+contract if the job no longer produces it. (Spark checks one write at a time, as each runs, so it
+finds this only when the job ends; see [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/#every-declared-output-must-be-written).)
+
+## Check a pipeline in CI, without running it
+
+Add `--invaractCheckOnly=true` to the job's production command line and run the job's own `main`
+in a CI build:
+
+```bash
+java -cp job.jar:invaract-beam-adapter.jar com.example.Job \
+  --runner=Invaract \
+  --invaractContract=contracts/orders_report.yaml \
+  --invaractDelegate=DataflowRunner --project=my-project --region=europe-west1 \
+  --invaractCheckOnly=true
+```
+
+The job builds its pipeline as always and Invaract checks it, but then hands it to no runner:
+`run()` returns at once with a finished result (state `DONE`, no metrics), so a job that waits
+for its pipeline ends normally, and it logs
+`Invaract: the pipeline was checked against its contract and, as --invaractCheckOnly asks, not run`.
+Nothing is read or written. A pipeline that breaks its contract throws exactly as it would in
+production, so the build fails with the same explanation. The runner `--invaractDelegate` names
+is not built (building Dataflow's checks a project and credentials), but the name is still looked
+up, so a misspelt one fails the build too.
+
+With `--invaractDryRun=true` in place of a contract, the same command reports the contract the
+job would need (see [Dry-run mode](#dry-run-mode)), without running it. Events from a check-only
+run say so: their `job.engineDetails` has `"checkOnly": "true"`, so a platform can tell a CI
+check from a production run.
+
+What the build needs: the job's classpath and its options, but no data, cluster or credentials,
+with one exception that is Beam's own. Beam validates each step before it hands the pipeline to
+any runner, and BigQuery's validation looks up the table's dataset (and checks a query) in
+BigQuery. To check a job that reads or writes BigQuery, either give the build credentials, or
+build those steps with `.withoutValidation()`; either way BigQuery also wants `--tempLocation` set,
+to any `gs://` path (nothing is written there). Files, Kafka, JDBC and Pub/Sub need nothing: a
+check-only run was confirmed with a file pattern that matches nothing, an unreachable broker, an
+unreachable database and a topic that does not exist (Beam 2.77).
+
+## How locations are written in a contract
+
+| In the job | Declared in the contract |
+|---|---|
+| `ParquetIO.read(...).from("in/orders/*.parquet")` (or `TextIO`, `AvroIO`), `FileIO.match().filepattern(...)` | the folder, `in/orders` (also for `in/orders/date=*/part-*.parquet` or `in/orders/**`) |
+| `FileIO.write().to("out/report")`, `FileIO.writeDynamic()...to("out/report")` | the directory, `out/report` |
+| `TextIO.write().to("out/text")`, `AvroIO.write...to("out/avro/part")`, `CsvIO.writeRows("out/csv/part", ...)` | the prefix as passed to `.to()`, `out/text` |
+| `BigQueryIO...from("proj:ds.orders")`, `BigQueryIO.write()...to("proj:ds.report")` | `proj/ds/orders`, or `ds/orders` for that table in any project |
+| `KafkaIO...withBootstrapServers("broker:9092").withTopic("orders")` | `broker:9092/orders`, or `orders` on any cluster |
+| `JdbcIO` with URL `jdbc:postgresql://db/shop`, table `orders` | `jdbc:postgresql://db/shop/orders`, or `orders` |
+| `PubsubIO...fromTopic("projects/p/topics/orders")` | `projects/p/topics/orders` |
+| `PubsubIO...fromSubscription("projects/p/subscriptions/orders-sub")` | `projects/p/subscriptions/orders-sub` (the pipeline does not say which topic a subscription follows) |
+
+A relative location matches any path that ends with it, so a contract need not know where a
+deployment keeps its data; declare an absolute location to pin one.
+
+## Formats, types and what cannot be told
+
+- A write through `ParquetIO.sink` is `parquet`, through `AvroIO` is `avro`, through
+  `CsvIO.writeRows` is `csv`, a text write of what `ToJson` made is `json`, and BigQuery, Kafka
+  and JDBC writes are `bigquery`, `kafka` and `jdbc`. A plain text writer publishes no
+  delimiter, so its write satisfies a declared `csv`, `json` or `text`; it does not satisfy
+  `parquet`.
+- The columns come from the data feeding the write (an Avro schema or a Beam row schema), or
+  from the table schema a BigQuery write declares. A Kafka write of key-value pairs, and a Kafka
+  read `withoutMetadata()`, has the columns `key` and `value`, typed by the job's coders (a
+  `Long` key is `long`, a `String` value is `string`) and nullable, as a Kafka record's are; the
+  same contract describes a Spark job writing `key` and `value` columns to the topic. A write whose data is plain Java objects (a
+  `TextIO.write()` of strings, a Pub/Sub write of strings or messages, a BigQuery write of
+  `TableRow`s that names no table schema, as a write into an existing table with `CREATE_NEVER`
+  often does) has no columns to check, so it is **refused as an unverifiable write**, not passed,
+  unless the output it lands on declares no columns either: an output whose content no contract
+  governs (a folder of rejected lines) can leave `schema` out, and is then checked for its
+  location and format only.
+- An input's schema is the one the job states for it: the file schema a Parquet or Avro read
+  names (even when the job reads only some columns), or the rows a `JsonToRow` or
+  `CsvIO.parseRows` straight after a text read produces. Beam does not open files before running.
+- **Save mode and catalog**: a BigQuery write states both (`WRITE_APPEND`, `WRITE_TRUNCATE`,
+  `WRITE_EMPTY` are `append`, `overwrite`, `error`; the table is in the `bigquery` catalog). No
+  other Beam write has a save mode, so a contract that declares one for a file, Kafka or JDBC
+  output has the write refused as unverifiable.
+- **Reads Invaract can see but not locate**: a BigQuery query, a JDBC query over more than one
+  table, a Kafka topic pattern, file patterns the job computes, or a source Invaract does not
+  know. A declared input such a read might be is reported as unverifiable, not missing, and the
+  job runs; with `--invaractRejectUndeclaredInputs=true` the write is refused instead, since an
+  undeclared input can no longer be ruled out.
+- A step that ends the pipeline without being a recognised write (a function that pushes rows to
+  a service, a write to an IO Invaract does not know, a write whose destination the job computes
+  per element) is refused as an unverifiable write, unless it only reports on the job (see
+  [Steps that only report](#steps-that-only-report)). A function that writes in the middle of a
+  pipeline cannot be seen by any check made before the run.
+- Transformation-shape rules (required filter, join or group-by columns, no cross join) are
+  checked where the pipeline uses Beam's schema transforms; see
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/#on-apache-beam).
+- The Beam adapter does not support static data-quality proofs or role consistency: turning
+  either on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE`, naming it. It produces no
+  fingerprints or column lineage either; with `--invaractComputeFingerprint=true` the pipeline
+  runs and a warning says no fingerprint was computed. See
+  [What Each Engine Checks](/reference/what-each-engine-checks/) for the full list.
+
+## Steps that only report
+
+A step at the end of a pipeline that does nothing but report on the job is let through in two
+cases:
+
+- **It reads only what writes report.** This means the file names a `FileIO` or `TextIO` write
+  hands on (`getPerDestinationOutputFilenames()`), or the tables a BigQuery load wrote. Steps
+  in between that read only those count too. Such a step sees names, not data, so a step that
+  announces the files a job wrote is not refused. A BigQuery write's failed or successful
+  inserts are rows, so a step that reads them is still refused, as is a step that also reads
+  data (directly or as a side input).
+- **The platform trusts it.** `--invaractTrustedSteps` takes comma-separated step names. `*`
+  stands for any run of characters, as in `--invaractTrustedSteps=NotifyTeam,Metrics*`. A step
+  named there that ends the pipeline is not refused. It is logged at INFO when let through.
+  This trusts a step, not a destination: a write Invaract cannot verify is refused even if its
+  name matches.
+
+A refused step is named in the `UNVERIFIABLE_WRITE` violation, and its remediation gives the
+flag that would trust it (`--invaractTrustedSteps=PushToSomeService`). A write's remediation
+says instead what the write would have to state, or that trusting it would not help.
+
+## Dataflow templates
+
+A Flex Template builds its pipeline when it is launched, with the values of its parameters, so
+it is checked like any other job. A classic template builds its pipeline once, ahead of time,
+with its paths left as runtime parameters (`ValueProvider`s) that have no value until the job
+runs. Invaract checks before that, so a read from such a parameter is treated as a read it
+cannot locate (as above), and a write to one is refused as unverifiable, naming the parameter.
+Use a Flex Template, or fixed paths, for a job whose writes a contract governs.
+
+## When the command line cannot reach the job
+
+A job that sets its runner in code after reading its arguments overrides `--runner`, and a job
+that never reads its arguments never sees the flags. Neither is checked by the flag route. For
+those, one line in the job calls the same check:
+
+```scala
+InvaractBeam.verify(pipeline)  // reads the --invaract options from pipeline.getOptions
+```
+
+## Dry-run mode
+
+With `--invaractDryRun=true` and no contract, the job runs unchanged and Invaract reports a
+contract inferred from each write it can describe. With a
+[notification sink](/guides/notification-sinks/) configured the draft is published as a
+`CONTRACT_INFERENCE` event (real output, trimmed):
+
+```json
+{"eventType": "CONTRACT_INFERENCE", "status": "INFERRED", "writeLocation": "<job folder>/out/anywhere",
+ "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: <job folder>/in/orders\n  ...",
+ "job": {"engine": "beam", "engineVersion": "2.77.0", "name": "examplejob-root-1013211353-4b52c371"}}
+```
+
+Each draft is checked against the write it was inferred from, as enforcement would check it, and
+the result is the event's `selfCheck` (`PASSED`, or `FAILED` with the violations). A write with
+no columns (a text write of strings) gets a draft whose output declares none, with status
+`INFERRED_DEGRADED` and that reason; a step the adapter cannot describe is reported with status
+`SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `DRY_RUN_SUMMARY` event counts
+the writes by status and merges every draft into one contract named after the job (its
+`--jobName`), the same summary Spark publishes when its application ends. Beam publishes it
+before the pipeline runs, since the whole pipeline is known by then. With no sink, the drafts
+and the summary are logged.
+
+## Related
+
+- [What Each Engine Checks](/reference/what-each-engine-checks/): what each engine checks and what it cannot, in plain words.
+- [Engine Capabilities](/reference/engine-capabilities/): the same, per capability, with the adapters' own notes.
+- [Configuration Settings](/reference/configuration/): every `--invaract...` option, with its Spark and Python spelling.
+- [Connector Support](/reference/connector-support/#apache-beam-ios): the IOs the adapter recognizes.
+- [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/): `ref://` locations, here via `--invaractLocationMap`.
+- [Use a Contract Registry](/guides/using-a-contract-registry/): `registry://` contracts, here via `--invaractContract` and `--invaractRegistryUrl`.
+- [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/): here via `--invaractOrgPolicy`.

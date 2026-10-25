@@ -169,7 +169,11 @@ class ToyEngineAdapterSpec extends AnyFunSuite {
 
   test("the toy engine's fail-closed path uses the same rejection every engine does") {
     val ex = intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "ToyBulkLoad", ToyAdapter.translate(job))
+      VerificationPipeline.rejectUnverifiableWrite(
+        contract,
+        UnverifiableOperation("ToyBulkLoad", "a toy bulk load may write, but the toy adapter cannot translate it", "Use a toy write instead."),
+        ToyAdapter.translate(job)
+      )
     }
     assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
   }

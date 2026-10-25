@@ -1,9 +1,9 @@
 ---
 title: Invaract
-description: Verify Spark data transformations against machine-readable data contracts, and abort the write before a violation ever lands.
+description: Verify Spark and Apache Beam data transformations against machine-readable data contracts, and stop the write before a violation ever lands.
 template: splash
 hero:
-  tagline: Stop hoping your Spark job matches its contract. Prove it, before the write happens.
+  tagline: Stop hoping your Spark job or Beam pipeline matches its contract. Prove it, before the write happens.
   # These two links are frontmatter data consumed directly by Starlight's
   # Hero component, which passes them straight through as a literal href —
   # unlike the rest of this site's content links, they are NOT rewritten by
@@ -27,22 +27,28 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## A verification engine, not a linter
 
-Invaract parses a data contract, translates a real Spark job's logical plan into an
-engine-independent representation, and checks the two against each other — structurally,
-before Spark ever executes the write. A violation aborts the job. No output file is created.
+Invaract parses a data contract, translates the engine's own description of a job (a Spark
+logical plan, or a Beam pipeline graph) into an engine-independent representation, and checks
+the two against each other — structurally, before the write executes. A violation stops the
+job. No output is created.
 
 <CardGrid stagger>
-	<Card title="Real Spark execution" icon="approve-check">
-		Verification runs against Spark's actual Catalyst logical plan — not a mock, not a static
-		description of a table.
+	<Card title="The real job" icon="approve-check">
+		Verification runs against what the engine is about to execute: Spark's logical plan, or a
+		Beam pipeline's graph — not a mock, not a static description of a table.
 	</Card>
 	<Card title="Enforcement, not just reporting" icon="warning">
-		A `SparkSessionExtensions` check rule aborts a contract-violating write *before* it happens.
+		A contract-violating write is stopped *before* it happens, on Spark inside the session and on
+		Beam before the pipeline reaches its runner.
+	</Card>
+	<Card title="No code change to the job" icon="setting">
+		A platform team attaches Invaract with a `spark-submit --conf` or a Beam `--runner` option, to
+		jobs whose source it doesn't own.
 	</Card>
 	<Card title="Fails closed" icon="error">
 		A write shape Invaract doesn't recognize is rejected, not silently let through unverified.
 	</Card>
-	<Card title="Never crashes" icon="setting">
+	<Card title="Never crashes" icon="seti:config">
 		Constructs the adapter can't translate degrade to a diagnostic, not an exception — checked by
 		property-based fuzzing.
 	</Card>
@@ -55,6 +61,10 @@ before Spark ever executes the write. A violation aborts the job. No output file
 		Go from a fresh clone to a verified Spark write in one command. [Start
 		here →](/getting-started/quick-start/)
 	</Card>
+	<Card title="Apache Beam" icon="puzzle">
+		Check a Java or Python pipeline before it runs, or in CI without running it. [Java
+		→](/guides/using-invaract-with-apache-beam/) · [Python →](/guides/using-invaract-with-beam-python/)
+	</Card>
 	<Card title="Write a Contract" icon="document">
 		Learn the contract format by extending the one this project ships with. [Read the
 		guide →](/guides/writing-a-contract/)
@@ -64,7 +74,7 @@ before Spark ever executes the write. A violation aborts the job. No output file
 		more →](/concepts/verification-vs-enforcement/)
 	</Card>
 	<Card title="Reference" icon="information">
-		The full contract format, supported connectors, and every violation type. [Browse
+		The contract format, every setting, supported connectors, and every violation type. [Browse
 		reference →](/reference/contract-format/)
 	</Card>
 </CardGrid>

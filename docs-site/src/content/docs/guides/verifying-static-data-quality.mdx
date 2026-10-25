@@ -16,6 +16,10 @@ length — and Invaract will attempt to *prove*, from the transformation's own t
 logic, that the requirement holds for every possible row, not just check it against
 whatever data happened to be present on one run.
 
+<Aside type="note" title="Spark only">
+Static data-quality proofs need the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `staticDataQuality` on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE` before it runs.
+</Aside>
+
 <Aside type="caution" title="This proves guarantees, not predicts them">
 The objective is never "will this data quality rule probably pass?" — it's "does the
 transformation's own code *guarantee* this property?" When the analysis can't prove

@@ -103,6 +103,15 @@ private[invaract] object Violations {
       location = Some(output.location)
     )
 
+  /** A whole job (every write it makes known) never writes `output` - see `OutputChecker.unwrittenOutputs`. */
+  def outputNeverWritten(output: Dataset): Violation =
+    Violation(
+      ViolationType.MissingOutput,
+      s"the job never writes declared output '${output.name}' (${output.location})",
+      remediation = s"Add a write to '${output.location}' to the job, or remove output '${output.name}' from the contract if the job no longer produces it.",
+      location = Some(output.location)
+    )
+
   def outputLocationMismatch(declaredLocations: List[String], actualLocation: String): Violation = {
     val single = declaredLocations.size == 1
     Violation(
@@ -374,18 +383,15 @@ private[invaract] object Violations {
   def orgPolicy(message: String, remediation: String, location: Option[String], policyId: String): Violation =
     Violation(ViolationType.OrgPolicyViolation, message, remediation, location = location, rule = Some(policyId))
 
-  /** `commandClassName` is also reported as `actual`. */
-  def unverifiableWrite(commandClassName: String, contractRef: String): Violation =
+  /** The adapter's own words for the operation (`UnverifiableOperation`): its `problem`, then that it was not checked; its
+    * `remediation`; and its `name`, reported as `actual`.
+    */
+  def unverifiableWrite(operation: UnverifiableOperation, contractRef: String): Violation =
     Violation(
       ViolationType.UnverifiableWrite,
-      s"'$commandClassName' looks like it may write or otherwise mutate data, but Invaract has no " +
-        s"translation for it, so it was never checked against contract '$contractRef'.",
-      remediation =
-        "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-          "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-          "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-          "\"Fail-closed on unverifiable writes\" section.",
-      actual = Some(commandClassName)
+      s"${operation.problem.capitalize}. It was never checked against contract '$contractRef'.",
+      remediation = operation.remediation,
+      actual = Some(operation.name)
     )
 
   /** `capability` is also reported as `expected`, and the declaring adapter as `actual`. `why` is

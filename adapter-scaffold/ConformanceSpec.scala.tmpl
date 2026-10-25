@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invaract Contributors
+
+package com.invaract.@@pkg@@
+
+import com.invaract.testkit.{AdapterConformanceSpec, ConformanceAdapter}
+
+/** @@Engine@@ through the adapter conformance kit: every engine-neutral scenario runs as a real @@Engine@@ job under
+  * the real enforcement, and each must come out the way `invaract-capabilities-@@engine@@.yaml` promises. A
+  * scenario the declaration says does not apply is canceled with its reason, not silently skipped.
+  */
+class @@Engine@@ConformanceSpec extends AdapterConformanceSpec {
+  private val @@engine@@Adapter = new @@Engine@@ConformanceAdapter
+
+  override protected def adapter: ConformanceAdapter = @@engine@@Adapter
+}

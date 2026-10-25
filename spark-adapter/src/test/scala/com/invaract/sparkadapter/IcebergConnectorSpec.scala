@@ -1666,4 +1666,41 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(events.head.diagnostics.exists(_.contains("row-level DML")))
     assert(events.head.contractYaml.exists(_.contains("dryrun_dml_tbl")))
   }
+
+  test("job: a state-changing CALL's validation events name the job, on a pass and on a rejection") {
+    val tableName = "local.db.job_call_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    capturedPlans.clear()
+    spark.sql(s"CALL local.system.rollback_to_snapshot('db.job_call_tbl', $firstSnapshotId)").collect()
+    val callPlan = capturedPlans.toList.find(p => StateChangingCallSupport.extract(p).isDefined)
+      .getOrElse(fail("the CALL's analyzed plan was never captured"))
+
+    // a required field the table's schema lacks is a violation; a present, nullable one declared optional is fine
+    def contractRequiring(column: String, required: Boolean) = parseContract(
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: $column
+         |          type: long
+         |          required: $required
+         |""".stripMargin
+    )
+    val job = com.invaract.verification.notification.JobInfo(engine = Some("spark"), jobId = Some("calls"))
+    val sink = new com.invaract.verification.notification.TestNotificationSink
+    ContractEnforcementRule.verifyOrThrow(contractRequiring("id", required = false), callPlan, VerificationOptions(), Some(sink), None, job = Some(job))
+    intercept[ContractViolationException] {
+      ContractEnforcementRule.verifyOrThrow(contractRequiring("not_a_column", required = true), callPlan, VerificationOptions(), Some(sink), None, job = Some(job))
+    }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
+    assert(events.map(e => e.status -> e.job) == List("PASSED" -> Some(job), "FAILED" -> Some(job)))
+  }
 }

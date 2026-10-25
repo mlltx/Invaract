@@ -12,6 +12,11 @@ Beyond schema, location, and format checks, a contract can constrain a table's r
 way everything else is — the write is aborted before anything is committed if a rule is
 violated.
 
+<Aside type="note" title="Spark only">
+Row-level DML exists only on Spark. A Beam pipeline reads collections and writes new output,
+so these rules don't apply there, and neither do custom rule types (below).
+</Aside>
+
 ## The three rule types
 
 ```yaml
@@ -88,10 +93,9 @@ Set expectations correctly rather than assuming full coverage:
 - **Governance rules** (field-level masking, residency, purpose limitation) — no rule
   vocabulary exists for these yet; `rules` entries of other types are recorded on the
   contract but not interpreted.
-- **Transformation-semantic rules** (join/aggregation/filter shape) now have a first
-  vocabulary — see [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/)
-  — but that's a separate rule family (`PlanRuleVerifier`, checked against a plan's whole
-  shape) from the row-level-DML rules this page covers, not an extension of them.
+- **Transformation-shape rules** (join, aggregation and filter shape) are a separate rule
+  family, checked against the whole plan: see
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
 
 ## Write your own rule type
 
@@ -158,6 +162,15 @@ against — nothing about extraction is different for a custom type.
 it validates the rest of the contract — a misspelled class name, or one missing a public
 no-arg constructor, is rejected before any plan is ever checked, not silently ignored the
 next time a governed job runs.
+</Aside>
+
+<Aside type="caution" title="A contract that names a class can run that class's constructor">
+`customRuleTypes` lives in the contract, so whoever can change the contract chooses which class
+Invaract instantiates in the driver. Invaract loads the named class without initializing it,
+checks that it implements `CustomRuleVerifier`, and only then constructs it, so a class that is
+not a verifier is rejected without any of its code running. A genuine verifier does run, in your
+job's JVM: treat the contract source (a file in your repository, a registry) as trusted code,
+the same as the job's jar, and restrict who can publish to it.
 </Aside>
 
 <Aside type="caution" title="A bug in your own verifier isn't swallowed">

@@ -45,6 +45,7 @@ private[sparkadapter] object SparkSchemas {
     case TimestampType    => LogicalType.TimestampType
     case TimestampNTZType => LogicalType.TimestampNtzType
     case BinaryType       => LogicalType.BinaryType
+    case CalendarIntervalType => LogicalType.IntervalType
     case d: DecimalType   => LogicalType.DecimalType(d.precision, d.scale)
     case a: ArrayType     => LogicalType.ArrayType(toLogicalType(a.elementType))
     case m: MapType       => LogicalType.MapType(toLogicalType(m.keyType), toLogicalType(m.valueType))

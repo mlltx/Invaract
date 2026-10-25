@@ -4,6 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.Contract
+import com.invaract.ir.Plan
 import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
 
 /** What an engine adapter implements to be run through the conformance scenarios: its own
@@ -21,4 +22,15 @@ trait ConformanceAdapter {
     * is a test failure, not a verdict.
     */
   def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome
+
+  /** The engine-neutral plan the adapter's own translation produces for `job` - the `ir.Plan` its
+    * enforcement would check, rooted at the write. Lineage and sensitivity propagation are computed from
+    * a plan, so the only way to check them is to look at what the adapter translated.
+    *
+    * Return `None` only if the adapter cannot expose it, and declare `lineage.columnLevel` and
+    * `analysis.sensitivityPropagation` `unsupported` or `not-applicable`: the kit reports a claim it cannot
+    * look at as a divergence, not a pass. The job's inputs are materialized the way `run` does, but nothing
+    * is written and no contract is enforced.
+    */
+  def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
 }

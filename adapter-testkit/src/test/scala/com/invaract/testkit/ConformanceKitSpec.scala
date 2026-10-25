@@ -3,7 +3,7 @@
 
 package com.invaract.testkit
 
-import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, ViolationType}
+import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, OutputChecker, ViolationType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -32,29 +32,30 @@ class ConformanceKitSpec extends AnyFunSuite {
   test("attested and gaps are disjoint, and together are exactly notCovered") {
     assert(Scenarios.attested.keySet.intersect(Scenarios.gaps.keySet).isEmpty)
     assert(Scenarios.notCovered == (Scenarios.attested ++ Scenarios.gaps))
-    assert(Scenarios.attested.nonEmpty && Scenarios.gaps.nonEmpty)
+    assert(Scenarios.attested.nonEmpty)
   }
 
-  test("a report splits an adapter's unchecked claims into those a job cannot check and those the kit cannot check yet") {
-    val claims = declaring(
-      Map(
-        "config.zeroCodeInstall" -> (("supported", None)),
-        "write.streaming" -> (("supported", None)),
-        "lineage.columnLevel" -> (("supported", None))
-      )
-    )
+  test("a report lists an adapter's unchecked claims as attested (a job cannot check them) or gaps (the kit cannot yet)") {
+    val claims = declaring(Map("config.zeroCodeInstall" -> (("supported", None)), "config.locationRefs" -> (("partial", Some("only maps"))))) 
     val report = Conformance.evaluate(new ReferenceAdapter(claims))
-    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.WriteStreaming, Capability.LineageColumnLevel))
-    assert(report.attestedClaims == List(Capability.ConfigZeroCodeInstall))
-    assert(report.gapClaims.toSet == Set(Capability.WriteStreaming, Capability.LineageColumnLevel))
+    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
+    assert(report.attestedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
+    // The kit has no gap today: every capability a job can show is shown by a scenario.
+    assert(Scenarios.gaps.isEmpty && report.gapClaims.isEmpty)
   }
 
   // Capabilities no contract "relies on" (they describe what the engine reports, not what a contract asks for).
-  private val notDerivable = Set(Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog, Capability.FailClosedUnverifiableWrites)
+  // Lineage, sensitivity and boundary resolution describe what an adapter's translation preserves, not what a contract asks for.
+  private val notDerivable = Set(
+    Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog, Capability.FailClosedUnverifiableWrites,
+    Capability.LineageColumnLevel, Capability.AnalysisSensitivityPropagation, Capability.LineageBoundaryResolution
+  )
 
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
-      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet
+      // a contract declaring an output the job never writes is what check.outputsWritten is about
+      val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, s.job.writtenLocations).nonEmpty
+      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ (if (unwritten) Set(Capability.CheckOutputsWritten) else Set.empty)
       s.focus.foreach { c =>
         assert(
           relied.contains(c) || s.operations.contains(c) || notDerivable.contains(c),
@@ -95,6 +96,7 @@ class ConformanceKitSpec extends AnyFunSuite {
     override def capabilities: AdapterCapabilities = delegate.capabilities
     override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
       outcomeOf(delegate.run(id, contractOf(c), j, o))
+    override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = delegate.translation(id, j)
   }
 
   private def failingIds(adapter: ConformanceAdapter): Set[String] = Conformance.evaluate(adapter).failures.map(_.scenario.id).toSet
@@ -128,7 +130,7 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("an adapter that lets everything through is caught on every scenario that expects a rejection") {
-    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns))
+    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns, o.dataQuality, o.roles, o.unverifiableInputs))
     val expectingReject = Scenarios.all.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
     assert(failingIds(permissive) == expectingReject)
   }
@@ -176,6 +178,14 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(failingIds(overeager) == Set("fingerprint-flags-nothing-for-a-deterministic-job", "fingerprint-flags-a-generated-id"))
   }
 
+  test("an adapter that exposes no translation diverges on exactly the scenarios that read the plan, and nowhere else") {
+    val noPlan = new Tampered(reference) {
+      override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = None
+    }
+    assert(failingIds(noPlan) == Scenarios.all.filter(_.analysis.needsTranslation).map(_.id).toSet)
+    assert(Scenarios.all.exists(_.analysis.needsTranslation))
+  }
+
   // --- honest declarations are held to what they say -----------------------------------------------
 
   private def declaring(overrides: Map[String, (String, Option[String])]): AdapterCapabilities = {
@@ -218,8 +228,11 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noFilter = new ReferenceAdapter(declaring(Map("write.batch" -> (("not-applicable", Some("the engine only streams"))))))
     val report = Conformance.evaluate(noFilter)
     assert(report.failures == Nil)
-    assert(report.conforming == Nil)
-    assert(report.skipped.size == Scenarios.all.size)
+    // the row-level DML scenarios need a different operation than a batch write, so they still run, and conform
+    val needsBatchWrite = Scenarios.all.filter(_.operations.contains(Capability.WriteBatch))
+    assert(report.skipped.map(_.scenario.id).toSet == needsBatchWrite.map(_.id).toSet)
+    assert(report.conforming.map(_.scenario.id).toSet == Scenarios.all.filterNot(_.operations.contains(Capability.WriteBatch)).map(_.id).toSet)
+    assert(report.conforming.nonEmpty)
     assert(report.skipped.forall(_.verdict.asInstanceOf[ScenarioVerdict.Skipped].reason.contains("the engine only streams")))
   }
 
@@ -227,13 +240,248 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noRead = new ReferenceAdapter(declaring(Map("read.batch" -> (("unsupported", Some("sources are push-only"))))))
     val report = Conformance.evaluate(noRead)
     assert(report.failures == Nil)
-    // every scenario that reads is skipped; the one that only needs a write (fail-closed) still runs, and conforms
+    // every scenario that reads is skipped; those that need no batch read (fail-closed, row-level DML, streaming) still run, and conform
     assert(report.skipped.map(_.scenario.id).toSet == Scenarios.all.filter(_.operations.contains(Capability.ReadBatch)).map(_.id).toSet)
-    assert(report.conforming.map(_.scenario.id) == List("untranslatable-write-fails-closed"))
+    assert(
+      report.conforming.map(_.scenario.id).toSet ==
+        Set(
+          "untranslatable-write-fails-closed", "row-level-delete-checked-as-write", "row-level-delete-own-table-is-not-an-input",
+          "unconditional-delete-forbidden", "filtered-delete-allowed",
+          "streaming-write-is-checked-like-a-batch-write", "streaming-write-to-the-wrong-location"
+        )
+    )
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {
-    val claims = declaring(Map("analysis.sensitivityPropagation" -> (("supported", None))))
-    assert(Conformance.unverifiedClaims(claims) == List(Capability.AnalysisSensitivityPropagation))
+    val claims = declaring(Map("config.contractRegistry" -> (("supported", None))))
+    assert(Conformance.unverifiedClaims(claims) == List(Capability.ConfigContractRegistry))
+  }
+
+  // --- the row-level DML and catalog scenarios must be able to fail too ------------------------
+
+  test("an adapter that lets an unconditional DELETE through is caught on exactly the DELETE rule scenario") {
+    val letsItThrough = new Tampered(
+      reference,
+      outcomeOf = {
+        case r: ScenarioOutcome.Rejected if r.violationTypes == Set(ViolationType.RuleUnconditionalDelete) => ScenarioOutcome.Passed(r.statuses)
+        case other => other
+      }
+    )
+    assert(failingIds(letsItThrough) == Set("unconditional-delete-forbidden"))
+  }
+
+  test("an adapter that wrongly rejects a filtered DELETE is caught on exactly that scenario") {
+    val rejectsFilteredDelete = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        if (id == "filtered-delete-allowed") ScenarioOutcome.Rejected(Set(ViolationType.RuleUnconditionalDelete), List("FAILED"))
+        else reference.run(id, c, j, o)
+      override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = reference.translation(id, j)
+    }
+    assert(failingIds(rejectsFilteredDelete) == Set("filtered-delete-allowed"))
+  }
+
+  test("an adapter that never checks catalog registration is caught on exactly the scenario that requires it") {
+    val liar = new Tampered(reference, contractOf = c => c.copy(outputs = c.outputs.map(_.copy(catalog = None))))
+    assert(failingIds(liar) == Set("catalog-required-output-unregistered"))
+  }
+
+  test("an adapter that declares catalog registration unsupported conforms by failing closed on both catalog scenarios") {
+    val caps = declaring(Map("check.catalogRegistration" -> (("unsupported", Some("no catalogs")))))
+    val honest = Conformance.evaluate(new ReferenceAdapter(caps))
+    assert(honest.failures == Nil)
+    assert(Set("catalog-required-output-unregistered", "catalog-required-output-registered").subsetOf(honest.conforming.map(_.scenario.id).toSet))
+    // ...and one that says so but lets the registered write through unchecked is caught on both.
+    val lying = new Tampered(new ReferenceAdapter(caps), outcomeOf = o => ScenarioOutcome.Passed(o.statuses))
+    assert(Set("catalog-required-output-unregistered", "catalog-required-output-registered").subsetOf(failingIds(lying)))
+  }
+
+  test("an adapter that declares an analysis unsupported conforms by failing closed, and is not held to the analysis result it said it cannot give") {
+    val caps = declaring(
+      Map(
+        "analysis.staticDataQuality" -> (("unsupported", Some("functions are opaque"))),
+        "analysis.roleConsistency" -> (("unsupported", Some("no column-level usage")))
+      )
+    )
+    // an engine without the analysis reports no verdicts at all, where the scenarios expect them of an engine that has it
+    val noVerdicts = new Tampered(new ReferenceAdapter(caps), outcomeOf = {
+      case r: ScenarioOutcome.Rejected => r.copy(dataQuality = Set.empty, roles = Map.empty)
+      case p: ScenarioOutcome.Passed   => p.copy(dataQuality = Set.empty, roles = Map.empty)
+    })
+    val report = Conformance.evaluate(noVerdicts)
+    assert(report.failures == Nil)
+    val refused = Set(
+      "static-data-quality-proves-a-constant",
+      "static-data-quality-cannot-prove-a-passthrough",
+      "static-data-quality-violation-blocks",
+      "role-source-contributing-conforms",
+      "role-control-contributing-contradicts"
+    )
+    assert(refused.subsetOf(report.conforming.map(_.scenario.id).toSet))
+    // ...while the same missing verdicts from an adapter that does claim the analyses are still caught
+    val claiming = new Tampered(new ReferenceAdapter(), outcomeOf = {
+      case r: ScenarioOutcome.Rejected => r.copy(dataQuality = Set.empty, roles = Map.empty)
+      case p: ScenarioOutcome.Passed   => p.copy(dataQuality = Set.empty, roles = Map.empty)
+    })
+    assert(failingIds(claiming).contains("static-data-quality-proves-a-constant"))
+  }
+
+  // --- the reference adapter's own translation --------------------------------------------------
+
+  private def scenario(id: String): Scenario = Scenarios.all.find(_.id == id).getOrElse(fail(s"no scenario '$id'"))
+
+  test("a row-level change reads no declared input: the job's inputs are not offered as read, so rejectUndeclaredInputs does not trip") {
+    val s = scenario("filtered-delete-allowed")
+    val strict = com.invaract.verification.VerificationOptions(rejectUndeclaredInputs = true)
+    assert(reference.run(s.id, s.contract, s.job, strict).isInstanceOf[ScenarioOutcome.Passed])
+  }
+
+  test("a transform job does offer its inputs' schemas: a declared input type that differs from the dataset's is blocked") {
+    val s = scenario("conforming-write")
+    val wrongInputType = s.contract.copy(inputs = s.contract.inputs.map(d =>
+      d.copy(schema = d.schema.copy(fields = d.schema.fields.map(f => if (f.name == "id") f.copy(fieldType = "string") else f)))
+    ))
+    reference.run(s.id, wrongInputType, s.job, s.options) match {
+      case r: ScenarioOutcome.Rejected => assert(r.violationTypes == Set(ViolationType.InputFieldTypeMismatch))
+      case other                       => fail(s"expected a rejection, got $other")
+    }
+  }
+
+  test("the reference adapter compares names case-insensitively, as Spark does by default") {
+    val s = scenario("conforming-write")
+    val upperCased = s.contract.copy(outputs = s.contract.outputs.map(d => d.copy(schema = d.schema.copy(fields = d.schema.fields.map(f => f.copy(name = f.name.toUpperCase))))))
+    assert(reference.run(s.id, upperCased, s.job, s.options).isInstanceOf[ScenarioOutcome.Passed])
+  }
+
+  test("an adapter that declares a capability unsupported but blocks for some other reason is a divergence naming UNSUPPORTED_CONTRACT_FEATURE") {
+    val caps = declaring(Map("check.nestedTypes" -> (("unsupported", Some("flat schemas only")))))
+    val wrongReason = new Tampered(
+      new ReferenceAdapter(caps),
+      outcomeOf = o => ScenarioOutcome.Rejected(Set(ViolationType.OutputFieldTypeMismatch), o.statuses)
+    )
+    val nested = Conformance.evaluate(wrongReason).failures.filter(_.scenario.id.startsWith("nested-type"))
+    assert(nested.nonEmpty)
+    nested.foreach(r => assert(r.verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("UNSUPPORTED_CONTRACT_FEATURE"), r.scenario.id))
+  }
+
+  // --- a bounded run: a scenario that never finishes is a divergence naming it, not a hung build ---
+
+  private val firstScenario = Scenarios.all.head
+
+  /** An adapter whose `run` blocks until interrupted, recording that it was and on what kind of thread. */
+  private class HungAdapter extends ConformanceAdapter {
+    @volatile var interrupted = false
+    @volatile var daemon: Option[Boolean] = None
+    @volatile var threadName: Option[String] = None
+    override def capabilities: AdapterCapabilities = reference.capabilities
+    override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome = {
+      daemon = Some(Thread.currentThread.isDaemon)
+      threadName = Some(Thread.currentThread.getName)
+      try { Thread.sleep(60000); throw new IllegalStateException("should have been interrupted") }
+      catch { case e: InterruptedException => interrupted = true; throw e }
+    }
+  }
+
+  test("a scenario that outlasts its limit is a divergence naming the scenario and the limit, returned promptly, with the run interrupted") {
+    import scala.concurrent.duration._
+    val hung = new HungAdapter
+    val started = System.nanoTime()
+    val verdict = Conformance.evaluateWithin(hung, hung.capabilities, firstScenario, 300.millis)
+    val tookMs = (System.nanoTime() - started) / 1000000
+    val reason = verdict.asInstanceOf[ScenarioVerdict.Diverges].reason
+    assert(reason.contains(s"'${firstScenario.id}'") && reason.contains("300 milliseconds") && reason.contains("scenarioTimeLimit"))
+    assert(tookMs < 20000, s"returned after ${tookMs}ms")
+    val deadline = System.nanoTime() + 5000L * 1000000L
+    while (!hung.interrupted && System.nanoTime() < deadline) Thread.sleep(20)
+    assert(hung.interrupted, "the hung run was interrupted")
+    assert(hung.daemon.contains(true), "the run is on a daemon thread, so it cannot keep the JVM alive")
+    assert(hung.threadName.exists(_.contains(firstScenario.id)), "and the thread is named for the scenario")
+  }
+
+  test("a scenario that finishes within its limit gives exactly the verdict evaluateOne does, on a thread other than the caller's") {
+    import scala.concurrent.duration._
+    val caller = Thread.currentThread
+    @volatile var ranOn: Option[Thread] = None
+    val watching = new Tampered(reference, outcomeOf = { case o => ranOn = Some(Thread.currentThread); o })
+    Scenarios.all.take(3).foreach { scenario =>
+      val bounded = Conformance.evaluateWithin(watching, watching.capabilities, scenario, 1.minute)
+      val boundedRanOn = ranOn // the comparison below runs inline and overwrites it
+      assert(boundedRanOn.exists(_ ne caller), scenario.id)
+      assert(bounded == Conformance.evaluateOne(watching, watching.capabilities, scenario), scenario.id)
+    }
+  }
+
+  test("an adapter that throws inside a bounded run is the same divergence as without a limit") {
+    import scala.concurrent.duration._
+    val crashing = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        throw new IllegalStateException("engine exploded")
+    }
+    val verdict = Conformance.evaluateWithin(crashing, crashing.capabilities, firstScenario, 1.minute)
+    assert(verdict == Conformance.evaluateOne(crashing, crashing.capabilities, firstScenario))
+    assert(verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("engine exploded"))
+  }
+
+  test("an Error out of the adapter (a failed assertion, say) still propagates from a bounded run rather than becoming a verdict") {
+    import scala.concurrent.duration._
+    val asserting = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        throw new AssertionError("the adapter's own check failed")
+    }
+    val thrown = intercept[AssertionError](Conformance.evaluateWithin(asserting, asserting.capabilities, firstScenario, 1.minute))
+    assert(thrown.getMessage.contains("the adapter's own check failed"))
+  }
+
+  test("a skipped scenario is skipped under a limit too, without running the adapter at all") {
+    import scala.concurrent.duration._
+    val caps = declaring(Map("failClosed.unverifiableWrites" -> (("unsupported", Some("not implemented")))))
+    val untranslatable = Scenarios.all.find(_.id == "untranslatable-write-fails-closed").get
+    val adapter = new ReferenceAdapter(caps)
+    assert(Conformance.evaluateWithin(adapter, caps, untranslatable, 1.minute).isInstanceOf[ScenarioVerdict.Skipped])
+  }
+}
+
+/** What a job of several writes must publish (`Conformance.judge` with `writes`). */
+class JudgeStatusesSpec extends AnyFunSuite {
+  import Conformance.Expected
+
+  private val caps = ReferenceAdapter.declared
+  private def passed(statuses: String*) = ScenarioOutcome.Passed(statuses.toList, Set.empty, Set.empty, Map.empty, Set.empty)
+  private def rejected(types: Set[String], statuses: String*) = ScenarioOutcome.Rejected(types, statuses.toList, Set.empty, Set.empty, Map.empty, Set.empty)
+  private def judge(expected: Expected, outcome: ScenarioOutcome, writes: Int) = Conformance.judge(expected, outcome, caps, None, Analysis(), writes)
+  private def diverges(v: ScenarioVerdict, why: String) = v match {
+    case ScenarioVerdict.Diverges(reason) => reason.contains(why)
+    case _                                => false
+  }
+
+  test("a job that passes publishes one PASSED per write, no more and no fewer") {
+    assert(judge(Expected.Pass, passed("PASSED", "PASSED"), 2) == ScenarioVerdict.Conforms)
+    assert(diverges(judge(Expected.Pass, passed("PASSED"), 2), "must publish exactly [PASSED, PASSED] validation event(s); it published [PASSED]"))
+    assert(diverges(judge(Expected.Pass, passed("PASSED", "PASSED"), 1), "exactly [PASSED]"))
+  }
+
+  test("a blocked job publishes one FAILED last, after a PASSED for each write allowed before it") {
+    val location = Expected.RejectExactly(Set(ViolationType.OutputLocationMismatch))
+    val types = Set(ViolationType.OutputLocationMismatch)
+    assert(judge(location, rejected(types, "PASSED", "PASSED", "FAILED"), 3) == ScenarioVerdict.Conforms)
+    assert(judge(location, rejected(types, "FAILED"), 3) == ScenarioVerdict.Conforms, "refused before anything ran")
+    assert(diverges(judge(location, rejected(types, "FAILED", "FAILED"), 3), "one FAILED, after at most 2 PASSED"), "a FAILED is the last event")
+    assert(diverges(judge(location, rejected(types, "FAILED", "PASSED"), 3), "it published [FAILED, PASSED]"))
+    assert(diverges(judge(location, rejected(types, "PASSED", "FAILED"), 1), "one FAILED, after at most 0 PASSED"),
+      "a single write that is blocked publishes FAILED in place of its PASSED")
+    assert(diverges(judge(location, rejected(types), 1), "it published []"))
+  }
+
+  test("only an output never written may be reported after every write has passed") {
+    val missing = Set(ViolationType.MissingOutput)
+    val expected = Expected.RejectExactly(missing)
+    assert(judge(expected, rejected(missing, "PASSED", "FAILED"), 1) == ScenarioVerdict.Conforms, "found when the job ends")
+    assert(judge(expected, rejected(missing, "FAILED"), 1) == ScenarioVerdict.Conforms, "or before it runs")
+    assert(diverges(judge(expected, rejected(missing, "PASSED", "PASSED", "FAILED"), 1), "one FAILED, after at most 1 PASSED"))
+    val withMore = Set(ViolationType.MissingOutput, ViolationType.OutputLocationMismatch)
+    assert(diverges(judge(Expected.RejectExactly(withMore), rejected(withMore, "PASSED", "FAILED"), 1), "after at most 0 PASSED"),
+      "a rejection that is not only a missing output was found at a write")
   }
 }

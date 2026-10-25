@@ -59,8 +59,15 @@ object CanonicalNode {
   * are.
   */
 object Encoding {
-  private val TagKind: Byte = 0
-  private val LeafKind: Byte = 1
+  private[fingerprint] val TagKind: Byte = 0
+  private[fingerprint] val LeafKind: Byte = 1
+
+  /** `n`'s varint encoding, the length prefix both this encoding and `Digests` use. */
+  private[fingerprint] def varInt(n: Int): Array[Byte] = {
+    val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
+    writeVarInt(n, buf)
+    buf.toArray
+  }
 
   def encode(node: CanonicalNode): Array[Byte] = {
     val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
@@ -199,19 +206,15 @@ object Encoding {
     }
   }
 
-  /** Lowercase hex of `encode(node)` — the sort key `Canonicalizer` uses to
+  /** Lowercase hex of `node`'s hash (`Digests`) — the sort key `Canonicalizer` uses to
     * canonically order a set-like field (`Aggregate.groupBy`/
     * `Window.partitionBy`, and `Lineage`'s `Set`-valued `sources`/
     * `aggregations`; see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §2.4) by
-    * the same bytes that will ultimately be hashed, rather than by some
+    * the same hash that will ultimately be folded into the fingerprint, rather than by some
     * separate, potentially-inconsistent comparator. Two hex characters per
     * byte preserves unsigned-byte-value ordering exactly under plain
-    * `String` comparison.
+    * `String` comparison. The hash, not the full encoding: an element can be a large expression, and its hash is
+    * already worked out once.
     */
-  def sortKey(node: CanonicalNode): String = {
-    val bytes = encode(node)
-    val sb = new StringBuilder(bytes.length * 2)
-    bytes.foreach(b => sb.append(f"${b & 0xff}%02x"))
-    sb.toString()
-  }
+  def sortKey(node: CanonicalNode): String = new Digests().hex(node)
 }

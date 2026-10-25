@@ -157,7 +157,8 @@ class SparkAdapterListener(
             operation = info.operation,
             catalog = info.catalogIdentity.map(CatalogInfo.from),
             partitionColumns = info.partitionColumns,
-            datasetType = datasetTypeFor(info.location)
+            datasetType = datasetTypeFor(info.location),
+            job = Some(DryRunReporter.jobInfoOf(qe.sparkSession))
           )
         )
       }

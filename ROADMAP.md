@@ -3949,12 +3949,10 @@ first written: one field's value compared against *another field on the same row
 
 Extend verification engine to support multiple execution engines.
 
-### Scope (Future)
+### Scope
 
-- [ ] Transformation IR abstraction
-- [ ] SQL adapter
-- [ ] dbt adapter
-- [ ] Engine-agnostic verification — staged in docs/MULTI_ENGINE_ADAPTERS.md
+- [x] Transformation IR abstraction: `ir` (engine-independent plan, expressions, lineage), used by every adapter
+- [x] Engine-agnostic verification — staged in docs/MULTI_ENGINE_ADAPTERS.md
   - [x] Stage 1: engine-neutral logical type model (`contract.LogicalType`/
         `LogicalSchema`); the schema/input/output checkers and `ContractInference` no
         longer import Spark types; Spark mapping isolated in `SparkSchemas`, pinned to
@@ -3963,17 +3961,39 @@ Extend verification engine to support multiple execution engines.
         names unchanged at that stage); seams for lineage-boundary
         types, `MutationKind`, `InferredWrite`
   - [x] Stage 2b: adapter SPI — `VerificationPipeline` (`verifyWrite` /
-        `verifyStateChange` / `rejectUnverifiableWrite`) and `VerificationSetup` +
-        `ConfigSource` (neutral `InvaractConf` names; Spark spells them `spark.invaract.*`,
-        unchanged)
+        `verifyStateChange` / `rejectUnverifiableWrite` / `requireOutputsWritten`) and
+        `VerificationSetup` + `AttachSetup` + `ConfigSource` (neutral `InvaractConf` names;
+        Spark spells them `spark.invaract.*`, Beam `--invaract<Name>`)
   - [x] Stage 2c: neutral package names (`com.invaract.verification`), no forwarding layer
   - [x] Stage 3: per-adapter capability declaration (`invaract-capabilities-<adapter>.yaml`),
         generated docs-site matrix with a drift test, `UNSUPPORTED_CONTRACT_FEATURE` fail-closed
-  - [x] Stage 4: `adapter-testkit` — 20 engine-neutral conformance scenarios judged against each
-        adapter's own capability declaration; a reference adapter on the SPI; Spark passes all
+  - [x] Stage 4: `adapter-testkit` — engine-neutral conformance scenarios (55 today) judged
+        against each adapter's own declaration, as real jobs that may make several writes; a
+        reference adapter on the SPI; deliberately broken adapters every scenario must catch;
+        per-adapter conformance baselines
   - [x] Stage 5: function canonicalisation — `ir.FunctionCatalog` + per-adapter `FunctionAliases`;
         non-determinism and seed handling read the catalog; Spark's table swept against Spark's own registry
-- [ ] Adapter pattern documentation
+- [x] Adapter pattern documentation: docs/ADDING_AN_ENGINE_ADAPTER.md (the process), docs/MULTI_ENGINE_ADAPTERS.md
+      (the design), `dev/new-adapter` and `adapter-scaffold/` (a new module wired into the build, CI and
+      release), and the `survey-engine-adapter` skill, which writes a feasibility survey before any code
+- [x] Apache Beam adapter (`beam-adapter`, docs/BEAM_ADAPTER.md): checks a pipeline before it is submitted,
+      through a wrapper runner named with `--runner`; files, BigQuery, Kafka, JDBC and Pub/Sub, batch and
+      streaming; transformation-shape rules from Beam's schema transforms; conforms to 44 scenarios, the
+      kit skipping the rest with the declaration's reason (no row-level DML, no checkpoints, analyses it
+      does not offer); tested on Beam 2.60 to 2.77 in CI's version matrix, with a hand-over
+      to Flink proven; a check-only mode (`--invaractCheckOnly=true`) checks an unmodified job in CI without running
+      it or building its runner
+- [x] Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the `invaract_beam` package's wrapper runner writes the
+      pipeline's portable form and runs a Java checker on it, which translates it with the Beam adapter's own
+      translator; conforms to 44 scenarios (13 by refusing safely: transformation-shape rules and analyses are
+      unsupported), real Python pipelines in CI's `beam-python` job, a matrix over Python SDK releases from 2.68
+      that records the test pipelines afresh with each. A refusal's advice is the adapter's own
+      (`UnverifiableOperation`), with the flag spelled for the SDK. Publishing the package and the checker jar is
+      still to do
+- [x] Every declared output must be written (`check.outputsWritten`): Beam refuses the pipeline before it
+      runs; Spark reports at application end, with an opt-in failing exit status
+- [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
+- [ ] dbt adapter: survey first with `survey-engine-adapter`
 
 ### Dependencies
 

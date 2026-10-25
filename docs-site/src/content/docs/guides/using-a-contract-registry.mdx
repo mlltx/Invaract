@@ -15,9 +15,13 @@ service that stores versions of a contract, computes a compatibility diff agains
 previous version on every new registration, and rejects a registration whose declared
 version bump doesn't match the actual scope of change unless explicitly overridden.
 
+<Aside type="note" title="Every engine">
+A `registry://` contract works the same on Spark and on Beam. On Beam, pass it as `--invaractContract` with `--invaractRegistryUrl` (Java), or `--invaract_contract` with `--invaract_registry_url` (Python); see [Configuration Settings](/reference/configuration/).
+</Aside>
+
 <Aside type="caution" title="The reference server is closed-source">
 Everything on this page other than the server itself is open, Apache 2.0, in this repo:
-the wire protocol (`docs/CONTRACT_REGISTRY.md`), and the `registry-client` library
+the [wire protocol](https://github.com/mlltx/Invaract/blob/main/docs/CONTRACT_REGISTRY.md), and the `registry-client` library
 that speaks it. The reference server implementation (`invaract-registry`) is a
 separate, **private** repository — its source isn't published, not something you can
 `git clone`. Its own documentation, however, **is** public — see
@@ -31,7 +35,7 @@ resolution mechanism work against either.
 ## What you need running
 
 A registry server, reachable over HTTP from wherever your job runs, implementing the
-wire protocol `docs/CONTRACT_REGISTRY.md` documents (routes, request/response shapes,
+[wire protocol](https://github.com/mlltx/Invaract/blob/main/docs/CONTRACT_REGISTRY.md) (routes, request/response shapes,
 status codes). Nothing else in this guide, or in `spark-adapter`'s resolution
 mechanism, assumes a specific server implementation — `registry-client` only speaks
 the documented HTTP protocol.
@@ -83,7 +87,9 @@ spark-submit \
 
 `registry://customer_orders@2.1.0` names an exact version; `registry://customer_orders@latest`
 resolves to whatever the registry currently considers the latest registered version for
-that id.
+that id. Both parts are needed: a reference without a version, such as `registry://customer_orders`,
+is refused when the job starts with
+`'registry://customer_orders' is not a valid contract reference: write it as 'registry://<id>@<version>' (the version may be 'latest').`
 
 <Aside type="tip" title="invaract-registry-client is only needed via --jars, not compiled in">
 `spark-adapter` has no compile-time dependency on `registry-client` — resolving a
@@ -146,6 +152,6 @@ path, is what confirms the run went through registry resolution end to end.
 A persistent registry storage backend (the reference implementation is in-memory, not
 durable across restarts), real SSO/OIDC auth, and cross-contract policies or
 fingerprint-based drift control consuming the registry are all named, disclosed future
-work — see `docs/CONTRACT_REGISTRY.md`'s "Non-goals" section and [the Invaract Registry
+work — see the wire protocol's ["Non-goals"](https://github.com/mlltx/Invaract/blob/main/docs/CONTRACT_REGISTRY.md#9-non-goals-explicit) section and [the Invaract Registry
 docs' Known Limitations page](https://mlltx.github.io/invaract-registry/troubleshooting/known-limitations/)
 for the current state of each.

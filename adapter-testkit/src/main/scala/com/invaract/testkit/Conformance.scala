@@ -5,6 +5,9 @@ package com.invaract.testkit
 
 import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, Support, ViolationType}
 
+import java.util.concurrent.{Callable, ExecutionException, Executors, ThreadFactory, TimeUnit, TimeoutException}
+import scala.concurrent.duration.FiniteDuration
+
 /** How one scenario went on one adapter. */
 sealed trait ScenarioVerdict
 
@@ -18,7 +21,25 @@ object ScenarioVerdict {
 
   /** The adapter did something its declaration does not allow - the thing the kit exists to find. */
   final case class Diverges(reason: String) extends ScenarioVerdict
+
+  /** The scenario could not be tried because the engine's environment was not there (an emulator that would not
+    * start, a service that did not answer, credentials the machine lacks): the adapter threw
+    * [[EnvironmentUnavailable]]. Neither a pass nor a divergence - nothing was learned about the adapter - so it is
+    * reported on its own, never counted as conforming.
+    */
+  final case class Unavailable(reason: String) extends ScenarioVerdict
 }
+
+/** Thrown by a [[ConformanceAdapter]] when the engine's environment is missing, as opposed to the adapter being
+  * wrong. An engine that needs a service (a cloud project, an emulator, a runner) fails for reasons that say nothing
+  * about the adapter, and a kit that reports those as divergences trains its users to ignore divergences. The kit
+  * reports the scenario `Unavailable` instead, and `AdapterConformanceSpec` cancels it visibly - or fails it, where
+  * the environment is supposed to be there (`strictEnvironment`).
+  *
+  * Throw it only for the environment: an adapter that cannot translate a job, or an engine that rejects one, is
+  * the adapter's to answer for.
+  */
+final class EnvironmentUnavailable(val reason: String, cause: Throwable = null) extends RuntimeException(reason, cause)
 
 final case class ScenarioResult(scenario: Scenario, verdict: ScenarioVerdict)
 
@@ -29,6 +50,9 @@ final case class ConformanceReport(adapter: String, results: List[ScenarioResult
   def failures: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Diverges])
   def skipped: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Skipped])
   def conforming: List[ScenarioResult] = results.filter(_.verdict == ScenarioVerdict.Conforms)
+
+  /** Scenarios the engine's environment could not run (`EnvironmentUnavailable`): not a pass, not a divergence. */
+  def unavailable: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Unavailable])
 
   /** The unverified claims no job could check by their nature (`Scenarios.attested`): the adapter's own tests carry them. */
   def attestedClaims: List[Capability] = unverifiedClaims.filter(Scenarios.attested.contains)
@@ -79,12 +103,26 @@ object Conformance {
     case object RejectedAsUnsupported extends Expected
   }
 
-  /** Compares what the adapter did with what it must have done. */
+  /** Compares what the adapter did with what it must have done, for a job that makes one write. */
   def judge(
       expected: Expected,
       outcome: ScenarioOutcome,
       capabilities: AdapterCapabilities,
-      expectNonDeterministic: Option[Set[String]] = None
+      expectNonDeterministic: Option[Set[String]] = None,
+      analysis: Analysis = Analysis()
+  ): ScenarioVerdict = judge(expected, outcome, capabilities, expectNonDeterministic, analysis, writes = 1)
+
+  /** Compares what the adapter did with what it must have done, for a job that makes `writes` writes. A job that passes
+    * publishes one PASSED validation per write. One that is blocked publishes one FAILED validation, after a PASSED one
+    * for each write it was allowed first - none when the adapter refuses the whole job before it runs, up to every write
+    * when it finds what is wrong only once they have all run (a declared output Spark never saw written). */
+  def judge(
+      expected: Expected,
+      outcome: ScenarioOutcome,
+      capabilities: AdapterCapabilities,
+      expectNonDeterministic: Option[Set[String]],
+      analysis: Analysis,
+      writes: Int
   ): ScenarioVerdict = {
     val verdict: Option[String] = (expected, outcome) match {
       case (Expected.Pass, _: ScenarioOutcome.Passed) => None
@@ -105,11 +143,30 @@ object Conformance {
       case Some(reason) => ScenarioVerdict.Diverges(reason)
       case None =>
         val reports = Set[Support](Support.Supported, Support.Partial).contains(capabilities.supportOf(Capability.ReportingNotifications))
-        val wanted = if (expected == Expected.Pass) List("PASSED") else List("FAILED")
-        if (reports && outcome.statuses != wanted) {
+        val statuses = outcome.statuses
+        // a blocked write publishes FAILED in place of its PASSED; only an output never written can be found after every
+        // write has run and passed, so only that rejection may follow a PASSED for each write
+        val foundAfterTheJob = outcome match {
+          case r: ScenarioOutcome.Rejected => r.violationTypes == Set(ViolationType.MissingOutput)
+          case _                           => false
+        }
+        val mostPassed = if (foundAfterTheJob) writes else writes - 1
+        val published =
+          if (expected == Expected.Pass) statuses == List.fill(writes)("PASSED")
+          else statuses.lastOption.contains("FAILED") && statuses.init.forall(_ == "PASSED") && statuses.size - 1 <= mostPassed
+        val wanted =
+          if (expected == Expected.Pass) List.fill(writes)("PASSED").mkString("exactly [", ", ", "]")
+          else s"one FAILED, after at most $mostPassed PASSED"
+        if (reports && !published) {
           ScenarioVerdict.Diverges(
-            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish exactly " +
-              s"${wanted.mkString("[", ", ", "]")} validation event(s); it published ${outcome.statuses.mkString("[", ", ", "]")}"
+            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish " +
+              s"$wanted validation event(s); it published ${statuses.mkString("[", ", ", "]")}"
+          )
+        } else if (reports && outcome.eventEngines.exists(_ != Some(capabilities.adapter))) {
+          ScenarioVerdict.Diverges(
+            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id}, so its validation events must name " +
+              s"its engine '${capabilities.adapter}' in job.engine (a consumer receiving events from more than one engine tells them apart by it); " +
+              s"they named ${outcome.eventEngines.map(_.getOrElse("nothing")).mkString("[", ", ", "]")}"
           )
         } else
           expectNonDeterministic match {
@@ -117,10 +174,55 @@ object Conformance {
               ScenarioVerdict.Diverges(
                 s"the fingerprint must report exactly ${show(columns)} non-deterministic; it reported ${show(outcome.nonDeterministicColumns)} - an engine function name did not reach the catalog"
               )
-            case _ => ScenarioVerdict.Conforms
+            // An adapter that must refuse the scenario (it declared a capability the contract needs unsupported) has said it
+            // cannot do that analysis, so it is not held to the analysis result the scenario expects of one that can.
+            case _ if expected == Expected.RejectedAsUnsupported => ScenarioVerdict.Conforms
+            case _ => judgeAnalysis(analysis, outcome)
           }
     }
   }
+
+  /** The analysis results a scenario pins down, compared with what the run reported. */
+  private def judgeAnalysis(analysis: Analysis, outcome: ScenarioOutcome): ScenarioVerdict = {
+    def pairs(p: Set[(String, String)]): String = p.toList.sorted.map { case (k, v) => s"$k=$v" }.mkString("{", ", ", "}")
+    val problems = List(
+      analysis.dataQuality.filter(_ != outcome.dataQuality).map(e => s"the static data-quality results must be ${pairs(e)}; the adapter reported ${pairs(outcome.dataQuality)}"),
+      analysis.roles.filter(_ != outcome.roles).map(e => s"the role-consistency verdicts must be ${pairs(e.toSet)}; the adapter reported ${pairs(outcome.roles.toSet)}"),
+      analysis.unverifiableInputs.filter(_ != outcome.unverifiableInputs).map { e =>
+        s"the inputs reported unverifiable behind a lineage boundary must be ${show(e)}; the adapter reported ${show(outcome.unverifiableInputs)}"
+      }
+    ).flatten
+    problems.headOption.fold[ScenarioVerdict](ScenarioVerdict.Conforms)(ScenarioVerdict.Diverges(_))
+  }
+
+  /** Lineage and sensitivity are read from the adapter's own translation of the job, never from a run. */
+  private def judgeTranslation(adapter: ConformanceAdapter, scenario: Scenario): ScenarioVerdict =
+    if (!scenario.analysis.needsTranslation) ScenarioVerdict.Conforms
+    else
+      adapter.translation(scenario.id, scenario.job) match {
+        case None =>
+          ScenarioVerdict.Diverges(
+            "the adapter declares a capability this scenario checks on its translated plan, but exposes no translation (ConformanceAdapter.translation); " +
+              "declare it unsupported or not applicable instead of leaving it unchecked"
+          )
+        case Some(plan) =>
+          val lineage = scenario.analysis.lineage.flatMap { expected =>
+            val actual = TranslationProbe.lineage(plan, scenario.job)
+            if (actual == expected) None
+            else Some(ScenarioVerdict.Diverges(s"column lineage must be ${showLineage(expected)}; the adapter's translation gives ${showLineage(actual)}"))
+          }
+          lineage.orElse(scenario.analysis.sensitivity.flatMap { expected =>
+            val actual = TranslationProbe.sensitivity(plan, scenario.contract)
+            if (actual == expected) None
+            else Some(ScenarioVerdict.Diverges(s"sensitivity tags per output column must be ${showTags(expected)}; propagated over the adapter's translation they are ${showTags(actual)}"))
+          }).getOrElse(ScenarioVerdict.Conforms)
+      }
+
+  private def showLineage(m: Map[String, Set[(Int, String)]]): String =
+    m.toList.sortBy(_._1).map { case (col, srcs) => s"$col <- ${srcs.toList.sorted.map { case (i, c) => s"#$i.$c" }.mkString("{", ", ", "}")}" }.mkString("[", "; ", "]")
+
+  private def showTags(m: Map[String, Set[String]]): String =
+    m.toList.sortBy(_._1).map { case (col, tags) => s"$col=${show(tags)}" }.mkString("[", "; ", "]")
 
   /** Runs every scenario on `adapter` and compares it with what its declaration promises. An
     * exception out of `adapter.run` is a divergence, not a verdict: only the engine's own
@@ -136,9 +238,47 @@ object Conformance {
     expectationFor(scenario, caps) match {
       case Left(reason) => ScenarioVerdict.Skipped(reason)
       case Right(expected) =>
-        try judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic)
-        catch { case e: Exception => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}") }
+        try
+          judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis, scenario.job.writes) match {
+            case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
+            case other                    => other
+          }
+        catch {
+          case e: EnvironmentUnavailable => ScenarioVerdict.Unavailable(e.reason)
+          case e: Exception              => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}")
+        }
     }
+
+  /** `evaluateOne`, but a scenario that does not finish within `limit` is a divergence naming the scenario instead of a
+    * hang. An engine job can stall (a lost connection, a runner that never starts), and a kit that waits forever turns
+    * one stuck scenario into a stuck build with nothing to say which. The scenario runs on its own daemon thread, which
+    * is interrupted when the limit passes and then left behind (an engine call that ignores interrupts cannot be forced
+    * to stop, but it no longer holds the run, or the JVM's exit, hostage).
+    *
+    * Everything `evaluateOne` does is unchanged, including an `Error` out of the adapter propagating rather than being
+    * turned into a verdict. The adapter runs on a thread of the kit's, not the caller's: an adapter that needs thread
+    * affinity (a thread-local engine session) should run its scenarios with `evaluateOne` instead.
+    */
+  def evaluateWithin(adapter: ConformanceAdapter, caps: AdapterCapabilities, scenario: Scenario, limit: FiniteDuration): ScenarioVerdict = {
+    val pool = Executors.newSingleThreadExecutor(new ThreadFactory {
+      def newThread(task: Runnable): Thread = {
+        val thread = new Thread(task, s"conformance-${scenario.id}")
+        thread.setDaemon(true)
+        thread
+      }
+    })
+    val running = pool.submit(new Callable[ScenarioVerdict] { def call(): ScenarioVerdict = evaluateOne(adapter, caps, scenario) })
+    try running.get(limit.toMillis, TimeUnit.MILLISECONDS)
+    catch {
+      case _: TimeoutException =>
+        // the run is interrupted by `shutdownNow` below
+        ScenarioVerdict.Diverges(
+          s"the adapter did not finish scenario '${scenario.id}' within $limit: its run is hung, or the engine is too slow for this limit " +
+            "(AdapterConformanceSpec.scenarioTimeLimit sets it)"
+        )
+      case e: ExecutionException => throw e.getCause
+    } finally pool.shutdownNow()
+  }
 
   /** The capabilities the adapter claims (`supported`/`partial`) that no scenario is evidence for. */
   def unverifiedClaims(caps: AdapterCapabilities): List[Capability] =

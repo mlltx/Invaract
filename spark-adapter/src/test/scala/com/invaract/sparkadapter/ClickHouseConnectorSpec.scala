@@ -7,6 +7,8 @@ package com.invaract.sparkadapter
 import com.invaract.verification.{ContractViolationException, ViolationType}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.scalatest.concurrent.Eventually.{eventually, interval, timeout}
+import org.scalatest.time.{Millis, Seconds, Span}
 
 /** ClickHouse-specific coverage, added via the `add-spark-connector`
   * skill's process (docs/ADDING_A_SPARK_CONNECTOR.md). Unlike every prior
@@ -286,7 +288,12 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
     withContract(yaml) {
       spark.sql("DELETE FROM ch.probe_db.delete_pass_tbl WHERE id = 1") // must not throw
     }
-    assert(spark.table("ch.probe_db.delete_pass_tbl").count() == 1, "exactly the matching row should be deleted")
+    // ClickHouse applies a DELETE as a mutation that completes in the background, so the row count can still be the
+    // old one for a moment after the statement returns (seen as `2 did not equal 1` on a macOS runner). What this
+    // test asserts is that the DELETE the contract allowed does happen, so it waits for the table to settle.
+    eventually(timeout(Span(60, Seconds)), interval(Span(500, Millis))) {
+      assert(spark.table("ch.probe_db.delete_pass_tbl").count() == 1, "exactly the matching row should be deleted")
+    }
   }
 
   test("FAIL: DELETE FROM a ClickHouse table whose target violates its contract is aborted before anything is deleted") {

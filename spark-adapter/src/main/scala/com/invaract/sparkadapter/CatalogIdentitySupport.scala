@@ -190,7 +190,7 @@ private[sparkadapter] object CatalogIdentitySupport {
       case _                  => None
     }
 
-  private def technologyOfCatalogPlugin(catalog: CatalogPlugin): String =
+  private[sparkadapter] def technologyOfCatalogPlugin(catalog: CatalogPlugin): String =
     catalog.getClass.getSimpleName match {
       case "DeltaCatalog" => "delta"
       // Iceberg's two catalog entrypoints: SparkCatalog (a pure Iceberg

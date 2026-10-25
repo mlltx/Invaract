@@ -1,0 +1,2 @@
+# recorded pipelines (protocol buffers): never converted, never diffed as text
+*.pb binary

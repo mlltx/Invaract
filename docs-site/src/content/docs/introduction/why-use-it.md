@@ -27,21 +27,22 @@ requires. Usually nobody finds out until a downstream consumer breaks.
 
 Post-hoc data quality checks (run a validation query after the table is written) catch
 problems late: bad data has already landed, and something downstream may have already
-read it. Invaract instead hooks into Spark's own query analysis, via
-`SparkSessionExtensions`, and rejects a violating write **before Spark executes it**. The
-target file or table is never created. See
+read it. Invaract instead checks the job before the write happens. On Spark it hooks into
+query analysis and rejects a violating write **before Spark executes it**; on Beam it checks
+the whole pipeline **before it is handed to a runner**. The target file or table is never
+created. See
 [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for how
 this differs from Invaract's own post-hoc reporting path.
 
-## Why a real Spark plan, not a schema diff
+## Why the real job, not a schema diff
 
 Comparing "the contract's declared output schema" against "the DataFrame's schema right
 before `.write()`" sounds sufficient, but it can't see how the data actually got there —
 whether a `MERGE` matched on the columns it should have, or whether a `DELETE` had a
-filter at all. Invaract translates Spark's actual Catalyst logical plan into an
-engine-independent IR (see [The Transformation IR](/concepts/transformation-ir/)),
-so verification is checking the transformation Spark is about to run, not a description of
-it.
+filter at all. Invaract translates the engine's own description of the job (Spark's
+logical plan, Beam's pipeline graph) into an engine-independent IR (see
+[The Transformation IR](/concepts/transformation-ir/)), so verification is checking the
+transformation that is about to run, not a description of it.
 
 ## Why it's worth trusting
 
@@ -55,10 +56,11 @@ silently let an unrecognized Delta write through with no verification at all).
 ## When Invaract is a good fit
 
 - You already write, or want to write, machine-readable data contracts (ODCS-shaped or
-  close to it) for tables your Spark jobs produce.
+  close to it) for tables your Spark jobs or Beam pipelines produce.
 - You want a write to genuinely fail — not just log a warning — when it violates its
   contract.
-- Your jobs write via Delta Lake, Iceberg, Parquet, CSV, Hive, Avro, or ClickHouse — see
+- Your Spark jobs write via Delta Lake, Iceberg, Parquet, CSV, Hive, Avro or ClickHouse, or
+  your Beam pipelines through file, BigQuery, Kafka, JDBC or Pub/Sub IOs — see
   [Connector Support](/reference/connector-support/) for what's covered today.
 
 ## When it isn't (yet)
@@ -66,6 +68,8 @@ silently let an unrecognized Delta write through with no verification at all).
 - You need to verify business logic correctness (is the aggregation itself right?), not
   just structural shape — out of scope today, see
   [What is Invaract?](/introduction/what-is-this/#what-it-verifies-today).
-- You're not on Apache Spark — the only adapter that exists today translates Spark's
-  Catalyst plans; the IR itself is engine-independent, but no other front end has been
-  built yet.
+- You're on an engine other than Spark or Beam (Flink, a warehouse's own SQL, dbt). The IR
+  is engine-independent, but no adapter for those exists yet.
+- You need a check Invaract can't make on your engine, such as row-level DML rules on Beam:
+  see [What Each Engine Checks](/reference/what-each-engine-checks/). A contract that relies on one is
+  refused, not silently half-checked.

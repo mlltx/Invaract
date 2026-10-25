@@ -204,6 +204,21 @@ private[invaract] object StructuralVerifier {
     options: VerificationOptions,
     caseSensitive: Boolean,
     lineageBoundaryTypes: Set[String]
+  ): VerificationResult =
+    verify(contract, facts, inputSchemas, outputSchema, options, caseSensitive, lineageBoundaryTypes, None)
+
+  /** The same check for a write that changes `inPlaceTarget` in place (a row-level DELETE / UPDATE / MERGE): the
+    * table it reads is the one it changes, so that read is not offered as an undeclared input.
+    */
+  def verify(
+    contract: Contract,
+    facts: PlanFacts,
+    inputSchemas: List[(String, LogicalSchema)],
+    outputSchema: LogicalSchema,
+    options: VerificationOptions,
+    caseSensitive: Boolean,
+    lineageBoundaryTypes: Set[String],
+    inPlaceTarget: Option[String]
   ): VerificationResult = {
     // Which declared output this write lands on (a single-output contract's only
     // output whatever the location, else the one whose location matches), which
@@ -216,7 +231,7 @@ private[invaract] object StructuralVerifier {
       case _                          => None
     }
 
-    val inputs = InputChecker.check(contract, facts, scopedOutput, inputSchemas, options, caseSensitive, lineageBoundaryTypes)
+    val inputs = InputChecker.check(contract, facts, scopedOutput, inputSchemas, options, caseSensitive, lineageBoundaryTypes, inPlaceTarget)
     val outputs = OutputChecker.check(contract, facts.plan, outputSchema, options, caseSensitive)
 
     VerificationResult.of(s"${contract.id}@${contract.version}", inputs.violations ++ outputs, unverifiableInputs = inputs.unverifiable)

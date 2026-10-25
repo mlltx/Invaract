@@ -14,6 +14,10 @@ nothing in the contract format could require otherwise. `catalog:` closes that g
 dataset can declare that it must be registered in a real catalog — optionally pinning
 down exactly which one.
 
+<Aside type="note" title="On Apache Beam">
+Beam has one catalog: a BigQuery table is registered in the `bigquery` catalog under its project, dataset and table. Files, Kafka, JDBC and Pub/Sub have no catalog in Beam, so a contract that requires one for them sees them as unregistered. The rest of this page uses Spark's Hive, Delta and Iceberg catalogs.
+</Aside>
+
 ## Declare it in your contract
 
 ```yaml

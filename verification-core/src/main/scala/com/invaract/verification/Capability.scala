@@ -57,6 +57,9 @@ object Capability {
   // --- structural checks ------------------------------------------------------------------------
   val CheckInputExistence = Capability("check.inputExistence", StructuralChecks, "Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT).", enforcesContract = true)
   val CheckLocation = Capability("check.location", StructuralChecks, "A write lands where the contract says (OUTPUT_LOCATION_MISMATCH).", enforcesContract = true)
+  // not blocking: an adapter that checks one write at a time cannot know a write will never come, and every contract declares
+  // outputs, so declaring this unsupported must not refuse every contract; it says the adapter does not catch the omission
+  val CheckOutputsWritten = Capability("check.outputsWritten", StructuralChecks, "A job that never writes a declared output is refused (MISSING_OUTPUT).", enforcesContract = false)
   val CheckSchema = Capability("check.schema", StructuralChecks, "Field presence, type and nullability of inputs and outputs.", enforcesContract = true)
   val CheckNestedTypes = Capability("check.nestedTypes", StructuralChecks, "Nested types (array, map, struct) are compared structurally, not just by keyword.", enforcesContract = true)
   val CheckFormat = Capability("check.format", StructuralChecks, "A declared output format is checked (OUTPUT_FORMAT_MISMATCH).", enforcesContract = true)
@@ -95,7 +98,7 @@ object Capability {
   /** Every capability, in the order the matrix shows them (category order, then declaration order). */
   val all: List[Capability] = List(
     ReadBatch, ReadStreaming, WriteBatch, WriteStreaming, WriteRowLevelDml, WriteStateChange,
-    CheckInputExistence, CheckLocation, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration,
+    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration,
     RulesDml, RulesPlanShape, RulesCustom,
     AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,

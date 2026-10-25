@@ -1,5 +1,5 @@
 ---
-title: Install the Enforcement Rule
+title: Install the Enforcement Rule on Spark
 description: Wire Invaract's contract enforcement into your own Spark job.
 sidebar:
   order: 3
@@ -7,7 +7,9 @@ sidebar:
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-This guide wires Invaract into a Spark job of your own. `ContractEnforcementRule` is a
+This guide wires Invaract into a Spark job of your own. (For Apache Beam, see
+[Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/) or
+[Beam Python pipelines](/guides/using-invaract-with-beam-python/).) `ContractEnforcementRule` is a
 `SparkSessionExtensions` check rule: it runs on the analyzed logical plan of every query
 your session executes, and throws before Spark runs a query that violates the active
 contract.
@@ -36,13 +38,10 @@ spark-submit \
 `MyRealJob`'s source never imports anything from `com.invaract.contract`/
 `com.invaract.sparkadapter` — a platform team, an orchestration framework, or a CI
 pipeline can attach contract enforcement to a job whose source they don't own at all.
-This is what closes CLAUDE.md's "External Attachability Requirement" for the one
-capability every other one sits on top of: installing Invaract itself.
 
-Every other `spark.invaract.*` conf key documented elsewhere in these docs — the location
-resolver, `computeFingerprint`/`rejectUndeclaredInputs`/`rejectUndeclaredFields`, a
-notification sink — composes with this for free, since `InvaractSparkSessionExtension`
-just calls the same `forContract` those are built into.
+Every other `spark.invaract.*` setting works with this too — the location map, the stricter
+checks, a notification sink. [Configuration Settings](/reference/configuration/) lists them
+all.
 
 <Steps>
 
@@ -74,16 +73,10 @@ path can't express — a contract loaded from somewhere `spark.invaract.contract
 a custom `LocationResolver`, or any other programmatic control. See [Install and Configure
 Invaract Explicitly in Code](/guides/calling-invaract-explicitly/#install-the-enforcement-rule).
 
-`runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — installs
-a plain contract the same way `MyRealJob` above does: purely via `spark-submit --conf`, the
-same path ["Your First Contract"](/getting-started/first-contract/) walks through. It falls
-back to explicit code only for the two cases the conf-driven mechanism structurally can't
-express: dry-run mode, where it needs a custom callback to put the inferred contract into
-its own report (not just log it), and a configured notification sink, where it needs the
-same sink instance shared between the check rule and its own `SparkAdapterListener` to tally
-one `JobSummaryEvent` — see [Configure a Notification Sink](/guides/notification-sinks/) and
-[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). See CLAUDE.md's "What's
-the product, and what's the test harness."
+The demo job `./dev/test` runs installs its contract the same way, through `spark-submit
+--conf` (["Your First Contract"](/getting-started/first-contract/) walks through it). It uses
+code only to put a dry-run draft and a job summary into its own report, which no setting
+can do.
 
 ## Handling a rejection
 
@@ -141,7 +134,7 @@ why these are two separate mechanisms rather than one.
 ## Version compatibility warnings
 
 Every time you build a `SparkSession` with `ContractEnforcementRule` installed (`forContract`
-or [dry-run mode](/reference/dev-commands/)), it also checks the running Spark version — and,
+or [dry-run mode](/guides/dry-run-mode/)), it also checks the running Spark version — and,
 if either is on the classpath, the running Delta Lake/Iceberg version — against this
 project's own [verified-version list](/reference/spark-version-support/). Running an
 unverified version doesn't block your job: verification proceeds normally, but a line like
@@ -168,3 +161,28 @@ Only a plan that translates to a recognized write is verified — everything els
 recognized today, and
 [Fail-Closed by Default](/concepts/fail-closed/) for what happens when your job
 writes via a shape Invaract doesn't recognize at all.
+
+## Every declared output must be written
+
+A contract that declares an output promises the job writes it. Spark checks each write as it
+runs, so whether every declared output was written is known only when the job ends: when the
+application stops, Invaract publishes a `FAILED` validation with one `MISSING_OUTPUT` per
+declared output the job never wrote, and logs it as an error, for example
+`the job never writes declared output 'audit' (out/audit)`. The job's other writes have already
+happened by then; nothing is blocked.
+
+To have the job fail as well, so the scheduler or CI step running it stops what depends on it:
+
+```bash
+spark-submit \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  --conf spark.invaract.failOnMissingOutput=true \
+  ...
+```
+
+The driver then exits with status 1 after Spark has shut down. Two things to know: in YARN
+cluster mode a failed attempt may be retried (`spark.yarn.maxAppAttempts`), which runs the job
+again; and a write Invaract cannot see (an RDD `saveAsTextFile`) counts as not written. An engine
+that sees the whole job before it runs, such as Beam, refuses such a job before it starts instead
+(see [Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/)).

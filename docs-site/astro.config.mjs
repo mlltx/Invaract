@@ -18,7 +18,7 @@ export default defineConfig({
 		starlight({
 			title: 'Invaract',
 			description:
-				'Verify Spark data transformations against machine-readable data contracts — and abort the write before a violation ever lands.',
+				'Verify Spark and Apache Beam data transformations against machine-readable data contracts — and stop the write before a violation ever lands.',
 			logo: {
 				light: './src/assets/invaract-mark-light.svg',
 				dark: './src/assets/invaract-mark-dark.svg',
@@ -52,41 +52,46 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
-						{ label: 'Write a Contract', slug: 'guides/writing-a-contract' },
 						{
-							label: 'Install the Enforcement Rule',
-							slug: 'guides/installing-the-enforcement-rule',
-						},
-						{ label: 'Enforce Row-Level DML Rules', slug: 'guides/enforcing-dml-rules' },
-						{ label: 'View Verification Results', slug: 'guides/viewing-results' },
-						{
-							label: 'Prove Enforcement with the Regression Pack',
-							slug: 'guides/running-the-regression-pack',
-						},
-						{
-							label: 'Check Contract Compatibility',
-							slug: 'guides/checking-contract-compatibility',
-						},
-						{ label: 'Configure a Notification Sink', slug: 'guides/notification-sinks' },
-						{
-							label: 'Fingerprint a Transformation',
-							slug: 'guides/fingerprinting-transformations',
+							label: 'Install',
+							items: [
+								{ label: 'Install on Spark', slug: 'guides/installing-the-enforcement-rule' },
+								{ label: 'Use Prebuilt Jars Without sbt', slug: 'guides/using-prebuilt-jars-without-sbt' },
+								{ label: 'Install and Configure in Code', slug: 'guides/calling-invaract-explicitly' },
+								{ label: 'Use with Apache Beam (Java)', slug: 'guides/using-invaract-with-apache-beam' },
+								{ label: 'Use with Beam Python Pipelines', slug: 'guides/using-invaract-with-beam-python' },
+							],
 						},
 						{
-							label: 'Resolve Dataset Locations at Runtime',
-							slug: 'guides/resolving-dataset-locations',
+							label: 'Write Contracts',
+							items: [
+								{ label: 'Infer a Starting Contract (Dry Run)', slug: 'guides/dry-run-mode' },
+								{ label: 'Write a Contract', slug: 'guides/writing-a-contract' },
+								{ label: 'Declare Input and Output Types', slug: 'guides/declaring-input-and-output-types' },
+								{ label: 'Map Outputs to Their Inputs', slug: 'guides/mapping-outputs-to-inputs' },
+								{ label: 'Enforce Transformation Shape Rules', slug: 'guides/enforcing-transformation-rules' },
+								{ label: 'Enforce Row-Level DML Rules', slug: 'guides/enforcing-dml-rules' },
+								{ label: 'Verify Static Data Quality', slug: 'guides/verifying-static-data-quality' },
+								{ label: 'Require Catalog Registration', slug: 'guides/requiring-catalog-registration' },
+								{ label: 'Check Contract Compatibility', slug: 'guides/checking-contract-compatibility' },
+							],
 						},
 						{
-							label: 'Require Catalog Registration',
-							slug: 'guides/requiring-catalog-registration',
+							label: 'Run at Scale',
+							items: [
+								{ label: 'Resolve Dataset Locations at Runtime', slug: 'guides/resolving-dataset-locations' },
+								{ label: 'Use a Contract Registry', slug: 'guides/using-a-contract-registry' },
+								{ label: 'Enforce an Organizational Policy', slug: 'guides/enforcing-organizational-policy' },
+								{ label: 'Configure a Notification Sink', slug: 'guides/notification-sinks' },
+								{ label: 'Fingerprint a Transformation', slug: 'guides/fingerprinting-transformations' },
+							],
 						},
 						{
-							label: 'Enforce an Organizational Policy',
-							slug: 'guides/enforcing-organizational-policy',
-						},
-						{
-							label: 'Use a Contract Registry',
-							slug: 'guides/using-a-contract-registry',
+							label: 'See It Work',
+							items: [
+								{ label: 'View Verification Results', slug: 'guides/viewing-results' },
+								{ label: 'Prove Enforcement with the Regression Pack', slug: 'guides/running-the-regression-pack' },
+							],
 						},
 					],
 				},
@@ -105,9 +110,11 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
+						{ label: 'What Each Engine Checks', slug: 'reference/what-each-engine-checks' },
 						{ label: 'Contract Format', slug: 'reference/contract-format' },
+						{ label: 'Configuration Settings', slug: 'reference/configuration' },
 						{ label: 'Connector Support', slug: 'reference/connector-support' },
-						{ label: 'Spark Version Support', slug: 'reference/spark-version-support' },
+						{ label: 'Engine Version Support', slug: 'reference/spark-version-support' },
 						{ label: 'Engine Capabilities', slug: 'reference/engine-capabilities' },
 						{ label: 'Violation Types', slug: 'reference/violation-types' },
 						{

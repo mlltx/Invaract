@@ -15,6 +15,10 @@ only checks shape. Semantic lineage fingerprinting can: it turns a transformatio
 translated logic into a deterministic hash, so a later revision of the same job can be
 compared against it.
 
+<Aside type="note" title="Spark only">
+A fingerprint is computed from the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `computeFingerprint` on doesn't stop the pipeline; it publishes no fingerprint, and a warning in the log says why. A fingerprint of the graph alone would miss the logic inside its steps.
+</Aside>
+
 <Aside type="note" title="This is a hash, not a diff">
 Enabling this gives you a fingerprint for *this* check — a value you can log, publish, and
 compare by hand or with your own tooling. Invaract does not yet store a history of
@@ -72,14 +76,19 @@ the identical pattern, via `spark.invaract.rejectUndeclaredInputs`/
 **In a rejected write's exception message.** When a check with `computeFingerprint = true`
 fails, `ContractViolationException`'s message gains a `Fingerprints` section after the
 usual "how to correct it" list — the same fingerprint that check computed, not a diff
-against anything prior:
+against anything prior. This is the end of the real message for a job that reads
+`raw/orders`, computes `value = amount * 1.20` and writes `gold/customer_values`, against a
+contract that declares `value` as `long` (the job produces a `double`):
 
 ```
-Fingerprints (v1, SHA-256):
-  overall: 5fdedfe2991b779fb380ca8775f8db5e01d3d8f8539f22f82a8a23acba384661
+How to correct it:
+  1. Cast 'value' to 'long' in the transformation, or update the contract to declare 'double' if the new type is intentional.
+
+Fingerprints (v4, SHA-256):
+  overall: 7173bc8758e3b735afc616302a32c3351494c89d7d7d9a0c7be03d761275eb0b
   outputs:
-    customer_id: 2ab5c6f75ad63625605011b796ffad66fa2c636d9573540884bfa4152965e843
-    value: 10b220dcfb75b8bafa6e7f355791315da10b7c8aeb9670652fec9b51d47be1d8
+    customer_id: d0ad273a8a49f68fdae80a82730e3f04f78e821bc953d53f3e274f59ae122549
+    value: fb215b585bfe17ec620bd49cb9d5f6d115973c6326301199dfdd432ede138cf4
 ```
 
 Only each output's combined hash is printed, to keep the message readable — see
@@ -90,7 +99,7 @@ Only each output's combined hash is printed, to keep the message readable — se
 a passing check's fingerprint is exactly the baseline a later comparison needs:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "status": "PASSED", "...": "...", "fingerprints": {"version": 1, "overall": {"version": 1, "algorithm": "SHA-256", "value": "a548a29e35d1cfda63f119c1b3d5a3f7e4c29ebd512ca7e3dbe7b641986b3fe9"}, "inputs": {"raw.orders#0": {"version": 1, "algorithm": "SHA-256", "value": "..."}}, "outputs": {"customer_id": {"expression": {"...": "..."}, "lineage": {"...": "..."}, "combined": {"...": "..."}, "nonDeterministic": false}, "value": {"...": "..."}}}}
+{"eventType": "CONTRACT_VALIDATION", "status": "PASSED", "...": "...", "fingerprints": {"version": 4, "overall": {"version": 4, "algorithm": "SHA-256", "value": "7173bc8758e3b735afc616302a32c3351494c89d7d7d9a0c7be03d761275eb0b"}, "inputs": {"file:/tmp/invaract-fingerprint-example/raw/orders#0": {"version": 4, "algorithm": "SHA-256", "value": "12789decf21121758b30b19080f0a66e101dcb6624e08958447bc8124a385ac9"}}, "outputs": {"customer_id": {"expression": {"...": "..."}, "lineage": {"...": "..."}, "combined": {"version": 4, "algorithm": "SHA-256", "value": "d0ad273a8a49f68fdae80a82730e3f04f78e821bc953d53f3e274f59ae122549"}, "nonDeterministic": false}, "value": {"...": "..."}}, "rowMutation": null}}
 ```
 
 **Programmatically**, on the `VerificationResult` itself — useful if you're calling
@@ -124,6 +133,17 @@ Changing `amount * 1.20` to `amount * 1.25` moves `value`'s `expression`/`combin
 **not** its `lineage` (same source column, same kind of computation) or `customer_id`'s
 fingerprint at all — the real, complete output from the run this example's hex values were
 captured from is worked through in full in the design document's own §13.
+
+Every hash carries the `version` of the rules that produced it. Compare only fingerprints
+with the same version: a change to the rules changes every value, for the same job. Version
+4 is the current one; it changed how a hash is built (from each part's own hash), so a job
+whose plan merges branches of the same data, or defines a column from itself repeatedly,
+is fingerprinted as quickly as any other. A fingerprint saved under version 3 or earlier
+will not match the same job's version 4 fingerprint.
+
+A read's hash is built from its location, so a job reading from a different place (another
+environment's bucket, a renamed folder) has a different `overall` and `inputs`, while each
+output's `expression` and `combined` are unchanged if only the location moved.
 
 ## What this can and cannot detect
 

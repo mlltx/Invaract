@@ -14,8 +14,10 @@ final case class ScenarioInput(location: String, schema: LogicalSchema)
 
 /** Where a scenario's job writes. `format` and `saveMode` use the engine-neutral spellings the
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).
+  * With `registeredAs` set the data is also registered in the engine's catalog under that table
+  * name (still stored at `location`), which is what a contract's `catalog:` requirement asks about.
   */
-final case class ScenarioOutput(location: String, format: String = "parquet", saveMode: String = "overwrite")
+final case class ScenarioOutput(location: String, format: String = "parquet", saveMode: String = "overwrite", registeredAs: Option[String] = None)
 
 /** What one output column is made of. Deliberately tiny: just enough to build every shape the
   * scenarios need on any engine - a pass-through, a cast, and a value that can never be null.
@@ -38,12 +40,37 @@ object ColumnSource {
 
   /** A constant integer, typed `long` and never null (the way to get a guaranteed non-null column). */
   final case class NonNullLong(value: Long) extends ColumnSource
+
+  /** The number of rows in each group of a job that groups (`ScenarioJob.groupBy`): typed `long`, never null. Only
+    * meaningful in such a job. */
+  case object RowCount extends ColumnSource
 }
 
 final case class OutColumn(name: String, source: ColumnSource)
 
 /** Join the two inputs on equality of one column from each. */
 final case class JoinOn(leftColumn: String, rightColumn: String)
+
+/** A row-level operation on the output dataset in place - not a read-transform-write. Only the
+  * shapes the scenarios need: a delete that touches every row, and one that touches the rows
+  * matching a predicate (`id > 0`).
+  */
+sealed trait RowChange
+
+object RowChange {
+
+  /** `DELETE FROM output` with no `WHERE`. */
+  case object UnconditionalDelete extends RowChange
+
+  /** `DELETE FROM output WHERE id > 0`. */
+  case object FilteredDelete extends RowChange
+}
+
+/** A further write the same job makes, after its main one: `input` copied unchanged (every column) to `output`. It reads
+  * nothing the main write reads unless it is the same input, and is checked against the contract like any write - so a
+  * job can write every output its contract declares, or write somewhere the contract does not mention.
+  */
+final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
 
 /** A job described in no engine's terms: read one or two inputs (two are inner-joined), optionally
   * keep the rows where a column of the first input is greater than zero, project `columns`, write
@@ -54,6 +81,46 @@ final case class JoinOn(leftColumn: String, rightColumn: String)
   * translation for, and an adapter must refuse it (`UNVERIFIABLE_WRITE`) rather than let it through
   * unchecked. The adapter picks its own engine's representative (Spark: `TRUNCATE TABLE`); the
   * inputs and columns are not used.
+  *
+  * With `rowChange` set the job changes the rows of `output` in place instead, and `columns` describe
+  * that dataset's own columns: the adapter first creates it (in `output.format`, with no contract
+  * active), then runs the change under enforcement. The change reads no declared input, so a
+  * scenario using it declares none.
+  *
+  * With `boundary` set the work so far (the read, the join, the filter) is materialized through the
+  * engine's own lineage-erasing point - a checkpoint or a cache - before the projection and the write.
+  * What the contract and its rules say about the job must come out the same as without it: an adapter
+  * that cannot see through the boundary has lost the reads and the filter that sit behind it.
+  *
+  * With `crossJoin` set the two inputs are joined with no condition at all - a cartesian product, which engines
+  * report either as a cross join or as a join with no condition (a rule that forbids cross joins must catch both).
+  *
+  * With `groupBy` set the work so far (the read, the join, the filter) is aggregated by those columns of the first
+  * input before the write, and `columns` are then the group columns (`FromInput`, which may rename one) and
+  * `RowCount`.
+  *
+  * With `opaqueStep` set the work so far (the read, the join, the filter) passes through one step the adapter's
+  * translation has no representation for, before the projection and the write: an engine operation that keeps
+  * the columns as they are (Spark: a row sample). What the contract says about the job must come out the same as
+  * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
+  * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
+  *
+  * With `rejoins` set the work so far (the read, the join, the filter, any opaque step) is split into two branches
+  * that are merged again (a union of the two), that many times in a row, before the projection and the write; each
+  * branch keeps the rows and columns as they are. An engine that describes a job as a graph (Beam) hands the adapter
+  * one step consumed by both branches, which its plan must keep as one node under both (see `ir.Plan`); what the
+  * contract says about the job must come out the same as without the merges, so an adapter that loses what is beneath
+  * a merge reports a genuinely read input missing or an undeclared read unseen. The scenarios keep it small (6, 64
+  * paths through the plan): Spark's own analysis of a self-union is exponential in it (12 takes seconds). That
+  * Invaract's own checks cost the plan's distinct nodes, not its paths, is held at 40 by verification-core's and
+  * ir's tests, which no engine has to run.
+  *
+  * With `extraWrites` the job makes further writes after its main one (`ExtraWrite`), each checked as a write of its own,
+  * in order.
+  *
+  * With `streaming` set the inputs are read as streams and the output is written as a stream (run to
+  * completion over the inputs that exist, then stopped), one input only. What the contract says about the job
+  * must come out the same as for the batch job: the stream is the declared input, the stream's sink the output.
   */
 final case class ScenarioJob(
     inputs: List[ScenarioInput],
@@ -61,30 +128,87 @@ final case class ScenarioJob(
     output: ScenarioOutput,
     join: Option[JoinOn] = None,
     filterColumn: Option[String] = None,
-    untranslatableWrite: Boolean = false
+    untranslatableWrite: Boolean = false,
+    rowChange: Option[RowChange] = None,
+    boundary: Boolean = false,
+    streaming: Boolean = false,
+    opaqueStep: Boolean = false,
+    crossJoin: Boolean = false,
+    groupBy: Option[List[String]] = None,
+    extraWrites: List[ExtraWrite] = Nil,
+    rejoins: Int = 0
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
-  require(inputs.size == 1 || join.isDefined, "a two-input job must say how its inputs are joined")
-  require(inputs.size == 2 || join.isEmpty, "a join needs two inputs")
+  require(inputs.size == 1 || join.isDefined || crossJoin, "a two-input job must say how its inputs are joined")
+  require(inputs.size == 2 || (join.isEmpty && !crossJoin), "a join needs two inputs")
+  require(!(join.isDefined && crossJoin), "inputs are joined on a column or not at all, not both")
+  require(
+    groupBy.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming),
+    "a grouping job is a plain read-transform-write"
+  )
+  require(
+    groupBy.isDefined || !columns.exists(_.source == ColumnSource.RowCount),
+    "a row count is the count of a group, so only a grouping job can have one"
+  )
+  require(!opaqueStep || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "an opaque step is part of a plain read-transform-write")
+  require(!streaming || (inputs.size == 1 && rowChange.isEmpty && !untranslatableWrite && !boundary), "a streaming job is a plain read-transform-write of one input")
+  require(extraWrites.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !streaming), "only a plain batch job makes further writes")
+  require(rejoins >= 0, "a job merges its branches again a number of times, or not at all")
+  require(rejoins == 0 || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "branches that rejoin are part of a plain read-transform-write")
+
+  /** Where the job's writes land, the main one first: every write it makes. */
+  def writtenLocations: List[String] = output.location :: extraWrites.map(_.output.location)
+
+  /** How many writes the job makes. */
+  def writes: Int = 1 + extraWrites.size
 }
 
 /** What running a scenario through an adapter produced. `statuses` are the `ContractValidationEvent`
-  * statuses the adapter published to the sink it was given, in order.
+  * statuses the adapter published to the sink it was given, in order; the rest is read from the last of
+  * those events, so an adapter fills it in by handing `RecordingSink` to its enforcement and asking the
+  * sink (`RecordingSink.passed` / `rejected`).
   */
 sealed trait ScenarioOutcome {
   def statuses: List[String]
 
   /** The output columns the adapter's fingerprint reported non-deterministic (empty when it computed none). */
   def nonDeterministicColumns: Set[String]
+
+  /** `(output field, verdict)` for every static data-quality check reported (`DataQualityVerdict` names). */
+  def dataQuality: Set[(String, String)]
+
+  /** Input name -> role-consistency verdict (`RoleConformanceVerdict` names) for every input checked. */
+  def roles: Map[String, String]
+
+  /** The declared inputs the adapter could not confirm were read, because a lineage boundary hid them. */
+  def unverifiableInputs: Set[String]
+
+  /** For each validation event the adapter published, the engine it named in `job.engine` (`None` when it named none). */
+  def eventEngines: List[Option[String]]
 }
 
 object ScenarioOutcome {
 
   /** The write was allowed to proceed. */
-  final case class Passed(statuses: List[String], nonDeterministicColumns: Set[String] = Set.empty) extends ScenarioOutcome
+  final case class Passed(
+      statuses: List[String],
+      nonDeterministicColumns: Set[String] = Set.empty,
+      dataQuality: Set[(String, String)] = Set.empty,
+      roles: Map[String, String] = Map.empty,
+      unverifiableInputs: Set[String] = Set.empty,
+      eventEngines: List[Option[String]] = Nil
+  ) extends ScenarioOutcome
 
   /** The write was blocked; `violationTypes` are the distinct `ViolationType`s reported. */
-  final case class Rejected(violationTypes: Set[String], statuses: List[String], nonDeterministicColumns: Set[String] = Set.empty) extends ScenarioOutcome
+  final case class Rejected(
+      violationTypes: Set[String],
+      statuses: List[String],
+      nonDeterministicColumns: Set[String] = Set.empty,
+      dataQuality: Set[(String, String)] = Set.empty,
+      roles: Map[String, String] = Map.empty,
+      unverifiableInputs: Set[String] = Set.empty,
+      eventEngines: List[Option[String]] = Nil
+  ) extends ScenarioOutcome
 }
 
 /** What a conforming adapter must do with a scenario. */
@@ -97,24 +221,58 @@ object Expectation {
   final case class Reject(violationTypes: Set[String]) extends Expectation
 }
 
+/** What a scenario expects an adapter to report beyond allow or block. Each part is checked only when set;
+  * `None` means the scenario says nothing about it.
+  *
+  * @param dataQuality exactly these `(field, verdict)` static data-quality results (the scenario turns
+  *   `staticDataQuality` on).
+  * @param roles exactly these input -> role-consistency verdicts (the scenario turns `roleConsistency` on).
+  * @param unverifiableInputs exactly these declared inputs reported as hidden behind a boundary.
+  * @param lineage for each output column, the `(input number, column)` pairs it derives from, read from
+  *   the adapter's own translation of the job (`ConformanceAdapter.translation`).
+  * @param sensitivity for each output column, the sensitivity tags that reach it from the contract's tagged
+  *   input fields, propagated over the adapter's own translation.
+  */
+final case class Analysis(
+    dataQuality: Option[Set[(String, String)]] = None,
+    roles: Option[Map[String, String]] = None,
+    unverifiableInputs: Option[Set[String]] = None,
+    lineage: Option[Map[String, Set[(Int, String)]]] = None,
+    sensitivity: Option[Map[String, Set[String]]] = None
+) {
+
+  /** True when checking this needs the adapter's translated plan, not just what a run reported. */
+  def needsTranslation: Boolean = lineage.isDefined || sensitivity.isDefined
+}
+
 /** One engine-neutral behaviour every adapter must show.
   *
+  * @param description what the scenario checks, in the kit's terms (it names the test).
+  * @param userStory the same scenario from the point of view of the team whose job it is: what their job does and what
+  *   Invaract does about it, in plain words with no engine or Invaract jargon. A survey of a new engine, the capability
+  *   page and `ScenarioCatalogue` show it beside the technical description, so a person who has never read the kit can
+  *   tell what each scenario is protecting them from. Required, so a new scenario cannot be added without one.
   * @param focus the capabilities this scenario is the evidence for: an adapter that declares one of
   *   these `supported` or `partial` is claiming this scenario passes on it.
   * @param expectNonDeterministic when set, exactly these output columns must be reported non-deterministic by the
   *   adapter's fingerprint (the scenario turns `computeFingerprint` on) - the check that an engine's own
   *   function names reach the shared catalog.
+  * @param analysis what the scenario expects the adapter to report beyond allow or block (see `Analysis`).
   * @param operations what the job itself needs the engine to do (read, write) - an adapter that
   *   cannot do those cannot run the scenario at all.
   */
 final case class Scenario(
     id: String,
     description: String,
+    userStory: String,
     focus: Set[Capability],
     contract: Contract,
     job: ScenarioJob,
     options: VerificationOptions,
     expect: Expectation,
     expectNonDeterministic: Option[Set[String]] = None,
+    analysis: Analysis = Analysis(),
     operations: Set[Capability] = Set(Capability.ReadBatch, Capability.WriteBatch)
-)
+) {
+  require(userStory.trim.nonEmpty, s"scenario '$id' needs a userStory: what it means for the team whose job it is")
+}

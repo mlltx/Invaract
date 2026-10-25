@@ -72,7 +72,10 @@ don't present it as something external consumers would bind to.
   adapter depends on this, not on `spark-adapter` — see
   docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
   scenarios every adapter's tests run — test-scope infrastructure, not part of any
-  runtime jar)
+  runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
+  submitted through a wrapper runner named by `--runner`, the second adapter after
+  `spark-adapter` — see docs/BEAM_ADAPTER.md; it also checks pipelines written with Beam's Python SDK, through the
+  `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -85,10 +88,11 @@ don't present it as something external consumers would bind to.
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
   required by Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (8 independent modules `./dev/build` builds, plus
-  the standalone opt-in `notification-kafka` — no aggregating root
-  `build.sbt` — see `dev/build`'s comments for the cross-module dependency
-  graph)
+- **Build System**: sbt, one independent build per module — no aggregating
+  root `build.sbt`. `modules.json` is the list of modules (and which of them
+  `./dev/build` builds, which are published, which are mutation-tested);
+  `dev/build`'s comments give the cross-module dependency graph. The opt-in
+  modules (`notification-kafka`, `registry-client`) are not built by `./dev/build`.
 - **Test Execution**: Local Spark master (`local[*]`)
 - **Results Viewer**: Next.js web UI, mobile-responsive
 
@@ -115,7 +119,8 @@ opposed to a harness run merely completing.
 
 ## Mutation Testing Requirement
 
-`ir` and `spark-adapter` are mutation-tested with Stryker4s (see
+Every module `modules.json` marks `mutation: true` (`ir`, `fingerprint`, `verification-core`,
+`adapter-testkit`, `spark-adapter`, and each future adapter) is mutation-tested with Stryker4s (see
 docs/TRANSFORMATION_IR.md and docs/SPARK_ADAPTER.md's "Mutation testing"
 sections). CI blocks on each module's *whole-module* score staying above
 its `break` threshold (see `strykerThresholdsBreak` in each module's
@@ -136,8 +141,8 @@ and its own PR-scoped incremental check, and `api-compatibility` covers it
 too. Nothing is left open for this module: mutation testing, API compatibility and
 Maven Central publishing are all in place.
 
-So: when a feature adds or changes code in `ir/src/main/scala/...`,
-`spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,
+So: when a feature adds or changes code in the `src/main/scala/...` of any of those modules
+(`ir`, `fingerprint`, `verification-core`, `adapter-testkit`, `spark-adapter`, an adapter),
 passing tests are **not** enough to call it done. Before considering such
 a feature complete, you MUST:
 
@@ -196,9 +201,12 @@ that otherwise looks unrelated to it.
 
 This bar — and every other regression-testing guardrail in this repo
 (property-based fuzzing, mutation testing, API-compatibility checking, the
-Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — is
-scoped to `contract`/`ir`/`spark-adapter`/`fingerprint`. It does not apply
-to `plugin`/`runner`, which are example/test code, not the engine.
+Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — applies to the
+engine modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
+every adapter (`spark-adapter` and `beam-adapter` today). `modules.json` is the authority: a module that is
+`published` is in the API-compatibility and coverage loops, and one with `mutation: true` has
+a `mutation-testing-<name>` job. The bar does not apply to `plugin`/`runner`, which are
+example/test code, not the engine.
 
 ## Coverage Gating Requirement
 
@@ -228,8 +236,8 @@ version genuinely published for `scalac-scoverage-plugin_2.12.18` (check
 `https://repo1.maven.org/maven2/org/scoverage/scalac-scoverage-plugin_2.12.18/maven-metadata.xml`)
 rather than assuming the pinned one is special.
 
-When a feature adds or changes code in one of these four modules and
-lowers that module's own real coverage below its pinned threshold, you MUST
+When a feature adds or changes code in one of the coverage-gated modules (every
+`published` module in `modules.json`) and lowers that module's own real coverage below its pinned threshold, you MUST
 either add tests bringing coverage back above it, or — only if the
 uncovered code is genuinely unreachable in tests for a documented reason
 (e.g. a defensive branch no realistic input can trigger) — lower the
@@ -384,24 +392,35 @@ names in `InvaractConf` (`locationMap`, `orgPolicy`, `rejectUndeclaredFields`, .
 an adapter satisfies this requirement by supplying a `ConfigSource` that spells those
 names its own way (Spark's is `SparkConfigSource`: `spark.invaract.<name>`) and calling
 `VerificationSetup`, which gives it location resolution, option overlay and
-organizational policy for free. A new neutral setting goes in `InvaractConf` and
-`VerificationSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
+organizational policy for free; `AttachSetup.select` (also `verification-core`) decides dry-run or
+enforcement, resolves the contract (a path or a `registry://` reference, `ContractReference`) and builds the
+notification sink, so an adapter only installs the plan it gets back. A new neutral setting goes in
+`InvaractConf` and `VerificationSetup`/`AttachSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 
 **Every adapter declares what it can and cannot verify**, in
 `invaract-capabilities-<adapter>.yaml` (a status for every `Capability` in
 `verification-core`; an undeclared capability is a parse error). A new engine-neutral
 check, rule or analysis means a new `Capability`, which forces every adapter to take a
-position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
-`verification-core` fails otherwise). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+position; regenerate the docs-site matrix and the user page "What Each Engine Checks" with `./dev/capabilities` (a drift test in
+`adapter-testkit` fails otherwise; the kit generates it because the page also says how the
+conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+
+**Surveying a new engine comes before adding it:** the `survey-engine-adapter` skill (`.claude/skills/survey-engine-adapter/`) writes `docs/<ENGINE>_ADAPTER_SURVEY.md`, a plain-language feasibility document (key design decisions, how the adapter gets hold of a job, how it attaches without touching the job, a forecast of every conformance scenario), using `./dev/adapter-survey` for the scenario table; it never starts the adapter. **Adding an adapter for a new engine** follows `docs/ADDING_AN_ENGINE_ADAPTER.md` (investigate the engine, then
+`dev/new-adapter <engine>`, then walk the kit's scenarios one capability at a time). `modules.json` is the one
+list of the repository's sbt modules; `.github/scripts/check_modules.py` (CI's "Workflow script tests" job) fails
+when any file that lists modules - the CI loops, the release steps, `dev/build`, the warm-up list, the dependency
+graph, the mutation jobs - disagrees with it, naming the file and line. A new module is added there first.
 
 **Every adapter is checked against its own declaration** by the conformance kit
 (`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
 and each must come out as the adapter's declaration promises (a capability declared
 unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
 is canceled with its note). A new engine-neutral check means a new scenario in
-`Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
-could check by its nature, the second for what the kit cannot check yet) — the kit's own
-tests fail if a capability is in neither. The kit is itself gated by MiMa and coverage in CI (not mutation testing). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+`Scenarios.scala`, with a `userStory` (the same scenario in plain words, from the point of view of the team whose job it is; the survey and `ScenarioCatalogue` show it) (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
+could check by its nature, the second for what the kit cannot check yet; there are no gaps today) — the kit's own
+tests fail if a capability is in neither, and `BrokenAdapterSpec` fails if a new scenario is the catch for no
+deliberately broken adapter (add the mistake it exists to catch, or exempt it with a pointer the suite checks: the scenario it is a control for, the `verification-core` test that holds it, or a kit test). An attested capability
+an adapter claims names the test that demonstrates it (`AttestedClaimsSpec`). Each adapter also checks in `conformance-baseline-<adapter>.txt` among its test resources (the scenarios it conforms to), and `AdapterConformanceSpec` fails when one stops conforming (a capability flipped to `unsupported` to silence a failure would otherwise be a green cancel) or when a new one conforms and is not yet listed; `dev/new-adapter` writes an empty one. The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
@@ -630,8 +649,10 @@ would be.
 │   ├── next.config.js
 │   └── .eslintrc.json
 │
+├── modules.json                  # The one list of the repository's sbt modules (checked by check_modules.py)
+├── adapter-scaffold/             # Templates dev/new-adapter turns into a new engine adapter module
 ├── dev/                          # Development scripts
-│   ├── build                    # Builds all 5 modules in dependency order
+│   ├── build                    # Builds every `built` module in modules.json, in dependency order
 │   ├── test                     # End-to-end harness run (7-step verification)
 │   ├── regression                # Docker-based pass/fail enforcement proof
 │   └── report                   # Launch web UI
@@ -731,7 +752,8 @@ Run the comprehensive test harness:
 
 This single command:
 
-1. ✓ Builds all 5 modules (`contract`, `ir`, `plugin` concurrently, then
+1. ✓ Builds every module `modules.json` marks built (`contract`, `ir`, `plugin`
+   concurrently, then `fingerprint`, `verification-core`, `adapter-testkit`,
    `spark-adapter`, then `runner`) via `./dev/build`
 2. ✓ Verifies the plugin JAR
 3. ✓ Verifies the Spark environment
@@ -969,7 +991,7 @@ To modify it:
 GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 
 - **`test`**: OS × Java matrix (ubuntu/macos/windows × 11/17/21, with
-  exclusions) — builds all 5 modules and runs `./dev/regression` (not
+  exclusions) — builds every built module and runs `./dev/regression` (not
   `./dev/test`, which stays a local/interactive script no CI job invokes —
   see `dev/lib.sh`'s own doc)
 - **`docker-regression`**: runs `./dev/regression` a second time, inside
@@ -986,10 +1008,15 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   changed-files check, so a whole-module regression is caught on the merge
   commit's run, not before it
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
-  run on a PR — only when `spark-adapter/`, `verification-core/` or
-  `.github/workflows/test.yml` changed; pushes always run them
+  run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
+  `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`
+  or a `.github/actions/` composite changed; pushes always run them
 - **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
   the job rebuilds every module
+- **`release-dry-run.yml`** (separate workflow, on changes to publishing files): signs and bundles all six
+  modules with a throwaway key; see docs/RELEASING.md
+- **Shared steps**: `.github/actions/setup-jdk-sbt` (JDK + sbt) and `.github/actions/publish-engine-modules`
+  (the local publish of the engine modules, cached) are used by the jobs above instead of copying the steps
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

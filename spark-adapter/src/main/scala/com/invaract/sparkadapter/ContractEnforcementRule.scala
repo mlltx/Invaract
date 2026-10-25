@@ -6,7 +6,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
-import com.invaract.verification.notification.{InferenceStatus, NotificationSink}
+import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -93,7 +93,10 @@ object ContractEnforcementRule {
       val resolvedOptions = resolveVerificationOptions(options, session)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, None, None)
       val checkpointRegistry = new CheckpointRegistry
-      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None, checkpointRegistry = Some(checkpointRegistry))
+      // every write checked is recorded, so a declared output never written is reported when the job ends
+      val outputs = DeclaredOutputs.forJob(session, governedContract, None, None, None)
+      (plan: LogicalPlan) =>
+        verifyOrThrow(governedContract, plan, governedOptions, None, None, Some(checkpointRegistry), SparkCapabilities.declared, None, outputs.record)
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -119,10 +122,14 @@ object ContractEnforcementRule {
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
       val applicationId = Some(session.sparkContext.applicationId)
-      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
+      // Which engine and job these events come from - the same identity dry-run mode reports (DryRunReporter.jobInfoOf).
+      val job = Some(DryRunReporter.jobInfoOf(session))
+      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId, job)
       val checkpointRegistry = new CheckpointRegistry
+      // every write checked is recorded, so a declared output never written is reported when the job ends
+      val outputs = DeclaredOutputs.forJob(session, governedContract, Some(sink), applicationId, job)
       (plan: LogicalPlan) =>
-        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry))
+        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, Some(checkpointRegistry), SparkCapabilities.declared, job, outputs.record)
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -147,7 +154,7 @@ object ContractEnforcementRule {
   val LocationMapConfKey = "spark.invaract.locationMap"
 
   /** The resolver `resolveContractLocations` builds when
-    * `LocationMapConfKey` isn't set on `session` - `NoOpLocationResolver`,
+    * `LocationMapConfKey` isn't set on `session` resolves nothing,
     * so a contract with no `ref://` locations is completely unaffected
     * (this whole mechanism is invisible to it) and one that does declare a
     * reference fails immediately with a clear, actionable message instead
@@ -300,9 +307,10 @@ object ContractEnforcementRule {
       options: VerificationOptions,
       session: SparkSession,
       sink: Option[NotificationSink],
-      applicationId: Option[String]
+      applicationId: Option[String],
+      job: Option[JobInfo] = None
   ): (Contract, VerificationOptions) =
-    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId)
+    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId, job)
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -441,7 +449,21 @@ object ContractEnforcementRule {
       sink: Option[NotificationSink] = None,
       applicationId: Option[String] = None,
       checkpointRegistry: Option[CheckpointRegistry] = None,
-      capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared
+      capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared,
+      job: Option[JobInfo] = None
+  ): Unit = verifyOrThrow(contract, analyzedPlan, options, sink, applicationId, checkpointRegistry, capabilities, job, _ => ())
+
+  /** `verifyOrThrow`, telling `written` the location of every write it checks (`DeclaredOutputs.record`). */
+  private[sparkadapter] def verifyOrThrow(
+      contract: Contract,
+      analyzedPlan: LogicalPlan,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      applicationId: Option[String],
+      checkpointRegistry: Option[CheckpointRegistry],
+      capabilities: Option[AdapterCapabilities],
+      job: Option[JobInfo],
+      written: String => Unit
   ): Unit = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
@@ -456,7 +478,8 @@ object ContractEnforcementRule {
     val translated = translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
-      case _: com.invaract.ir.Write =>
+      case w: com.invaract.ir.Write =>
+        written(w.dataset.location)
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
         // describes the same (checkpoint-resolved) plan this check does.
         SparkAdapterListener.stash(analyzedPlan, translated)
@@ -467,7 +490,7 @@ object ContractEnforcementRule {
         // plain read/transformation the moment an invalid contract was merely
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities)
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
       case _ =>
         // Checked before the fail-closed Command catch-all below: a recognized
         // state-changing CALL (nine procedures - see StateChangingCallSupport)
@@ -485,10 +508,13 @@ object ContractEnforcementRule {
               SQLConf.get.caseSensitiveAnalysis,
               options,
               sink,
-              applicationId
+              applicationId,
+              job
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId)
+            VerificationPipeline.rejectUnverifiableWrite(
+              contract, FailClosedCommands.unverifiable(plan.getClass.getSimpleName), translated.plan, sink, applicationId, job
+            )
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }

@@ -83,9 +83,18 @@ class SparkSchemasSpec extends AnyFunSuite {
     assert(SparkSchemas.toLogicalType(dt) == LogicalType.MapType(LogicalType.StringType, LogicalType.ArrayType(LogicalType.IntegerType)))
   }
 
+  test("Spark's calendar interval is the logical interval, which is what a contract's `interval` parses to") {
+    assert(SparkSchemas.toLogicalType(CalendarIntervalType) == LogicalType.IntervalType)
+    assert(LogicalType.parse(CalendarIntervalType.catalogString).contains(LogicalType.IntervalType))
+  }
+
   test("a type with no logical equivalent keeps Spark's own spelling and equals only itself") {
     assert(SparkSchemas.toLogicalType(NullType) == LogicalType.OtherType(NullType.typeName, NullType.catalogString))
-    assert(SparkSchemas.toLogicalType(CalendarIntervalType) == LogicalType.OtherType(CalendarIntervalType.typeName, CalendarIntervalType.catalogString))
+    val yearMonth = YearMonthIntervalType()
+    assert(SparkSchemas.toLogicalType(yearMonth) == LogicalType.OtherType(yearMonth.typeName, yearMonth.catalogString))
+    val dayTime = DayTimeIntervalType()
+    assert(SparkSchemas.toLogicalType(dayTime) == LogicalType.OtherType(dayTime.typeName, dayTime.catalogString))
+    assert(SparkSchemas.toLogicalType(yearMonth) != SparkSchemas.toLogicalType(dayTime))
     assert(SparkSchemas.toLogicalType(CharType(3)) != SparkSchemas.toLogicalType(StringType))
     assert(SparkSchemas.toLogicalType(VarcharType(5)) != SparkSchemas.toLogicalType(VarcharType(6)))
   }

@@ -1,11 +1,12 @@
 ---
 title: The Transformation IR
-description: Why Invaract translates Spark plans into an engine-independent representation before checking them.
+description: Why Invaract translates a Spark plan or a Beam pipeline into an engine-independent representation before checking it.
 sidebar:
   order: 2
 ---
 
-Before a Spark write is checked against a contract, it's translated into Invaract's own
+Before a write is checked against a contract, the job that makes it (a Spark logical plan, or
+a Beam pipeline graph) is translated into Invaract's own
 **transformation IR** (intermediate representation) — an engine-independent algebra of
 plan and expression nodes. Plan nodes: `Read`, `Write`, `Project`, `Filter`, `Join`,
 `Aggregate`, `Union`, `Sort`, `Limit`, and `Window`. Expression nodes: `ColumnReference`,
@@ -18,13 +19,16 @@ plan and expression nodes. Plan nodes: `Read`, `Write`, `Project`, `Filter`, `Jo
 Spark's Catalyst `LogicalPlan` is Spark-specific and version-sensitive — its exact node
 shapes vary across Spark versions and aren't fully specified. Verification logic written
 directly against Catalyst would be coupled to Spark's internals and brittle across
-versions. The IR is the layer that logic is actually written against: any future engine
-front end (a different Spark version, or in principle a different engine entirely) only
-needs to translate into the same IR, not reimplement verification.
+versions. The IR is the layer that logic is actually written against: an engine adapter
+only needs to translate into the same IR, not reimplement verification. That is how the
+Apache Beam adapters work: they translate a pipeline's graph into the same IR, so the same
+contract is checked by the same code on both engines. What an engine's description of a
+job leaves out (a Beam step written as a function, for instance) is what that engine can't
+check: see [What Each Engine Checks](/reference/what-each-engine-checks/).
 
 ## What gets translated
 
-`SparkPlanAdapter.translate` walks a Spark logical plan and produces an `ir.Plan`. A
+On Spark, `SparkPlanAdapter.translate` walks a Spark logical plan and produces an `ir.Plan`. A
 worked example, run against this project's own demo data
 (`SELECT id, SUM(value) AS lifetime_value FROM orders GROUP BY id`):
 
@@ -103,4 +107,4 @@ The IR is what [structural verification](/concepts/verification-vs-enforcement/)
 actually compares against a contract — it's the "actual plan" side of "does the actual
 plan match what the contract declares." See
 [Reference → Connector Support](/reference/connector-support/) for exactly
-which Spark write shapes translate to a recognized `ir.Write` today.
+which Spark write shapes and Beam IOs translate to a recognized `ir.Write` today.

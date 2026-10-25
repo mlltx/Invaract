@@ -89,4 +89,13 @@ class NotificationConfigSpec extends AnyFunSuite {
       NotificationConfig.load("/does/not/exist/invaract-notify.properties")
     }
   }
+
+  test("sink.enabled ignores space around the value, and refuses anything but true or false, naming the file") {
+    withPropertiesFile("sink.enabled=  true  \n") { file => assert(NotificationConfig.load(file.toString).enabled) }
+    withPropertiesFile("sink.enabled=False\n") { file => assert(!NotificationConfig.load(file.toString).enabled) }
+    withPropertiesFile("sink.enabled=yes\nsink.class=x.Y\n") { file =>
+      val e = intercept[IllegalArgumentException](NotificationConfig.load(file.toString))
+      assert(e.getMessage == s"'sink.enabled' in '$file' must be true or false, not 'yes'.")
+    }
+  }
 }

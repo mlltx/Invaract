@@ -123,6 +123,31 @@ class NotificationSinkSpec extends AnyFunSuite {
     )
   }
 
+  test("SummarizingNotificationSink: the summary names the most recent job any event carried, and an event without one does not blank it") {
+    val delegate = new TestNotificationSink
+    val sink = new SummarizingNotificationSink(delegate)
+    val first = JobInfo(jobId = Some("first"), engine = Some("spark"))
+    val second = JobInfo(jobId = Some("second"), engine = Some("spark"))
+
+    sink.publish(sampleEvent.copy(job = Some(first)))
+    sink.publish(sampleWrite.copy(job = Some(second)))
+    sink.publish(sampleEvent) // carries no job
+    sink.publishSummary()
+    assert(delegate.events.collect { case e: JobSummaryEvent => e }.last.job.contains(second))
+
+    sink.publish(sampleEvent.copy(job = Some(first)))
+    sink.publishSummary()
+    assert(delegate.events.collect { case e: JobSummaryEvent => e }.last.job.contains(first), "a validation event's job is the latest too")
+  }
+
+  test("SummarizingNotificationSink: a summary over events that carried no job has none") {
+    val delegate = new TestNotificationSink
+    val sink = new SummarizingNotificationSink(delegate)
+    sink.publish(sampleEvent)
+    sink.publishSummary()
+    assert(delegate.events.collect { case e: JobSummaryEvent => e }.head.job.isEmpty)
+  }
+
   test("SummarizingNotificationSink.configure delegates to the wrapped sink") {
     val delegate = new TestNotificationSink
     val sink = new SummarizingNotificationSink(delegate)

@@ -12,7 +12,10 @@
 // 0.3.0: ScenarioJob gained `untranslatableWrite` and Scenarios split `notCovered` into `attested` and
 // `gaps` - a binary break of the kit's own API (declared below for MiMa), hence a new coordinate: the
 // base ref's spark-adapter resolves the kit by coordinate in CI.
-ThisBuild / version := "0.3.0"
+// 0.4.0: ScenarioJob gained `rowChange` (row-level DML scenarios), so rulesDml and write.rowLevelDml
+// are verified rather than unchecked gaps; ScenarioOutput gained `registeredAs` (catalog-registration
+// scenarios). The same deliberate ScenarioJob break, and the ScenarioOutput one, declared below.
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -92,17 +95,61 @@ versionScheme := Some("early-semver")
 // INVARACT_MIMA_BASELINE_VERSION from its build.sbt); the fallback is the last released-to-main version.
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-adapter-testkit" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
+  "com.invaract" %% "invaract-adapter-testkit" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.3.0")
 )
 
-// Deliberate break (review pass 1): ScenarioJob gained the `untranslatableWrite` parameter (the fail-closed
-// scenario's job shape). The kit has no consumers outside this repository yet; these are the exact lines
+// Deliberate break (review passes 1 and 4, and later `opaqueStep`): ScenarioJob gained the `untranslatableWrite`,
+// `rowChange` and `opaqueStep` parameters (the fail-closed, row-level DML and unrecognized-step scenarios' job shapes). The kit has no consumers outside this repository yet; these are the exact lines
 // MiMa's own output suggests.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioJob$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioJob$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutput$"),
+  // Kit hardening (stage 1 of the adapter-skill preparation): Scenario gained the `analysis` expectations, ScenarioJob the
+  // `boundary` and `streaming` shapes, and ScenarioOutcome the data-quality, role and unverifiable-input results, so
+  // an adapter reports them and the kit judges them. Same reason as above: no consumer outside this repository yet.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Conformance.judge"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.<init>$default$9"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.apply$default$9"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$9"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.Scenario$"),
+  // `userStory`: every Scenario now says, in plain words, what it means for the team whose job it is (the survey, the
+  // scenario catalogue and the capability page show it). It is a required third parameter, so every positional default
+  // getter after it moves by one. Same reason as above: no consumer outside this repository yet.
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.<init>$default$10"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.<init>$default$8"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.apply$default$10"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.apply$default$8"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$10"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$3"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$4"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$5"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$7"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$8"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.dataQuality"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.roles"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.unverifiableInputs"),
+  // Engine identity on the events: ScenarioOutcome gained `eventEngines` (which engine each validation event named), so the
+  // kit can fail an adapter whose events do not name its own. ScenarioOutcome is sealed to Passed and Rejected, whose
+  // constructors are covered by the Passed/Rejected lines below. Same reason as above: no consumer outside this repository.
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.eventEngines"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutcome$Passed$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutcome$Rejected$")
 )
 
 // Line/branch coverage gating (sbt-scoverage), same "measure first, then pin" discipline as the other
@@ -112,3 +159,19 @@ coverageMinimumStmtTotal := 91
 coverageMinimumBranchTotal := 82
 coverageFailOnMinimum := true
 coverageHighlighting := true
+
+// Mutation testing (Stryker4s), same convention as the other engine modules (CLAUDE.md's "Mutation Testing
+// Requirement"). The kit is what defines "conformant", so a scenario or judge that a mutant can change
+// without ConformanceKitSpec noticing is a hole in every adapter's guarantee. `StringLiteral` is excluded for
+// the reason it is in verification-core and spark-adapter: scenario descriptions and verdict messages are
+// human-readable text. The break threshold is pinned a few points under a real whole-module run (see the
+// measured figure in docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
+// Scenarios.scala is left out: it is the declarative catalogue (one object initialiser building every
+// scenario), and the code Stryker injects pushes that initialiser past the JVM's 64KB method limit
+// ("Method too large"), so the module would not compile. Its content is already held by the reference adapter
+// and by every real adapter's conformance run, which fail on a scenario whose expectation is wrong.
+strykerMutate := Seq("src/main/scala/**/*.scala", "!src/main/scala/com/invaract/testkit/Scenarios.scala")
+strykerExcludedMutations := Seq("StringLiteral")
+strykerThresholdsHigh := 90
+strykerThresholdsLow := 80
+strykerThresholdsBreak := 70
