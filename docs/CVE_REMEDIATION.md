@@ -1458,6 +1458,69 @@ environment difference between the two runs, not a regression from this
 change). No code in `src/main/scala` changed, so neither Mutation Testing
 nor Coverage Gating apply here either.
 
+## 7r. `web/`'s own Next.js out-of-band security release — 16.3.8 → 16.4.3
+
+A real Dependabot alert, this time against `web/`'s own direct (not
+transitive) `next` dependency: `next` `>= 16.0.0 <= 16.4.0` (fixed
+`16.4.1`), named for its Image Optimization path's bundled `sharp` →
+`librsvg`, a memory-safety bug reachable via `dangerouslyAllowSVG` or
+`next/og` on glibc-based Linux (**CVE-2026-96889**, GHSA-2464-fhr4-w9xw,
+CVSS 9.5). This was Vercel's October 14, 2026 out-of-band security
+release, and 16.4.1 is a bundle of **three** disclosed issues, not one —
+checked against Vercel's own advisory before treating the Dependabot
+alert's text as the whole picture: alongside CVE-2026-96889, the same
+release fixes a second critical RCE in React's server packages (`use
+cache` with Cache Components returning multiple typed arrays,
+GHSA-673q-mjm6-r5xr, also CVSS 9.5, no workaround) and a CPU-exhaustion
+DoS in App Router Server Actions (GHSA-p3m5-59mp-jv5r).
+
+| Package | Lockfile | Before | After | CVE/advisory |
+|---|---|---|---|---|
+| `next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | CVE-2026-96889 + GHSA-673q-mjm6-r5xr + GHSA-p3m5-59mp-jv5r |
+| `eslint-config-next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | (version-matched to `next`, not itself a CVE fix) |
+
+**Promoted to 16.4.3, not the bare-minimum 16.4.1** — the newest published
+stable release at the time of this change (checked against the real npm
+registry, not assumed), same "take the newest release actually available
+and checked" judgment as §7o's Spark promotion, with no indication of any
+withheld caveat the way the lz4-java 1.12.0 case had.
+
+**Reachability, checked rather than assumed — all three low for this
+module specifically**: `web/` (ARCHITECTURE.md's "example harness," not
+the product) is a thin report viewer — `grep` across `web/app` and
+`next.config.js` for `next/image`, `next/og`, `ImageResponse`,
+`dangerouslyAllowSVG`, `"use cache"`, and `"use server"` returns nothing.
+It has one API route (`app/api/report/route.ts`, reads and returns
+`demo/output/report.json`) and no Server Actions at all, so none of the
+three vulnerable code paths are in this app's own routes. Fixed anyway,
+on the same principle as the Hadoop/Beam alerts above: a direct
+dependency that already has a clean, available patched version gets
+updated regardless of this module's own exposure, rather than left
+because the immediate blast radius happens to be low.
+
+**A second finding along the way**: `eslint-config-next`'s own
+transitive `zod` (via `eslint-plugin-react-hooks`) resolved to `4.4.3`,
+affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion validating oversized
+constrained collections, High) — `npm audit` surfaced this only after the
+`next`/`eslint-config-next` bump re-resolved the tree. `npm audit fix`
+cleared it to `4.6.7` with no `package.json` change needed (resolved
+within the existing semver range). Dev-tooling only (`eslint`'s own
+transitive, never shipped in the built app), so this was never reachable
+by anything `web/` serves — same bucket-3 reasoning as `notification-kafka`'s
+`lz4-java` finding, just in the npm ecosystem instead of Maven's.
+
+**Verified**: `npm install` (regenerates `package-lock.json`), `npm audit`
+— 0 vulnerabilities after the `zod` fix — `npm run build` (Turbopack,
+compiles clean, all 3 routes generate) and `npm run lint` (clean, no
+output) all pass.
+
+**Scope note for §1's table**: unlike the Scala/Maven bucket, `web/`'s npm
+ecosystem already has Dependabot's automated version-update path
+configured (`.github/dependabot.yml`) — this alert would normally surface
+as an automated PR Dependabot opens itself. This entry exists because the
+alert was handed over directly rather than through that automated path;
+the fix is identical either way.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1550,6 +1613,15 @@ nor Coverage Gating apply here either.
       GCP/SQL IO modules (all test scope). 1.80 → 1.85.2. Confirmed via
       `dependencyTree` (single resolved version, no conflicts) and a real
       `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Fix `web/`'s Next.js out-of-band security release (this change) —
+      see §7r: `next` 16.3.8 → 16.4.3, fixing CVE-2026-96889 (the
+      Dependabot-named sharp/librsvg RCE) plus two more disclosed in the
+      same Vercel release (a React `use cache` RCE, a Server Actions DoS)
+      — none of the three reachable by this app's own routes, fixed
+      anyway. A second finding along the way: `eslint-config-next`'s
+      transitive `zod` (dev-tooling only), cleared by `npm audit fix`.
+      Confirmed via `npm audit` (0 vulnerabilities), `npm run build` and
+      `npm run lint`.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
