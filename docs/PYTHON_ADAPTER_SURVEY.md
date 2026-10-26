@@ -32,6 +32,16 @@ environment the job runs in, and sets `INVARACT_CONTRACT=<contract>` (plus any o
 variables. The job's code and its command stay exactly as they are. Probe 5 showed this on an unmodified job. Section 5 has
 the details, and the ways a job can escape it.
 
+**Classifying outputs: a data asset or a readiness signal.** A contract can already label each output `type: DATA_ASSET`
+(the data product itself) or `type: CONTROL`, which the contract model defines to include "a readiness/reconciliation
+signal". Nothing checks an output's label today, on any engine. D13 proposes the check, and it suits plain Python well:
+- the adapter confirms the job wrote to each declared place;
+- it confirms that what landed there matches the label: a table with columns for a data asset, a marker or small status
+  file for a readiness signal;
+- it refuses a readiness signal for a data asset that was not written, and checked, earlier in the same job.
+
+It is an engine-neutral change, so it needs a decision of its own (decision 9).
+
 **The biggest risks.**
 1. **The checking code runs in Java, so every machine that runs a governed Python job needs Java.** For Beam that was only the
    machine that submits jobs. Here it is every worker, and slim Python container images usually have no Java (UNVERIFIED).
@@ -64,6 +74,9 @@ the details, and the ways a job can escape it.
    *Recommend yes.*
 8. Name it the `python` adapter, in a new `python-adapter` module with its own Python package, and share the pyarrow type
    mapping with the Beam Python adapter? *Recommend yes.*
+9. Check each output against its declared kind, as an engine-neutral addition that every adapter declares a position on,
+   built before the Python adapter? The kinds are a data asset or a readiness signal, with the signal naming the data assets
+   it announces. *Recommend yes; the open questions on it are at the end of D13.*
 
 ## How to read this document
 
@@ -344,6 +357,7 @@ Reading it:
 | pandas `to_csv`, `to_json` | hook (+ a pandas wrapper, for columns) | path | names and pandas types once wrapped | csv, json | from `mode=` |
 | `pyarrow.parquet.read_table`, pandas `read_parquet` | wrapper only | path or folder | exact | parquet | |
 | `open()` for reading, `csv.reader`, pandas `read_csv` | hook (+ wrapper for the header) | path | names | csv | |
+| `pathlib.Path.touch()`, `os.utime` (a marker such as `_SUCCESS`) | hook | path | none | | a new marker raises `open` with create flags; re-touching an existing one raises **only** `os.utime` (probe 9) |
 | `shutil.copy`, `os.rename`, `os.remove` | hook | both paths | none | | refused onto a declared output (D7) |
 | `sqlite3.connect` | hook | database file | none | | refused unless declared and trusted (D7) |
 | another program (`subprocess`) | hook | the program's name | none | | refused unless trusted (D7) |
@@ -566,6 +580,78 @@ this probe also allowed `/tmp`, which holds the scratch folder, and so proved no
 - **What it costs.** More Python code than the Beam Python package, which was ~150 lines with no decisions in it. Here the
   hook, the catalogue and the staging *are* decisions. They need their own tests, lint and mutation testing (`mutmut`),
   because the repository's Scala gates do not reach them.
+
+### D13. Classifying each output: a data asset or a readiness signal
+
+The requirement: the contract confirms that the job wrote to each place it declared, and the team declares *what* it wrote
+or did there. Two kinds matter most:
+- a **data asset**: the governed table or files other teams consume;
+- a **readiness signal**: a marker such as `_SUCCESS` or `READY`, or a small status file, that tells downstream jobs the asset
+  is complete.
+
+**What exists today.**
+- The first half is there: `check.location` refuses a write to an undeclared place (`OUTPUT_LOCATION_MISMATCH`), and
+  `check.outputsWritten` reports a declared output never written (`MISSING_OUTPUT`).
+- The second half is declared but never checked. Every output may carry `type: DATA_ASSET` or `type: CONTROL`, and CONTROL's
+  definition includes "a readiness/reconciliation signal" (`contract/.../ContractModel.scala`, `DatasetType`). But the role
+  check covers inputs only. In `docs/CONTRACT_MODEL.md`'s words, "a declared output's type carries no role-consistency check
+  of its own".
+- CONTROL also covers processing calendars and watermarks, so a readiness signal cannot be told apart from other control
+  data, and nothing records which asset a signal announces.
+
+**Options.**
+- (a) Keep `type: CONTROL` and add an output-only field naming the assets the signal announces, for example
+  `readinessFor: [report]`.
+- (b) Add `READINESS` as a fourth `type`.
+- (c) Leave the contract as it is and check only that a `DATA_ASSET` output receives tabular data.
+
+**Recommendation.** (a), with three checks, each a blocking violation:
+1. **A data asset must receive data.** The write to a `DATA_ASSET` output must be a write with columns, such as a Parquet
+   table. A touch, an empty file or a raw text write there is refused: "declared a data asset, but the job wrote a marker".
+2. **A readiness signal must not receive the data.** A table written to a readiness output is refused. A marker, an empty
+   file or a small status file passes. A status file may declare a `schema` like any output, and is then checked against it.
+3. **A readiness signal comes after its asset.** The signal is refused unless every asset it names was written earlier in the
+   same job and passed its check. A refused or never-written asset therefore never gets a "ready" marker. This is the
+   check that protects downstream consumers most.
+
+**Why (a).** `type` is a closed set, and contract parsers hard-fail on a value they do not know. A fourth type would make
+every new contract unreadable by older Invaract releases. A new optional field is ignored by them. (c) leaves out the
+ordering check, which is the valuable one.
+
+**What plain Python can see** (probes 2, 3 and 9):
+- The kind of each write is exact. A catalogued table writer (pyarrow, pandas, the `csv` module) means data. A touch, an
+  `open` closed with nothing written, or a raw write of a few bytes means a marker or status. With staging (D3), the adapter
+  also sees the final size and which writer produced the file.
+- Order is exact, because a script runs one line at a time and the adapter checks every write in the same process. When the
+  marker is written, it already knows whether the report was written and passed.
+- **The trap probe 9 found.** Re-touching a marker that already exists raises only an `os.utime` event, with no `open`. The
+  adapter must treat `os.utime` on a readiness location as a write of that signal. Otherwise a stale marker could be
+  re-signalled unseen.
+- A data asset written through compiled code the catalogue does not wrap is never seen as written, so its readiness signal is
+  refused. That fails closed, as it should.
+
+**Forecast for this adapter:** supported, High confidence for the facts, Medium for the whole, since no adapter exists. Other
+engines differ, which is why this needs a capability every adapter declares:
+- Spark checks writes one at a time in order, so the ordering check fits it (Medium).
+- A Beam pipeline's steps run in parallel unless the job orders them, so a marker step could start before the asset's write
+  finishes. Beam would likely declare the ordering check partial or unsupported (Low, UNVERIFIED).
+
+**What it costs.** It is an engine-neutral change, made in its own pull request before the Python adapter:
+- the contract field and its validation;
+- the checks in `verification-core`, and two new violation types (for example `OUTPUT_ROLE_MISMATCH` and
+  `READINESS_BEFORE_ASSET`);
+- a new `Capability`, so that every adapter takes a position;
+- new conformance scenarios: an asset written as a marker, a readiness signal written as a table, a signal before its asset,
+  and a signal after its asset;
+- the user documentation.
+
+**Open questions for you.**
+- May a readiness signal be only an empty marker, or also a small status file, or a row in a control table?
+- Is a signal written by a *different* process than the asset (an orchestrator's next task, say) in scope? One process cannot
+  see another's checks, so that would need Invaract to keep a durable record of checked writes. Until it exists, such a
+  signal would have to be refused or left unchecked.
+- Are there other things a team should declare it "did" at an output, such as deleting it, or publishing by moving a staged
+  folder into place?
 
 ## 5. Switching it on without touching the job: external attachability
 
@@ -834,6 +920,9 @@ limit: plain Python does not record which reads a write was built from.
 6. **The Linux restriction** (small to medium). It is opt-in (D8), with the trusted places, and tested with the pyarrow
    writes of probe 6.
 7. **Release** (small). This means the PyPI package and the checker jar.
+8. **Output classification** (medium, engine-neutral, best done before step 3). This is D13: the contract field, the three
+   checks, the capability, the scenarios and the docs, in its own pull request. It also raises Spark's and Beam's positions on
+   the new capability.
 
 ## 9. Risks and open questions
 
@@ -896,8 +985,17 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
 8. **Probe 8, pandas and required columns.** `df.to_parquet` wrote `id: int64; amount: int64` (both optional).
    `df.to_parquet(..., schema=pa.schema([pa.field('id', pa.int64(), nullable=False), ...]))` wrote `id: int64 not null`.
 
+9. **Probe 9, readiness markers.** The same event-printing hook as probe 2, around four ways of writing a marker:
+   - `pathlib.Path(...).touch()` of a new `_SUCCESS` raised `os.utime` and an `open` with create flags (524353);
+   - touching it again raised **only** `os.utime ('data/out/report/_SUCCESS', None, None, -1)`;
+   - `open("data/out/READY", "w").close()` raised `open (..., 'w', 524865)` and left a 0-byte file;
+   - a small `json.dump` status file raised `open (..., 'w', 524865)` and left 26 bytes.
+
 ### Sources
 
+- `contract/src/main/scala/com/invaract/contract/ContractModel.scala`, `DatasetType`: `DATA_ASSET`, `SOURCE`, `CONTROL`, with
+  CONTROL defined to include "a readiness/reconciliation signal"; `docs/CONTRACT_MODEL.md`, "Input and Output Types" and
+  "Role-consistency checks": only inputs are checked.
 - `/usr/lib/python3.11/site.py`, lines 200 to 201: a `.pth` line starting with `import` is executed at start-up.
 - `pathlib.py` (3.11), line 1044: `Path.open` calls `io.open`; probe: `io.open is builtins.open` is `True`.
 - `pyarrow/parquet/core.py` (25.0.1), line 47: `_resolve_filesystem_and_path` is imported by name. Patching it in
@@ -923,6 +1021,8 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
 | Wrapping pyarrow lazily when the job first imports it (an import hook) works for `from pyarrow.parquet import write_table` | a probe with an import hook and that import form |
 | The helper Java process starts within the job's own start-up time | time the assembled checker as a long-running process |
 | Staging keeps file permissions and ownership that jobs rely on | probe 4 on a file with non-default permissions |
+| Landlock's write rights cover `os.utime`, so a re-touch of a marker outside the allowed folders is refused | probe 7 with an `os.utime` call |
+| Beam cannot order a marker step after an asset's write without the job saying so | read Beam's `Wait.on` documentation and a probe pipeline |
 
 ## Glossary
 
@@ -943,6 +1043,8 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
 - **Wrapper / catalogue**: a function put in place of a library's own to check its arguments first / the list of functions
   wrapped.
 - **Compiled code**: code turned into machine instructions (pyarrow's C++), which Python's hooks cannot see into.
+- **Data asset / readiness signal**: an output that is the governed data product itself (`type: DATA_ASSET`) / a
+  marker or small status file telling downstream jobs an asset is complete (today `type: CONTROL`; D13).
 - **Staging**: writing to a temporary file and moving it into place only once checked.
 - **Landlock**: a Linux feature that lets a process give up file and network rights for good.
 - **`.pth` file**: a small file in Python's library folder that Python reads, and may run a line of, at start-up.
