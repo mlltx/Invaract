@@ -1521,6 +1521,60 @@ as an automated PR Dependabot opens itself. This entry exists because the
 alert was handed over directly rather than through that automated path;
 the fix is identical either way.
 
+## 7s. `beam-adapter`'s third finding: Netty, a real version split, and CVE-2026-75595
+
+A third real Dependabot alert against `beam-adapter`, against
+`io.netty:netty-handler <= 4.1.136.Final` (fixed `4.1.137.Final`):
+**CVE-2026-75595** (GHSA-c4c3-7fpv-j4q5, CVSS 9.1 Critical) — a fragmented
+TLS ClientHello whose handshake header spans multiple records makes
+`SslClientHelloHandler#decode` read it at the wrong offset, throw, and
+silently fall back to the default `SslContext`; where per-SNI selection
+is the sole mTLS gate, an unauthenticated attacker bypasses that route's
+mTLS requirement. The same release also fixes the related
+**CVE-2026-75596**, a quadratic-CPU DoS in the same pre-handshake
+reassembly path.
+
+`spark-adapter`/`plugin`/`runner` already carry an identical Netty pin at
+this exact floor (`4.1.137.Final`, with its own `build.sbt` comment
+documenting seven earlier CVEs it already fixes), so this alert did not
+apply to them — checked before concluding `beam-adapter` was the only
+module in scope, not assumed. `beam-adapter` itself had no Netty pin at
+all before this change, and `sbt Test/dependencyTree` turned up something
+worse than a single outdated version: the tree was **split across two
+Netty releases at once** — `netty-handler`/`netty-buffer`/`netty-codec`/
+`netty-common`/`netty-transport`/etc. resolving to 4.1.133.Final (from
+Beam's GCP/SQL IO modules and the Flink runner), while
+`netty-codec-dns`/`netty-codec-haproxy`/`netty-handler-ssl-ocsp`/
+`netty-resolver-dns*`/`netty-transport-classes-*`/`netty-transport-
+native-{epoll,kqueue}`/`netty-transport-{rxtx,sctp,udt}`/`netty-all`
+itself stayed on 4.1.100.Final (from Hadoop's own tree). Both are below
+the fix floor, and the split itself is the same classpath-consistency
+risk `spark-adapter`'s own build.sbt comment already documents (Ivy
+doesn't evict cleanly across a tree this deep, so Netty-internal classes
+from two releases can coexist on the same classpath and crash with a
+`NoSuchFieldError` the moment reflective code built against one version's
+internals meets a jar from the other).
+
+| Artifact (32 total) | Module | Before | After | CVE |
+|---|---|---|---|---|
+| Every `io.netty:*` artifact except `netty-tcnative-*` | `beam-adapter` (test scope) | split: 4.1.100.Final / 4.1.133.Final | 4.1.137.Final | CVE-2026-75595, CVE-2026-75596 |
+
+Pinned the full set via `dependencyOverrides`, mirroring `spark-adapter`'s
+identical block artifact-for-artifact (`netty-tcnative-boringssl-static`/
+`netty-tcnative-classes` excluded, same reasoning: OpenSSL's own version
+line, no CVE flagged against them).
+
+**Reachability**: test scope only, same as every other finding in §7p-§7q
+— none of this module's own test dependents run an SNI-routed TLS server,
+so neither CVE was reachable through anything this module does. Fixed
+anyway, same principle as the rest of this module's findings.
+
+**Verified**: `sbt Test/dependencyTree` — every `io.netty` artifact now
+resolves to `4.1.137.Final`, no evictions, confirming the split itself is
+closed, not just papered over by one coordinate. `sbt test`: 360 passed,
+0 failed, 26 canceled — identical to §7q's run, confirming the pin
+changes nothing about this module's own behavior.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1622,6 +1676,15 @@ the fix is identical either way.
       transitive `zod` (dev-tooling only), cleared by `npm audit fix`.
       Confirmed via `npm audit` (0 vulnerabilities), `npm run build` and
       `npm run lint`.
+- [x] Fix `beam-adapter`'s Netty alert (this change) — see §7s:
+      CVE-2026-75595 (CVSS 9.1 Critical, SNI/mTLS bypass via a fragmented
+      TLS ClientHello) plus CVE-2026-75596, and a real classpath split
+      found along the way (two Netty releases, 4.1.100.Final and
+      4.1.133.Final, resolved simultaneously across different artifacts).
+      Pinned the full 32-artifact `io.netty:*` set to 4.1.137.Final via
+      `dependencyOverrides`, mirroring `spark-adapter`'s identical pin.
+      Confirmed via `dependencyTree` (single resolved version everywhere)
+      and a real `sbt test` run (360 passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
