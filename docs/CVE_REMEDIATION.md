@@ -1458,6 +1458,123 @@ environment difference between the two runs, not a regression from this
 change). No code in `src/main/scala` changed, so neither Mutation Testing
 nor Coverage Gating apply here either.
 
+## 7r. `web/`'s own Next.js out-of-band security release — 16.3.8 → 16.4.3
+
+A real Dependabot alert, this time against `web/`'s own direct (not
+transitive) `next` dependency: `next` `>= 16.0.0 <= 16.4.0` (fixed
+`16.4.1`), named for its Image Optimization path's bundled `sharp` →
+`librsvg`, a memory-safety bug reachable via `dangerouslyAllowSVG` or
+`next/og` on glibc-based Linux (**CVE-2026-96889**, GHSA-2464-fhr4-w9xw,
+CVSS 9.5). This was Vercel's October 14, 2026 out-of-band security
+release, and 16.4.1 is a bundle of **three** disclosed issues, not one —
+checked against Vercel's own advisory before treating the Dependabot
+alert's text as the whole picture: alongside CVE-2026-96889, the same
+release fixes a second critical RCE in React's server packages (`use
+cache` with Cache Components returning multiple typed arrays,
+GHSA-673q-mjm6-r5xr, also CVSS 9.5, no workaround) and a CPU-exhaustion
+DoS in App Router Server Actions (GHSA-p3m5-59mp-jv5r).
+
+| Package | Lockfile | Before | After | CVE/advisory |
+|---|---|---|---|---|
+| `next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | CVE-2026-96889 + GHSA-673q-mjm6-r5xr + GHSA-p3m5-59mp-jv5r |
+| `eslint-config-next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | (version-matched to `next`, not itself a CVE fix) |
+
+**Promoted to 16.4.3, not the bare-minimum 16.4.1** — the newest published
+stable release at the time of this change (checked against the real npm
+registry, not assumed), same "take the newest release actually available
+and checked" judgment as §7o's Spark promotion, with no indication of any
+withheld caveat the way the lz4-java 1.12.0 case had.
+
+**Reachability, checked rather than assumed — all three low for this
+module specifically**: `web/` (ARCHITECTURE.md's "example harness," not
+the product) is a thin report viewer — `grep` across `web/app` and
+`next.config.js` for `next/image`, `next/og`, `ImageResponse`,
+`dangerouslyAllowSVG`, `"use cache"`, and `"use server"` returns nothing.
+It has one API route (`app/api/report/route.ts`, reads and returns
+`demo/output/report.json`) and no Server Actions at all, so none of the
+three vulnerable code paths are in this app's own routes. Fixed anyway,
+on the same principle as the Hadoop/Beam alerts above: a direct
+dependency that already has a clean, available patched version gets
+updated regardless of this module's own exposure, rather than left
+because the immediate blast radius happens to be low.
+
+**A second finding along the way**: `eslint-config-next`'s own
+transitive `zod` (via `eslint-plugin-react-hooks`) resolved to `4.4.3`,
+affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion validating oversized
+constrained collections, High) — `npm audit` surfaced this only after the
+`next`/`eslint-config-next` bump re-resolved the tree. `npm audit fix`
+cleared it to `4.6.7` with no `package.json` change needed (resolved
+within the existing semver range). Dev-tooling only (`eslint`'s own
+transitive, never shipped in the built app), so this was never reachable
+by anything `web/` serves — same bucket-3 reasoning as `notification-kafka`'s
+`lz4-java` finding, just in the npm ecosystem instead of Maven's.
+
+**Verified**: `npm install` (regenerates `package-lock.json`), `npm audit`
+— 0 vulnerabilities after the `zod` fix — `npm run build` (Turbopack,
+compiles clean, all 3 routes generate) and `npm run lint` (clean, no
+output) all pass.
+
+**Scope note for §1's table**: unlike the Scala/Maven bucket, `web/`'s npm
+ecosystem already has Dependabot's automated version-update path
+configured (`.github/dependabot.yml`) — this alert would normally surface
+as an automated PR Dependabot opens itself. This entry exists because the
+alert was handed over directly rather than through that automated path;
+the fix is identical either way.
+
+## 7s. `beam-adapter`'s third finding: Netty, a real version split, and CVE-2026-75595
+
+A third real Dependabot alert against `beam-adapter`, against
+`io.netty:netty-handler <= 4.1.136.Final` (fixed `4.1.137.Final`):
+**CVE-2026-75595** (GHSA-c4c3-7fpv-j4q5, CVSS 9.1 Critical) — a fragmented
+TLS ClientHello whose handshake header spans multiple records makes
+`SslClientHelloHandler#decode` read it at the wrong offset, throw, and
+silently fall back to the default `SslContext`; where per-SNI selection
+is the sole mTLS gate, an unauthenticated attacker bypasses that route's
+mTLS requirement. The same release also fixes the related
+**CVE-2026-75596**, a quadratic-CPU DoS in the same pre-handshake
+reassembly path.
+
+`spark-adapter`/`plugin`/`runner` already carry an identical Netty pin at
+this exact floor (`4.1.137.Final`, with its own `build.sbt` comment
+documenting seven earlier CVEs it already fixes), so this alert did not
+apply to them — checked before concluding `beam-adapter` was the only
+module in scope, not assumed. `beam-adapter` itself had no Netty pin at
+all before this change, and `sbt Test/dependencyTree` turned up something
+worse than a single outdated version: the tree was **split across two
+Netty releases at once** — `netty-handler`/`netty-buffer`/`netty-codec`/
+`netty-common`/`netty-transport`/etc. resolving to 4.1.133.Final (from
+Beam's GCP/SQL IO modules and the Flink runner), while
+`netty-codec-dns`/`netty-codec-haproxy`/`netty-handler-ssl-ocsp`/
+`netty-resolver-dns*`/`netty-transport-classes-*`/`netty-transport-
+native-{epoll,kqueue}`/`netty-transport-{rxtx,sctp,udt}`/`netty-all`
+itself stayed on 4.1.100.Final (from Hadoop's own tree). Both are below
+the fix floor, and the split itself is the same classpath-consistency
+risk `spark-adapter`'s own build.sbt comment already documents (Ivy
+doesn't evict cleanly across a tree this deep, so Netty-internal classes
+from two releases can coexist on the same classpath and crash with a
+`NoSuchFieldError` the moment reflective code built against one version's
+internals meets a jar from the other).
+
+| Artifact (32 total) | Module | Before | After | CVE |
+|---|---|---|---|---|
+| Every `io.netty:*` artifact except `netty-tcnative-*` | `beam-adapter` (test scope) | split: 4.1.100.Final / 4.1.133.Final | 4.1.137.Final | CVE-2026-75595, CVE-2026-75596 |
+
+Pinned the full set via `dependencyOverrides`, mirroring `spark-adapter`'s
+identical block artifact-for-artifact (`netty-tcnative-boringssl-static`/
+`netty-tcnative-classes` excluded, same reasoning: OpenSSL's own version
+line, no CVE flagged against them).
+
+**Reachability**: test scope only, same as every other finding in §7p-§7q
+— none of this module's own test dependents run an SNI-routed TLS server,
+so neither CVE was reachable through anything this module does. Fixed
+anyway, same principle as the rest of this module's findings.
+
+**Verified**: `sbt Test/dependencyTree` — every `io.netty` artifact now
+resolves to `4.1.137.Final`, no evictions, confirming the split itself is
+closed, not just papered over by one coordinate. `sbt test`: 360 passed,
+0 failed, 26 canceled — identical to §7q's run, confirming the pin
+changes nothing about this module's own behavior.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1550,6 +1667,24 @@ nor Coverage Gating apply here either.
       GCP/SQL IO modules (all test scope). 1.80 → 1.85.2. Confirmed via
       `dependencyTree` (single resolved version, no conflicts) and a real
       `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Fix `web/`'s Next.js out-of-band security release (this change) —
+      see §7r: `next` 16.3.8 → 16.4.3, fixing CVE-2026-96889 (the
+      Dependabot-named sharp/librsvg RCE) plus two more disclosed in the
+      same Vercel release (a React `use cache` RCE, a Server Actions DoS)
+      — none of the three reachable by this app's own routes, fixed
+      anyway. A second finding along the way: `eslint-config-next`'s
+      transitive `zod` (dev-tooling only), cleared by `npm audit fix`.
+      Confirmed via `npm audit` (0 vulnerabilities), `npm run build` and
+      `npm run lint`.
+- [x] Fix `beam-adapter`'s Netty alert (this change) — see §7s:
+      CVE-2026-75595 (CVSS 9.1 Critical, SNI/mTLS bypass via a fragmented
+      TLS ClientHello) plus CVE-2026-75596, and a real classpath split
+      found along the way (two Netty releases, 4.1.100.Final and
+      4.1.133.Final, resolved simultaneously across different artifacts).
+      Pinned the full 32-artifact `io.netty:*` set to 4.1.137.Final via
+      `dependencyOverrides`, mirroring `spark-adapter`'s identical pin.
+      Confirmed via `dependencyTree` (single resolved version everywhere)
+      and a real `sbt test` run (360 passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

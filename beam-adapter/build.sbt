@@ -152,6 +152,82 @@ dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 // change actually checked, per this file's own precedent.
 dependencyOverrides += "org.bouncycastle" % "bcprov-jdk18on" % "1.85.2"
 
+// Netty pinned to a single consistent version across every io.netty artifact
+// this tree resolves (the full set, confirmed via `sbt Test/dependencyTree` -
+// `netty-tcnative-*` excluded, same as spark-adapter's identical pin below:
+// those use OpenSSL's own version line, not Netty's 4.1.x one, and no CVE has
+// been flagged against them). Two reasons to pin explicitly, both already
+// learned the hard way in spark-adapter and directly confirmed here too:
+//
+//  1. **Consistency, not just currency**: before this override, this
+//     module's own transitives (Hadoop's hadoop-client/hadoop-common pulling
+//     an older line, Beam's GCP/SQL IO modules and the Flink runner pulling
+//     a newer one) left the tree split across two versions at once -
+//     `netty-handler`/`netty-buffer`/`netty-codec`/`netty-common`/
+//     `netty-transport`/etc. resolving to 4.1.133.Final, while
+//     `netty-codec-dns`/`netty-codec-haproxy`/`netty-handler-ssl-ocsp`/
+//     `netty-resolver-dns*`/`netty-transport-classes-*`/`netty-transport-
+//     native-{epoll,kqueue}`/`netty-transport-{rxtx,sctp,udt}` (and
+//     `netty-all` itself) stayed on 4.1.100.Final - confirmed directly via
+//     `dependencyTree`, not assumed from a single artifact's own eviction
+//     line. Ivy does not evict cleanly across a tree this deep, so mixed
+//     Netty-internal classes from two releases can end up on the same
+//     classpath simultaneously; spark-adapter's own build.sbt documents a
+//     real `NoSuchFieldError` crash from exactly this pattern (a different
+//     pair of artifacts, same root cause). Every `io.netty` artifact in the
+//     tree must move together, never partially.
+//  2. **CVE remediation**: the version that resolves this split, 4.1.137.Final,
+//     is the same floor spark-adapter's own identical override already pins,
+//     fixing the same seven CVEs documented in that module's build.sbt
+//     comment (CVE-2025-24970, CVE-2026-33871, CVE-2025-55163,
+//     CVE-2026-44249, two ByteBuf-leak/infinite-loop DoS bugs, and
+//     CVE-2026-59903) plus an eighth found against *this* module directly:
+//     **CVE-2026-75595** (GHSA-c4c3-7fpv-j4q5, CVSS 9.1 Critical) - a
+//     fragmented TLS ClientHello whose handshake header spans multiple
+//     records makes `SslClientHelloHandler` read it at the wrong offset,
+//     throw, and silently fall back to the default `SslContext`; where
+//     per-SNI selection is the sole mTLS gate, an unauthenticated attacker
+//     bypasses that route's mTLS requirement. Fixed 4.1.137.Final, the same
+//     release that also fixes the related **CVE-2026-75596** (a quadratic-
+//     CPU DoS in the same pre-handshake reassembly path). Neither of this
+//     module's own test-scope dependents runs an SNI-routed TLS server of
+//     its own, so this was never reachable through anything this module
+//     does - fixed anyway, on the same "a clean patched version is
+//     available" principle as every other test-scope finding above.
+dependencyOverrides ++= Seq(
+  "io.netty" % "netty-all" % "4.1.137.Final",
+  "io.netty" % "netty-buffer" % "4.1.137.Final",
+  "io.netty" % "netty-codec" % "4.1.137.Final",
+  "io.netty" % "netty-codec-dns" % "4.1.137.Final",
+  "io.netty" % "netty-codec-haproxy" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.137.Final",
+  "io.netty" % "netty-codec-memcache" % "4.1.137.Final",
+  "io.netty" % "netty-codec-mqtt" % "4.1.137.Final",
+  "io.netty" % "netty-codec-redis" % "4.1.137.Final",
+  "io.netty" % "netty-codec-smtp" % "4.1.137.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.137.Final",
+  "io.netty" % "netty-codec-stomp" % "4.1.137.Final",
+  "io.netty" % "netty-codec-xml" % "4.1.137.Final",
+  "io.netty" % "netty-common" % "4.1.137.Final",
+  "io.netty" % "netty-handler" % "4.1.137.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.137.Final",
+  "io.netty" % "netty-handler-ssl-ocsp" % "4.1.137.Final",
+  "io.netty" % "netty-resolver" % "4.1.137.Final",
+  "io.netty" % "netty-resolver-dns" % "4.1.137.Final",
+  "io.netty" % "netty-resolver-dns-classes-macos" % "4.1.137.Final",
+  "io.netty" % "netty-resolver-dns-native-macos" % "4.1.137.Final",
+  "io.netty" % "netty-transport" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.137.Final",
+  "io.netty" % "netty-transport-rxtx" % "4.1.137.Final",
+  "io.netty" % "netty-transport-sctp" % "4.1.137.Final",
+  "io.netty" % "netty-transport-udt" % "4.1.137.Final"
+)
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
