@@ -1319,6 +1319,145 @@ had a full, passing test history against this module's Delta/Iceberg/
 Hive/ClickHouse connectors from the version-matrix CI job, so there was
 no new DSv2/Catalyst-compatibility surface to discover here.
 
+## 7p. `beam-adapter`'s first pass: kafka-clients, and a scope finding
+
+`beam-adapter` (`main` PR #148 onward) is new to this repo and needed its
+own first triage pass per §2's framework, not an assumption carried over
+from `spark-adapter`'s.
+
+**Scope finding first, per §2's own priority rule.** `beam-adapter`'s own
+`build.sbt` declares exactly three unscoped (compile-scope) dependencies -
+`com.invaract:invaract-contract`/`invaract-ir`/`invaract-verification-core`
+- all three this repo's own already-published, already-vetted modules (no
+non-`com.invaract` compile-scope coordinate of its own). `invaract-ir`
+declares no external compile dependency; `invaract-verification-core`'s
+only non-`com.invaract` dependency is `slf4j-api`, `% "provided"`; that
+leaves `invaract-contract`'s `org.yaml:snakeyaml:2.2` as the one
+externally-facing coordinate reachable through `beam-adapter`, already
+checked clean in §8's first checklist item. Apache Beam itself is
+`% "provided"` (the job being checked brings its own, same reasoning as
+`spark-core`/`spark-sql` in `spark-adapter` - see this module's own
+`build.sbt` comment and docs/BEAM_ADAPTER.md, D2), and every other new
+dependency this module adds - `beam-runners-direct-java`,
+`beam-sdks-java-io-{parquet,google-cloud-platform,kafka,jdbc,csv}`,
+`beam-sdks-java-extensions-sql`, `beam-runners-flink-*`, `hadoop-client`,
+`hadoop-common`, `kafka-clients` - is `% "test"`. **So `beam-adapter`
+introduces zero new downstream-inherited CVE risk**: nothing it adds
+reaches a real user's classpath through our artifact, the same
+"check scope before severity" conclusion §2 already reached for
+`contract`/`ir`/`spark-adapter`.
+
+That leaves the test-scope (bucket 3, CI/dev-machine attack surface)
+walk, same category as `notification-kafka`'s in §7n. One concrete,
+fixable finding from this first pass:
+
+| Artifact | Module | Before | After | CVE |
+|---|---|---|---|---|
+| `org.apache.kafka:kafka-clients` | `beam-adapter` (test scope) | 3.9.1 | 3.9.2 | CVE-2026-33558 |
+
+**CVE-2026-33558**: with `DEBUG` logging enabled, `kafka-clients`'
+`NetworkClient` logs full request/response contents (can include SASL
+credentials and SCRAM salts); affected 0.11.0 through 3.9.1/4.0.0, fixed
+3.9.2/4.0.1/4.1.0. Default log level is INFO, so this was never reachable
+by this module's own tests (none of which touch `NetworkClient`'s
+logging configuration) - hardening, not a live exposure, but a real,
+patched CVE in a coordinate this module itself declares (unlike
+`notification-kafka`'s own kafka-clients, which already sat on 3.9.2 by
+the time CVE-2026-33558 was disclosed - confirmed against that module's
+`build.sbt` directly, so no separate fix was needed there).
+
+**Same `at.yawk.lz4:lz4-java` transitive this repo has already fully
+investigated twice** (spark-adapter's own `build.sbt` comment; §7n for
+`notification-kafka`): bumping to `kafka-clients:3.9.2` pulls in
+`at.yawk.lz4:lz4-java:1.10.1` as a transitive (the `org.lz4:lz4-java`
+coordinate is relocated to this fork on Maven Central), which is affected
+by the same four advisories (GHSA-4v53-57pg-c464, GHSA-gm45-99xc-r7wv,
+GHSA-343h-94h5-c4wr, GHSA-mcr4-qmvw-px4g) already fixed in both
+`spark-adapter` and `notification-kafka` by pinning `1.11.4`. Rather than
+re-deriving that analysis, `beam-adapter/build.sbt` pins the same
+coordinate and version with `dependencyOverrides`, scoped by nothing
+else needing the override elsewhere in this module's graph (`kafka-clients`
+itself is test-scope here, so the override only ever affects the test
+classpath).
+
+**Verified**, not assumed: `cd beam-adapter && sbt test` - 311 succeeded,
+0 failed, 75 canceled (expected: scenarios this adapter's own
+`invaract-capabilities-beam.yaml` declares unsupported or not-applicable,
+per the conformance kit's own judging rules, docs/MULTI_ENGINE_ADAPTERS.md
+Stage 4) - including the Flink production-runner handoff tests and the
+real in-process-runner conformance suite, not just a resolution check.
+No code in `src/main/scala` changed, so neither the Mutation Testing nor
+Coverage Gating requirements apply to this change (a dependency-version
+edit in `build.sbt` only, the same shape every other fix in this
+document has been).
+
+**Not yet done**: this module's remaining test-scope dependency surface
+(Hadoop, the Beam IO modules' own GCP/gRPC/Jackson/Guava/Netty transitive
+web) has not had the exhaustive, batch-by-batch walk §7a-§7l gave
+`spark-adapter`'s - this pass checked the one alert with clear, concrete
+evidence in hand, not the full set. Hadoop (`hadoop-client`/
+`hadoop-common` 3.4.1) was checked for CVE-2025-27821 (fixed 3.4.2) and
+found **not applicable**: that CVE is in `org.apache.hadoop:hadoop-hdfs-
+native-client`, which `sbt Test/dependencyTree` confirms never resolves
+onto this module's classpath at all (hadoop-client's own transitive edges
+stop short of it); the Avro version these two pull in (1.12.0, confirmed
+via the same `dependencyTree` output) is also already past the versions
+named in the bundled-Avro CVEs (2024-47561/2023-39410, fixed 1.11.4) that
+motivated Hadoop's own 3.4.2 release notes - already-resolved-without-a-
+code-change, the same pattern §7a/§7b/§7c record for `protobuf-java`/
+`jackson-mapper-asl`. Add this module to the "walk the rest of the bucket"
+checklist item in §8.
+
+## 7q. `beam-adapter`'s second finding: `bcprov-jdk18on`, from a real Dependabot alert
+
+Unlike §7p (derived by hand from `build.sbt` plus a real `dependencyTree`
+run, with no Dependabot alert text in hand), this one started from an
+actual alert: Dependabot flagged `org.bouncycastle:bcprov-jdk18on` 1.80,
+naming all four of its real routes into this module's graph —
+`hadoop-client`/`hadoop-common` 3.4.1 (Hadoop's own Credential Provider/
+SSL support) and `beam-sdks-java-io-google-cloud-platform`/
+`beam-sdks-java-extensions-sql` 2.77.0 (their own TLS/crypto needs) — all
+four already test-scope in `beam-adapter/build.sbt`, confirmed again via
+`sbt Test/dependencyTree` (1.80 the sole resolved winner, no sibling
+`bcpkix-jdk18on`/`bcutil-jdk18on` anywhere in this module's graph).
+
+**CVE-2026-8763** (CWE-295, CVSS 9.3 Critical): a trailing dot in an
+`rfc822Name`/URI name constraint lets `PkixNameConstraintValidator` accept
+a certificate its issuer's constraints should have rejected — enabling
+impersonation or MITM against whatever validates certificates through it.
+Affected `< 1.85`, fixed in Bouncy Castle for Java 1.85 (`bc-java` tag
+`r1rv85`).
+
+| Artifact | Module | Before | After | CVE |
+|---|---|---|---|---|
+| `org.bouncycastle:bcprov-jdk18on` | `beam-adapter` (test scope) | 1.80 | 1.85.2 | CVE-2026-8763 |
+
+**Pinned to 1.85.2, not the bare-minimum 1.85** — the same "take every
+examined fix for the release line, not just the floor" judgment §7n's
+`lz4-java` pin already used, applied the other way: 1.85.2's own one
+listed defect fix (AES-256/CBC under the `id_aes256_CBC` OID silently
+deriving a 192-bit key from a password instead of 256-bit) is unrelated
+to CVE-2026-8763 but already published and already checked — ordinary
+`SecretKeySpec` use (what a TLS/JCE-provider path here would do) is
+unaffected, so there is no "could in theory break some users" caveat like
+the one that kept §7n at `1.11.4` instead of `lz4-java`'s own `1.12.0`.
+1.86 exists on Maven Central (confirmed via the real
+`maven-metadata.xml`), but `bouncycastle.org`'s release notes were not a
+reachable host from this environment to examine its contents against —
+so, per this same file's own standard (check before trusting, don't
+assume "latest" is safe), the pin stops at 1.85.2, the newest release
+this pass could actually examine, not the newest release that exists.
+
+**Verified**: `sbt Test/dependencyTree` shows `bcprov-jdk18on:1.85.2` as
+the sole resolved version everywhere it appears (no eviction, no
+conflict), and `sbt test` passes with the override in place: 360
+succeeded, 0 failed, 26 canceled, all tests passed (a different
+canceled/run split than §7p's 311/0/75 run — this one picked up the
+Python conformance suites that need `INVARACT_TEST_PYTHON`, an
+environment difference between the two runs, not a regression from this
+change). No code in `src/main/scala` changed, so neither Mutation Testing
+nor Coverage Gating apply here either.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1390,11 +1529,34 @@ no new DSv2/Catalyst-compatibility surface to discover here.
       3.5.9 since it was already this repo's newest verified/CI-proven
       patch, confirmed via `./dev/test` and `./dev/regression` with a real
       `spark-submit` 3.5.9.
+- [x] First pass on `beam-adapter` (new to this repo as of PR #148) — see
+      §7p: a scope finding (zero new downstream-inherited CVE risk — its
+      only compile-scope deps are our own already-vetted `contract`/`ir`/
+      `verification-core`, and Beam itself is `% "provided"`), one real
+      fix (`kafka-clients` 3.9.1 → 3.9.2 for CVE-2026-33558, with the same
+      `at.yawk.lz4:lz4-java` transitive pin already used in `spark-adapter`/
+      `notification-kafka`), and one already-resolved-without-a-code-change
+      finding (Hadoop's CVE-2025-27821 doesn't reach this module's
+      classpath). Confirmed via a real `sbt test` run (311 passed, 0
+      failed). This module's own remaining test-scope surface (Beam's GCP/
+      gRPC IO modules pull a very large transitive tree) still needs the
+      full batch-by-batch walk below, same as `spark-adapter` got in
+      §7a-§7l.
+- [x] Fix `beam-adapter`'s `bcprov-jdk18on` alert (this change) — see
+      §7q: the first of this module's findings to start from a real
+      Dependabot alert rather than hand-derived research. CVE-2026-8763
+      (CWE-295, CVSS 9.3 Critical, name-constraints bypass), reaching this
+      module through `hadoop-client`/`hadoop-common` and two of Beam's own
+      GCP/SQL IO modules (all test scope). 1.80 → 1.85.2. Confirmed via
+      `dependencyTree` (single resolved version, no conflicts) and a real
+      `sbt test` run (360 passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
       each, no matter how confident the reasoning sounds. Record each
       one's scope/inheritance status per §2's table format (see §7/§7a/§7b).
+      Now includes `beam-adapter`'s own test-scope transitive surface
+      (§7p), not just `contract`/`ir`/`spark-adapter`/`plugin`/`runner`.
 - [ ] Fix or explicitly document-and-accept every alert with no available
       patched version, per §3 — Derby (§7) and `commons-lang`/`guava`
       (§7b) are templates for how to document one, each for a different

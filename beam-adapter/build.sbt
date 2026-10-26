@@ -102,7 +102,13 @@ libraryDependencies ++= Seq(
   // Beam's Kafka IO depends on Confluent's schema-registry client, which is not on Maven Central (and not needed to
   // construct a KafkaIO graph), so it is left out.
   ("org.apache.beam" % "beam-sdks-java-io-kafka" % beamVersion % "test").excludeAll(ExclusionRule("io.confluent")),
-  "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
+  // 3.9.1 -> 3.9.2: CVE-2026-33558 - with DEBUG logging enabled, kafka-clients'
+  // NetworkClient logs full request/response contents (which can include SASL
+  // credentials and SCRAM salts); affected 0.11.0-3.9.1/4.0.0, fixed 3.9.2/4.0.1.
+  // Default log level is INFO, so this is a hardening bump, not a reachable
+  // issue in this module's own tests. Test scope only - a job under check never
+  // resolves this jar (docs/BEAM_ADAPTER.md, D2).
+  "org.apache.kafka" % "kafka-clients" % "3.9.2" % "test",
   "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test",
   "org.apache.beam" % "beam-sdks-java-io-csv" % beamVersion % "test",
   // Beam SQL, whose queries can read and write through tables they define themselves (CREATE EXTERNAL TABLE)
@@ -112,6 +118,39 @@ libraryDependencies ++= Seq(
   // supported-beam-versions.properties, so the line follows the Beam release under test.
   "org.apache.beam" % s"beam-runners-flink-$flinkLine" % beamVersion % "test"
 )
+
+// at.yawk.lz4:lz4-java: kafka-clients 3.9.2 declares it as a runtime-scope
+// transitive dependency (org.lz4:lz4-java is relocated to this community fork
+// on Maven Central - confirmed via its own relocation POM), and four advisories
+// affect everything through 1.11.1 (GHSA-4v53-57pg-c464, GHSA-gm45-99xc-r7wv,
+// GHSA-343h-94h5-c4wr, GHSA-mcr4-qmvw-px4g - unbounded allocation/CPU-GC
+// amplification/stack overflow/temp-dir races on attacker-controlled compressed
+// input). Same coordinate and version (1.11.4, not 1.12.0 - see spark-adapter's
+// own comment for why) spark-adapter and notification-kafka already pin for the
+// identical kafka-clients transitive. Test scope only here, same as kafka-clients
+// above, so this pin never reaches a job under check.
+dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
+
+// org.bouncycastle:bcprov-jdk18on: a transitive of hadoop-client/hadoop-common
+// (3.4.1's own Hadoop Credential Provider / SSL support) and of Beam's
+// beam-sdks-java-io-google-cloud-platform/beam-sdks-java-extensions-sql (their
+// own TLS/crypto needs) - all four test-scope here, confirmed via
+// `sbt Test/dependencyTree` (1.80 is the resolved winner; nothing in this
+// module's graph needs it at compile scope). CVE-2026-8763 (CWE-295, CVSS 9.3
+// Critical): a trailing dot in an rfc822Name/URI name constraint lets
+// PkixNameConstraintValidator accept a certificate its issuer's constraints
+// should have rejected, enabling impersonation/MITM against whatever validates
+// certs through it. Affected < 1.85, fixed in 1.85 (bc-java tag r1rv85).
+// Pinned to 1.85.2, not the bare-minimum 1.85: its own one listed defect fix
+// (AES-256/CBC under the id_aes256_CBC OID silently deriving a 192-bit key
+// from a password instead of 256-bit) is unrelated to this CVE but already
+// published and already examined - ordinary SecretKeySpec use (what any TLS/
+// JCE-provider path here would do) is unaffected, so there is no equivalent
+// "could in theory break some users" caveat the lz4-java 1.12.0 case above
+// had. 1.86 exists on Maven Central but its release notes were not reachable
+// to examine, so this pin deliberately stops at the most recent release this
+// change actually checked, per this file's own precedent.
+dependencyOverrides += "org.bouncycastle" % "bcprov-jdk18on" % "1.85.2"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
