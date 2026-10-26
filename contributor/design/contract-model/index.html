@@ -1171,12 +1171,12 @@ under “Input and Output Types” above for the <code dir="auto">typeGuarantees
 covers for <code dir="auto">contract.id</code>) and splits the resulting <code dir="auto">PolicyViolation</code>s by
 <code dir="auto">PolicyMode</code> into <code dir="auto">OrgPolicyEvaluation(enforceViolations, warnViolations)</code>. Every rule — built-in or custom — is evaluated through
 the identical <code dir="auto">CustomPolicyEvaluator</code> interface: <code dir="auto">resolveEvaluator</code>
-checks <code dir="auto">builtinEvaluators</code> (nine of the ten built-in types, each an
+checks <code dir="auto">builtinEvaluators</code> (ten of the eleven built-in types, each an
 ordinary <code dir="auto">CustomPolicyEvaluator</code> compiled into this module) before
 falling back to <code dir="auto">policy.customPolicyTypes</code> for a <code dir="auto">ruleType</code> outside that
 set — see “Custom policy types” below for the full mechanism, and its
 own note on why a built-in type always wins a naming collision. The
-tenth built-in type, <code dir="auto">require_control_registration</code>, is special-cased in
+remaining built-in type, <code dir="auto">require_control_registration</code>, is special-cased in
 <code dir="auto">evaluateRule</code> ahead of that dispatch instead, since it needs
 <code dir="auto">policy.controlTables</code> — data no <code dir="auto">CustomPolicyEvaluator</code> can see through
 <code dir="auto">evaluate(contract, rule)</code> alone — see “Control table registration”
@@ -1239,6 +1239,19 @@ declare a non-blank <code dir="auto">description</code> (see <code dir="auto">Da
 no properties at all: there’s nothing to configure beyond “this dataset
 must have one,” so unlike every other type here, <code dir="auto">interpret</code> can never
 fail on malformed properties for it.</li>
+<li><strong><code dir="auto">require_absolute_location</code></strong> (optional <code dir="auto">catalogs</code>) — a dataset’s
+<code dir="auto">location</code> must name one place on its own: <code dir="auto">Locations.isAbsolute</code> (a URL,
+a path from the root or a Windows drive path, after <code dir="auto">Locations.canonical</code>),
+never a relative location, which matches any location ending in it (see
+docs-site’s “Location matching”) and so cannot tell two teams’ <code dir="auto">.../orders</code>
+apart. <code dir="auto">catalogs</code> (scalar or list, same coercion as <code dir="auto">formats</code>) names
+catalogs a location may start with instead, so a table named in full
+(<code dir="auto">spark_catalog/gold/orders</code>) passes and <code dir="auto">gold/orders</code> does not; the first
+segment is compared case-insensitively, as Spark compares catalog names. An
+explicit empty <code dir="auto">catalogs</code> is malformed. Evaluated on the contract a job
+enforces, after <code dir="auto">ref://</code> resolution (<code dir="auto">VerificationSetup</code> resolves before it
+enforces policy); a lint of a contract file sees an unresolved <code dir="auto">ref://</code>,
+which <code dir="auto">isAbsolute</code> counts as a URL, so the lint lets it through.</li>
 <li><strong><code dir="auto">require_dataset_type</code></strong> (optional <code dir="auto">types</code>) — a dataset must declare a
 <code dir="auto">type</code> (<code dir="auto">DATA_ASSET</code>/<code dir="auto">SOURCE</code>/<code dir="auto">CONTROL</code> — see “Input and Output Types”
 above) at all; if <code dir="auto">types</code> is also set (a single scalar or a YAML list,
@@ -1321,8 +1334,8 @@ built-in type is, without re-deriving it from each evaluator’s own body:</p>
 <ul>
 <li><strong><code dir="auto">DatasetPolicy</code></strong> — <code dir="auto">require_catalog</code>, <code dir="auto">require_field</code>,
 <code dir="auto">field_naming_convention</code>, <code dir="auto">require_format</code>, <code dir="auto">require_dataset_description</code>,
-<code dir="auto">require_dataset_type</code>, <code dir="auto">forbid_control_sensitivity_tags</code>, and
-<code dir="auto">require_control_registration</code>. Each narrows to <code dir="auto">scopedDatasets(contract, rule)</code> (<code dir="auto">datasetsInScope(contract, rule.scope)</code>, further filtered by
+<code dir="auto">require_dataset_type</code>, <code dir="auto">forbid_control_sensitivity_tags</code>,
+<code dir="auto">require_control_registration</code> and <code dir="auto">require_absolute_location</code>. Each narrows to <code dir="auto">scopedDatasets(contract, rule)</code> (<code dir="auto">datasetsInScope(contract, rule.scope)</code>, further filtered by
 <code dir="auto">rule.when</code>) and checks each dataset independently, producing a
 <code dir="auto">PolicyViolation</code> with <code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
 <li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code> and <code dir="auto">require_extension_if</code>
@@ -1342,7 +1355,7 @@ would join <code dir="auto">ContractPolicy</code>, not <code dir="auto">DatasetP
 adding one doesn’t force a dataset-shaped evaluation path onto a check
 that was never about any one dataset.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="custom-policy-types-custompolicyevaluator">Custom policy types (<code dir="auto">CustomPolicyEvaluator</code>)</h3><a class="sl-anchor-link" href="#custom-policy-types-custompolicyevaluator"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Custom policy types (CustomPolicyEvaluator)”</span></a></div>
-<p>The ten built-in types above are deliberately closed — but an
+<p>The eleven built-in types above are deliberately closed — but an
 organization’s own policy vocabulary isn’t limited to them. <code dir="auto">OrgPolicy</code>
 carries a fifth field, <code dir="auto">customPolicyTypes: Map[String, String]</code>, mapping
 a <code dir="auto">PolicyRule.ruleType</code> this document uses to the fully-qualified class
@@ -1364,11 +1377,11 @@ team points <code dir="auto">--jars</code> at their own evaluator jar alongside 
 with zero change to any governed job’s own source.</p>
 <p>There is nothing special about <em>most</em> built-in types’ evaluation
 mechanism — <code dir="auto">OrgPolicyEvaluator.resolveEvaluator</code> looks <code dir="auto">ruleType</code> up in
-<code dir="auto">builtinEvaluators</code> (a <code dir="auto">Map[String, CustomPolicyEvaluator]</code> covering nine
-of the ten built-in types, each an ordinary <code dir="auto">CustomPolicyEvaluator</code>, built
+<code dir="auto">builtinEvaluators</code> (a <code dir="auto">Map[String, CustomPolicyEvaluator]</code> covering ten
+of the eleven built-in types, each an ordinary <code dir="auto">CustomPolicyEvaluator</code>, built
 via the private <code dir="auto">interpreted</code> helper — see that method’s own doc for why —
 compiled into this module) before ever consulting <code dir="auto">customPolicyTypes</code>.
-The tenth, <code dir="auto">require_control_registration</code>, needs <code dir="auto">OrgPolicy.controlTables</code>
+The eleventh, <code dir="auto">require_control_registration</code>, needs <code dir="auto">OrgPolicy.controlTables</code>
 — data the <code dir="auto">CustomPolicyEvaluator</code> trait has no way to receive — so
 <code dir="auto">evaluateRule</code> checks for it by name before ever reaching this map; see
 “Control table registration” below. This is why

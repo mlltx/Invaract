@@ -1172,10 +1172,10 @@ imprecise about the mechanism (worse than described, in fact —
 all the way through to the fully generic <code dir="auto">UnknownPlan</code> translation, not
 even the <code dir="auto">catalogTable</code> fallback) but correct about the conclusion (a
 real, previously-untested gap). Both the read side and two real write-
-side false-rejection bugs are now fixed; one known, documented,
-unfixed location-resolution gap remains for CTAS with no pre-existing
-physical path — see “Hive support” for the full writeup and both
-coverage ledgers.</p>
+side false-rejection bugs are now fixed, and so is the location gap
+for a managed table’s CTAS (the outer command resolves
+<code dir="auto">defaultTablePath</code>, as the V1 data-source CTAS does) — see
+docs/connectors/hive.md for the full writeup and both coverage ledgers.</p>
 </li>
 <li>
 <p><strong>DataFrameWriterV2/SQL <code dir="auto">MERGE INTO</code>/<code dir="auto">DELETE</code>/<code dir="auto">UPDATE</code> writes are not
@@ -1226,9 +1226,13 @@ relative location (<code dir="auto">"demo/input/sample.csv"</code>); Spark repor
 <code dir="auto">file:</code> URI at runtime (<code dir="auto">"file:/home/user/.../demo/input/sample.csv"</code> —
 confirmed empirically earlier in this doc). Comparing with <code dir="auto">==</code> would fail
 every real run for a reason unrelated to actual contract compliance, so
-locations are matched by normalized suffix instead (strip the <code dir="auto">file:</code>
-scheme; a declared location matches if it equals, or is a path-boundary
-suffix of, the actual one).</p>
+locations are matched by normalized suffix instead (both sides in
+<code dir="auto">contract.Locations</code>’ canonical form - no <code dir="auto">file:</code> scheme, no repeated or
+trailing slashes, <code dir="auto">s3a://</code> as <code dir="auto">s3://</code> - then a declared location matches if
+it equals, or is a path-boundary suffix of, the actual one). A read or write
+of a catalog table also answers to its table name, <code dir="auto">catalog/namespace/table</code>
+(<code dir="auto">LocationMatching.namesOf</code>), so a contract can name the table; see
+“<code dir="auto">StructuralVerifier</code> internals” below.</p>
 <p><strong>Nullability</strong> is checked directionally, not by equality: a contract
 requiring non-null (<code dir="auto">nullable: false</code>) is violated by an actual column
 that permits nulls; the reverse — contract allows null, actual guarantees
@@ -3160,7 +3164,8 @@ failed jobs” only has to redo the one shard that actually failed.</p>
 <p><code dir="auto">StructuralVerifier.verify</code> is the entry point; three helpers carry the logic that used to
 be inline, each with its own spec:</p>
 <ul>
-<li><strong><code dir="auto">SchemaChecker</code></strong> compares a declared schema with the actual <code dir="auto">LogicalSchema</code> — the
+<li>
+<p><strong><code dir="auto">SchemaChecker</code></strong> compares a declared schema with the actual <code dir="auto">LogicalSchema</code> — the
 engine-neutral <code dir="auto">com.invaract.contract</code> model (see docs/CONTRACT_MODEL.md’s “Logical
 types”), not Spark’s <code dir="auto">StructType</code>. <code dir="auto">ContractEnforcementRule</code> (and <code dir="auto">DryRunReporter</code>) map
 Spark’s schema into it at the boundary with <code dir="auto">SparkSchemas</code>, the one place a Spark
@@ -3178,17 +3183,43 @@ the type keyword was compared — <code dir="auto">array</code> for every array 
 passed. <code dir="auto">SparkSchemasSpec</code> pins both the mapping and the parser against Spark itself (the
 logical <code dir="auto">typeName</code>/<code dir="auto">catalogString</code> equal Spark’s; 33 declared nested types parse to what
 <code dir="auto">DataType.fromDDL</code> produces), which is what makes the move verdict- and message-neutral.
-See docs-site’s contract-format reference for the user-facing rules.</li>
-<li><strong><code dir="auto">LocationMatching</code> / <code dir="auto">LocationIndex</code></strong> hold the one definition of “declared location
+See docs-site’s contract-format reference for the user-facing rules.</p>
+</li>
+<li>
+<p><strong><code dir="auto">LocationMatching</code> / <code dir="auto">LocationIndex</code></strong> hold the one definition of “declared location
 matches actual location” (normalize both sides, then equal or <code dir="auto">/</code>-boundary suffix) and an
 index that buckets declared locations by their last path segment, so each question is a
 lookup instead of a scan. <code dir="auto">verify</code> used to normalize and test every declared input against
 every read in four separate loops (missing, undeclared, schema, catalog) — quadratic in
 contract size × plan size. Measured on one machine with a replica of the old loops: 3,000
 declared inputs and 3,000 reads, ~1.1 s of matching per checked write before, ~24 ms for the
-whole of <code dir="auto">verify</code> after (200 inputs: 13 ms vs 6 ms). The matching <em>rule</em> is unchanged;
-<code dir="auto">LocationMatchingSpec</code> checks the index against the old rule on thousands of generated paths.</li>
-<li><strong><code dir="auto">PlanFacts</code></strong> gathers an <code dir="auto">ir.Plan</code>’s reads, unknown nodes, aggregates, joins and
+whole of <code dir="auto">verify</code> after (200 inputs: 13 ms vs 6 ms). <code dir="auto">LocationMatchingSpec</code> checks the index
+against the rule written out directly on thousands of generated paths.</p>
+<p><strong>The canonical form</strong> both sides are put in is <code dir="auto">contract.Locations.canonical</code>, shared with
+<code dir="auto">CrossContractValidator</code>, <code dir="auto">ContractDraftMerger</code> and the organizational policy so two
+comparisons of locations can never disagree: <code dir="auto">\</code> to <code dir="auto">/</code>, <code dir="auto">file:</code> dropped (either side),
+URL scheme lower-cased with one store’s spellings folded (<code dir="auto">s3a</code>/<code dir="auto">s3n</code> to <code dir="auto">s3</code>, <code dir="auto">abfss</code> to
+<code dir="auto">abfs</code>, <code dir="auto">wasbs</code> to <code dir="auto">wasb</code>), empty and <code dir="auto">.</code> segments dropped. Case and <code dir="auto">..</code> stay.</p>
+<p><strong>A dataset answers to more than its location.</strong> <code dir="auto">LocationMatching.namesOf(location, catalog)</code> is the reported location plus, for a read or write that resolved to a catalog
+table (<code dir="auto">ir.CatalogIdentity</code> with a <code dir="auto">table</code>), its table name in <code dir="auto">fromParts</code> form
+(<code dir="auto">spark_catalog/gold/orders</code>). Every place a declared location is paired with a dataset uses
+it: <code dir="auto">InputChecker</code> (missing, undeclared, schema and catalog, through <code dir="auto">PlanFacts.namesOf</code>),
+<code dir="auto">OutputChecker</code> (location, the output a write is checked against, missing outputs), the
+state-change check for Iceberg <code dir="auto">CALL</code>s (<code dir="auto">StateChangeInfo.tableName</code>), static data quality,
+role consistency, sensitivity propagation and the listener’s <code dir="auto">datasetType</code>. The reason is
+Spark itself: it reports a table that exists by its files and a table a DSv2 write is
+creating (Delta, Iceberg) by its qualified identifier - its create and the write inside it
+both do, so they agree, but a contract declaring the path matches neither (docs/connectors/delta.md)</p>
+<ul>
+<li>and the table name is the same in both. (Hive’s managed CTAS used to be the same; it now
+resolves <code dir="auto">defaultTablePath</code>, docs/connectors/hive.md.) The insert
+Spark runs inside a new data-source table’s <code dir="auto">CreateDataSourceTableAsSelectCommand</code> carries no
+<code dir="auto">CatalogTable</code> at all, so <code dir="auto">TableCreations</code> hands it the identity the outer command’s check
+saw (noted only once that check passed, claimed once, at most <code dir="auto">Capacity</code> waiting).</li>
+</ul>
+</li>
+<li>
+<p><strong><code dir="auto">PlanFacts</code></strong> gathers an <code dir="auto">ir.Plan</code>’s reads, unknown nodes, aggregates, joins and
 filters in one iterative pre-order pass. <code dir="auto">ContractEnforcementRule</code> builds one per checked
 write and hands it to <code dir="auto">StructuralVerifier</code>, <code dir="auto">PlanRuleVerifier</code> (previously one full walk
 per declared rule), <code dir="auto">StaticDataQualityVerifier</code> and <code dir="auto">RoleConsistencyVerifier</code>. Order is the
@@ -3197,15 +3228,18 @@ A node with children that several parents share (an adapter for a graph-shaped e
 as Beam, hands over such plans; Spark’s translation never does) is visited once, by
 reference, so the walk is linear in the graph rather than in its paths; a node with no
 children (a read) is still listed each time it is reached, so a table read on both sides of
-a join stays two reads and a tree’s lists are unchanged.</li>
-<li><strong>Lineage, the property analysis and the fingerprint</strong> resolve each column name once per
+a join stays two reads and a tree’s lists are unchanged.</p>
+</li>
+<li>
+<p><strong>Lineage, the property analysis and the fingerprint</strong> resolve each column name once per
 plan node (<code dir="auto">ir.IdentityMemo</code>; docs/TRANSFORMATION_IR.md’s “A plan is a graph”). Before,
 a column defined from itself twice, repeated (<code dir="auto">withColumn("v", col("v") + col("v"))</code>
 22 times), took about 4 s each in lineage and the property analysis, doubling per step,
 and its fingerprint inlined <code dir="auto">2^k</code> copies of the bottom definition: reachable from an
 ordinary Spark job with <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code>, sensitivity propagation
 or <code dir="auto">computeFingerprint</code> on. Now about 2 ms, and the fingerprint is a per-node hash
-(fingerprint version 4).</li>
+(fingerprint version 4).</p>
+</li>
 </ul>
 <p><code dir="auto">StructuralVerifier.scala</code> was one 1,200-line file holding the result model, the violation
 vocabulary, <code dir="auto">verify</code> (a ~230-line method) and the catalog checks. It is now an orchestrator over:</p>
