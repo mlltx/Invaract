@@ -209,24 +209,17 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // both independently checked.
   //
   // Unlike Parquet/Delta/Iceberg's version of this pitfall, the two sides
-  // do NOT always agree here - a real, found (not fixed - see below)
-  // asymmetry: confirmed empirically that `CreateHiveTableAsSelectCommand.
-  // tableDesc.storage.locationUri` is populated with the real physical
-  // path when appending onto an EXISTING table (the analyzer resolves
-  // `tableDesc` by looking up the existing catalog entry), but is `None` -
-  // falling back to the qualified catalog identifier - both for a
-  // genuinely NEW table AND, surprisingly, for `.mode("overwrite")` onto
-  // an EXISTING table (overwrite is treated as replace-like, so the
-  // analyzer builds `tableDesc` fresh rather than consulting the existing
-  // entry). The nested `InsertIntoHiveTable`, built during `run()` after
-  // the table has been created/verified, always has the real physical
-  // path. So APPEND mode is the one case confirmed to agree by
-  // construction (both PASS below); NEW-table and OVERWRITE-onto-existing
-  // are the same "no explicit path given" class of gap
-  // `ParquetConnectorSpec`'s own `.saveAsTable()`-on-a-brand-new-table test
-  // already documents and leaves out of scope (there, a V1 `.option("path",
-  // ...)` sidesteps it; Hive's `.saveAsTable()` has no equivalent knob) -
-  // see docs/connectors/hive.md for the full writeup and next step. ---
+  // did NOT always agree here - a real, found asymmetry, since fixed:
+  // `CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri` is
+  // populated with the real physical path when appending onto an EXISTING
+  // table (the analyzer resolves `tableDesc` by looking up the existing
+  // catalog entry), but is `None` both for a genuinely NEW managed table
+  // AND for `.mode("overwrite")` onto an EXISTING one (the writer drops the
+  // old table first, so `tableDesc` is built fresh). The outer command used
+  // to fall back to the qualified catalog identifier there, while the nested
+  // `InsertIntoHiveTable` always has the real physical path; it now resolves
+  // `defaultTablePath`, where Spark creates the table, so all three agree -
+  // see the tests below and docs/connectors/hive.md. ---
 
   test("PASS: .format(hive).saveAsTable() append onto an existing table - both nested Command plans see a satisfying write") {
     df().write.format("hive").saveAsTable("hive_ctas_append_pass_tbl")
@@ -287,52 +280,69 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_ctas_append_fail_tbl").count() == rowCountBefore, "a rejected append must never have committed, and the nested insert must never run")
   }
 
-  // --- Known limitation (not fixed - see the comment above): a genuinely
-  // NEW table via .format("hive").saveAsTable(...) has the same "outer
-  // command has no explicit physical path to resolve" gap
-  // ParquetConnectorSpec's own new-table CTAS test already documents for
-  // the V1 CreateDataSourceTableAsSelectCommand case - confirmed here to
-  // also apply to Hive's CreateHiveTableAsSelectCommand, and confirmed to
-  // ALSO apply to .mode("overwrite") onto an EXISTING table (a real,
-  // Hive-specific extension of the same gap: overwrite is treated as
-  // replace-like, so the analyzer never consults the existing catalog
-  // entry for tableDesc's location). Translation-only, not a PASS/FAIL
-  // enforcement pair - a contract targeting the outer command's own
-  // resolved location for either scenario would need to use the qualified
-  // catalog identifier (e.g. "spark_catalog.default.<table>"), not the
-  // physical path, which the nested InsertIntoHiveTable then independently
-  // resolves to the physical path instead - the two commands don't agree
-  // unless the physical path happens to already be known before the
-  // command is built (append mode, tested above). ---
+  // --- A managed table's create: a genuinely NEW table via .format("hive").saveAsTable(...), and
+  // .mode("overwrite") onto an EXISTING one (the writer drops the old table before the plan is built,
+  // so the analyzer never sees its location). Neither plan carries a location; the outer
+  // CreateHiveTableAsSelectCommand resolves the one Spark creates the table at, `defaultTablePath` -
+  // the same lookup the V1 CreateDataSourceTableAsSelectCommand makes - which is where the nested
+  // InsertIntoHiveTable writes, so a contract declaring the table's physical path matches both.
+  // (This used to be a known limitation: the outer command fell back to the qualified identifier.) ---
 
-  test("known limitation: OVERWRITE-mode .saveAsTable() onto an EXISTING table has no resolved location in the outer command") {
+  private def warehousePath(table: String): String =
+    spark.sessionState.catalog.defaultTablePath(TableIdentifier(table)).toString.stripPrefix("file:")
+
+  private def physicalPathContract(location: String) =
+    s"""id: enforcement_demo
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: $location
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: long
+       |        - name: value
+       |          type: long
+       |""".stripMargin
+
+  test("an OVERWRITE-mode .saveAsTable() onto an EXISTING table resolves the outer command to the table's physical path") {
     df().write.format("hive").saveAsTable("hive_ctas_overwrite_gap_tbl")
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)
     df().write.format("hive").mode("overwrite").saveAsTable("hive_ctas_overwrite_gap_tbl")
 
-    // SparkAdapterListener's QueryExecutionListener only observes the
-    // top-level query (the outer CreateHiveTableAsSelectCommand), unlike
-    // injectCheckRule which sees both nested commands - so this captures
-    // exactly the command whose location resolution is the known gap:
-    // the qualified catalog identifier, not the table's real physical
-    // path (confirmed via `tableLocation` below, which IS the real path).
-    // Filtered on the exact expected qualified identifier, not just
-    // location-contains: the setup write just above (a genuinely NEW
-    // table, its own top-level query) is exactly the same "no resolved
-    // path yet" shape and can still have its own async onSuccess event
-    // in flight when this listener registers - without this filter,
-    // `eventually` can accept that stray event instead of the actual
-    // target write's.
-    val result = awaitWriteTo(listener, "hive_ctas_overwrite_gap_tbl", w => w.dataset.location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl")
+    // SparkAdapterListener's QueryExecutionListener only observes the top-level query (the outer
+    // CreateHiveTableAsSelectCommand), unlike injectCheckRule which sees both nested commands - so
+    // this captures exactly the command that used to fall back to the qualified identifier.
+    val result = awaitWriteTo(listener, "hive_ctas_overwrite_gap_tbl", w => w.saveMode.contains("overwrite"))
     result.plan match {
       case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, _, _, _) =>
-        assert(location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl",
-          s"expected the outer command's qualified-identifier fallback, got '$location'")
-        assert(location.stripPrefix("file:") != tableLocation("hive_ctas_overwrite_gap_tbl"),
-          "this is exactly the known gap: the outer command's location does NOT match the table's real physical path")
+        assert(location.stripPrefix("file:") == tableLocation("hive_ctas_overwrite_gap_tbl"),
+          s"expected the table's real physical path, got '$location'")
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
+  }
+
+  test("PASS: a contract declaring a MANAGED Hive table's physical path governs its creation and an overwrite onto it") {
+    spark.sql("DROP TABLE IF EXISTS hive_ctas_path_tbl")
+    val path = warehousePath("hive_ctas_path_tbl")
+    withContract(physicalPathContract(path)) {
+      df().write.format("hive").saveAsTable("hive_ctas_path_tbl") // new table: must not throw
+      df().write.format("hive").mode("overwrite").saveAsTable("hive_ctas_path_tbl") // overwrite: must not throw
+    }
+    assert(tableLocation("hive_ctas_path_tbl") == path, "the table really lives where the outer command said")
+    assert(spark.table("hive_ctas_path_tbl").count() == 2)
+  }
+
+  test("FAIL: a contract declaring another path rejects a NEW managed Hive table's creation before the table exists") {
+    spark.sql("DROP TABLE IF EXISTS hive_ctas_wrong_path_tbl")
+    val ex = withContract(physicalPathContract(warehousePath("some_other_tbl"))) {
+      intercept[ContractViolationException](df().write.format("hive").saveAsTable("hive_ctas_wrong_path_tbl"))
+    }
+    assert(ex.result.violations.map(_.violationType).contains(ViolationType.OutputLocationMismatch))
+    assert(ex.result.violations.flatMap(_.location).exists(_.stripPrefix("file:") == warehousePath("hive_ctas_wrong_path_tbl")),
+      "the violation names the path the table would have been created at")
+    assert(!spark.catalog.tableExists("hive_ctas_wrong_path_tbl"))
   }
 
   // --- Write: .insertInto(...) / .saveAsTable() append onto an EXISTING
@@ -340,7 +350,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // inside a CreateHiveTableAsSelectCommand for the append-via-saveAsTable
   // form. ---
 
-  // --- The CTAS gap above, closed for a contract that names the table: every write to a Hive table carries the table's
+  // --- A contract can also name the table instead of its path: every write to a Hive table carries the table's
   // catalog identity, and a declared location matches its table name (`spark_catalog/default/<table>`) as well as its
   // location, so `default/<table>` matches the outer command (the qualified identifier) and the nested insert (the
   // physical path) alike - for a new table and for an overwrite onto an existing one. ---

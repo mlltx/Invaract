@@ -327,8 +327,9 @@ A read or write of a catalog table also answers to the table's name,
 for a table in Spark's default database. A contract can name the table that way, or by the end
 of the name (`gold/orders`, `default/orders`), instead of where its files are. This matters
 because Spark doesn't always report a table the same way: usually by its files
-(`file:/warehouse/gold.db/orders`), but a write that creates a Hive, Delta or Iceberg table by
-the table's qualified name (`spark_catalog.gold.orders`). The table's name is the same either
+(`file:/warehouse/gold.db/orders`), but a write that creates a Delta or Iceberg table by the
+table's qualified name (`spark_catalog.gold.orders`), so only a contract that names the table
+matches that write. The table's name is the same either
 way, so a contract that names the table matches every write to it, and a `rollback_to_snapshot`
 or similar `CALL` on it too.
 

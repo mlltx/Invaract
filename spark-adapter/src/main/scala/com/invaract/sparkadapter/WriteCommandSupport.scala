@@ -1257,12 +1257,20 @@ private[sparkadapter] object WriteCommandSupport {
           val tableDesc = plan.getClass.getMethod("tableDesc").invoke(plan).asInstanceOf[SparkCatalogTable]
           val query = plan.getClass.getMethod("query").invoke(plan).asInstanceOf[LogicalPlan]
           val mode = plan.getClass.getMethod("mode").invoke(plan).asInstanceOf[SaveMode]
+          // No location on the plan for a managed table: a new one, or an overwrite onto an existing one (the
+          // writer drops the old table before this plan is built, so it is created afresh). Spark puts it where it
+          // puts every managed table, `defaultTablePath` - the same lookup `createDataSourceTableAsSelect` makes -
+          // which is where the nested `InsertIntoHiveTable` then writes, so the two report one location.
           val (location, diagnostic) = tableDesc.storage.locationUri match {
             case Some(uri) => (uri.toString, None)
             case None =>
-              val msg = s"No storage location on new Hive table '${tableDesc.identifier}'; " +
-                "using its table identifier as a best-effort location"
-              (tableDesc.identifier.unquotedString, Some(Diagnostic("CreateHiveTableAsSelectCommand", msg)))
+              scala.util.Try(org.apache.spark.sql.SparkSession.active.sessionState.catalog.defaultTablePath(tableDesc.identifier)) match {
+                case scala.util.Success(uri) => (uri.toString, None)
+                case scala.util.Failure(_) =>
+                  val msg = s"No storage location on new Hive table '${tableDesc.identifier}', and its default " +
+                    "warehouse path could not be resolved; using its table identifier as a best-effort location"
+                  (tableDesc.identifier.unquotedString, Some(Diagnostic("CreateHiveTableAsSelectCommand", msg)))
+              }
           }
           WriteCommandInfo(
             location = location,
