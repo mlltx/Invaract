@@ -228,6 +228,65 @@ dependencyOverrides ++= Seq(
   "io.netty" % "netty-transport-udt" % "4.1.137.Final"
 )
 
+// commons-beanutils:commons-beanutils: a transitive of hadoop-client/hadoop-common
+// 3.4.1 (both test scope here, confirmed via `sbt Test/dependencyTree` - resolves to
+// 1.9.4, the sole version, no eviction). CVE-2025-48734 (CVSS 8.8): PropertyUtilsBean's
+// (and BeanUtilsBean's) getProperty()/getNestedProperty() let a caller that controls the
+// property path reach a Java enum's "declaredClass" property, exposing its classloader -
+// a BeanIntrospector added in 1.9.2 could suppress this, but it was never enabled by
+// default until 1.11.0, which does enable it by default. Affected < 1.11.0 (the latest
+// published 1.x release on Maven Central, so there is no later floor to consider), fixed
+// 1.11.0. Pinned via dependencyOverrides for the same reason as every override above:
+// test scope only, so this never reaches a job under check - no code in this module's own
+// test suites passes an external property path into PropertyUtilsBean at all - fixed
+// anyway since a clean patched version is available.
+dependencyOverrides += "commons-beanutils" % "commons-beanutils" % "1.11.0"
+
+// org.apache.zookeeper:zookeeper: a transitive of hadoop-client/hadoop-common 3.4.1
+// (test scope here, confirmed via `sbt Test/dependencyTree` - resolves to 3.8.4, the
+// sole version, no eviction). CVE-2026-24308 (CWE-532, CVSS 8.7 High): ZKConfig logs
+// configuration values - which can include credentials or connection strings - at INFO
+// level with no masking, so a client's own logfile can leak sensitive config it was
+// never meant to disclose. Affected 3.8.0-3.8.5 (fixed 3.8.6) and, separately,
+// 3.9.0-3.9.4 (fixed 3.9.5). Pinned to 3.9.5, not the bare-minimum 3.8.6: the same
+// coordinate and version spark-adapter's own build.sbt already pins (for its own,
+// separate zookeeper CVE pass), so this reuses an already-proven, already-tested choice
+// in this exact codebase rather than introducing a second, never-before-verified
+// zookeeper version. Both zookeeper 3.8.4's and 3.9.5's own POMs declare jetty-client/
+// jetty-server/jetty-servlet as `provided`, confirmed directly - zookeeper itself never
+// forces a Jetty version transitively at either release, so this bump has no effect on
+// (and shares no root cause with) the separate Jetty finding below; Hadoop pulls that
+// one directly. Test scope only, so this never reaches a job under check - no code in
+// this module's own test suites starts a ZooKeeper client or logs its configuration.
+dependencyOverrides += "org.apache.zookeeper" % "zookeeper" % "3.9.5"
+
+// org.eclipse.jetty:jetty-security (and its whole 9.4.53.v20231009 family - jetty-
+// server/-http/-io/-util/-util-ajax/-servlet/-webapp/-xml/-client, all the same version,
+// confirmed via `dependencyTree` - no split, unlike the Netty finding above): a
+// transitive of hadoop-client/hadoop-common 3.4.1 (test scope), which bundles Jetty as
+// the embedded HTTP server for Hadoop's own web UIs (NameNode/ResourceManager/etc.).
+// CVE-2026-10050 (GHSA-2fvj-hgj9-j2gr, CWE-?, CVSS 8.7 High): DigestAuthentication.apply()
+// in Jetty's HTTP *client* encodes the username/password/realm with
+// getBytes(StandardCharsets.ISO_8859_1) before hashing; any character above U+00FF
+// silently becomes '?', so a password with every non-Latin-1 character replaced by '?'
+// produces the identical MD5 Digest response hash as the original - letting an attacker
+// who knows a victim's username bypass Digest authentication. Affected
+// 9.4.0.v20161208-9.4.58.v20250814; the advisory names 9.4.63 as the fix for this line,
+// but **no such artifact exists on Maven Central** - confirmed directly: 9.4.58.v20250814
+// is the newest 9.4.x release actually published for jetty-security/jetty-util/every
+// sibling in this family (`maven-metadata.xml`, `lastUpdated` well after this CVE's own
+// disclosure date), and fetching 9.4.63's own expected path returns a plain 404. The 9.4.x
+// line is EOL; Eclipse's real fix landed only in the 10.x/11.x/12.x lines, which would be
+// a major-version jump for an API Hadoop's own compiled 3.4.1 code was built against -
+// the same class of risk spark-adapter's build.sbt documents for an unexamined Netty/
+// Arrow jump, except here there is no later 9.4.x release to fall back to if it breaks,
+// and verifying a cross-major-line swap is out of proportion to a test-scope-only finding.
+// **Accepted risk**, per docs/CVE_REMEDIATION.md §3's template (same shape as that
+// section's Derby case: no patched version of the affected line exists at all). Low
+// reachability: test scope only (never reaches a job under check), and nothing in this
+// module's own code - or in Hadoop's test-scope use here - configures an HTTP client to
+// authenticate via Jetty's `DigestAuthentication` class in the first place.
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
