@@ -118,6 +118,13 @@ const PAGES = [
     order: 9,
   },
   {
+    src: 'docs/PYTHON_ADAPTER_SURVEY.md',
+    slug: 'design/python-adapter-survey',
+    section: 'Design Docs',
+    label: 'Native Python Adapter Survey',
+    order: 9,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',
