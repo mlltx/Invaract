@@ -70,13 +70,140 @@ It is an engine-neutral change, so it needs a decision of its own (decision 9).
    later? *Recommend yes.*
 6. Read `trustedSteps` on this engine as places and programs a platform trusts not to carry governed data (log folders,
    caches, `gzip`)? *Recommend yes.*
-7. Recognise the standard library, pyarrow and pandas in the first version, and leave Polars and DuckDB for later?
-   *Recommend yes.*
+7. Wrap the standard library, pyarrow, pandas and Polars in the first version, and cover DuckDB and every other writer by
+   reading files back from disk plus the operating-system restriction? *Recommend yes.*
 8. Name it the `python` adapter, in a new `python-adapter` module with its own Python package, and share the pyarrow type
    mapping with the Beam Python adapter? *Recommend yes.*
 9. Check each output against its declared kind, as an engine-neutral addition that every adapter declares a position on,
    built before the Python adapter? The kinds are a data asset or a readiness signal, with the signal naming the data assets
    it announces. *Recommend yes; the open questions on it are at the end of D13.*
+10. When a job starts, should Invaract remove a stale readiness marker for each signal the contract declares, so
+    downstream jobs never see yesterday's "ready" for today's run? *Recommend yes, as an opt-in setting.*
+
+## The four requirements, one by one
+
+The requirements this adapter is judged on first:
+1. confirm the job wrote where its contract says;
+2. have each output declare what it is (a data asset or a readiness signal), and confirm that;
+3. switch it on without changing the job;
+4. capture the schema of the files written.
+
+Probes 10 to 13 were run for this section.
+
+### 1. The job wrote where it said it would
+
+**Verdict: yes, in two halves.** Nothing lands outside the declared places, and every declared place is written in this run.
+
+**Nothing lands outside the declared places.**
+- *Writes that go through Python* are seen before they happen, and refused: `open`, the `csv` and `json` modules, pandas'
+  CSV, Excel and Parquet writers, fsspec on local files, renames, moves and touches (probes 2, 3 and 10).
+- *Writes made inside compiled code* are not seen by Python at all. That covers pyarrow, Polars and DuckDB (probes 2, 6
+  and 10). There are two answers:
+  - A wrapper on each catalogued function sees the write before it happens: pyarrow's write functions, and Polars'
+    `write_parquet`, `write_csv` and the other Python methods.
+  - DuckDB's `COPY ... TO 'path'` is inside SQL text, so no wrapper can sensibly read it. On Linux, the operating-system
+    restriction refuses every write outside the declared places, whatever makes it. Probe 13 showed it stopping pyarrow,
+    Polars and DuckDB writes, a shell command, and a Python child running in its own virtual environment.
+
+**Every declared place is written in this run.** This is checked when the job ends, as on Spark. It uses what the hook
+recorded, plus a look at the files at each declared place that changed since the job started, which also catches writers
+Python cannot see (probe 12).
+
+**Details that decide what "the place it said" means:**
+- *Write to a temporary file, then rename it into place* is a common, careful pattern. The rename names the destination
+  (`os.rename ('data/out/.report.tmp', 'data/out/report.parquet')`, probe 10), and counts as the write landing there. A
+  rename onto a declared output is not refused, contrary to the first draft of D7.
+- *Paths are compared once `..` and symbolic links (shortcuts to another folder) are resolved.* A write through
+  `linked/out/x.csv` is a write to `real/out/x.csv` (probe 10).
+- *Libraries write their own temporary files* in the system temporary folder (`tempfile`, and openpyxl for Excel files,
+  probe 10). That folder is trusted by default.
+- *Cloud storage (S3, GCS)* was not probed: there are no credentials here (UNVERIFIED).
+  - Writes through fsspec are Python code and can be wrapped.
+  - The boto3 and google-cloud-storage clients would need wrappers of their own.
+  - The operating-system restriction does not cover network writes.
+
+### 2. Each output says what it is, and Invaract confirms it
+
+The contract labels each output, and a readiness signal names the asset it announces (D13 proposes the `readinessFor`
+field). Probe 12 built a small working prototype of the checks, with this contract:
+- `report`: a data asset, the folder `data/out/report`, columns `id` and `amount`, both int64;
+- `report_ready`: a readiness signal for `report`, the file `data/out/report/_SUCCESS`.
+
+The job wrote its report with Polars, which Python cannot see.
+
+| Case | What the job did | Result |
+|---|---|---|
+| a | wrote the report, then touched `_SUCCESS` | allowed: "every asset it names was written in this run and matches" |
+| b | touched `_SUCCESS` first, then wrote the report | signal refused: "its asset 'report' was not written in this run" |
+| c | wrote the report with DuckDB, `id` as text, then touched `_SUCCESS` | signal refused: "its asset 'report' has id: string, the contract says int64" |
+| d | wrote nothing new; yesterday's report and marker were there; re-touched `_SUCCESS` | signal refused: "its asset 'report' was not written in this run" |
+| e | put only an empty file at the report's place, then touched `_SUCCESS` | signal refused: "its asset 'report' holds an empty file" |
+| f | wrote the report, then a pyarrow table as `_SUCCESS` | caught only at exit, after it landed: "readiness location holds a table, not a marker"; exit status 3 |
+
+**How it works.** The readiness signal is the gate downstream jobs rely on, so that is where Invaract looks hardest:
+- It sees all three ways a marker is written: created, opened for writing, or re-touched (`os.utime` only, probe 9).
+- At that moment, it opens the asset's files *as they are on disk*. Each must have been written in this run, be a data file,
+  and have the declared columns.
+- Because it reads the files themselves, this works whichever library wrote them, DuckDB included (case c).
+
+**What it does not do.**
+- **It stops a new signal; it cannot withdraw an old one.** In case d, yesterday's `_SUCCESS` is still there. Downstream jobs
+  should check the marker's date, or Invaract should remove a stale marker for a declared signal when the job starts. That
+  is a choice to make (decision 10).
+- **A table written as the marker by a writer Python cannot see** (case f) is caught only when the job ends. With a wrapper
+  on that function, it would be refused before it landed.
+- **"Written in this run" uses file modification times.** On a network file system whose clock differs from the machine's,
+  or on an object store, that needs checking (UNVERIFIED).
+
+### 3. Switched on without changing the job
+
+| Route | How | Covers (probe) | Escapes (probe) |
+|---|---|---|---|
+| **Installed package** (recommended) | the package's `.pth` file, plus `INVARACT_*` environment variables | the job, its child Python processes, `multiprocessing` with both `fork` and `spawn`, `python -I` (probes 5, 13) | `python -S`; a job that runs in a Python environment without the package, such as one it builds itself (probe 13) |
+| **Environment only, no install** | `PYTHONPATH` pointing at a shared folder holding a `sitecustomize.py` (a file Python runs at start-up if it finds one) | the same, without touching the job's environment (probe 13) | `python -I`, which ignores `PYTHONPATH`. It also hides the distribution's own `sitecustomize.py` (Debian's Python has one) unless it imports it in turn (probe 13) |
+| **Launcher** | `invaract-python run job.py` | the same as the package, and refuses to start if Invaract cannot install itself | nothing extra (PREDICTED) |
+| **Operating-system restriction** (Linux, opt-in) | set when the interpreter starts; it cannot be undone and every child inherits it | writes outside the declared places, from any library, any child process, a shell command or a job's own virtual environment (probe 13) | nothing on Linux. It cannot classify outputs or check columns: it is the floor under the other routes |
+
+Two more points:
+- **Long-lived processes** (a notebook's kernel, a scheduler worker that runs many tasks in one process) start before a task's
+  settings exist. The package should read `INVARACT_*` at the first write rather than at start-up (not probed).
+- **Java is needed wherever the job runs**, for the checker (D9). It is the main practical cost of this whole route.
+
+### 4. The schema of the files written
+
+There are two sources, and the recommendation is to use both:
+
+- **From the call, before anything is written** (wrappers). This is what allows a refusal before the data lands.
+  - pyarrow tables: exact.
+  - pandas: its own types are vague (`object` for text, probe 11). pandas' own conversion to pyarrow gives the exact types,
+    `id: int64; name: string; amount: int64; at: timestamp[ns]; tier: dictionary<...>`.
+  - The `csv` module: names only.
+- **From the file, after it is written** (read back from disk). This is the truth, whatever wrote it. Probe 11 wrote eight
+  files and read them back:
+
+| File | Written by | Read back |
+|---|---|---|
+| `pandas.parquet` | pandas | `id: int64; name: string; amount: int64; at: timestamp[ns]; tier: dictionary<values=string, ...>` |
+| `pandas_index.parquet` | pandas, `id` as the index | `name: string; ...; id: int64` (the index became a column, moved to the end) |
+| `polars.parquet` | Polars | `id: int64; tags: large_list<element: large_string>` |
+| `duckdb.parquet` | DuckDB `COPY` | `id: int64 not null; name: string not null; d: date32[day] not null` |
+| `fast.avro` | fastavro | `id: long; name: ['null', 'string']` |
+| `pandas.feather` | pyarrow | as the Parquet file |
+| `pandas.csv` | pandas | header only: `id, name, amount, at, tier` |
+| `pandas.jsonl` | pandas | keys of the first record only: `id, name, amount, at, tier` |
+
+**What this means.**
+- Parquet, Avro and Feather files carry their exact schema, nested types and "may not be empty" included. The pyarrow type
+  mapping Invaract already has covers what came back: `large_list`, `large_string`, `dictionary`, `date32`
+  (`PyArrowSchemas.scala`, lines 59 to 108).
+- CSV and JSON carry column names, never types. Their types can come only from the data the job handed over (pandas
+  types), and the contract should say whether that is good enough or whether such a write is refused when it declares
+  types.
+- Two surprises a contract author will meet:
+  - pandas writes a non-default index as an extra column;
+  - pandas never marks a column "may not be empty", while DuckDB marks most of them.
+- The same read-back gives **dry-run mode** a real schema for every file the job wrote, so draft contracts are accurate
+  whichever library the team uses.
 
 ## How to read this document
 
@@ -358,7 +485,8 @@ Reading it:
 | `pyarrow.parquet.read_table`, pandas `read_parquet` | wrapper only | path or folder | exact | parquet | |
 | `open()` for reading, `csv.reader`, pandas `read_csv` | hook (+ wrapper for the header) | path | names | csv | |
 | `pathlib.Path.touch()`, `os.utime` (a marker such as `_SUCCESS`) | hook | path | none | | a new marker raises `open` with create flags; re-touching an existing one raises **only** `os.utime` (probe 9) |
-| `shutil.copy`, `os.rename`, `os.remove` | hook | both paths | none | | refused onto a declared output (D7) |
+| `shutil.copy`, `os.rename`, `os.remove` | hook | both paths | none | | a rename or move onto a declared output is the write landing there (probe 10); a delete of one is refused (D7) |
+| Polars `write_*`, DuckDB `COPY ... TO` | **nothing** (probe 10); Polars methods can be wrapped, DuckDB's SQL cannot | path | read back from the file (probe 11) | parquet, csv, ... | refused outside the declared places only by the operating-system restriction (probe 13) |
 | `sqlite3.connect` | hook | database file | none | | refused unless declared and trusted (D7) |
 | another program (`subprocess`) | hook | the program's name | none | | refused unless trusted (D7) |
 | compiled code outside the catalogue (database drivers, other C libraries) | **nothing** (UNVERIFIED for drivers) | | | | refused only by the operating-system restriction (D8) |
@@ -508,7 +636,8 @@ this probe also allowed `/tmp`, which holds the scratch folder, and so proved no
   - Save mode comes from the open mode: `w` is overwrite, `a` append, `x` error. `pq.write_table` always replaces the file.
     `write_to_dataset` follows its `existing_data_behavior` option.
   - Refused as unverifiable (`UNVERIFIABLE_WRITE`):
-    - a rename, delete or copy onto a declared output;
+    - a delete of a declared output (a rename or move onto one is followed instead: the destination is where the write
+      landed, probe 10);
     - a `sqlite3` database that is not a declared output, whose statements are not translated at first;
     - another program started by the job, unless the platform trusts it.
 - **Why.** Each of these changes data in a way Invaract cannot read. Failing closed (refusing what cannot be checked, rather
@@ -789,7 +918,7 @@ adapter. Each event names the engine `python`, its version, and the script.
 | `policy.organizational`, `config.locationRefs`, `config.contractRegistry`, `reporting.notifications` | organisation policy, `ref://` locations, a contract registry, events | supported | Shared Java code, configured through the environment. | Medium |
 | `config.zeroCodeInstall` | switched on without changing the job | partial | An installed package plus environment variables (probe 5). `python -S`, an unprepared environment, or deliberate evasion escapes it. Java is needed on the worker. | High |
 | `reporting.dryRunInference` | draft contracts from real jobs | partial | Drafts are only as precise as the writer: types for Parquet, names for CSV. | Medium |
-| `failClosed.unverifiableWrites` | refusing what cannot be checked | partial | Renames, deletes, copies, `sqlite3` and other programs are refused (probe 2 shows each raises an event). Writes inside unwrapped compiled code are refused only by the Linux restriction (probe 7). | High |
+| `failClosed.unverifiableWrites` | refusing what cannot be checked | partial | Deletes, `sqlite3` and other programs are refused; renames and moves are followed (probe 2 shows each raises an event). Writes inside unwrapped compiled code are refused only by the Linux restriction (probe 7). | High |
 
 **Enforcement point:** `in-engine-blocking`. Each write is checked inside the interpreter just before it happens, and a
 refused one never lands. The job does run, and writes made before a refusal stand, as on Spark.
@@ -991,6 +1120,30 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
    - `open("data/out/READY", "w").close()` raised `open (..., 'w', 524865)` and left a 0-byte file;
    - a small `json.dump` status file raised `open (..., 'w', 524865)` and left 26 bytes.
 
+10. **Probe 10, where writes land.** The event-printing hook of probe 2, with Polars 2.1.0, DuckDB 2.0.0, openpyxl 3.1.5 and
+    fsspec 2026.9.0 installed in a scratch environment:
+    - "write a temp file, then `os.replace`" raised `open` of the temp file, then `os.rename (.report.tmp, report.parquet)`;
+    - a `tempfile` then `shutil.move` raised `shutil.move` and `os.rename` naming the destination;
+    - writes through a symbolic link and through `..` raised `open` with the path as written, unresolved;
+    - Polars `write_parquet` and `write_csv`, DuckDB `COPY ... TO` and `pyarrow.dataset.write_dataset` raised **nothing**;
+    - pandas `to_excel` raised `open` of the destination, plus openpyxl's own temporary files in `/tmp`;
+    - fsspec on a local file raised `open`.
+11. **Probe 11, schemas from calls and from files.** pandas, Polars, DuckDB, pyarrow (Feather) and fastavro wrote eight files,
+    then a reader took each schema from the file itself: the Parquet footer, the Avro header, the Arrow file, or the first
+    line of a CSV or JSON file. The output is quoted in "The four requirements", section 4.
+12. **Probe 12, classifying outputs.** A prototype (a hook for `open`, `os.utime` and `os.rename` on the readiness location,
+    plus reading the asset's files from disk) with a two-output contract. Six cases, quoted in "The four requirements",
+    section 2. A `touch` of a new marker raised `os.utime` first and then `open`, so a real adapter must count one signal,
+    not two.
+13. **Probe 13, how far switching it on reaches.**
+    - With the package's `.pth`: `multiprocessing` writes under both `fork` and `spawn` were refused.
+    - With `PYTHONPATH` and a `sitecustomize.py` only, on the system Python: the write was refused, the distribution's own
+      `/usr/lib/python3.11/sitecustomize.py` was hidden, and `python -I` wrote unchecked.
+    - A child running in a virtual environment the job created wrote unchecked.
+    - With the operating-system restriction set in the parent, every write outside the allowed folder was refused with
+      "Permission denied": the same child, `sh -c "echo x > ..."`, Polars `write_parquet` and DuckDB `COPY`. A Polars write
+      inside the allowed folder landed.
+
 ### Sources
 
 - `contract/src/main/scala/com/invaract/contract/ContractModel.scala`, `DatasetType`: `DATA_ASSET`, `SOURCE`, `CONTROL`, with
@@ -1015,7 +1168,10 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
 | Slim Python worker images (`python:3.11-slim`, common Airflow and serverless images) have no Java | `docker run python:3.11-slim java -version`, and the same on the platforms' own images |
 | Audit hooks behave as in probe 2 on Python 3.9, 3.10, 3.12 and 3.13 | run probe 2 on each |
 | Database drivers (`psycopg2`, `pymysql`) and HTTP clients raise usable events, or none | probe 2 with each installed, against a local server |
-| Landlock is available on the platforms' Linux hosts and container runtimes, and child processes inherit it | `landlock_create_ruleset` version check on each; probe 7 with a child process |
+| Landlock is available on the platforms' Linux hosts and container runtimes (inheritance by child processes is settled: probe 13) | `landlock_create_ruleset` version check on each |
+| Writes to S3 or GCS (fsspec, boto3, google-cloud-storage) can be located by wrappers | a probe against a local S3 emulator |
+| "Written in this run" by modification time is reliable on the platforms' shared and network file systems | probe 12 on each, comparing the file's time with the machine's clock |
+| Reading the settings at the first write works for long-lived processes (notebook kernels, scheduler workers) | probe 5 with the variable set after start-up |
 | Landlock's network rules can refuse database and HTTP connections | probe 7 with `LANDLOCK_ACCESS_NET_CONNECT_TCP` |
 | A hook cannot be removed by any means, `ctypes` included | read CPython's `sys.addaudithook` implementation; try to clear it through `ctypes` |
 | Wrapping pyarrow lazily when the job first imports it (an import hook) works for `from pyarrow.parquet import write_table` | a probe with an import hook and that import form |
