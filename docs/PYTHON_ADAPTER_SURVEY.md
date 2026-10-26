@@ -205,6 +205,96 @@ There are two sources, and the recommendation is to use both:
 - The same read-back gives **dry-run mode** a real schema for every file the job wrote, so draft contracts are accurate
   whichever library the team uses.
 
+### 5. When the job writes to a database: Postgres and BigQuery
+
+A database write does not go through Python's file opening, so the file mechanisms above do not apply. Probes 14 to 17 ran
+a real Postgres 16 server, and the real BigQuery client library (3.46.2) against a recording stand-in for BigQuery, since
+there are no Google credentials here.
+
+**What the hook sees** (probes 14 and 17b):
+
+| How the job writes | What the hook sees |
+|---|---|
+| Postgres through psycopg2, psycopg 3, or pandas `to_sql` (SQLAlchemy) | **nothing**: these drivers talk to the server from compiled code |
+| Postgres through pg8000 (a pure-Python driver) | only the connection: `socket.connect (..., ('127.0.0.1', 55432))`. No SQL, no table |
+| BigQuery through `google-cloud-bigquery` | **every request, before it is sent**: `http.client.send` carries `POST /bigquery/v2/projects/demo/datasets/gold/tables/report/insertAll` and the body `{"rows": [...]}` |
+
+**So the work falls to three other places.**
+
+1. **A wrapper on the database client, which sees each statement or request before it runs.**
+   - *Postgres* (probe 16). Wrapping `psycopg2.connect` so that every cursor is a checking one covered:
+     - the job's own SQL;
+     - pandas `to_sql`.
+
+     A SQL parser (sqlglot) named each statement's target table and kind. Results:
+     - `INSERT INTO gold.other` was refused (an undeclared table);
+     - `DELETE FROM gold.report` with no `WHERE` was refused;
+     - `INSERT INTO gold.report` was allowed.
+
+     Postgres's own `EXPLAIN` (it describes what a statement would do without running it) also names the tables read and
+     their filters (probe 15): `WRITE INSERT gold.report; READ gold.orders filter=(orders.amount > 0)`. `EXPLAIN` cannot
+     explain `TRUNCATE` or `CREATE TABLE AS`; the parser names their targets.
+     - **The gap.** A job that picks its own cursor type (`cursor(cursor_factory=RealDictCursor)`) got past the wrapper,
+       and its insert into `gold.other` landed.
+   - *BigQuery* (probe 17). Every write goes through one Python client object, and its requests say exactly what is
+     written:
+
+     | Call | What the request states |
+     |---|---|
+     | `load_table_from_dataframe` | `destinationTable` (`demo.gold.report`), `writeDisposition` (`WRITE_TRUNCATE`), the `schema`, `sourceFormat: PARQUET` |
+     | `insert_rows_json` | the table in the path (`.../tables/report/insertAll`), and the rows |
+     | `query("INSERT INTO gold.report SELECT ...")` | the SQL text; BigQuery itself runs it |
+     | `query(..., destination=..., write_disposition=WRITE_APPEND)` | `destinationTable` and `writeDisposition` |
+
+     For SQL that BigQuery runs, BigQuery has its own **dry run**: the same query with `dry_run=True` runs nothing. The
+     client then reads the statement type and the tables it reads from the answer (`QueryJob.statement_type`,
+     `referenced_tables` and `ddl_target_table`, `google/cloud/bigquery/job/query.py`, lines 1258 to 1307). What a real
+     BigQuery dry run returns for each statement type was not seen here (UNVERIFIED: no credentials).
+2. **The database's own permissions** are the floor, as the operating-system restriction is for files. A Postgres role
+   allowed only `INSERT` on `gold.report` was refused everything else by Postgres itself (probe 15):
+   - `insert into gold.other`: `ERROR: permission denied for table other`;
+   - `delete from gold.report` and `truncate gold.report` were refused the same way.
+
+   BigQuery's equivalent is the job's service account (IAM). A platform team applies either through the credentials it
+   gives the job, without touching the job.
+3. **The database is the truth about the schema.** Reading the table back gives its exact columns, types and "may not be
+   empty":
+   - Postgres's `information_schema.columns`: `id bigint NO; amount bigint YES` (probe 16);
+   - BigQuery's `get_table`: `('id', 'INTEGER', 'REQUIRED'), ('amount', 'INTEGER', 'NULLABLE')` (probe 17).
+
+   One surprise: pandas' load into BigQuery sent every column as `NULLABLE` (probe 17), the same as with Parquet files.
+
+**What it means for the four requirements.**
+- **Where it wrote.** A table is located by its name. That would be `<database>/<schema>/<table>` for Postgres (with the
+  server's address as its catalog location), and `<project>/<dataset>/<table>` for BigQuery, as the Beam adapters already
+  write it. The wrapper refuses an undeclared table before the statement runs. Permissions refuse it even when the wrapper
+  is bypassed.
+- **What it is.**
+  - A data asset is a load or insert into a governed table.
+  - A readiness signal is usually a row in a status table, such as `INSERT INTO control.load_status VALUES ('report',
+    'READY', now())`.
+  - The wrapper sees both statements, in order, and whether each succeeded. So the rule "no ready row unless the asset was
+    written and checked in this run" works the same as for files.
+  - Updates, deletes and merges are visible too. That makes Invaract's existing rules on row-level changes (for example
+    `forbid_unconditional_delete`) checkable for these jobs, which they are not for files.
+- **Save mode.**
+  - BigQuery states it outright (`writeDisposition`).
+  - For Postgres it follows from the statements: `INSERT` is append, `TRUNCATE` then `INSERT` is overwrite, `CREATE TABLE
+    AS` is "error if it exists".
+  - pandas' `if_exists="replace"` drops and re-creates the table.
+- **The schema.**
+  - Before the write: from a BigQuery load's `schema`, or the `INSERT`'s column list and the table's own columns.
+  - After the write: from the table itself, exactly.
+- **Switching it on.** The wrappers come in the same package as everything else, so there is nothing new to install.
+  Permissions are a second, independent switch the platform already holds.
+
+**What stays out of reach.**
+- SQL hidden inside a stored procedure or function (`CALL load_report()`): the wrapper sees only the call. It must be
+  refused, or trusted by name.
+- Drivers the package does not wrap: asyncpg, or a database driver for another engine.
+- Another program run by the job (`psql`, the `bq` command): refused unless trusted.
+- BigQuery multi-statement scripts, where a dry run may say little (UNVERIFIED).
+
 ## How to read this document
 
 - **What "conforming" means here.** Invaract has a *conformance suite*: 55 small, engine-neutral jobs, called *scenarios*,
@@ -1144,6 +1234,34 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
       "Permission denied": the same child, `sh -c "echo x > ..."`, Polars `write_parquet` and DuckDB `COPY`. A Polars write
       inside the allowed folder landed.
 
+14. **Probe 14, database writes and the hook.** The event watcher of probe 2 (socket, HTTP and file events) around inserts into a
+    local Postgres 16 through psycopg2 2.9.13, psycopg 3.3.6 (binary), pg8000 1.31.5 and pandas `to_sql` through SQLAlchemy
+    2.1.6. All four rows landed:
+    - psycopg2, psycopg 3 and `to_sql` raised no event;
+    - pg8000 raised `socket.getaddrinfo` and `socket.connect` to `127.0.0.1:55432`, and nothing about the SQL.
+15. **Probe 15, Postgres's own view.**
+    - `EXPLAIN (FORMAT JSON, VERBOSE)` gave, for example, `WRITE INSERT gold.report; READ gold.orders filter=(orders.amount
+      > 0)`. A `DELETE` with no `WHERE` showed a scan with no filter. `TRUNCATE` cannot be explained, and `CREATE TABLE AS`
+      showed only its read.
+    - sqlglot 30.25.0 named the target and kind of all five statements.
+    - A role granted only `INSERT` on `gold.report` got `permission denied` for an insert into `gold.other`, a `DELETE`
+      and a `TRUNCATE`.
+16. **Probe 16, a psycopg2 wrapper.** `psycopg2.connect` wrapped so that each connection's `cursor_factory` is a checking
+    cursor (`execute`, `executemany`, `copy_expert`), using sqlglot.
+    - It refused an insert into `gold.other`, the same through pandas `to_sql`, and a `DELETE` with no `WHERE`.
+    - It allowed inserts into `gold.report`.
+    - A cursor created with `cursor_factory=RealDictCursor` bypassed it, and its insert landed.
+    - `information_schema.columns` then gave `id bigint NO; amount bigint YES`.
+17. **Probe 17, the BigQuery client.**
+    - The real `google-cloud-bigquery` 3.46.2 ran against a recording HTTP session standing in for BigQuery, so its
+      answers, the dry run's included, were made up by the probe.
+    - The requests carried: the destination table, `writeDisposition`, the schema (every column `NULLABLE`, from pandas)
+      and `sourceFormat: PARQUET` for a load; the table path and rows for a streaming insert; the SQL text for a query; and
+      `dryRun: true` for a dry run.
+    - A separate real call without credentials (17b) showed the hook receiving `http.client.send` with the request line
+      `POST /bigquery/v2/projects/demo/datasets/gold/tables/report/insertAll` and the JSON body, before sending. BigQuery
+      refused the call, since it had no credentials.
+
 ### Sources
 
 - `contract/src/main/scala/com/invaract/contract/ContractModel.scala`, `DatasetType`: `DATA_ASSET`, `SOURCE`, `CONTROL`, with
@@ -1172,6 +1290,9 @@ All on 2026-10-26, CPython 3.11.17, pyarrow 25.0.1, pandas 2.3.3 (the repository
 | Writes to S3 or GCS (fsspec, boto3, google-cloud-storage) can be located by wrappers | a probe against a local S3 emulator |
 | "Written in this run" by modification time is reliable on the platforms' shared and network file systems | probe 12 on each, comparing the file's time with the machine's clock |
 | Reading the settings at the first write works for long-lived processes (notebook kernels, scheduler workers) | probe 5 with the variable set after start-up |
+| What a real BigQuery dry run returns for INSERT, MERGE, CREATE TABLE AS and scripts | one dry run of each with a test project's credentials |
+| psycopg 3, pg8000 and asyncpg can be wrapped as psycopg2 was | probe 16 for each driver |
+| pandas-gbq goes through the `google-cloud-bigquery` client | read pandas-gbq's source; probe 17 with it installed |
 | Landlock's network rules can refuse database and HTTP connections | probe 7 with `LANDLOCK_ACCESS_NET_CONNECT_TCP` |
 | A hook cannot be removed by any means, `ctypes` included | read CPython's `sys.addaudithook` implementation; try to clear it through `ctypes` |
 | Wrapping pyarrow lazily when the job first imports it (an import hook) works for `from pyarrow.parquet import write_table` | a probe with an import hook and that import form |
