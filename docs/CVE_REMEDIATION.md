@@ -1575,6 +1575,93 @@ closed, not just papered over by one coordinate. `sbt test`: 360 passed,
 0 failed, 26 canceled — identical to §7q's run, confirming the pin
 changes nothing about this module's own behavior.
 
+## 7t. `beam-adapter`'s fourth and fifth findings: `commons-beanutils` and `zookeeper`
+
+Two more real Dependabot alerts against `beam-adapter`'s `hadoop-client`/
+`hadoop-common` 3.4.1 transitives (both test scope, confirmed via
+`sbt Test/dependencyTree` — each resolves to a single version, no
+eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `commons-beanutils:commons-beanutils` | 1.9.4 | 1.11.0 | CVE-2025-48734 |
+| `org.apache.zookeeper:zookeeper` | 3.8.4 | 3.9.5 | CVE-2026-24308 |
+
+**CVE-2025-48734** (CVSS 8.8): `PropertyUtilsBean`'s (and
+`BeanUtilsBean`'s) `getProperty()`/`getNestedProperty()` let a caller
+that controls the property path reach a Java enum's `declaredClass`
+property, exposing its classloader. A `BeanIntrospector` added in 1.9.2
+could suppress this, but it was never enabled by default until 1.11.0 —
+the latest published 1.x release on Maven Central, so there is no later
+floor to consider.
+
+**CVE-2026-24308** (CWE-532, CVSS 8.7 High): `ZKConfig` logs
+configuration values — which can include credentials or connection
+strings — at INFO level with no masking, so a client's own logfile can
+leak sensitive config it was never meant to disclose. Affected
+3.8.0-3.8.5 (fixed 3.8.6) and, separately, 3.9.0-3.9.4 (fixed 3.9.5).
+Pinned to 3.9.5, not the bare-minimum 3.8.6: the same coordinate and
+version `spark-adapter`'s own `build.sbt` already pins (its own,
+separate zookeeper CVE pass), reusing an already-proven, already-tested
+choice in this exact codebase rather than introducing a second,
+never-before-verified zookeeper version. Checked rather than assumed
+that this doesn't interact with the Netty-style version-split risk: both
+zookeeper 3.8.4's and 3.9.5's own POMs declare `jetty-client`/
+`jetty-server`/`jetty-servlet` as `provided`, so zookeeper itself never
+forces a Jetty version transitively at either release — the Jetty in
+this module's tree (§7u) comes directly from Hadoop, with no shared root
+cause.
+
+**Reachability**: test scope only, same as every other finding in
+§7p-§7s. No code in this module's own test suites passes an external
+property path into `PropertyUtilsBean`, starts a ZooKeeper client, or
+logs its configuration.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve cleanly to the
+pinned version everywhere, no evictions. `sbt test`: 360 passed, 0
+failed, 26 canceled — identical to §7s's run.
+
+## 7u. `beam-adapter`'s sixth finding: Jetty, with no available fix — accepted risk
+
+A sixth real Dependabot alert, against `org.eclipse.jetty:jetty-security`
+(and its whole 9.4.53.v20231009 family — `jetty-server`/`-http`/`-io`/
+`-util`/`-util-ajax`/`-servlet`/`-webapp`/`-xml`/`-client`, all the same
+version, confirmed via `dependencyTree` — no split, unlike the Netty
+finding in §7s): a transitive of `hadoop-client`/`hadoop-common` 3.4.1
+(test scope), which bundles Jetty as the embedded HTTP server for
+Hadoop's own web UIs.
+
+**CVE-2026-10050** (GHSA-2fvj-hgj9-j2gr, CVSS 8.7 High):
+`DigestAuthentication.apply()` in Jetty's HTTP *client* encodes the
+username/password/realm with `getBytes(StandardCharsets.ISO_8859_1)`
+before hashing; any character above U+00FF silently becomes `?`, so a
+password with every non-Latin-1 character replaced by `?` produces the
+identical MD5 Digest response hash as the original — letting an attacker
+who knows a victim's username bypass Digest authentication. Affected
+`9.4.0.v20161208`-`9.4.58.v20250814`; the advisory names `9.4.63` as the
+fix for this line.
+
+**No such artifact exists on Maven Central** — checked directly, not
+assumed from the advisory text: `9.4.58.v20250814` is the newest 9.4.x
+release actually published for `jetty-security`/`jetty-util`/every
+sibling in this family (`maven-metadata.xml`, `lastUpdated` well after
+this CVE's own disclosure date), and fetching `9.4.63`'s own expected
+path on `repo1.maven.org` returns a plain 404. The 9.4.x line is EOL;
+Eclipse's real fix landed only in the 10.x/11.x/12.x lines, which would
+be a major-version jump for an API Hadoop's own compiled 3.4.1 code was
+built against — the same class of risk `spark-adapter`'s `build.sbt`
+documents for an unexamined Netty/Arrow jump (§7e), except here there is
+no later 9.4.x release to fall back to if it breaks, and verifying a
+cross-major-line swap is out of proportion to a test-scope-only finding.
+
+**Accepted risk**, per §3's template — the same shape as this document's
+own Derby case in §7: no patched version of the affected line exists at
+all, so there is no honest "bump" or "pin" to apply, only document and
+accept. Low reachability: test scope only (never reaches a job under
+check), and nothing in this module's own code, or in Hadoop's test-scope
+use here, configures an HTTP client to authenticate via Jetty's
+`DigestAuthentication` class in the first place.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1685,6 +1772,21 @@ changes nothing about this module's own behavior.
       `dependencyOverrides`, mirroring `spark-adapter`'s identical pin.
       Confirmed via `dependencyTree` (single resolved version everywhere)
       and a real `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Fix `beam-adapter`'s `commons-beanutils` and `zookeeper` alerts
+      (this change) — see §7t: CVE-2025-48734 (`commons-beanutils` 1.9.4
+      → 1.11.0) and CVE-2026-24308 (`zookeeper` 3.8.4 → 3.9.5, reusing
+      `spark-adapter`'s already-proven pin). Confirmed both don't
+      interact with the Jetty finding below (both zookeeper releases'
+      own POMs mark Jetty `provided`). Confirmed via `dependencyTree` and
+      a real `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Document `beam-adapter`'s Jetty alert as an accepted risk (this
+      change) — see §7u: CVE-2026-10050 (Digest auth bypass via lossy
+      ISO-8859-1 encoding). The advisory names `9.4.63` as the 9.4.x
+      line's fix, but checked directly against Maven Central and
+      confirmed **no such artifact was ever published** — the line is
+      EOL, `9.4.58.v20250814` is the newest real release, and a
+      cross-major-line Jetty bump is out of proportion to a test-scope
+      finding with no reachable attack path in this module's own code.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
