@@ -131,6 +131,24 @@ libraryDependencies ++= Seq(
 // above, so this pin never reaches a job under check.
 dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 
+// org.lz4:lz4-java:1.8.0 - a real Dependabot alert, separate from the kafka-clients
+// path above: `beam-runners-flink-1.19` 2.77.0 (test scope) declares the old,
+// unrelocated `org.lz4` coordinate directly, and `dependencyOverrides` only resolves
+// version conflicts *within* a groupId:artifactId, so the override two lines up does
+// nothing for a different groupId - confirmed via `sbt Test/dependencyTree`, which
+// shows both `org.lz4:lz4-java:1.8.0` (5 occurrences under beam-runners-flink-1.19,
+// no eviction) and `at.yawk.lz4:lz4-java:1.11.4` resolved simultaneously, side by side.
+// CVE-2025-12183 (GHSA-vqf4-7m7x-wgfc): out-of-bounds memory read via untrusted
+// compressed input, affected <= 1.8.0, "fixed" 1.8.1 - but 1.8.1 is itself still
+// within the four-advisories range the override above already fixes (affected
+// `<= 1.11.0`), so bumping the version here would just re-introduce an already-fixed
+// problem under a different coordinate. The real fix, per spark-adapter's own
+// build.sbt comment for this identical pattern: exclude the old coordinate outright so
+// only the fork's classes are on the classpath, the same net.jpountz.lz4/net.jpountz.
+// xxhash namespace either way (confirmed in spark-adapter's own investigation, reused
+// here rather than re-derived).
+excludeDependencies += ExclusionRule("org.lz4", "lz4-java")
+
 // org.bouncycastle:bcprov-jdk18on: a transitive of hadoop-client/hadoop-common
 // (3.4.1's own Hadoop Credential Provider / SSL support) and of Beam's
 // beam-sdks-java-io-google-cloud-platform/beam-sdks-java-extensions-sql (their
@@ -286,6 +304,56 @@ dependencyOverrides += "org.apache.zookeeper" % "zookeeper" % "3.9.5"
 // reachability: test scope only (never reaches a job under check), and nothing in this
 // module's own code - or in Hadoop's test-scope use here - configures an HTTP client to
 // authenticate via Jetty's `DigestAuthentication` class in the first place.
+
+// com.charleskorn.kaml:kaml: a transitive of beam-sdks-java-io-google-cloud-platform/
+// beam-sdks-java-extensions-sql/beam-sdks-java-io-kafka 2.77.0 (all test scope), resolves
+// to 0.20.0, the sole version (confirmed via `dependencyTree` - no split). Affected
+// < 0.53.0: parsing untrusted YAML containing anchors and aliases can be made to consume
+// excessive memory (a "billion laughs"-style expansion), crashing the process. Pinned to
+// 0.53.0, the advisory's own named floor, not kaml's own latest (0.104.0 at the time of
+// this change): kaml is still pre-1.0, where each release can carry real API breaks (not
+// just patch-level fixes the way lz4-java's 1.11.x line above was), and nothing in this
+// module calls kaml directly to justify chasing a release 50+ versions past what the CVE
+// itself needs - the same "examined minimum over an unexamined jump" judgment as the
+// lz4-java 1.12.0 case, applied the other way (there, the examined choice was higher than
+// the bare minimum; here, it's the bare minimum itself that's already proportionate).
+dependencyOverrides += "com.charleskorn.kaml" % "kaml" % "0.53.0"
+
+// Jackson (jackson-core/-databind/-annotations), a transitive of beam-sdks-java-core
+// 2.77.0 among others (test scope and `% "provided"` both - `beam-sdks-java-core` is
+// `provided` per D2 above, so this family is only ever on this module's own test/compile
+// classpath, never a real job's), all three resolving to 2.18.8 as the sole version
+// (confirmed via `dependencyTree`). Two CVEs, fixed by the same bump:
+//
+//  - CVE-2026-89425 (GHSA-7hhh-6rmp-j9qf, jackson-core, affected 2.8.0-2.18.10, fixed
+//    2.18.11): a malformed token fed through `createParser(DataInput)` builds its
+//    exception message from the full attacker payload rather than a bounded excerpt -
+//    confirmed reproduced upstream: a 20,000,109-character message from a
+//    20-million-character payload via `createParser(DataInput)`, versus a
+//    correctly-bounded 367-character message for the identical payload via
+//    `createParser(InputStream)`.
+//  - CVE-2026-59889 (GHSA-mhm7-754m-9p8w, jackson-databind, affected 2.18.0 to < 2.18.9,
+//    fixed 2.18.9):
+//    `UnwrappedPropertyHandler.processUnwrapped()` replays a buffered `@JsonUnwrapped`
+//    property's JSON and calls `deserializeAndSet()` with no `visibleInView()` guard - the
+//    same guard `processUnwrappedCreatorProperties()` already got for GHSA-rcqc-6cw3-h962,
+//    and the one `BeanDeserializer.deserializeWithUnwrapped` applies to directly-matched
+//    properties - so a property marked `@JsonView(PrivilegedView.class)` together with
+//    `@JsonUnwrapped` is written from attacker JSON even under a more-restrictive active
+//    view.
+//
+// Bumped all three together to 2.18.11 (the higher of the two fix floors, covering both),
+// the same "move the matched set together" rule this file's own CVE_REMEDIATION.md
+// history (see spark-adapter's identical Jackson passes) already established - these
+// three version-lock against each other at compile time (`jackson-databind`/
+// `jackson-annotations` against `jackson-core`), so moving one without the others risks
+// the exact split-classpath failure the Netty/commons-beanutils findings above warn
+// about, not just a missed fix.
+dependencyOverrides ++= Seq(
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11"
+)
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

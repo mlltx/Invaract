@@ -1662,6 +1662,149 @@ check), and nothing in this module's own code, or in Hadoop's test-scope
 use here, configures an HTTP client to authenticate via Jetty's
 `DigestAuthentication` class in the first place.
 
+## 7v. `beam-adapter`'s seventh through ninth findings: a second lz4-java path, kaml, Jackson
+
+A fourth real Dependabot alert batch against `beam-adapter`, all test
+scope, confirmed via `sbt Test/dependencyTree`:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `org.lz4:lz4-java` | 1.8.0 (via `beam-runners-flink-1.19`) | excluded | CVE-2025-12183 |
+| `com.charleskorn.kaml:kaml` | 0.20.0 | 0.53.0 | memory exhaustion via YAML anchors/aliases |
+| `com.fasterxml.jackson.core:jackson-core` | 2.18.8 | 2.18.11 | CVE-2026-89425 |
+| `com.fasterxml.jackson.core:jackson-databind` | 2.18.8 | 2.18.11 | CVE-2026-59889 |
+| `com.fasterxml.jackson.core:jackson-annotations` | 2.18.8 | 2.18.11 | (version-matched to jackson-core/-databind) |
+
+**`org.lz4:lz4-java`, a second, independent path for a coordinate this
+module already has a fix for.** §7n's `at.yawk.lz4:lz4-java` override
+(line 132 of this module's `build.sbt`) only resolves version conflicts
+*within* a groupId:artifactId — it does nothing for a different
+groupId, and `beam-runners-flink-1.19` 2.77.0 declares the old,
+unrelocated `org.lz4` coordinate directly. `dependencyTree` showed both
+`org.lz4:lz4-java:1.8.0` (5 occurrences, no eviction) and
+`at.yawk.lz4:lz4-java:1.11.4` resolved simultaneously, side by side — the
+override alone never closed this gap. Excluded outright
+(`excludeDependencies += ExclusionRule("org.lz4", "lz4-java")`), the
+other half of `spark-adapter`'s own identical fix for this exact
+pattern, reused rather than re-derived: CVE-2025-12183 (out-of-bounds
+memory read via untrusted compressed input, affected `<= 1.8.0`,
+"fixed" 1.8.1 — itself still within the four advisories the
+`at.yawk.lz4` override already fixes, so bumping instead of excluding
+would just reintroduce an already-fixed problem under a different
+coordinate).
+
+**`com.charleskorn.kaml:kaml`**: a transitive of
+`beam-sdks-java-io-google-cloud-platform`/`beam-sdks-java-extensions-sql`/
+`beam-sdks-java-io-kafka` 2.77.0, resolving to 0.20.0, the sole version
+(no split). Affected `< 0.53.0`: parsing untrusted YAML containing
+anchors and aliases can be made to consume excessive memory (a "billion
+laughs"-style expansion). Pinned to 0.53.0, the advisory's own named
+floor, not kaml's own latest (0.104.0 at the time of this change): kaml
+is still pre-1.0, where a release can carry a real API break, not just a
+patch-level fix the way the `at.yawk.lz4` 1.11.x line is — the same
+"examined minimum over an unexamined jump" judgment as §7n's lz4-java
+1.12.0 case, applied the other way (there the examined choice was higher
+than the bare minimum; here the bare minimum is already the
+proportionate choice).
+
+**Jackson (`jackson-core`/`-databind`/`-annotations`)**: a transitive of
+`beam-sdks-java-core` 2.77.0 among others, all three resolving to
+2.18.8, the sole version. Two CVEs, fixed by the same bump:
+CVE-2026-89425 (GHSA-7hhh-6rmp-j9qf, jackson-core, affected 2.8.0-2.18.10,
+fixed 2.18.11 — a malformed token through `createParser(DataInput)`
+builds its exception message from the full attacker payload rather than
+a bounded excerpt; reproduced upstream as a 20,000,109-character message
+from a 20-million-character payload, versus a correctly-bounded
+367-character message for the identical payload via
+`createParser(InputStream)`) and CVE-2026-59889 (GHSA-mhm7-754m-9p8w,
+jackson-databind, affected 2.18.0-2.18.8, fixed 2.18.9 —
+`UnwrappedPropertyHandler.processUnwrapped()` replays a buffered
+`@JsonUnwrapped` property's JSON with no `visibleInView()` guard, the
+same guard a sibling creator-property path and `BeanDeserializer`'s own
+directly-matched-property path already have, so a property marked both
+`@JsonView(PrivilegedView.class)` and `@JsonUnwrapped` is written from
+attacker JSON even under a more-restrictive active view). Bumped all
+three together to 2.18.11 (the higher of the two fix floors), the
+"move the matched set together" rule this document's own `spark-adapter`
+passes already established (§7d, §7l) — these three version-lock
+against each other, so moving one alone risks the exact split-classpath
+failure the Netty/`commons-beanutils` findings above warn about.
+
+**Reachability**: test scope only for all three, same as every other
+finding in §7p-§7u.
+
+**Verified**: `sbt Test/dependencyTree` — `org.lz4` gone entirely (only
+`at.yawk.lz4:lz4-java:1.11.4` remains), `kaml`/all three Jackson
+artifacts each resolve to a single version, no evictions. `sbt test`:
+360 passed, 0 failed, 26 canceled — identical to every prior run on this
+module.
+
+## 7w. Spark's own `snappy-java`/`guava` pins, overtaken by newer CVEs
+
+Two more real Dependabot alerts, this time against `spark-adapter`/
+`plugin`/`runner` — not `beam-adapter` — each an *existing*, explicit
+`dependencyOverrides`/`libraryDependencies` pin from an earlier CVE pass
+(§7a/§7b) that a newer CVE has since overtaken:
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.xerial.snappy:snappy-java` | `spark-adapter`, `plugin`, `runner` | 1.1.10.4 | 1.1.10.12 | CVE-2026-90559, CVE-2026-93451 |
+| `com.google.guava:guava` | `spark-adapter`, `plugin`, `runner` | 33.4.8-jre | 33.7.2-jre | CVE-2026-102554 |
+
+**`snappy-java`**: 1.1.10.9's own release notes name CVE-2026-90559 "and
+others" as its security content — checked against the project's real
+GitHub security advisories rather than taken on faith: GHSA-q233-g92q-qxp6
+(unbounded allocation — `Snappy.uncompress`/`uncompressString`/the typed
+`uncompress*Array` methods/`SnappyInputStream`/`SnappyFramedInputStream`
+all size an output buffer from the attacker-declared uncompressed length
+before validating it, so a few crafted bytes can force up to a 2 GB
+allocation) and CVE-2026-93451 (a distinct heap-corruption bug in the
+same typed `uncompress*Array` family — `uncompressCharArray`/
+`uncompressShortArray`/`uncompressIntArray`/`uncompressLongArray`/
+`uncompressFloatArray`/`uncompressDoubleArray` size the *Java* result
+array by dividing the declared byte length by the element size, but the
+native decompressor still writes the full, undivided byte length, up to
+7 bytes past the end of the array, whenever the declared length isn't a
+multiple of the element size). Promoted past 1.1.10.9 itself to 1.1.10.12
+not for a further CVE but because 1.1.10.9's own artifact hit a
+persistent Maven Central CDN 429 in this environment — the same
+specific-path quirk CLAUDE.md's "Coverage Gating Requirement" section
+documents for `scalac-scoverage-plugin`, confirmed independently
+resolvable by a direct, repeated HTTP check yet still refused by
+Coursier's own resolution. `.10`/`.11`/`.12`'s own GitHub release notes
+list only Hadoop ByteBuffer-compression/block-header-size compatibility
+fixes, no CVEs — a strict superset of `.9`'s security content, not the
+undisclosed-tightening risk §7n's lz4-java-1.12.0 case flagged (that
+case had an explicit maintainer caveat; this one has none, and
+Hadoop-compatibility fixes are net-positive for a module that pulls
+Hadoop transitively).
+
+**`guava`**: CVE-2026-102554 (GHSA-xxph-c9ww-hj94) — `MapMaker`/
+`CompactHashMap`/`CompactHashSet` deserialization eagerly allocates as
+much memory as a serialized payload's own declared size claims, before
+validating it, the same "trust the attacker-declared size" shape as the
+`snappy-java` allocation CVE just above. 33.7.2's own changelog lists
+only this one fix over 33.7.1 — a narrow, examined bump, not a jump to
+an unexamined latest. (A real editing mistake caught before it shipped:
+the first pass wrote the override as `"33.7.2"`, dropping the `-jre`
+classifier every other Guava coordinate in this file already carries —
+caught because the bare `33.7.2` artifact simply doesn't exist on Maven
+Central, a 404 on the very first resolution attempt, not a behavior that
+could have passed silently.)
+
+**Reachability**: `spark-adapter`'s own copies are `% "provided"`/
+`% "test"` (see §2's scope table); `plugin`/`runner` carry both as real,
+unscoped compile-scope dependencies in their assembled jars (confirmed
+against each module's own `build.sbt`), since those two modules *are*
+what a real `spark-submit` runs — the only two places in this repo where
+these specific coordinates would actually reach a real Spark execution,
+not just a test classpath.
+
+**Verified**: `sbt Test/dependencyTree` in `spark-adapter` — both
+resolve to a single version, no evictions. `sbt test` across all three
+modules: `spark-adapter`'s full real-Spark/Delta/Iceberg/Hive/ClickHouse
+suite, plus `plugin`'s and `runner`'s own suites.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1787,6 +1930,29 @@ use here, configures an HTTP client to authenticate via Jetty's
       EOL, `9.4.58.v20250814` is the newest real release, and a
       cross-major-line Jetty bump is out of proportion to a test-scope
       finding with no reachable attack path in this module's own code.
+- [x] Fix `beam-adapter`'s second `lz4-java` path, `kaml`, and Jackson
+      (this change) — see §7v: `org.lz4:lz4-java` 1.8.0 (via
+      `beam-runners-flink-1.19`, a path the existing `at.yawk.lz4`
+      override couldn't reach) excluded outright; `kaml` 0.20.0 → 0.53.0;
+      `jackson-core`/`-databind`/`-annotations` 2.18.8 → 2.18.11
+      (CVE-2026-89425, CVE-2026-59889). Confirmed via `dependencyTree`
+      (the `org.lz4` coordinate gone entirely; all others single-version,
+      no evictions) and a real `sbt test` run (360 passed, 0 failed, 26
+      canceled).
+- [x] Fix `spark-adapter`/`plugin`/`runner`'s overtaken `snappy-java` and
+      `guava` pins (this change) — see §7w: `snappy-java` 1.1.10.4 →
+      1.1.10.12 (CVE-2026-90559, CVE-2026-93451; promoted past 1.1.10.9
+      itself only because that artifact hit a persistent Maven Central
+      CDN 429 in this environment) and `guava` 33.4.8-jre → 33.7.2-jre
+      (CVE-2026-102554 — caught a real editing slip along the way: the
+      first attempt dropped the `-jre` classifier, which 404'd
+      immediately rather than passing silently). Confirmed via
+      `dependencyTree` (both single-version, no evictions), real `sbt
+      test` runs in all three modules (`spark-adapter`: 812 passed, 0
+      failed; `plugin`: 5 passed, 0 failed), and a full `./dev/build` +
+      `./dev/test` run proving the real `spark-submit` path still works
+      end-to-end with `plugin`/`runner`'s bumped compile-scope copies
+      (`Status: PASS`, `Contract verification: PASSED`, no violations).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
