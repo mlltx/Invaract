@@ -125,6 +125,13 @@ const PAGES = [
     order: 9,
   },
   {
+    src: 'docs/SINK_RECORDS_SURVEY.md',
+    slug: 'design/sink-records-survey',
+    section: 'Design Docs',
+    label: 'Sink Records Survey',
+    order: 9,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',
