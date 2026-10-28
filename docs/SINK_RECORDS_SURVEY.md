@@ -52,6 +52,8 @@ so for them the machine has to keep the record.
    time window and one writer per place, and say so in each run's report? *Recommend yes.*
 4. Require the records to be switched on (pgaudit, CloudTrail object-level events, GCS Data Access logs) as a precondition
    for a destination to be "verified", and report the destination as unverifiable otherwise? *Recommend yes.*
+5. On the read side (section 4), check which inputs were read, not which columns, and leave the role check (whether a
+   `CONTROL` input fed the output) out of reach? *Recommend yes.* Snowflake is the one source that may do better.
 
 ## 1. The questions asked of each destination
 
@@ -302,7 +304,79 @@ What this means:
 - **Kafka.** Brokers do not keep a per-producer record of writes by default. Attribution would need the authorizer's logs
   of each producer principal (UNVERIFIED). Confidence: low, unverified.
 
-## 4. What this means for the design
+## 4. The read side
+
+The contract also declares what a job reads, and Invaract's input checks use that:
+- `MISSING_INPUT`: a declared input was never read;
+- `UNDECLARED_INPUT`: something undeclared was read.
+
+The same idea applies: the source's own record of reads, or the watch on the job's own view of the file system. Probes 7
+and 8 tested both.
+
+**Files (probe 7).** The private-view watch can also report files *opened* (`FAN_OPEN` on the job's mount copies). The job
+read in five ways while another process read the same Parquet file. Reported as the run's reads:
+- Polars, reading one column only;
+- DuckDB, through a glob (`'in/orders/*.parquet'`);
+- pandas `read_csv`;
+- pyarrow, memory-mapped;
+- a child process's `cat` of an undeclared `in/secret/salaries.parquet`.
+
+The other process's read was not reported.
+
+Two differences from writes:
+- **Noise.** Python and its libraries opened 871 other files in the same run (modules, shared libraries, configuration). A
+  read counts as a dataset read only outside the interpreter's own folders and the trusted places, as in the native Python
+  survey's D4.
+- **Granularity.** The watch says a file was opened, not which columns or rows were read. Polars read only `id`, but the
+  record shows only that the file was opened. "Read the orders" can be confirmed; "read only the declared columns" cannot.
+
+**Postgres (probe 8).** pgaudit with `pgaudit.log = 'read, write'` logs each read with the run's label, and names every
+table it touches:
+
+| The job's statement | Tables pgaudit named |
+|---|---|
+| a join of `raw.orders` and `raw.customers` | both |
+| `SELECT * FROM raw.order_summary` (a view) | the view **and** the two tables behind it |
+| `SELECT raw.total_pay()` (a function) | the call, **and** `hr.salaries`, read inside the function and never named by the job |
+| `COPY raw.customers TO STDOUT` | `raw.customers` |
+| pandas `read_sql` | `raw.orders`, plus SQLAlchemy's own reads of `pg_catalog`, which are easily filtered |
+| another team's read of `hr.salaries` | logged with their own label, so not the run's |
+
+Logging reads is heavier than logging writes, because a job usually reads more than it writes.
+
+**Elsewhere** (not probed; search results):
+- **Snowflake.** `ACCESS_HISTORY` records reads at column level. `direct_objects_accessed` holds what the query named;
+  `base_objects_accessed` holds the underlying tables and columns, views resolved to their base tables. It is the richest
+  read record of any source here, but it shares the 2 to 3 hours of delay, and "records in QUERY_HISTORY do not always get
+  recorded in ACCESS_HISTORY".
+- **BigQuery.** Reads through `tabledata.list` and query results are `DATA_READ` audit events. Whether the Storage Read API
+  (which pandas and BigQuery DataFrames use) is recorded, and whether Data Access logs are on by default, is UNVERIFIED. A
+  query job's referenced tables are in the jobs history (UNVERIFIED column name).
+- **S3 and GCS.** Reads are CloudTrail `GetObject` data events and GCS `DATA_READ` audit logs. Both are opt-in, and read
+  logging is heavier than write logging. Whether CloudTrail records the byte ranges of a Parquet reader's partial reads is
+  UNVERIFIED.
+- **MySQL.** The binary log has no reads, so only the general log (every statement as text, to be parsed) or an audit
+  plugin. Confidence: low to medium.
+- **Delta and Iceberg.** Reading leaves no trace in a table's commit log. It needs the watch, or the storage's read logs.
+
+**What no record gives.** Whether an input was *used* to build an output, rather than only read. Invaract's role check
+(a `CONTROL` input must not feed output data) needs lineage, which only a plan gives. The records give it in one case:
+SQL that the database itself runs, `INSERT ... SELECT`, where the statement text names both sides. Snowflake's access
+history may record such lineage; UNVERIFIED.
+
+**Confidence on the read side.**
+
+| Source | Which inputs were read | Which columns | Who | Delay |
+|---|---|---|---|---|
+| Parquet or CSV files on the job's machine (watch) | **High** (probe 7) | no | **High**, by construction | immediate |
+| Postgres with pgaudit | **High** (probe 8), views and functions included | no (tables only) | **High** (`PGAPPNAME`) | immediate |
+| Snowflake access history | **High** (unverified) | **yes** (unverified) | user | 2 to 3 hours |
+| BigQuery | **Medium** (unverified; the Storage Read API is the open question) | no | service account | unverified |
+| S3 or GCS | **Medium** (unverified; opt-in, heavy) | no | caller | minutes |
+| MySQL | **Low to medium** | no | database user | immediate |
+| Delta or Iceberg on their own | **None** | no | no | — |
+
+## 5. What this means for the design
 
 - **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
   place, operation, amount, committed or not, and who. Invaract's existing checks then judge that list against the
@@ -319,7 +393,7 @@ What this means:
   received a status row or a marker" come from the record's operation and row counts, plus the destination's schema
   (`information_schema`, a table's own schema, a file's footer).
 
-## 5. Evidence log
+## 6. Evidence log
 
 ### Probes I ran (2026-10-28, not committed)
 
@@ -361,6 +435,18 @@ What this means:
      delimiter of a one-column file.
    - `fanotify_init(FAN_REPORT_DFID_NAME)`, then a mount mark for `FAN_DELETE | FAN_MOVED_TO | FAN_CREATE`, was refused
      with `Invalid argument`. A file-system mark for the same events was accepted.
+7. **Reads through the job's own view.**
+   - Set-up: as probe 5, with `FAN_OPEN` in place of `FAN_CLOSE_WRITE`, keeping only paths inside the job's folder.
+   - The job read with Polars (`columns=["id"]`), DuckDB (a glob), pandas `read_csv`, pyarrow with `memory_map=True`, and
+     a `sh -c "cat ..."` child. Another process read the same Parquet file.
+   - Result: the job's reads were reported (the Parquet file several times, once per open), and the child's read of
+     `in/secret/salaries.parquet`. The other process's read was not reported. 871 opens outside the job's folder were left
+     out.
+8. **Postgres reads with pgaudit.**
+   - Set-up: `pgaudit.log = 'read, write'`, `pgaudit.log_relation = on`.
+   - A run labelled `invaract-run-7` made a join, a read through a view, a call to a SQL function reading `hr.salaries`,
+     a `COPY ... TO STDOUT` and a pandas `read_sql`. Another connection, labelled `other-team`, read `hr.salaries`.
+   - The audit lines are summarised in section 4.
 
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
@@ -377,6 +463,10 @@ What this means:
 - [Cloud Storage audit logs](https://docs.cloud.google.com/storage/docs/audit-logs) and
   [Enable Data Access audit logs](https://docs.cloud.google.com/logging/docs/audit/configure-data-access): `DATA_WRITE`, off
   by default.
+- [Snowflake Access History guide](https://docs.snowflake.com/user-guide/access-history): `direct_objects_accessed` and
+  `base_objects_accessed`, with columns.
+- [BigQuery audit logs overview](https://docs.cloud.google.com/bigquery/audit-logs): `DATA_READ` methods such as
+  `TableDataService.List`.
 - [Snowflake ACCESS_HISTORY](https://docs.snowflake.com/sql-reference/account-usage/access_history) and
   [Account Usage](https://docs.snowflake.cn/sql-reference/account-usage): 365 days; up to 2 to 3 hours of latency.
 
@@ -392,4 +482,7 @@ What this means:
 | A rename into a declared place can be attributed by matching inodes | probe 5 with a write-then-`os.replace` job |
 | fanotify reports writes made from this machine to an NFS mount | probe 5 on an NFS mount |
 | The launcher can run on platforms that deny containers administrator capability (the watch on the host instead) | probe 5 inside a container without `CAP_SYS_ADMIN`, and on its host |
+| BigQuery records Storage Read API reads, and its Data Access logs are on by default | a `read_gbq` (Storage Read API) from a test project, then the audit logs |
+| CloudTrail records the byte ranges of partial `GetObject` reads | a Parquet read of an S3 object, then the event |
+| Snowflake's access history records lineage from inputs to the columns a statement writes | an `INSERT ... SELECT` in a test account, then `ACCESS_HISTORY` |
 | Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
