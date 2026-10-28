@@ -376,7 +376,69 @@ history may record such lineage; UNVERIFIED.
 | MySQL | **Low to medium** | no | database user | immediate |
 | Delta or Iceberg on their own | **None** | no | no | — |
 
-## 5. What this means for the design
+## 5. Reading the code: what the records cannot say
+
+The records prove *what happened*: where the job read and wrote, who did it, and what landed. They cannot say *how* the
+outputs were made: which filters, joins and groupings were applied, which columns were read, and which input columns each
+output column comes from. Invaract's transformation-shape rules and role check need those. Probes 9 to 11 tried three ways
+of reading them from the job itself, without changing it.
+
+**1. The Python syntax tree (probe 9).** A toy analyser of about 60 lines read a realistic pandas script without running it.
+It rebuilt this plan:
+
+```
+line 13: Write 'data/out/report/*.parquet'  (a pattern: * is decided at run time) (parquet)
+  Add column run_date = <a command-line argument>
+    Group by region: total = sum(amount), orders = count(order_id)
+      Join on customer_id (left)
+        Filter status Eq 'paid'
+          Read 'data/in/orders' (parquet)
+        Read 'data/in/customers.csv' (csv)
+```
+
+- **What it recovered.**
+  - `SOURCE = "data/in/orders"` was resolved through its constant.
+  - An f-string path became a folder pattern.
+  - A column set from `sys.argv` was marked as decided at run time.
+- **Where it stopped.**
+  - The team's own function `tidy(df)` became an opaque step, keeping the read beneath it.
+  - A `for` loop writing one file per region was reported as not analysed.
+- **What a real analyser would add.** Simple functions inlined, loops over constant lists unrolled, `argparse` defaults
+  resolved.
+- **Where any analyser stops.** Column names built at run time, paths from configuration files, code spread over many
+  modules, and notebooks. How much of a real estate of jobs falls in the first group is unknown, and should be measured on a
+  sample of the real jobs before anything is built.
+
+**2. The library's own plan, where there is one (probe 10).**
+- **Polars' lazy API** builds a plan before reading anything. `explain()` on a scan, filter, join and group-by gave the files
+  to scan (the glob already expanded), the filter (`SELECTION: col("status") == "paid"`), the join keys, the grouping, and
+  **exactly which columns will be read**: `PROJECT 3/5 COLUMNS`, so the orders' `note` and the customers' `email` are never
+  read. That is the column-level read the records cannot give.
+- **DuckDB's** `EXPLAIN` gave the same facts for SQL in a Python string. It had rewritten the left join as an equivalent right
+  join, so a reader of its plans must know its rewrites.
+- Neither plan exists for pandas, or for Polars' eager API.
+- Getting the plan without changing the job needs a small wrapper: `LazyFrame.collect` and `sink_*` are Python methods, so a
+  wrapper can record `explain()` first. Or, for DuckDB, `EXPLAIN` on the statement text.
+
+**3. SQL text, from the records themselves (probe 11).** pgaudit logs each statement's full text, so no code is needed in
+the job. sqlglot (a SQL parser) read an `INSERT ... SELECT` and gave:
+- the target table, the three tables read, and the columns filtered on (`o.status`, `cal.is_open`);
+- the join conditions and the grouping;
+- column lineage: `total` from `o.amount`, `region` from `c.region`, `run_date` from `cal.business_day`.
+
+The last of those is exactly the role check's case: a column of `control.calendar`, a `CONTROL` input, flows into the output.
+
+**4. A language model reading the code** is useful for *drafting*: a first contract for a job, or an explanation of it for a
+reviewer. It cannot be *proof*. It is not deterministic, and nothing checks it. Use it for migration, never for a verdict.
+
+**Recommendation.**
+- **Records for the proof:** where, who and what landed, for every job.
+- **The library's own plan, or the SQL text, for how the outputs were made,** wherever one exists: Polars lazy, DuckDB, SQL
+  sent to Postgres or BigQuery.
+- **The syntax tree only as a best effort for pandas.** Claim a transformation-shape rule or a role check only when the whole
+  path from read to write was analysed, and refuse safely otherwise.
+
+## 6. What this means for the design
 
 - **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
   place, operation, amount, committed or not, and who. Invaract's existing checks then judge that list against the
@@ -393,7 +455,7 @@ history may record such lineage; UNVERIFIED.
   received a status row or a marker" come from the record's operation and row counts, plus the destination's schema
   (`information_schema`, a table's own schema, a file's footer).
 
-## 6. Evidence log
+## 7. Evidence log
 
 ### Probes I ran (2026-10-28, not committed)
 
@@ -448,6 +510,21 @@ history may record such lineage; UNVERIFIED.
      a `COPY ... TO STDOUT` and a pandas `read_sql`. Another connection, labelled `other-team`, read `hr.salaries`.
    - The audit lines are summarised in section 4.
 
+9. **A syntax-tree analyser for pandas.** Python's `ast` module, matching:
+   - `pd.read_*` reads;
+   - `df[df[col] == value]` filters;
+   - `merge(on=..., how=...)`;
+   - `groupby(...).agg(name=(col, fn))`;
+   - `df[col] = ...`;
+   - `to_*` writes.
+
+   String constants and f-strings were resolved, and anything else became an opaque step. Output quoted in section 5.
+10. **Library plans.**
+    - Polars 2.1.0: `scan_parquet`, `scan_csv`, `filter`, `join`, `group_by().agg()` and `explain()`.
+    - DuckDB 2.0.0: `EXPLAIN` of the equivalent SQL, over a 5-column Parquet folder and a 3-column CSV file.
+11. **SQL lineage.** sqlglot 30.25.0: `parse_one` of an `INSERT ... SELECT` joining `raw.orders`, `raw.customers` and
+    `control.calendar`, then `sqlglot.lineage.lineage` for each output column.
+
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
 - [AWS CloudTrail: working with log files](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-working-with-log-files.html):
@@ -485,4 +562,5 @@ history may record such lineage; UNVERIFIED.
 | BigQuery records Storage Read API reads, and its Data Access logs are on by default | a `read_gbq` (Storage Read API) from a test project, then the audit logs |
 | CloudTrail records the byte ranges of partial `GetObject` reads | a Parquet read of an S3 object, then the event |
 | Snowflake's access history records lineage from inputs to the columns a statement writes | an `INSERT ... SELECT` in a test account, then `ACCESS_HISTORY` |
+| How many real pandas jobs a syntax-tree analyser can read end to end | run probe 9's analyser, extended, over a sample of the real jobs |
 | Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
