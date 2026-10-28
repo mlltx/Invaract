@@ -31,7 +31,8 @@ credentials it held, or what permissions anyone granted.
 | **S3** | **Medium** (unverified) | CloudTrail object-level events, opt-in, about 5 minutes late on average; server access logs are best effort and not enough |
 | **GCS** | **Medium** (unverified) | Data Access audit logs, off by default |
 | **Snowflake** | **Medium** (unverified) | Access history names modified objects, but can lag by hours |
-| **Local or shared files** | **Medium** with fanotify, **low** without | No log of their own. A machine-level watch sees every write with its process (probe 4), but attributing short-lived child processes needs process tracking |
+| **Parquet or CSV files** on the job's machine | **High** for Parquet, **medium** for CSV | No log of their own. A watch on the job's own view of the file system attributes every write, child processes included (probe 5); Parquet's footer states its schema and rows, CSV only names (probe 6) |
+| **Parquet or CSV files** on object storage | **Medium** (unverified) | As S3 and GCS below for who and when; the file's footer for what |
 | **SQLite, Kafka** | **Low** | No record of who wrote what; only before-and-after state |
 
 **The pattern behind the table.** The strongest destinations have three things:
@@ -224,6 +225,77 @@ commonly writes, through pandas, pyarrow, Polars, SQLAlchemy and the cloud clien
   - Containers may not grant the capability.
 - **Confidence: Medium with a watch and process tracking; low with snapshots only.**
 
+### Parquet and CSV files: the common case, in depth
+
+Writing Parquet or CSV files is the most common output of a Python data job. Probes 5 and 6 go further than probe 4 on
+the two hard parts: who wrote a file, and what is in it.
+
+**Who wrote it: watch the job's own view of the file system (probe 5).** The launcher starts the job in a private mount
+namespace, the job's own copies of the machine's mounts. It watches only those copies with fanotify (`FAN_MARK_MOUNT`).
+
+A write through them can only come from the job, or from a process it started. That holds however short-lived the process
+is, because nothing has to be looked up after the fact: the mount itself identifies the writer.
+
+The job wrote six files while another team wrote into the same folder:
+
+| Written by | Recorded as the run's |
+|---|---|
+| Polars (`write_parquet`) | yes |
+| DuckDB (`COPY ... TO`) | yes |
+| pandas (`to_csv`) | yes |
+| a short-lived shell command | yes |
+| a grandchild process | yes |
+| the job's `_SUCCESS` | yes |
+| another team, same folder | **no**: it went through the ordinary mount, not the job's view |
+
+This closes probe 4's gap: the shell command's write is now attributed by construction.
+
+**What the watch cannot see (probe 6).**
+- Deletes and renames. The kernel refuses those events on a mount mark (`Invalid argument`); it accepts them only on a
+  whole-file-system mark, which sees everyone.
+- So deletes, and the final name of a file written under a temporary name and renamed into place, come from comparing
+  the declared folders before and after the run.
+- A rename keeps the file's inode (its identity on disk). Matching the inode of a file the job wrote to the file that
+  ends up at the declared place should attribute a "write, then rename into place" to the run (UNVERIFIED).
+
+**What is in it: read the file, not the data (probe 6).**
+
+| File | Written by | What the file states, without reading its data |
+|---|---|---|
+| `part-0.parquet` | Polars | rows=2; `created_by: Polars (python) version 2.1.0`; schema `id: int64` |
+| `part-1.parquet` | DuckDB | rows=1; `created_by: DuckDB version v2.0.0`; schema `id: int32 not null` |
+| `typed.csv` | pandas | rows=3; header `id, amount, day, name` exactly; types only *inferred* from the values: `int64, double, date32, string` |
+| `summary.csv` | pandas | rows=1; header `id`; delimiter sniffing guessed `'i'`, wrongly, for a one-column file |
+| `_SUCCESS` | the job | an empty file: a marker |
+
+What this means:
+- **Parquet** states its exact schema, nullability and row count, and the library that wrote it, in a footer that can be
+  read without reading the data. On object storage that is a small read of the file's last bytes.
+- The DuckDB file shows why the check matters. `SELECT 3 AS id` is written as `int32 not null`, while Polars writes
+  `int64`. A contract that declares `long` rightly flags one of the two.
+- **CSV** states only names and rows. Types are a guess from the values; the contract should say whether a guess is
+  acceptable for each column. Delimiter detection is unreliable, so the contract should declare the delimiter (or it
+  defaults to `,`).
+
+**Classification and order.**
+- A data asset is a data file with rows and the declared columns: Parquet from its footer, CSV from its header and line
+  count.
+- A readiness signal is an empty or small non-data file.
+- The watch reports writes in the order they finished, so "the marker was written after every data file" can be checked
+  from the run's own events.
+
+**Save mode.** Comparing the declared folder before and after the run gives it:
+- files removed or replaced is overwrite;
+- only new files is append.
+
+**Confidence by where the files live.**
+
+| Where | Who | Complete | Content | Delay | Needs |
+|---|---|---|---|---|---|
+| a local disk or a mounted volume, on the job's machine | **High**: by construction (probe 5) | **High** for writes; deletes and renames from the before-and-after listing | **High** for Parquet; **medium** for CSV (types guessed) | immediate | Linux; administrator capability for the launcher (`unshare`, fanotify). Containers often lack it: the watch would then run on the host (UNVERIFIED) |
+| a shared file system (NFS), written from the job's machine | as above, if fanotify reports local writes to NFS (UNVERIFIED) | as above | as above | immediate | as above |
+| object storage (`s3://`, `gs://`) through pyarrow, fsspec or boto3 | the watch does not apply (a network write). CloudTrail or GCS Data Access logs: **medium** | as those logs | **High** for Parquet, by reading the footer afterwards | minutes | the audit logs switched on (S3 and GCS sections above) |
+
 ### SQLite and Kafka (not probed)
 
 - **SQLite.** No log of who wrote what: only the file's state before and after, and table counts. Confidence: low.
@@ -278,6 +350,18 @@ commonly writes, through pandas, pyarrow, Polars, SQLAlchemy and the cloud clien
    - The job's own writes were attributed. The shell child and the other process came out "unknown: the process had already
      exited".
 
+5. **fanotify on the job's own view.** The launcher's child called `unshare(CLONE_NEWNS)`, made its mounts private, marked
+   each disk or tmpfs mount of its own view with `FAN_MARK_MOUNT | FAN_CLOSE_WRITE` on a fanotify descriptor it inherited,
+   and then became the job. The job wrote with Polars, DuckDB and pandas, a `sh -c` child, a backgrounded grandchild and a
+   plain `open`. Another process wrote into the same `out/` folder, and elsewhere, at the same time. All seven of the job's
+   writes were reported, with their processes; neither of the other process's writes was.
+6. **What the files state, and what the watch cannot see.**
+   - `pyarrow.parquet.ParquetFile(...).metadata` gave rows and `created_by`, and `read_schema` the schema.
+   - `csv.Sniffer` and `pyarrow.csv.read_csv` gave the header and the inferred types; the sniffer guessed `'i'` as the
+     delimiter of a one-column file.
+   - `fanotify_init(FAN_REPORT_DFID_NAME)`, then a mount mark for `FAN_DELETE | FAN_MOVED_TO | FAN_CREATE`, was refused
+     with `Invalid argument`. A file-system mark for the same events was accepted.
+
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
 - [AWS CloudTrail: working with log files](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-working-with-log-files.html):
@@ -305,5 +389,7 @@ commonly writes, through pandas, pyarrow, Polars, SQLAlchemy and the cloud clien
 | GCS Data Access log delay, and Snowflake's edition requirement | a test bucket's write, timed; Snowflake's documentation |
 | asyncpg honours `PGAPPNAME` | probe 1 with asyncpg |
 | A MySQL driver can carry a per-run label without code, or an audit plugin records connection attributes | the drivers' documentation; probe 2 with Percona's or MariaDB's audit plugin |
-| Process-tree tracking attributes short-lived children's file writes | probe 4 with the kernel's process events, or Linux audit with `auid` |
+| A rename into a declared place can be attributed by matching inodes | probe 5 with a write-then-`os.replace` job |
+| fanotify reports writes made from this machine to an NFS mount | probe 5 on an NFS mount |
+| The launcher can run on platforms that deny containers administrator capability (the watch on the host instead) | probe 5 inside a container without `CAP_SYS_ADMIN`, and on its host |
 | Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
