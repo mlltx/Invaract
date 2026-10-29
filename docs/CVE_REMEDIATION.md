@@ -1805,6 +1805,53 @@ resolve to a single version, no evictions. `sbt test` across all three
 modules: `spark-adapter`'s full real-Spark/Delta/Iceberg/Hive/ClickHouse
 suite, plus `plugin`'s and `runner`'s own suites.
 
+## 7x. `beam-adapter`'s tenth and eleventh findings: `aircompressor`, and a two-major-version `wire-runtime` jump
+
+Two more real Dependabot alerts against `beam-adapter`, both test scope,
+confirmed via `sbt Test/dependencyTree` (each resolves to a single
+version, no eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `io.airlift:aircompressor` | 2.0.2 (via `beam-sdks-java-io-parquet`) | 2.0.3 | CVE-2025-67721 |
+| `com.squareup.wire:wire-runtime` | 4.8.0 (via `beam-sdks-java-io-google-cloud-platform`/`-io-kafka`/`-extensions-sql`) | 6.4.5 | CVE-2026-63126 |
+
+**`aircompressor`**: CVE-2025-67721 (GHSA-vx9q-rhv9-3jvg, CWE-125/CWE-201)
+— the Java Snappy/LZ4 decompressor implementations mishandle malformed
+compressed input, letting leftover bytes from a reused output buffer
+leak into the decompressed result; a real risk only for code that
+reuses one fixed-size output buffer across many decompress calls
+without clearing it. Affected 0.3 to `< 2.0.3`, the latest published
+2.0.x release — no later floor to consider.
+
+**`wire-runtime`, a real major-version jump, not a patch bump.**
+CVE-2026-63126 (CVSS 8.7): the Kotlin/JVM protobuf decoder lets a
+positive, oversized attacker-controlled length-delimited size wrap
+`pos + length` to a negative limit, escaping the existing
+negative-length check and computing an invalid cursor/limit/pointer
+position before validating it against the reader's actual bounds — an
+*incomplete* fix of an earlier CVE (CVE-2026-45799) in the same decoder.
+Affected `>= 1.0.0, < 6.4.5` — a wide range spanning this library's
+1.x-6.4.x major-version history, which is why 4.8.0 falls inside it
+despite not being especially old. Pinned to 6.4.5 specifically, not
+wire-runtime's own latest (7.1.2 at the time of this change): 6.4.5 is
+the named fix for this exact CVE and the smallest move off 4.8.0 that
+clears it, whereas 7.x is a further major-version line Beam's own
+compiled 2.77.0 classes were never built against — the same "examined
+minimum over an unexamined jump" judgment as the `kaml` 0.53.0 override
+(§7v). Unlike that case, this one genuinely crosses two major versions
+(4→6), so it got the full real-suite run rather than being waved through
+on reasoning alone — see Verified below.
+
+**Reachability**: test scope only for both, same as every other finding
+in §7p-§7w.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve to a single
+version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
+identical to every prior run on this module, confirming the two-major-
+version `wire-runtime` jump changes nothing observable about this
+module's own behavior.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1953,6 +2000,15 @@ suite, plus `plugin`'s and `runner`'s own suites.
       `./dev/test` run proving the real `spark-submit` path still works
       end-to-end with `plugin`/`runner`'s bumped compile-scope copies
       (`Status: PASS`, `Contract verification: PASSED`, no violations).
+- [x] Fix `beam-adapter`'s `aircompressor` and `wire-runtime` alerts
+      (this change) — see §7x: `aircompressor` 2.0.2 → 2.0.3
+      (CVE-2025-67721) and `wire-runtime` 4.8.0 → 6.4.5 (CVE-2026-63126,
+      an incomplete fix of an earlier CVE in the same decoder). The
+      latter is a real two-major-version jump, not a patch bump, so it
+      got the full real-suite run rather than being waved through on
+      reasoning alone. Confirmed via `dependencyTree` (both
+      single-version, no evictions) and a real `sbt test` run (360
+      passed, 0 failed, 26 canceled, identical to every prior run).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
