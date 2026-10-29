@@ -113,7 +113,13 @@ dependencyOverrides ++= Seq(
   // 1.1.10.3 -> 1.1.10.4: CVE-2023-43642 (GHSA-55g7-9cwv-5qfv) -
   // SnappyInputStream has no upper bound on the declared chunk length,
   // so a crafted input can force an oversized heap allocation.
-  "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  //
+  // 1.1.10.4 -> 1.1.10.12: see spark-adapter/build.sbt's identical
+  // comment for the full detail (CVE-2026-90559 and CVE-2026-93451, both
+  // named in 1.1.10.9's own notes; promoted to .12, a pure
+  // Hadoop-compatibility superset, after .9's own artifact hit a
+  // persistent Maven Central CDN 429 on this environment).
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.12",
   // 16.0.1 -> 33.4.8-jre. Three Guava CVEs, all on the same jar, all fixed
   // by this one bump: CVE-2018-10237 (GHSA-w787-jrh4-2xh8, unbounded
   // memory allocation when deserializing AtomicDoubleArray/CompoundOrdering,
@@ -133,7 +139,10 @@ dependencyOverrides ++= Seq(
   // HiveConnectorSpec (the one place Hive 2.3.9, which also uses Guava, is
   // run for real) passes unchanged. Guava 33 adds failureaccess and
   // listenablefuture as transitive deps; nothing else in the tree moves.
-  "com.google.guava" % "guava" % "33.4.8-jre",
+  //
+  // 33.4.8-jre -> 33.7.2: see spark-adapter/build.sbt's identical
+  // comment (CVE-2026-102554, GHSA-xxph-c9ww-hj94).
+  "com.google.guava" % "guava" % "33.7.2-jre",
   // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
   // protobuf-java's parser has no recursion limit when skipping nested
   // unknown fields/groups (and in Any/MessageSet handling), so a crafted
