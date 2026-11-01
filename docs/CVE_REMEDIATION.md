@@ -1889,6 +1889,35 @@ in §7p-§7x.
 version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
 identical to every prior run on this module.
 
+## 7z. `docs-site`'s own `undici` — missed when `contributor-docs`' identical alert was fixed
+
+A real Dependabot alert against `docs-site`'s own `package-lock.json`:
+`undici` `>= 8.0.0, < 8.12.2` (transitive via `astro` 7.3.5), fixed
+`8.12.2`. `contributor-docs` had the identical alert fixed already
+(Dependabot's own automated PR #175, already merged, landing it at
+`8.12.3`) — `docs-site` is a second Starlight site with its own separate
+`package-lock.json`, the same class of gap §7l already recorded once
+before for a different package (`devalue`) in this same pair of sites.
+
+| Lockfile | astro | undici |
+|---|---|---|
+| `contributor-docs/package-lock.json` | 7.3.5 | 8.12.3 (already fixed) |
+| **`docs-site/package-lock.json`** | 7.2.9 | **8.11.2 → 8.12.3** |
+
+Not a direct dependency in either site (`undici` appears in neither
+`package.json`, confirmed via `grep`) — purely transitive through
+`astro`. `npm install` alone didn't move it (npm respects the existing
+lockfile's resolved versions unless told otherwise); `npm audit fix`
+did, landing on `8.12.3` (the same version `contributor-docs` already
+carries) and clearing all eight bundled advisories `npm audit` listed
+(EventSource-parser DoS, Subresource Integrity bypass, content-encoding
+DoS, cross-origin cache poisoning, dropped TLS options, TLS
+renegotiation DoS, unbounded WebSocket PONG buffering, decompress-
+interceptor DoS) — `npm audit` reports 0 vulnerabilities afterward.
+
+**Verified**: `npm audit` — 0 vulnerabilities. `npm run build` — all 43
+pages build clean, Pagefind search index built, sitemap generated.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2057,6 +2086,12 @@ identical to every prior run on this module.
       already carries. Confirmed via `dependencyTree` (both
       single-version, no evictions) and a real `sbt test` run (360
       passed, 0 failed, 26 canceled).
+- [x] Fix `docs-site`'s own `undici` alert (this change) — see §7z:
+      `undici` 8.11.2 → 8.12.3 (transitive via `astro`), the identical
+      CVE `contributor-docs` already had fixed on its own separate
+      lockfile — the same class of per-lockfile gap §7l already
+      recorded once before for `devalue`. `npm audit fix`; confirmed via
+      `npm audit` (0 vulnerabilities) and `npm run build` (all 43 pages).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
