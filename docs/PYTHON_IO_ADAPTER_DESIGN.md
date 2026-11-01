@@ -1,6 +1,6 @@
 # Python I/O adapter: design
 
-> **Status: design. No code exists.** This is the design for checking Python data jobs against a data contract by having
+> **Status: design, decisions settled 2026-11-01 (section 13). No code exists.** This is the design for checking Python data jobs against a data contract by having
 > Invaract do the job's reading and writing. It follows two surveys:
 > - docs/PYTHON_ADAPTER_SURVEY.md, which found that watching an unchanged Python job from inside is possible but costly
 >   to maintain;
@@ -35,16 +35,19 @@ design depends only on stable, public interfaces:
 
 What it does not see is reading or writing done *outside* the package. A lint guards against that (section 7).
 
-**Decisions needed** (section 13):
-1. Accept a one-time code change per job as the way to adopt Invaract for Python. This means declaring
-   `config.zeroCodeInstall` unsupported: a deliberate exception to the install half of the External Attachability
-   Requirement in CLAUDE.md. Every setting stays configurable from outside the job.
-2. Run the checks in Invaract's existing Java checker, as one helper process per run, rather than re-implementing them in
-   Python.
-3. Treat "required" as "no empty values in what was written" (checked exactly on the data) rather than "can never be
-   empty" (which needs the transformation).
-4. Start with Parquet and CSV files on local and mounted file systems. Object storage, partitioned outputs, table formats
-   and databases come later.
+**Decisions** (settled 2026-11-01; section 13):
+1. Adopting Invaract for Python is a one-time code change per job. `config.zeroCodeInstall` is declared unsupported: a
+   deliberate exception to the install half of the External Attachability Requirement in CLAUDE.md. Every setting stays
+   configurable from outside the job.
+2. **No Java where jobs run.** The existing checker is compiled ahead of time into a native program (GraalVM native image)
+   and shipped inside the Python package. A Python re-implementation is the fallback only if that fails (section 4).
+3. "Required" means no empty values in what was written, checked exactly on the data.
+4. The first version covers Parquet and CSV files on local and mounted file systems. Object storage, Delta Lake and Iceberg
+   follow **immediately after, as committed work tracked until delivered** (section 12; ROADMAP.md).
+5. The lint is the main guard against reads and writes outside the package; the run-time strict mode is optional and off
+   by default.
+6. The package is `invaract` on PyPI, with `invaract-lint` beside it. Both names were free on 2026-11-01 and should be
+   registered early.
 
 ## 1. Goals and non-goals
 
@@ -174,13 +177,32 @@ checker.
 
 **Why the existing checker, not Python.** Contract parsing, validation, organisational policy, location maps, the registry,
 notification sinks, dry-run inference and the checks themselves already exist, held to the repository's coverage,
-mutation and API-compatibility gates. A Python copy would drift from them. The cost:
-- Java 11 or later wherever the job runs;
-- about a second of start-up per run, measured for the Beam Python adapter's checker. It starts in parallel with the job's
-  own start.
+mutation and API-compatibility gates. A Python copy would drift from them.
 
-A GraalVM native image of the checker would remove the Java requirement; it is a later step (section 12), as it was for
-Beam Python.
+**No Java where jobs run (decision 2).** Most users' Python workers have no Java. So the checker is compiled ahead of time
+with GraalVM `native-image` into a standalone program, one per platform, shipped inside the Python package's wheels. The
+package starts it exactly as it would start Java: same protocol, same process model. Start-up should be milliseconds rather
+than about a second (UNVERIFIED until the first milestone builds it).
+
+What compiling ahead of time costs:
+- **Plug-ins loaded by class name.**
+  - Invaract loads several things by the class named in configuration: notification sinks (even the built-in ones,
+    `NotificationSinkFactory`), custom rule verifiers, custom policy evaluators, type-guarantee checks, and registry
+    clients (`ReflectivePluginResolver`, `ContractReference`).
+  - A native program can load only classes listed when it is built. The built-in ones are listed in its reflection
+    configuration.
+  - A team's *own* plug-in classes cannot be loaded. Those teams need a build that includes them, or the Java build. The
+    declaration and the user guide must say so.
+- **Libraries that use reflection.** The Scala runtime and SnakeYAML (contract parsing) may need reflection configuration;
+  GraalVM's tracing agent, run over the checker's test suite, generates it (UNVERIFIED).
+- **A build per platform:** Linux x86_64 and aarch64, macOS arm64 and x86_64, and Windows if users need it. Each is built in
+  CI with GraalVM's GitHub Action, since the GraalVM download is blocked from this session (HTTP 403) and was not tried here.
+- **Wheel size.** A native image of the checker is likely tens of megabytes per platform (UNVERIFIED).
+
+**The fallback, only if the native image fails the first milestone's criteria.** Re-implement in Python the narrow set of
+checks this adapter needs: contract parsing, schema, location, format, save mode, outputs written and inputs read. Hold
+it to the Scala implementation with a shared set of recorded cases, run against both in CI, so a difference fails the
+build. Organisational policy, the registry and plug-ins would then be unavailable to Python jobs until ported.
 
 **Type mapping.** Arrow types map to the contract's types through one mapping shared with the Beam Python adapter. That
 mapping is `PyArrowSchemas`, which already covers `large_string`, `string_view`, dictionaries, lists, structs and maps; it
@@ -306,7 +328,8 @@ everything is local files.
 ## 9. Errors and reporting
 
 - `ContractViolation(PermissionError)` carries the violations and Invaract's standard four-part explanation.
-- `CheckNotRun` (exit status 2) means the checker could not start or answer. The job's data is never published unchecked.
+- `CheckNotRun` (exit status 2) means the checker could not start or answer, for example no build for this platform. The
+  job's data is never published unchecked.
 - The validation event carries:
   - the engine `python-io`;
   - the Python version;
@@ -330,10 +353,13 @@ everything is local files.
   - The Python side gets pytest, a lint, and mutation testing with `mutmut`, since the repository's mutation testing is
     Scala-only.
   - A CI job runs the conformance suite with real Python, over a version matrix.
-- **Release.** The checker as a runnable jar; the package on PyPI, versioned with the jar.
+- **Release.** The package on PyPI as one wheel per platform, each carrying the native checker, plus a pure-Python wheel
+  that starts a Java checker for platforms without a native build. `invaract-lint` is a separate pure-Python package. The
+  checker jar is also published, for the Java route and for teams with their own plug-ins.
 
 ## 11. Versions and compatibility
 
+- Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.
 - Python 3.9 to 3.13.
 - pyarrow: the oldest release with `RecordBatchReader.from_stream` and the C stream protocol (UNVERIFIED which one).
 - pandas: the release that added `__arrow_c_stream__` (UNVERIFIED, believed 2.2).
@@ -344,6 +370,14 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 
 ## 12. Milestones
 
+0. **The native checker, first and gating** (medium). Build `PythonIoCheck` with GraalVM `native-image` in CI, for Linux
+   x86_64 first. It passes if:
+   - it answers the protocol with the same verdicts as on the JVM, over the recorded cases;
+   - it parses contracts, applies organisational policy and publishes to the built-in sinks;
+   - it starts in well under a second;
+   - its size suits a wheel.
+
+   If it fails, the Python fallback of section 4 replaces it, and this design is revised.
 1. **The checker protocol** (small to medium). `PythonIoCheck`, with `open`, `write`, `read` and `finish`, over the shared
    Arrow mapping. Tested with recorded descriptions; no Python needed.
 2. **The package** (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
@@ -352,34 +386,40 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 3. **Conformance** (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.
 4. **The lint** (small).
 5. **The user guide, and the first release** (small).
-6. **Later, each on its own:**
-   - object storage through Delta or Iceberg;
-   - partitioned outputs;
-   - a native image of the checker (no Java);
-   - Polars lazy plans for the transformation-shape rules;
-   - databases.
+6. **Immediately after the first release, committed and tracked until delivered (decision 4):**
+   - **Object storage** (S3, GCS, Azure), for reading and for writing.
+   - **Delta Lake and Iceberg outputs.** Their commits are atomic, which is what makes publishing safe on object storage.
+     The sink records survey, probe 3, showed both record operation, mode, rows and schema per commit, through delta-rs and
+     pyiceberg.
 
-## 13. Decisions for you
+   The rule for this work:
+   - it is listed in ROADMAP.md as open items;
+   - it is not displaced by other Python I/O work;
+   - each release note until it lands states what is still missing.
+7. **Later, each on its own:** partitioned outputs, Polars lazy plans for the transformation-shape rules, databases.
 
-1. Adoption is a one-time code change per job, with `config.zeroCodeInstall` declared unsupported and every setting
-   configurable from outside. *Recommend yes.*
-2. The checks run in the existing Java checker, as one helper process per run. *Recommend yes; a native image later.*
-3. "Required" means no empty values in what was written, and the published file then states `not null`. *Recommend yes.*
-4. The first version covers Parquet and CSV files on local and mounted file systems. *Recommend yes.*
-5. The lint is the main guard against reads and writes outside the package, and the run-time strict mode is optional and
-   off by default. *Recommend yes.*
-6. The package's import name is `invaract`, and its PyPI name `invaract`. *Recommend yes, if the name is free.*
+## 13. Decisions (settled 2026-11-01)
+
+| # | Decision | Answer |
+|---|---|---|
+| 1 | Adoption is a one-time code change per job; `config.zeroCodeInstall` unsupported; every setting configurable from outside | **Yes** |
+| 2 | Where the checks run | **No Java where jobs run.** The existing checker compiled to a native program, shipped in the package; a Python re-implementation only if milestone 0 fails |
+| 3 | "Required" means no empty values in what was written; the file then states `not null` | **Yes** |
+| 4 | First version: Parquet and CSV on local and mounted file systems | **Yes, then object storage, Delta Lake and Iceberg immediately after, committed and tracked until delivered** |
+| 5 | The lint is the main guard; the run-time strict mode optional and off | **Yes** |
+| 6 | `invaract` on PyPI (and `invaract-lint`) | **Yes**; both free on 2026-11-01, to be registered early |
 
 ## 14. Open questions and unverified points
 
 | Question | How to settle it |
 |---|---|
 | The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol | their changelogs, then the CI matrix |
-| Java on the machines that run Python jobs (decision 2) | `java -version` on the platforms' worker images |
+| Whether the checker builds as a native image, with which reflection configuration, at what size and start-up | milestone 0, in CI with GraalVM's GitHub Action |
+| How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load | ask the teams; check the deployed notification and policy configurations |
 | How small the change is on real jobs | convert a sample of real jobs |
 | How often real jobs read or write outside the package | run the lint over the same sample |
 | The kit decision on per-write read attribution (scenario 20) | the open decision D4 of docs/PYTHON_ADAPTER_SURVEY.md |
-| Whether `invaract` is free on PyPI | pypi.org |
+| Whether the PyPI names stay free until registered | register placeholder releases of `invaract` and `invaract-lint` |
 
 ## Evidence
 
