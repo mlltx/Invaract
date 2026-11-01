@@ -1889,6 +1889,64 @@ in §7p-§7x.
 version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
 identical to every prior run on this module.
 
+## 7z. `beam-adapter`'s fourteenth finding: `wire-runtime-jvm`, a sibling coordinate `wire-runtime`'s own override doesn't reach
+
+One more real Dependabot alert against `beam-adapter`, test scope,
+confirmed via `sbt Test/dependencyTree` (sole winner, no eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `com.squareup.wire:wire-runtime-jvm` | 4.9.3 (via `beam-sdks-java-io-google-cloud-platform`/`-io-kafka`/`-extensions-sql`) | 6.4.5 | CVE-2026-45799 |
+
+**A different artifactId the existing override doesn't reach, the same
+lesson `org.lz4:lz4-java`/`at.yawk.lz4:lz4-java` already taught (§7v).**
+`wire-runtime-jvm` is a distinct Maven coordinate from `wire-runtime`,
+which §7x already pinned to 6.4.5 for a different CVE (CVE-2026-63126).
+`dependencyOverrides` only resolves version conflicts *within* a
+groupId:artifactId, so that existing override does nothing for this one
+— confirmed via `dependencyTree`, which shows `wire-runtime-jvm:4.9.3`
+resolving on its own, unaffected by the sibling pin.
+
+**CVE-2026-45799** (GHSA-7xpr-hc2w-34m9, CVSS not Critical but a real
+decode-time DoS): Wire's protobuf group-skip logic never rejected a
+negative length before skipping a length-delimited field inside a group,
+so a crafted 10-byte payload throws an unchecked exception instead of
+Wire's own documented checked decode failure — any service decoding
+untrusted protobuf without its own guard against an unchecked exception
+from the decoder can be crashed by it. This is the *earlier*, originally
+disclosed bug; CVE-2026-63126 (§7x) is a later, separate advisory for an
+*incomplete* fix of this one in the decoder's length-handling path —
+checked directly rather than assumed, since the two numbers are easy to
+conflate. The advisory text explicitly lists `wire-runtime-jvm` alongside
+`wire-runtime` with identical ranges (affected `<= 6.2.0` and
+`7.0.0-alpha01`/`02`, fixed `6.3.0`/`7.0.0-alpha03`) — not a coordinate
+it leaves unaddressed.
+
+**A "discontinued legacy artifact" framing that doesn't hold up, checked
+rather than trusted.** Several mirrors of this advisory describe
+`wire-runtime-jvm` as a discontinued coordinate that "will not receive a
+patched release," pointing at older confirmed-vulnerable 5.3.1/5.3.3
+releases. Checked directly against Maven Central's own
+`maven-metadata.xml` for this exact artifactId: real releases continue
+well past the fix, through `6.4.0`, `6.4.1`, `6.4.5`, `6.4.6`, `6.4.7`,
+and into the `7.x` line (`7.0.0` through `7.1.2`) — so "discontinued"
+describes those old 5.x releases' own support status, not an absent fix
+for this finding. Pinned to `6.4.5`, not the advisory's bare `6.3.0`
+floor: the same version already chosen for the sibling `wire-runtime`
+coordinate (§7x), for the same consistent-release-line reasoning that
+pin used — an examined, already-tested version in this exact codebase —
+and confirmed to actually exist for this coordinate too via the same
+Maven Central check.
+
+**Reachability**: test scope only, same as every other finding in
+§7p-§7y.
+
+**Verified**: `sbt Test/dependencyTree` — resolves to a single version
+(`6.4.5`), no evictions, confirmed alongside the sibling `wire-runtime`
+override resolving independently to the same version. `sbt test`: 360
+passed, 0 failed, 26 canceled — identical to every prior run on this
+module.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2057,6 +2115,20 @@ identical to every prior run on this module.
       already carries. Confirmed via `dependencyTree` (both
       single-version, no evictions) and a real `sbt test` run (360
       passed, 0 failed, 26 canceled).
+- [x] Fix `beam-adapter`'s `wire-runtime-jvm` alert (this change) — see
+      §7z: CVE-2026-45799 (GHSA-7xpr-hc2w-34m9, the original, earlier
+      advisory `wire-runtime` itself was separately re-flagged for under
+      an incomplete fix, §7x's CVE-2026-63126). A different artifactId
+      from `wire-runtime` the existing override doesn't reach — the same
+      "override doesn't cross-apply to a different coordinate" lesson as
+      §7v's `org.lz4`/`at.yawk.lz4` pair. `4.9.3` → `6.4.5`, matching the
+      sibling `wire-runtime` pin rather than the advisory's bare `6.3.0`
+      floor. Checked, and ruled out, a "discontinued legacy artifact"
+      framing some advisory mirrors use — Maven Central's own metadata
+      shows real releases for this exact coordinate through `6.4.7` and
+      into `7.x`. Confirmed via `dependencyTree` (single resolved
+      version, no eviction) and a real `sbt test` run (360 passed, 0
+      failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
