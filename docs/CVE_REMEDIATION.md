@@ -1947,6 +1947,66 @@ override resolving independently to the same version. `sbt test`: 360
 passed, 0 failed, 26 canceled — identical to every prior run on this
 module.
 
+## 7aa. `notification-kafka`'s `snappy-java`: the first finding of this pair that's actually reachable at runtime
+
+A real Dependabot alert naming `org.xerial.snappy:snappy-java` 1.1.10.5,
+introduced via `org.apache.kafka:kafka-clients` 3.9.2. This CVE pair has
+already been fixed in four other modules (`spark-adapter`, `plugin`,
+`runner` — §7w; `beam-adapter` — §7y), all test scope. This fifth finding
+is different, and worth stating plainly rather than filing it as another
+routine repeat:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `org.xerial.snappy:snappy-java` | 1.1.10.5 (via `kafka-clients` 3.9.2) | 1.1.10.12 | CVE-2026-90559, CVE-2026-93451 |
+
+**Checked which module(s) this alert actually names, rather than
+assuming it was a repeat of an already-fixed finding.** `kafka-clients`
+is declared directly in exactly two places in this repository
+(confirmed via a repo-wide grep): `beam-adapter` (test scope — already
+pinned, §7s/§7y) and `notification-kafka` (no scope qualifier at all —
+see its own `libraryDependencies` comment: this module is compiled
+directly against `kafka-clients`' producer API, precisely so a user who
+never configures a Kafka sink never resolves it). Re-ran
+`Test/dependencyTree` in `beam-adapter` first to rule it out: every
+`snappy-java` node there, including the one `kafka-clients` itself
+introduces, already resolves to `1.1.10.12` from the existing override —
+confirmed clean, nothing to do there. `notification-kafka` had no
+`snappy-java` override at all; its own `Compile/dependencyTree` showed
+the raw `1.1.10.5` node kafka-clients' POM declares, unmodified.
+
+**Why this one is the most reachable `snappy-java` finding in this
+document so far.** Every prior `snappy-java` fix (§7w, §7y) sits behind
+`% "provided"`/`% "test"` in `spark-adapter`/`beam-adapter`, or a
+compile-scope copy in `plugin`/`runner` that only a Spark job's own
+Parquet codec path would exercise. `notification-kafka` has neither: its
+one real dependency, `kafka-clients`, is unscoped (compile and runtime
+both), and `KafkaNotificationSink` passes a caller's own producer
+properties straight through with no allowlist — the same reasoning this
+module's own `lz4-java` override above already gives for why `lz4-java`
+can't simply be excluded. A user who sets `compression.type=snappy` on
+their sink's producer config loads this exact vulnerable jar in a real
+process, the first time one of this pair's findings has had a concrete,
+non-hypothetical trigger rather than "test scope only, no reachable
+path."
+
+**The CVEs themselves**: CVE-2026-90559 and CVE-2026-93451 — see
+`spark-adapter/build.sbt`'s identical comment for the full technical
+detail of both. Affected `<= 1.1.10.8`, fixed `1.1.10.9`. Pinned to
+`1.1.10.12`, the same coordinate and version every other module in this
+repository already carries for this identical pair, reused rather than
+re-derived: `1.1.10.9`'s own artifact hit the same Maven Central CDN 429
+pattern CLAUDE.md documents for `scalac-scoverage-plugin` (confirmed
+directly here too — the first `dependencyTree` attempt 429'd fetching
+`1.1.10.5`'s own jar, not even the target version, and cleared on a
+plain retry), and `.10`-`.12` are a pure Hadoop-compatibility superset
+with no new CVEs, per every sibling module's own investigation.
+
+**Verified**: `Compile/dependencyTree` — resolves to a single version
+(`1.1.10.12`), no eviction. A real `sbt test` run: 8 passed, 0 failed, 0
+canceled, including `KafkaNotificationSinkSpec`'s own round-trip tests
+against a real `KafkaProducer` built from properties (not a mock).
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2129,6 +2189,18 @@ module.
       into `7.x`. Confirmed via `dependencyTree` (single resolved
       version, no eviction) and a real `sbt test` run (360 passed, 0
       failed, 26 canceled).
+- [x] Fix `notification-kafka`'s `snappy-java` alert (this change) — see
+      §7aa: the same CVE pair already fixed in `spark-adapter`/`plugin`/
+      `runner` (§7w) and `beam-adapter` (§7y), but this module's own
+      `kafka-clients` dependency is unscoped (compile and runtime), not
+      test scope — the most reachable finding of this pair so far, since
+      a user setting `compression.type=snappy` on their notification
+      sink's producer config actually loads this jar. `1.1.10.5` →
+      `1.1.10.12`. Confirmed `beam-adapter`'s own existing override
+      already covers the identical `kafka-clients`-introduced path there
+      (re-checked, nothing to do). Confirmed via `Compile/dependencyTree`
+      (single resolved version, no eviction) and a real `sbt test` run
+      (8 passed, 0 failed, 0 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
