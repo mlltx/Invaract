@@ -477,7 +477,92 @@ DuckDB (which can query a pandas DataFrame by its variable name), and writes fro
 holds only if the adapters share one record of where each frame came from. How often real jobs mix libraries should be
 measured before building more than one adapter.
 
-## 6. What this means for the design
+## 6. The low-change alternative: Invaract does the reading and writing
+
+Every approach above that reaches into the job depends on things that keep changing:
+- library internals (hooks, wrappers, tracers);
+- coding styles (the syntax tree);
+- operating-system privileges (the watch).
+
+The cost of keeping them working grows with libraries, destinations and releases. Giving up "zero change" for a *small*
+change removes that cost. The job declares its inputs and outputs by name, and Invaract does the reading and writing.
+
+**What the team changes (probe 13).** The whole diff for a typical pandas job:
+
+```diff
+-import pandas as pd
++import pandas as pd
++import invaract
+-def main():
+-    orders = pd.read_parquet("data/in/orders")
+-    customers = pd.read_csv("data/in/customers.csv")
++@invaract.job("contract.yaml")
++def main(orders: pd.DataFrame, customers: pd.DataFrame):
+     ...the transformation, unchanged...
+-    report.to_parquet("data/out/report/part-0.parquet", index=False)
+-    open("data/out/report/_SUCCESS", "w").close()
++    return {"report": report}
+```
+
+The decorator:
+1. reads each input the function names, from the contract's location, as the type the function asks for (a pandas
+   DataFrame, a Polars DataFrame, or a Polars LazyFrame);
+2. calls the function;
+3. checks each returned table against its declared output: columns, types, required columns;
+4. writes the outputs to staging and swaps them into place;
+5. writes the readiness marker.
+
+If anything fails, nothing is written. For a job that cannot be one function, the same library would offer explicit calls
+(`invaract.read("orders")`, `invaract.write(df, "report")`) inside a `with invaract.run("contract.yaml"):` block; not
+built in the toy.
+
+**Probe 13's runs:**
+
+| The job | Result |
+|---|---|
+| correct (pandas) | `wrote 'report' -> data/out/report (2 rows; region: string not null; total: int64 not null)`, then `readiness 'report_ready' written` |
+| `total` as text | `REFUSED OUTPUT_FIELD_TYPE_MISMATCH: total is string, the contract says long`; nothing written |
+| lost the `region` column | `REFUSED MISSING_OUTPUT_FIELD: 'report' has no column region`; nothing written |
+| returned an undeclared output | `REFUSED UNDECLARED_OUTPUT: the job returned 'debug_dump', which the contract does not declare`; nothing written |
+| correct (Polars, lazy) | Polars' full plan recorded before it ran (`PROJECT 3/5 COLUMNS`, `SELECTION: col("status") == "paid"`, the join, the grouping), then written as above |
+
+**How the requirements come out.**
+- **Wrote where it said: by construction.** The job names an output and Invaract writes it to the contract's location.
+- **Classification: by construction.** Data assets are written from returned tables; readiness markers are written by
+  Invaract, only after every asset passed.
+- **Schema: exact.** The check runs on the table in memory before writing. Invaract writes the file with the contract's own
+  types and required-ness, so the published schema says what the contract says: `region: string not null` here, although
+  pandas never marks a column required.
+- **Inputs: by construction.**
+  - The function can only take declared inputs, and a declared input it does not take is reported.
+  - Where the contract declares an input's columns, Invaract can read only those, so the job never sees an undeclared
+    column (an email address, say).
+- **Rules and lineage:** exact for Polars lazy jobs, from the plan the function returns. Not for pandas. That stays
+  out of reach, and is refused safely as before.
+
+**What it depends on.** Only public, stable interfaces:
+- conversion to Arrow (`pa.Table.from_pandas`, Polars' `to_arrow`);
+- pyarrow's Parquet and CSV reading and writing;
+- for the Polars plan, `explain()`. Its text is not a promised format; Polars' structured plan output should be checked for
+  stability (UNVERIFIED).
+
+No hooks, no wrapping of library internals, no privileges, nothing per release of pandas.
+
+**What it does not do.**
+- **I/O outside it.** A job can still write somewhere directly (`df.to_csv("elsewhere.csv")`). Two cheap checks cover that:
+  - a lint of the job's code for read and write calls outside Invaract. That checks only that such calls are *present*,
+    which a syntax tree answers reliably, unlike *what* they do;
+  - the destination records of section 3, for databases.
+- **Large outputs** are held in memory before the write, as pandas does anyway. Polars lazy outputs could stream to staging
+  (`sink_parquet`) instead.
+- **Partitioned outputs, appends and databases** need design. Databases mean writing through ADBC or SQLAlchemy, one per
+  kind of database, which adds a little upkeep.
+- **Where the checks run** is a choice:
+  - in Python, a second copy of the schema checks;
+  - or in Invaract's Java checker, called once per run with a description of every output, as the Beam Python adapter
+    does (about 0.9 s per call, Java needed where the job runs).
+
+## 7. What this means for the design
 
 - **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
   place, operation, amount, committed or not, and who. Invaract's existing checks then judge that list against the
@@ -494,7 +579,7 @@ measured before building more than one adapter.
   received a status row or a marker" come from the record's operation and row counts, plus the destination's schema
   (`information_schema`, a table's own schema, a file's footer).
 
-## 7. Evidence log
+## 8. Evidence log
 
 ### Probes I ran (2026-10-28, not committed)
 
@@ -570,6 +655,11 @@ measured before building more than one adapter.
       `to_csv`.
     - Each DataFrame's origin was kept in a dictionary keyed by object identity, cleaned up when the frame was freed.
     - Ran probe 9's job, unchanged, with the argument `2026-11-01`. Output summarised in "Library-specific adapters".
+13. **A low-change decorator (`@invaract.job`).**
+    - A toy library: it reads the inputs the function names (pyarrow, then `to_pandas`, `pl.from_arrow` or `pl.scan_*`),
+      converts returned tables to Arrow, checks them against the contract, and writes the outputs through staging, then the
+      readiness marker.
+    - Ran a pandas job correct and with three mistakes, and a Polars lazy job. Output summarised in section 6.
 
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
@@ -611,4 +701,6 @@ measured before building more than one adapter.
 | How many real pandas jobs a syntax-tree analyser can read end to end | run probe 9's analyser, extended, over a sample of the real jobs |
 | How much of a real job the pandas tracer follows end to end, and how often jobs mix pandas, Polars and DuckDB | probe 12's tracer over a sample of the real jobs |
 | DuckDB statements can be captured from its Python API without changing the job | wrap `duckdb.sql` and try a connection's `execute`, which is compiled |
+| Polars' structured plan output (`serialize`) is stable enough to check rules from | read Polars' stability policy; compare the output across two releases |
+| How small the decorator's diff is across real jobs | convert a sample of the real jobs |
 | Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
