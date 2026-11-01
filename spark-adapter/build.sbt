@@ -740,7 +740,45 @@ dependencyOverrides ++= Seq(
   // SnappyInputStream has no upper-bound check on the declared chunk
   // length, so a crafted input can force an inappropriately large heap
   // allocation (OutOfMemoryError DoS).
-  "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  //
+  // 1.1.10.4 -> 1.1.10.9: this release's own notes name
+  // CVE-2026-90559 "and others" as its security content - confirmed via
+  // the project's GitHub security advisories rather than taken on faith:
+  // GHSA-q233-g92q-qxp6 (unbounded allocation - `Snappy.uncompress`/
+  // `uncompressString`/the typed `uncompress*Array` methods/
+  // `SnappyInputStream`/`SnappyFramedInputStream` all size an output
+  // buffer from the attacker-declared uncompressed length before
+  // validating it, so a few crafted bytes can force up to a 2 GB
+  // allocation) and CVE-2026-93451 (a distinct heap-corruption bug in
+  // the same typed `uncompress*Array` family: `uncompressCharArray`/
+  // `uncompressShortArray`/`uncompressIntArray`/`uncompressLongArray`/
+  // `uncompressFloatArray`/`uncompressDoubleArray` size the *Java* result
+  // array by dividing the declared byte length by the element size, but
+  // the native decompressor still writes the full, undivided byte
+  // length - up to 7 bytes past the end of the array, corrupting the
+  // heap, whenever the declared length isn't a multiple of the element
+  // size).
+  //
+  // 1.1.10.9 -> 1.1.10.12: not another CVE - 1.1.10.9's own artifact hit
+  // a persistent 429 from Maven Central's CDN on this environment, the
+  // same specific-path quirk CLAUDE.md's "Coverage Gating Requirement"
+  // section documents for `scalac-scoverage-plugin` (a real,
+  // otherwise-published artifact, confirmed independently resolvable by
+  // a direct, repeated HTTP check, still refused by Coursier's own
+  // resolution). Rather than retry indefinitely against one path, moved
+  // to .12 (the newest published at the time of this change, confirmed
+  // resolvable the same way), per that same guidance's own precedent:
+  // "pick another version genuinely published... rather than assuming
+  // the pinned one is special." Examined before trusting, not just
+  // newest-for-its-own-
+  // sake: `.10`/`.11`/`.12`'s own GitHub release notes list only Hadoop
+  // ByteBuffer-compression/block-header-size *compatibility* fixes, no
+  // CVEs - a strict superset of `.9`'s security content, not the kind of
+  // undisclosed-tightening risk the lz4-java 1.12.0 comment above
+  // flagged (that case had an explicit maintainer caveat; this one has
+  // none, and Hadoop-compatibility fixes are net-positive for a module
+  // that pulls Hadoop transitively, not a reason for caution).
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.12",
   // 16.0.1 -> 33.4.8-jre. Three Guava CVEs, all on the same jar, all fixed
   // by this one bump: CVE-2018-10237 (GHSA-w787-jrh4-2xh8, unbounded
   // memory allocation when deserializing AtomicDoubleArray/CompoundOrdering,
@@ -760,7 +798,16 @@ dependencyOverrides ++= Seq(
   // HiveConnectorSpec (the one place Hive 2.3.9, which also uses Guava, is
   // run for real) passes unchanged. Guava 33 adds failureaccess and
   // listenablefuture as transitive deps; nothing else in the tree moves.
-  "com.google.guava" % "guava" % "33.4.8-jre",
+  //
+  // 33.4.8-jre -> 33.7.2: CVE-2026-102554 (GHSA-xxph-c9ww-hj94) -
+  // `MapMaker`/`CompactHashMap`/`CompactHashSet` deserialization eagerly
+  // allocates as much memory as a serialized payload's own declared size
+  // claims, before validating it, the same "trust the attacker-declared
+  // size" shape as the snappy-java allocation CVE just above. Per the
+  // release's own changelog, 33.7.2 carries only this one fix over
+  // 33.7.1 (which itself only removed a stray `Multi-Release` manifest
+  // entry) - a narrow, examined bump, not a jump to an unexamined latest.
+  "com.google.guava" % "guava" % "33.7.2-jre",
   // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
   // protobuf-java's parser has no recursion limit when skipping nested
   // unknown fields/groups (and in Any/MessageSet handling), so a crafted

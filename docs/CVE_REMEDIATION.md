@@ -1458,6 +1458,437 @@ environment difference between the two runs, not a regression from this
 change). No code in `src/main/scala` changed, so neither Mutation Testing
 nor Coverage Gating apply here either.
 
+## 7r. `web/`'s own Next.js out-of-band security release — 16.3.8 → 16.4.3
+
+A real Dependabot alert, this time against `web/`'s own direct (not
+transitive) `next` dependency: `next` `>= 16.0.0 <= 16.4.0` (fixed
+`16.4.1`), named for its Image Optimization path's bundled `sharp` →
+`librsvg`, a memory-safety bug reachable via `dangerouslyAllowSVG` or
+`next/og` on glibc-based Linux (**CVE-2026-96889**, GHSA-2464-fhr4-w9xw,
+CVSS 9.5). This was Vercel's October 14, 2026 out-of-band security
+release, and 16.4.1 is a bundle of **three** disclosed issues, not one —
+checked against Vercel's own advisory before treating the Dependabot
+alert's text as the whole picture: alongside CVE-2026-96889, the same
+release fixes a second critical RCE in React's server packages (`use
+cache` with Cache Components returning multiple typed arrays,
+GHSA-673q-mjm6-r5xr, also CVSS 9.5, no workaround) and a CPU-exhaustion
+DoS in App Router Server Actions (GHSA-p3m5-59mp-jv5r).
+
+| Package | Lockfile | Before | After | CVE/advisory |
+|---|---|---|---|---|
+| `next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | CVE-2026-96889 + GHSA-673q-mjm6-r5xr + GHSA-p3m5-59mp-jv5r |
+| `eslint-config-next` | `web/package-lock.json` | 16.3.8 | 16.4.3 | (version-matched to `next`, not itself a CVE fix) |
+
+**Promoted to 16.4.3, not the bare-minimum 16.4.1** — the newest published
+stable release at the time of this change (checked against the real npm
+registry, not assumed), same "take the newest release actually available
+and checked" judgment as §7o's Spark promotion, with no indication of any
+withheld caveat the way the lz4-java 1.12.0 case had.
+
+**Reachability, checked rather than assumed — all three low for this
+module specifically**: `web/` (ARCHITECTURE.md's "example harness," not
+the product) is a thin report viewer — `grep` across `web/app` and
+`next.config.js` for `next/image`, `next/og`, `ImageResponse`,
+`dangerouslyAllowSVG`, `"use cache"`, and `"use server"` returns nothing.
+It has one API route (`app/api/report/route.ts`, reads and returns
+`demo/output/report.json`) and no Server Actions at all, so none of the
+three vulnerable code paths are in this app's own routes. Fixed anyway,
+on the same principle as the Hadoop/Beam alerts above: a direct
+dependency that already has a clean, available patched version gets
+updated regardless of this module's own exposure, rather than left
+because the immediate blast radius happens to be low.
+
+**A second finding along the way**: `eslint-config-next`'s own
+transitive `zod` (via `eslint-plugin-react-hooks`) resolved to `4.4.3`,
+affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion validating oversized
+constrained collections, High) — `npm audit` surfaced this only after the
+`next`/`eslint-config-next` bump re-resolved the tree. `npm audit fix`
+cleared it to `4.6.7` with no `package.json` change needed (resolved
+within the existing semver range). Dev-tooling only (`eslint`'s own
+transitive, never shipped in the built app), so this was never reachable
+by anything `web/` serves — same bucket-3 reasoning as `notification-kafka`'s
+`lz4-java` finding, just in the npm ecosystem instead of Maven's.
+
+**Verified**: `npm install` (regenerates `package-lock.json`), `npm audit`
+— 0 vulnerabilities after the `zod` fix — `npm run build` (Turbopack,
+compiles clean, all 3 routes generate) and `npm run lint` (clean, no
+output) all pass.
+
+**Scope note for §1's table**: unlike the Scala/Maven bucket, `web/`'s npm
+ecosystem already has Dependabot's automated version-update path
+configured (`.github/dependabot.yml`) — this alert would normally surface
+as an automated PR Dependabot opens itself. This entry exists because the
+alert was handed over directly rather than through that automated path;
+the fix is identical either way.
+
+## 7s. `beam-adapter`'s third finding: Netty, a real version split, and CVE-2026-75595
+
+A third real Dependabot alert against `beam-adapter`, against
+`io.netty:netty-handler <= 4.1.136.Final` (fixed `4.1.137.Final`):
+**CVE-2026-75595** (GHSA-c4c3-7fpv-j4q5, CVSS 9.1 Critical) — a fragmented
+TLS ClientHello whose handshake header spans multiple records makes
+`SslClientHelloHandler#decode` read it at the wrong offset, throw, and
+silently fall back to the default `SslContext`; where per-SNI selection
+is the sole mTLS gate, an unauthenticated attacker bypasses that route's
+mTLS requirement. The same release also fixes the related
+**CVE-2026-75596**, a quadratic-CPU DoS in the same pre-handshake
+reassembly path.
+
+`spark-adapter`/`plugin`/`runner` already carry an identical Netty pin at
+this exact floor (`4.1.137.Final`, with its own `build.sbt` comment
+documenting seven earlier CVEs it already fixes), so this alert did not
+apply to them — checked before concluding `beam-adapter` was the only
+module in scope, not assumed. `beam-adapter` itself had no Netty pin at
+all before this change, and `sbt Test/dependencyTree` turned up something
+worse than a single outdated version: the tree was **split across two
+Netty releases at once** — `netty-handler`/`netty-buffer`/`netty-codec`/
+`netty-common`/`netty-transport`/etc. resolving to 4.1.133.Final (from
+Beam's GCP/SQL IO modules and the Flink runner), while
+`netty-codec-dns`/`netty-codec-haproxy`/`netty-handler-ssl-ocsp`/
+`netty-resolver-dns*`/`netty-transport-classes-*`/`netty-transport-
+native-{epoll,kqueue}`/`netty-transport-{rxtx,sctp,udt}`/`netty-all`
+itself stayed on 4.1.100.Final (from Hadoop's own tree). Both are below
+the fix floor, and the split itself is the same classpath-consistency
+risk `spark-adapter`'s own build.sbt comment already documents (Ivy
+doesn't evict cleanly across a tree this deep, so Netty-internal classes
+from two releases can coexist on the same classpath and crash with a
+`NoSuchFieldError` the moment reflective code built against one version's
+internals meets a jar from the other).
+
+| Artifact (32 total) | Module | Before | After | CVE |
+|---|---|---|---|---|
+| Every `io.netty:*` artifact except `netty-tcnative-*` | `beam-adapter` (test scope) | split: 4.1.100.Final / 4.1.133.Final | 4.1.137.Final | CVE-2026-75595, CVE-2026-75596 |
+
+Pinned the full set via `dependencyOverrides`, mirroring `spark-adapter`'s
+identical block artifact-for-artifact (`netty-tcnative-boringssl-static`/
+`netty-tcnative-classes` excluded, same reasoning: OpenSSL's own version
+line, no CVE flagged against them).
+
+**Reachability**: test scope only, same as every other finding in §7p-§7q
+— none of this module's own test dependents run an SNI-routed TLS server,
+so neither CVE was reachable through anything this module does. Fixed
+anyway, same principle as the rest of this module's findings.
+
+**Verified**: `sbt Test/dependencyTree` — every `io.netty` artifact now
+resolves to `4.1.137.Final`, no evictions, confirming the split itself is
+closed, not just papered over by one coordinate. `sbt test`: 360 passed,
+0 failed, 26 canceled — identical to §7q's run, confirming the pin
+changes nothing about this module's own behavior.
+
+## 7t. `beam-adapter`'s fourth and fifth findings: `commons-beanutils` and `zookeeper`
+
+Two more real Dependabot alerts against `beam-adapter`'s `hadoop-client`/
+`hadoop-common` 3.4.1 transitives (both test scope, confirmed via
+`sbt Test/dependencyTree` — each resolves to a single version, no
+eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `commons-beanutils:commons-beanutils` | 1.9.4 | 1.11.0 | CVE-2025-48734 |
+| `org.apache.zookeeper:zookeeper` | 3.8.4 | 3.9.5 | CVE-2026-24308 |
+
+**CVE-2025-48734** (CVSS 8.8): `PropertyUtilsBean`'s (and
+`BeanUtilsBean`'s) `getProperty()`/`getNestedProperty()` let a caller
+that controls the property path reach a Java enum's `declaredClass`
+property, exposing its classloader. A `BeanIntrospector` added in 1.9.2
+could suppress this, but it was never enabled by default until 1.11.0 —
+the latest published 1.x release on Maven Central, so there is no later
+floor to consider.
+
+**CVE-2026-24308** (CWE-532, CVSS 8.7 High): `ZKConfig` logs
+configuration values — which can include credentials or connection
+strings — at INFO level with no masking, so a client's own logfile can
+leak sensitive config it was never meant to disclose. Affected
+3.8.0-3.8.5 (fixed 3.8.6) and, separately, 3.9.0-3.9.4 (fixed 3.9.5).
+Pinned to 3.9.5, not the bare-minimum 3.8.6: the same coordinate and
+version `spark-adapter`'s own `build.sbt` already pins (its own,
+separate zookeeper CVE pass), reusing an already-proven, already-tested
+choice in this exact codebase rather than introducing a second,
+never-before-verified zookeeper version. Checked rather than assumed
+that this doesn't interact with the Netty-style version-split risk: both
+zookeeper 3.8.4's and 3.9.5's own POMs declare `jetty-client`/
+`jetty-server`/`jetty-servlet` as `provided`, so zookeeper itself never
+forces a Jetty version transitively at either release — the Jetty in
+this module's tree (§7u) comes directly from Hadoop, with no shared root
+cause.
+
+**Reachability**: test scope only, same as every other finding in
+§7p-§7s. No code in this module's own test suites passes an external
+property path into `PropertyUtilsBean`, starts a ZooKeeper client, or
+logs its configuration.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve cleanly to the
+pinned version everywhere, no evictions. `sbt test`: 360 passed, 0
+failed, 26 canceled — identical to §7s's run.
+
+## 7u. `beam-adapter`'s sixth finding: Jetty, with no available fix — accepted risk
+
+A sixth real Dependabot alert, against `org.eclipse.jetty:jetty-security`
+(and its whole 9.4.53.v20231009 family — `jetty-server`/`-http`/`-io`/
+`-util`/`-util-ajax`/`-servlet`/`-webapp`/`-xml`/`-client`, all the same
+version, confirmed via `dependencyTree` — no split, unlike the Netty
+finding in §7s): a transitive of `hadoop-client`/`hadoop-common` 3.4.1
+(test scope), which bundles Jetty as the embedded HTTP server for
+Hadoop's own web UIs.
+
+**CVE-2026-10050** (GHSA-2fvj-hgj9-j2gr, CVSS 8.7 High):
+`DigestAuthentication.apply()` in Jetty's HTTP *client* encodes the
+username/password/realm with `getBytes(StandardCharsets.ISO_8859_1)`
+before hashing; any character above U+00FF silently becomes `?`, so a
+password with every non-Latin-1 character replaced by `?` produces the
+identical MD5 Digest response hash as the original — letting an attacker
+who knows a victim's username bypass Digest authentication. Affected
+`9.4.0.v20161208`-`9.4.58.v20250814`; the advisory names `9.4.63` as the
+fix for this line.
+
+**No such artifact exists on Maven Central** — checked directly, not
+assumed from the advisory text: `9.4.58.v20250814` is the newest 9.4.x
+release actually published for `jetty-security`/`jetty-util`/every
+sibling in this family (`maven-metadata.xml`, `lastUpdated` well after
+this CVE's own disclosure date), and fetching `9.4.63`'s own expected
+path on `repo1.maven.org` returns a plain 404. The 9.4.x line is EOL;
+Eclipse's real fix landed only in the 10.x/11.x/12.x lines, which would
+be a major-version jump for an API Hadoop's own compiled 3.4.1 code was
+built against — the same class of risk `spark-adapter`'s `build.sbt`
+documents for an unexamined Netty/Arrow jump (§7e), except here there is
+no later 9.4.x release to fall back to if it breaks, and verifying a
+cross-major-line swap is out of proportion to a test-scope-only finding.
+
+**Accepted risk**, per §3's template — the same shape as this document's
+own Derby case in §7: no patched version of the affected line exists at
+all, so there is no honest "bump" or "pin" to apply, only document and
+accept. Low reachability: test scope only (never reaches a job under
+check), and nothing in this module's own code, or in Hadoop's test-scope
+use here, configures an HTTP client to authenticate via Jetty's
+`DigestAuthentication` class in the first place.
+
+## 7v. `beam-adapter`'s seventh through ninth findings: a second lz4-java path, kaml, Jackson
+
+A fourth real Dependabot alert batch against `beam-adapter`, all test
+scope, confirmed via `sbt Test/dependencyTree`:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `org.lz4:lz4-java` | 1.8.0 (via `beam-runners-flink-1.19`) | excluded | CVE-2025-12183 |
+| `com.charleskorn.kaml:kaml` | 0.20.0 | 0.53.0 | memory exhaustion via YAML anchors/aliases |
+| `com.fasterxml.jackson.core:jackson-core` | 2.18.8 | 2.18.11 | CVE-2026-89425 |
+| `com.fasterxml.jackson.core:jackson-databind` | 2.18.8 | 2.18.11 | CVE-2026-59889 |
+| `com.fasterxml.jackson.core:jackson-annotations` | 2.18.8 | 2.18.11 | (version-matched to jackson-core/-databind) |
+
+**`org.lz4:lz4-java`, a second, independent path for a coordinate this
+module already has a fix for.** §7n's `at.yawk.lz4:lz4-java` override
+(line 132 of this module's `build.sbt`) only resolves version conflicts
+*within* a groupId:artifactId — it does nothing for a different
+groupId, and `beam-runners-flink-1.19` 2.77.0 declares the old,
+unrelocated `org.lz4` coordinate directly. `dependencyTree` showed both
+`org.lz4:lz4-java:1.8.0` (5 occurrences, no eviction) and
+`at.yawk.lz4:lz4-java:1.11.4` resolved simultaneously, side by side — the
+override alone never closed this gap. Excluded outright
+(`excludeDependencies += ExclusionRule("org.lz4", "lz4-java")`), the
+other half of `spark-adapter`'s own identical fix for this exact
+pattern, reused rather than re-derived: CVE-2025-12183 (out-of-bounds
+memory read via untrusted compressed input, affected `<= 1.8.0`,
+"fixed" 1.8.1 — itself still within the four advisories the
+`at.yawk.lz4` override already fixes, so bumping instead of excluding
+would just reintroduce an already-fixed problem under a different
+coordinate).
+
+**`com.charleskorn.kaml:kaml`**: a transitive of
+`beam-sdks-java-io-google-cloud-platform`/`beam-sdks-java-extensions-sql`/
+`beam-sdks-java-io-kafka` 2.77.0, resolving to 0.20.0, the sole version
+(no split). Affected `< 0.53.0`: parsing untrusted YAML containing
+anchors and aliases can be made to consume excessive memory (a "billion
+laughs"-style expansion). Pinned to 0.53.0, the advisory's own named
+floor, not kaml's own latest (0.104.0 at the time of this change): kaml
+is still pre-1.0, where a release can carry a real API break, not just a
+patch-level fix the way the `at.yawk.lz4` 1.11.x line is — the same
+"examined minimum over an unexamined jump" judgment as §7n's lz4-java
+1.12.0 case, applied the other way (there the examined choice was higher
+than the bare minimum; here the bare minimum is already the
+proportionate choice).
+
+**Jackson (`jackson-core`/`-databind`/`-annotations`)**: a transitive of
+`beam-sdks-java-core` 2.77.0 among others, all three resolving to
+2.18.8, the sole version. Two CVEs, fixed by the same bump:
+CVE-2026-89425 (GHSA-7hhh-6rmp-j9qf, jackson-core, affected 2.8.0-2.18.10,
+fixed 2.18.11 — a malformed token through `createParser(DataInput)`
+builds its exception message from the full attacker payload rather than
+a bounded excerpt; reproduced upstream as a 20,000,109-character message
+from a 20-million-character payload, versus a correctly-bounded
+367-character message for the identical payload via
+`createParser(InputStream)`) and CVE-2026-59889 (GHSA-mhm7-754m-9p8w,
+jackson-databind, affected 2.18.0-2.18.8, fixed 2.18.9 —
+`UnwrappedPropertyHandler.processUnwrapped()` replays a buffered
+`@JsonUnwrapped` property's JSON with no `visibleInView()` guard, the
+same guard a sibling creator-property path and `BeanDeserializer`'s own
+directly-matched-property path already have, so a property marked both
+`@JsonView(PrivilegedView.class)` and `@JsonUnwrapped` is written from
+attacker JSON even under a more-restrictive active view). Bumped all
+three together to 2.18.11 (the higher of the two fix floors), the
+"move the matched set together" rule this document's own `spark-adapter`
+passes already established (§7d, §7l) — these three version-lock
+against each other, so moving one alone risks the exact split-classpath
+failure the Netty/`commons-beanutils` findings above warn about.
+
+**Reachability**: test scope only for all three, same as every other
+finding in §7p-§7u.
+
+**Verified**: `sbt Test/dependencyTree` — `org.lz4` gone entirely (only
+`at.yawk.lz4:lz4-java:1.11.4` remains), `kaml`/all three Jackson
+artifacts each resolve to a single version, no evictions. `sbt test`:
+360 passed, 0 failed, 26 canceled — identical to every prior run on this
+module.
+
+## 7w. Spark's own `snappy-java`/`guava` pins, overtaken by newer CVEs
+
+Two more real Dependabot alerts, this time against `spark-adapter`/
+`plugin`/`runner` — not `beam-adapter` — each an *existing*, explicit
+`dependencyOverrides`/`libraryDependencies` pin from an earlier CVE pass
+(§7a/§7b) that a newer CVE has since overtaken:
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.xerial.snappy:snappy-java` | `spark-adapter`, `plugin`, `runner` | 1.1.10.4 | 1.1.10.12 | CVE-2026-90559, CVE-2026-93451 |
+| `com.google.guava:guava` | `spark-adapter`, `plugin`, `runner` | 33.4.8-jre | 33.7.2-jre | CVE-2026-102554 |
+
+**`snappy-java`**: 1.1.10.9's own release notes name CVE-2026-90559 "and
+others" as its security content — checked against the project's real
+GitHub security advisories rather than taken on faith: GHSA-q233-g92q-qxp6
+(unbounded allocation — `Snappy.uncompress`/`uncompressString`/the typed
+`uncompress*Array` methods/`SnappyInputStream`/`SnappyFramedInputStream`
+all size an output buffer from the attacker-declared uncompressed length
+before validating it, so a few crafted bytes can force up to a 2 GB
+allocation) and CVE-2026-93451 (a distinct heap-corruption bug in the
+same typed `uncompress*Array` family — `uncompressCharArray`/
+`uncompressShortArray`/`uncompressIntArray`/`uncompressLongArray`/
+`uncompressFloatArray`/`uncompressDoubleArray` size the *Java* result
+array by dividing the declared byte length by the element size, but the
+native decompressor still writes the full, undivided byte length, up to
+7 bytes past the end of the array, whenever the declared length isn't a
+multiple of the element size). Promoted past 1.1.10.9 itself to 1.1.10.12
+not for a further CVE but because 1.1.10.9's own artifact hit a
+persistent Maven Central CDN 429 in this environment — the same
+specific-path quirk CLAUDE.md's "Coverage Gating Requirement" section
+documents for `scalac-scoverage-plugin`, confirmed independently
+resolvable by a direct, repeated HTTP check yet still refused by
+Coursier's own resolution. `.10`/`.11`/`.12`'s own GitHub release notes
+list only Hadoop ByteBuffer-compression/block-header-size compatibility
+fixes, no CVEs — a strict superset of `.9`'s security content, not the
+undisclosed-tightening risk §7n's lz4-java-1.12.0 case flagged (that
+case had an explicit maintainer caveat; this one has none, and
+Hadoop-compatibility fixes are net-positive for a module that pulls
+Hadoop transitively).
+
+**`guava`**: CVE-2026-102554 (GHSA-xxph-c9ww-hj94) — `MapMaker`/
+`CompactHashMap`/`CompactHashSet` deserialization eagerly allocates as
+much memory as a serialized payload's own declared size claims, before
+validating it, the same "trust the attacker-declared size" shape as the
+`snappy-java` allocation CVE just above. 33.7.2's own changelog lists
+only this one fix over 33.7.1 — a narrow, examined bump, not a jump to
+an unexamined latest. (A real editing mistake caught before it shipped:
+the first pass wrote the override as `"33.7.2"`, dropping the `-jre`
+classifier every other Guava coordinate in this file already carries —
+caught because the bare `33.7.2` artifact simply doesn't exist on Maven
+Central, a 404 on the very first resolution attempt, not a behavior that
+could have passed silently.)
+
+**Reachability**: `spark-adapter`'s own copies are `% "provided"`/
+`% "test"` (see §2's scope table); `plugin`/`runner` carry both as real,
+unscoped compile-scope dependencies in their assembled jars (confirmed
+against each module's own `build.sbt`), since those two modules *are*
+what a real `spark-submit` runs — the only two places in this repo where
+these specific coordinates would actually reach a real Spark execution,
+not just a test classpath.
+
+**Verified**: `sbt Test/dependencyTree` in `spark-adapter` — both
+resolve to a single version, no evictions. `sbt test` across all three
+modules: `spark-adapter`'s full real-Spark/Delta/Iceberg/Hive/ClickHouse
+suite, plus `plugin`'s and `runner`'s own suites.
+
+## 7x. `beam-adapter`'s tenth and eleventh findings: `aircompressor`, and a two-major-version `wire-runtime` jump
+
+Two more real Dependabot alerts against `beam-adapter`, both test scope,
+confirmed via `sbt Test/dependencyTree` (each resolves to a single
+version, no eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `io.airlift:aircompressor` | 2.0.2 (via `beam-sdks-java-io-parquet`) | 2.0.3 | CVE-2025-67721 |
+| `com.squareup.wire:wire-runtime` | 4.8.0 (via `beam-sdks-java-io-google-cloud-platform`/`-io-kafka`/`-extensions-sql`) | 6.4.5 | CVE-2026-63126 |
+
+**`aircompressor`**: CVE-2025-67721 (GHSA-vx9q-rhv9-3jvg, CWE-125/CWE-201)
+— the Java Snappy/LZ4 decompressor implementations mishandle malformed
+compressed input, letting leftover bytes from a reused output buffer
+leak into the decompressed result; a real risk only for code that
+reuses one fixed-size output buffer across many decompress calls
+without clearing it. Affected 0.3 to `< 2.0.3`, the latest published
+2.0.x release — no later floor to consider.
+
+**`wire-runtime`, a real major-version jump, not a patch bump.**
+CVE-2026-63126 (CVSS 8.7): the Kotlin/JVM protobuf decoder lets a
+positive, oversized attacker-controlled length-delimited size wrap
+`pos + length` to a negative limit, escaping the existing
+negative-length check and computing an invalid cursor/limit/pointer
+position before validating it against the reader's actual bounds — an
+*incomplete* fix of an earlier CVE (CVE-2026-45799) in the same decoder.
+Affected `>= 1.0.0, < 6.4.5` — a wide range spanning this library's
+1.x-6.4.x major-version history, which is why 4.8.0 falls inside it
+despite not being especially old. Pinned to 6.4.5 specifically, not
+wire-runtime's own latest (7.1.2 at the time of this change): 6.4.5 is
+the named fix for this exact CVE and the smallest move off 4.8.0 that
+clears it, whereas 7.x is a further major-version line Beam's own
+compiled 2.77.0 classes were never built against — the same "examined
+minimum over an unexamined jump" judgment as the `kaml` 0.53.0 override
+(§7v). Unlike that case, this one genuinely crosses two major versions
+(4→6), so it got the full real-suite run rather than being waved through
+on reasoning alone — see Verified below.
+
+**Reachability**: test scope only for both, same as every other finding
+in §7p-§7w.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve to a single
+version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
+identical to every prior run on this module, confirming the two-major-
+version `wire-runtime` jump changes nothing observable about this
+module's own behavior.
+
+## 7y. `beam-adapter`'s twelfth and thirteenth findings: `guava` and `snappy-java`, both already fixed in `spark-adapter`
+
+Two more real Dependabot alerts against `beam-adapter`, both test scope,
+both CVEs this document already investigated and fixed for
+`spark-adapter`/`plugin`/`runner` in §7w — this pass hadn't yet checked
+whether `beam-adapter` carried the same exposure, and it did:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `com.google.guava:guava` | 33.6.0-jre (via `beam-runners-flink-1.19`/`beam-sdks-java-io-kafka`/`beam-sdks-java-io-google-cloud-platform`/`beam-sdks-java-extensions-sql`/`hadoop-client`/`hadoop-common`) | 33.7.2-jre | CVE-2026-102554 |
+| `org.xerial.snappy:snappy-java` | 1.1.10.7 (via `beam-sdks-java-core`) | 1.1.10.12 | CVE-2026-90559, CVE-2026-93451 |
+
+**`guava`**: confirmed via `dependencyTree` as the sole winner across a
+wide tree of older `-jre`/`-android` losers (every one shows its own
+`evicted by: 33.6.0-jre`) — not a Netty-style split, a clean single
+winner that's simply still vulnerable. Pinned to the same coordinate and
+version `spark-adapter`'s own `build.sbt` already carries for the
+identical CVE (§7w), reused rather than re-derived.
+
+**`snappy-java`, a discrepancy between the alert's named node and the
+real resolved version, checked rather than assumed.** The Dependabot
+alert names `1.1.10.4` (what `beam-sdks-java-core` itself declares), but
+`dependencyTree` shows that exact node evicted by `1.1.10.7` elsewhere in
+this module's tree — the real winner on the classpath is `1.1.10.7`, not
+`1.1.10.4`. That distinction doesn't change the outcome here: `1.1.10.7`
+is still within the affected range (`<= 1.1.10.8`), so the alert's
+underlying finding holds regardless of which specific node it happened
+to name. Pinned to `1.1.10.12`, the same coordinate and version
+`spark-adapter` already carries for this identical CVE pair (§7w).
+
+**Reachability**: test scope only for both, same as every other finding
+in §7p-§7x.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve to a single
+version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
+identical to every prior run on this module.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -1550,6 +1981,82 @@ nor Coverage Gating apply here either.
       GCP/SQL IO modules (all test scope). 1.80 → 1.85.2. Confirmed via
       `dependencyTree` (single resolved version, no conflicts) and a real
       `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Fix `web/`'s Next.js out-of-band security release (this change) —
+      see §7r: `next` 16.3.8 → 16.4.3, fixing CVE-2026-96889 (the
+      Dependabot-named sharp/librsvg RCE) plus two more disclosed in the
+      same Vercel release (a React `use cache` RCE, a Server Actions DoS)
+      — none of the three reachable by this app's own routes, fixed
+      anyway. A second finding along the way: `eslint-config-next`'s
+      transitive `zod` (dev-tooling only), cleared by `npm audit fix`.
+      Confirmed via `npm audit` (0 vulnerabilities), `npm run build` and
+      `npm run lint`.
+- [x] Fix `beam-adapter`'s Netty alert (this change) — see §7s:
+      CVE-2026-75595 (CVSS 9.1 Critical, SNI/mTLS bypass via a fragmented
+      TLS ClientHello) plus CVE-2026-75596, and a real classpath split
+      found along the way (two Netty releases, 4.1.100.Final and
+      4.1.133.Final, resolved simultaneously across different artifacts).
+      Pinned the full 32-artifact `io.netty:*` set to 4.1.137.Final via
+      `dependencyOverrides`, mirroring `spark-adapter`'s identical pin.
+      Confirmed via `dependencyTree` (single resolved version everywhere)
+      and a real `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Fix `beam-adapter`'s `commons-beanutils` and `zookeeper` alerts
+      (this change) — see §7t: CVE-2025-48734 (`commons-beanutils` 1.9.4
+      → 1.11.0) and CVE-2026-24308 (`zookeeper` 3.8.4 → 3.9.5, reusing
+      `spark-adapter`'s already-proven pin). Confirmed both don't
+      interact with the Jetty finding below (both zookeeper releases'
+      own POMs mark Jetty `provided`). Confirmed via `dependencyTree` and
+      a real `sbt test` run (360 passed, 0 failed, 26 canceled).
+- [x] Document `beam-adapter`'s Jetty alert as an accepted risk (this
+      change) — see §7u: CVE-2026-10050 (Digest auth bypass via lossy
+      ISO-8859-1 encoding). The advisory names `9.4.63` as the 9.4.x
+      line's fix, but checked directly against Maven Central and
+      confirmed **no such artifact was ever published** — the line is
+      EOL, `9.4.58.v20250814` is the newest real release, and a
+      cross-major-line Jetty bump is out of proportion to a test-scope
+      finding with no reachable attack path in this module's own code.
+- [x] Fix `beam-adapter`'s second `lz4-java` path, `kaml`, and Jackson
+      (this change) — see §7v: `org.lz4:lz4-java` 1.8.0 (via
+      `beam-runners-flink-1.19`, a path the existing `at.yawk.lz4`
+      override couldn't reach) excluded outright; `kaml` 0.20.0 → 0.53.0;
+      `jackson-core`/`-databind`/`-annotations` 2.18.8 → 2.18.11
+      (CVE-2026-89425, CVE-2026-59889). Confirmed via `dependencyTree`
+      (the `org.lz4` coordinate gone entirely; all others single-version,
+      no evictions) and a real `sbt test` run (360 passed, 0 failed, 26
+      canceled).
+- [x] Fix `spark-adapter`/`plugin`/`runner`'s overtaken `snappy-java` and
+      `guava` pins (this change) — see §7w: `snappy-java` 1.1.10.4 →
+      1.1.10.12 (CVE-2026-90559, CVE-2026-93451; promoted past 1.1.10.9
+      itself only because that artifact hit a persistent Maven Central
+      CDN 429 in this environment) and `guava` 33.4.8-jre → 33.7.2-jre
+      (CVE-2026-102554 — caught a real editing slip along the way: the
+      first attempt dropped the `-jre` classifier, which 404'd
+      immediately rather than passing silently). Confirmed via
+      `dependencyTree` (both single-version, no evictions), real `sbt
+      test` runs in all three modules (`spark-adapter`: 812 passed, 0
+      failed; `plugin`: 5 passed, 0 failed), and a full `./dev/build` +
+      `./dev/test` run proving the real `spark-submit` path still works
+      end-to-end with `plugin`/`runner`'s bumped compile-scope copies
+      (`Status: PASS`, `Contract verification: PASSED`, no violations).
+- [x] Fix `beam-adapter`'s `aircompressor` and `wire-runtime` alerts
+      (this change) — see §7x: `aircompressor` 2.0.2 → 2.0.3
+      (CVE-2025-67721) and `wire-runtime` 4.8.0 → 6.4.5 (CVE-2026-63126,
+      an incomplete fix of an earlier CVE in the same decoder). The
+      latter is a real two-major-version jump, not a patch bump, so it
+      got the full real-suite run rather than being waved through on
+      reasoning alone. Confirmed via `dependencyTree` (both
+      single-version, no evictions) and a real `sbt test` run (360
+      passed, 0 failed, 26 canceled, identical to every prior run).
+- [x] Fix `beam-adapter`'s `guava` and `snappy-java` alerts (this
+      change) — see §7y: both CVEs already fixed in `spark-adapter`/
+      `plugin`/`runner` (§7w), just not yet checked for `beam-adapter`'s
+      own, separate transitive exposure. `guava` 33.6.0-jre → 33.7.2-jre
+      (CVE-2026-102554) and `snappy-java` 1.1.10.7 → 1.1.10.12
+      (CVE-2026-90559, CVE-2026-93451 — the alert names the evicted
+      `1.1.10.4` node, but the real winner, `1.1.10.7`, is equally
+      affected). Both reuse the exact coordinate/version `spark-adapter`
+      already carries. Confirmed via `dependencyTree` (both
+      single-version, no evictions) and a real `sbt test` run (360
+      passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
