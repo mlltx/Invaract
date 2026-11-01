@@ -562,6 +562,44 @@ No hooks, no wrapping of library internals, no privileges, nothing per release o
   - or in Invaract's Java checker, called once per run with a description of every output, as the Beam Python adapter
     does (about 0.9 s per call, Java needed where the job runs).
 
+### Jobs bigger than one function: three pieces (probe 14)
+
+**Decision (2026-11-01): readiness signals are dropped.** Every declared output is a data asset, so nothing in the design
+writes or checks a marker.
+
+A real job reads and writes in several functions and files, so the design has three pieces, not one:
+
+| Piece | Where it goes | What it does |
+|---|---|---|
+| `@invaract.job("contract.yaml")` | once, on the job's entry point | starts a run. At its end it checks that every declared output was written (and every declared input read), then publishes all the outputs together, or none |
+| `invaract.read("orders")` | wherever the job reads, in any function or file | reads a declared input by name from the contract's location; anything undeclared is refused at once |
+| `invaract.write(df, "report")` | wherever the job writes, in any function or file | checks the table against the contract there and then, and holds it in staging until the run ends |
+
+There are optional decorator forms of the last two: `@invaract.reads("customers")` passes the input in as a parameter, and
+`@invaract.writes("audit")` writes whatever the function returns. A read or write outside a run is an error that says to
+add `@invaract.job`.
+
+**The example.** A job spread over three files (`load.py`, `build.py`, `main.py`) that reads `orders` and `customers` and
+writes `report` and `audit`. The changes:
+- `load.py`: `pd.read_parquet("data/in/orders")` became `invaract.read("orders")`, and the CSV read became
+  `@invaract.reads("customers")`;
+- `build.py`: the audit's `to_parquet(...)` became `@invaract.writes("audit")` on a function that returns the table;
+- `main.py`: `@invaract.job("contract.yaml")` on `main`, and `report.to_parquet(...)` became
+  `invaract.write(report, "report")`; the `os.makedirs` lines went.
+
+No paths remain in the job: they are in the contract.
+
+| The job | Result |
+|---|---|
+| correct | both inputs read; `report` and `audit` checked and staged; at the run's end, both published |
+| a bug in `build.report` (`total` as text) | `REFUSED OUTPUT_FIELD_TYPE_MISMATCH: 'report'.total is string`, raised at the write; nothing published |
+| a bug in `build.audit` (`order_id` dropped) | `report` passed and was staged; `REFUSED MISSING_OUTPUT_FIELD: 'audit' has no column order_id`; **neither** output published |
+| `main` forgets the audit | `REFUSED MISSING_OUTPUT: ... 'audit', which the job never wrote`, found at the run's end; nothing published |
+| `main` writes `debug_dump` | `REFUSED UNDECLARED_OUTPUT: ... 'debug_dump'`; nothing published |
+
+After the correct run, the published schemas were exactly the contract's: `region: string not null; total: int64 not
+null` and `order_id: int64 not null; status: string`.
+
 ## 7. What this means for the design
 
 - **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
@@ -660,6 +698,11 @@ No hooks, no wrapping of library internals, no privileges, nothing per release o
       converts returned tables to Arrow, checks them against the contract, and writes the outputs through staging, then the
       readiness marker.
     - Ran a pandas job correct and with three mistakes, and a Polars lazy job. Output summarised in section 6.
+14. **The three pieces, end to end.**
+    - A toy library with `job`, `read`, `write`, `reads` and `writes`; the run is held in a context variable; outputs are
+      staged per run and published together at its end.
+    - Ran a three-file pandas job (`python -m orders_job.main`) correct, and with four mistakes switched on in turn.
+      Output summarised in section 6, "Jobs bigger than one function".
 
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
