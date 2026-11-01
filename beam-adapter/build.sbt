@@ -355,6 +355,33 @@ dependencyOverrides ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11"
 )
 
+// io.airlift:aircompressor: a transitive of beam-sdks-java-io-parquet 2.77.0 (test
+// scope), resolving to 2.0.2, the sole version (confirmed via `dependencyTree` - no
+// eviction). CVE-2025-67721 (GHSA-vx9q-rhv9-3jvg, CWE-125/CWE-201): the Java Snappy/LZ4
+// decompressor implementations mishandle malformed compressed input, letting leftover
+// bytes from a reused output buffer leak into the decompressed result - a real risk only
+// for code that reuses one fixed-size output buffer across many decompress calls without
+// clearing it. Affected 0.3 to < 2.0.3 (the latest published 2.0.x release, so no later
+// floor to consider), fixed 2.0.3.
+dependencyOverrides += "io.airlift" % "aircompressor" % "2.0.3"
+
+// com.squareup.wire:wire-runtime: a transitive of
+// beam-sdks-java-io-google-cloud-platform/beam-sdks-java-io-kafka/
+// beam-sdks-java-extensions-sql 2.77.0 (test scope), resolving to 4.8.0, the sole version
+// (no eviction). CVE-2026-63126 (CVSS 8.7): the Kotlin/JVM protobuf decoder lets a
+// positive, oversized attacker-controlled length-delimited size wrap `pos + length` to a
+// negative limit, escaping the existing negative-length check and computing an invalid
+// cursor/limit/pointer position before validating it against the reader's actual bounds -
+// an incomplete fix of an earlier CVE (CVE-2026-45799) in the same decoder. Affected
+// >= 1.0.0, < 6.4.5 (a wide range spanning this library's 1.x-6.4.x major-version
+// history, which is why 4.8.0 falls inside it despite not being especially old), fixed
+// 6.4.5. Pinned to 6.4.5 specifically, not wire-runtime's own latest (7.1.2 at the time
+// of this change): 6.4.5 is the named fix for this exact CVE and the smallest move off
+// 4.8.0 that clears it, whereas 7.x is a further major-version line Beam's own compiled
+// 2.77.0 classes were never built against - the same "examined minimum over an
+// unexamined jump" judgment as the kaml 0.53.0 override above.
+dependencyOverrides += "com.squareup.wire" % "wire-runtime" % "6.4.5"
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
