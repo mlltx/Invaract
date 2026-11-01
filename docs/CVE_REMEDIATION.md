@@ -1852,6 +1852,43 @@ identical to every prior run on this module, confirming the two-major-
 version `wire-runtime` jump changes nothing observable about this
 module's own behavior.
 
+## 7y. `beam-adapter`'s twelfth and thirteenth findings: `guava` and `snappy-java`, both already fixed in `spark-adapter`
+
+Two more real Dependabot alerts against `beam-adapter`, both test scope,
+both CVEs this document already investigated and fixed for
+`spark-adapter`/`plugin`/`runner` in §7w — this pass hadn't yet checked
+whether `beam-adapter` carried the same exposure, and it did:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `com.google.guava:guava` | 33.6.0-jre (via `beam-runners-flink-1.19`/`beam-sdks-java-io-kafka`/`beam-sdks-java-io-google-cloud-platform`/`beam-sdks-java-extensions-sql`/`hadoop-client`/`hadoop-common`) | 33.7.2-jre | CVE-2026-102554 |
+| `org.xerial.snappy:snappy-java` | 1.1.10.7 (via `beam-sdks-java-core`) | 1.1.10.12 | CVE-2026-90559, CVE-2026-93451 |
+
+**`guava`**: confirmed via `dependencyTree` as the sole winner across a
+wide tree of older `-jre`/`-android` losers (every one shows its own
+`evicted by: 33.6.0-jre`) — not a Netty-style split, a clean single
+winner that's simply still vulnerable. Pinned to the same coordinate and
+version `spark-adapter`'s own `build.sbt` already carries for the
+identical CVE (§7w), reused rather than re-derived.
+
+**`snappy-java`, a discrepancy between the alert's named node and the
+real resolved version, checked rather than assumed.** The Dependabot
+alert names `1.1.10.4` (what `beam-sdks-java-core` itself declares), but
+`dependencyTree` shows that exact node evicted by `1.1.10.7` elsewhere in
+this module's tree — the real winner on the classpath is `1.1.10.7`, not
+`1.1.10.4`. That distinction doesn't change the outcome here: `1.1.10.7`
+is still within the affected range (`<= 1.1.10.8`), so the alert's
+underlying finding holds regardless of which specific node it happened
+to name. Pinned to `1.1.10.12`, the same coordinate and version
+`spark-adapter` already carries for this identical CVE pair (§7w).
+
+**Reachability**: test scope only for both, same as every other finding
+in §7p-§7x.
+
+**Verified**: `sbt Test/dependencyTree` — both resolve to a single
+version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
+identical to every prior run on this module.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2009,6 +2046,17 @@ module's own behavior.
       reasoning alone. Confirmed via `dependencyTree` (both
       single-version, no evictions) and a real `sbt test` run (360
       passed, 0 failed, 26 canceled, identical to every prior run).
+- [x] Fix `beam-adapter`'s `guava` and `snappy-java` alerts (this
+      change) — see §7y: both CVEs already fixed in `spark-adapter`/
+      `plugin`/`runner` (§7w), just not yet checked for `beam-adapter`'s
+      own, separate transitive exposure. `guava` 33.6.0-jre → 33.7.2-jre
+      (CVE-2026-102554) and `snappy-java` 1.1.10.7 → 1.1.10.12
+      (CVE-2026-90559, CVE-2026-93451 — the alert names the evicted
+      `1.1.10.4` node, but the real winner, `1.1.10.7`, is equally
+      affected). Both reuse the exact coordinate/version `spark-adapter`
+      already carries. Confirmed via `dependencyTree` (both
+      single-version, no evictions) and a real `sbt test` run (360
+      passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

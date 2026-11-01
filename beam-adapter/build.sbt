@@ -382,6 +382,30 @@ dependencyOverrides += "io.airlift" % "aircompressor" % "2.0.3"
 // unexamined jump" judgment as the kaml 0.53.0 override above.
 dependencyOverrides += "com.squareup.wire" % "wire-runtime" % "6.4.5"
 
+// com.google.guava:guava: a transitive of beam-runners-flink-1.19/
+// beam-sdks-java-io-kafka/beam-sdks-java-io-google-cloud-platform/
+// beam-sdks-java-extensions-sql 2.77.0 and hadoop-client/hadoop-common 3.4.1 (all test
+// scope), resolving to 33.6.0-jre, the sole winner across a wide tree of older -jre/
+// -android losers (confirmed via `dependencyTree` - every one of them shows its own
+// "evicted by: 33.6.0-jre"). CVE-2026-102554 (GHSA-xxph-c9ww-hj94): `MapMaker`/
+// `CompactHashMap`/`CompactHashSet` deserialization eagerly allocates as much memory as a
+// serialized payload's own declared size claims, before validating it. Affected <= 33.7.1,
+// fixed 33.7.2 - the same coordinate and version spark-adapter's own build.sbt already
+// pins for the identical CVE, reused rather than re-derived.
+dependencyOverrides += "com.google.guava" % "guava" % "33.7.2-jre"
+
+// org.xerial.snappy:snappy-java: a transitive of beam-sdks-java-core 2.77.0 (test scope),
+// resolving to 1.1.10.7 - not the 1.1.10.4 the Dependabot alert names (that one is itself
+// evicted by 1.1.10.7 elsewhere in this tree, confirmed via `dependencyTree`), but 1.1.10.7
+// is still within the affected range below, so the alert's underlying finding holds
+// regardless of which specific node it names. CVE-2026-90559/CVE-2026-93451 (see
+// spark-adapter/build.sbt's identical comment for the full detail): affected <= 1.1.10.8,
+// fixed 1.1.10.9. Pinned to 1.1.10.12, the same coordinate and version spark-adapter
+// already pins for the identical CVE pair, reused rather than re-derived (that module's own
+// comment explains why .12 over the bare .9: a persistent Maven Central CDN 429 on .9's own
+// artifact, and .10-.12 are a pure Hadoop-compatibility superset with no new CVEs).
+dependencyOverrides += "org.xerial.snappy" % "snappy-java" % "1.1.10.12"
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
