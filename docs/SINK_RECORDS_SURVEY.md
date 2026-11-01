@@ -438,6 +438,45 @@ reviewer. It cannot be *proof*. It is not deterministic, and nothing checks it. 
 - **The syntax tree only as a best effort for pandas.** Claim a transformation-shape rule or a role check only when the whole
   path from read to write was analysed, and refuse safely otherwise.
 
+### Library-specific adapters, not one "Python" adapter
+
+"Python" is a language, not an engine; it offers no description of a job. The libraries a job uses are where descriptions
+exist, and each library offers a different one. So one adapter per library is easier, and more honest about what each can
+check, than one adapter for all Python. Destination records (sections 3 and 4) stay shared underneath all of them, for
+where, who and what landed.
+
+**pandas: trace it as it runs (probe 12).** pandas' functions are ordinary Python, so a tracer installed in the job's
+interpreter (the same way as the native Python survey's hook, with no change to the job) can attach to every DataFrame
+where it came from. On probe 9's job, it gave for each write the full chain from the reads, with:
+- the real paths (`data/out/report/2026-11-01.parquet`, the date filled in);
+- the real columns at each step;
+- the step inside the team's own function (`dropna()`), where the syntax tree saw only an opaque call;
+- **both iterations of the loop** (`by_region/eu.csv`, `by_region/us.csv`), which the syntax tree could not analyse.
+
+Because it sits at the write call, it can refuse a write before it happens, the way Spark is checked.
+
+Its costs:
+- pandas' surface is large. A generic wrapper keeps table-level lineage through any step, and only the steps a rule needs
+  (filters, joins, groupings) must be recognised one by one.
+- The chain breaks where data leaves pandas: through numpy (`df.values`), or into another library. Such a step must be
+  reported as untraced, not assumed.
+- Condition strings (`df.query("amount > 0")`) need parsing.
+- Every pandas release must be re-checked, as the Beam Python adapter re-records its fixtures per release.
+
+| Library | The job's description | How it is obtained without changing the job | Checks it supports | Effort | Confidence |
+|---|---|---|---|---|---|
+| **Polars, lazy API** | the library's own optimised plan (probe 10) | a wrapper records `explain()` at `collect()` or `sink_*` | locations, schema, filters, joins, groupings, **columns read**, lineage | small | **High** |
+| **DuckDB** | the library's own plan, and the SQL text | `EXPLAIN` on the statement; the Python API is compiled, so capturing the text needs wrapping its module functions (UNVERIFIED for connection methods) | as Polars | medium | **High** where the SQL text is caught |
+| **SQL sent to Postgres or BigQuery** | the SQL text, from the database's records | pgaudit, or BigQuery's jobs history; sqlglot for lineage (probe 11) | as Polars, plus the role check | small | **High** (Postgres tested) |
+| **pandas** | a trace of what ran (probe 12) | the tracer in the job's interpreter | locations, schema, filters, joins, groupings, table-level lineage; columns only as names flow | medium, with upkeep per release | **Medium to high** |
+| **Polars, eager API** | none of its own | a tracer like pandas' | as pandas | medium | **Medium** |
+| **anything else** | none | records only | where, who and what landed | — | as section 3 |
+
+**The risk to check first: mixed jobs.** A job that reads with pandas, hands the frame to Polars (`pl.from_pandas`) or to
+DuckDB (which can query a pandas DataFrame by its variable name), and writes from there, crosses adapters. The chain then
+holds only if the adapters share one record of where each frame came from. How often real jobs mix libraries should be
+measured before building more than one adapter.
+
 ## 6. What this means for the design
 
 - **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
@@ -524,6 +563,13 @@ reviewer. It cannot be *proof*. It is not deterministic, and nothing checks it. 
     - DuckDB 2.0.0: `EXPLAIN` of the equivalent SQL, over a 5-column Parquet folder and a 3-column CSV file.
 11. **SQL lineage.** sqlglot 30.25.0: `parse_one` of an `INSERT ... SELECT` joining `raw.orders`, `raw.customers` and
     `control.calendar`, then `sqlglot.lineage.lineage` for each output column.
+12. **A pandas tracer.**
+    - Set-up: pandas 2.3.3 functions wrapped in the job's interpreter: `read_parquet` and `read_csv`; `DataFrame.__getitem__`
+      (boolean filters and selections); `Series` comparisons, to carry the column into a filter; `merge`; `groupby` with
+      `DataFrameGroupBy.agg`; `__setitem__`; a generic wrapper for `dropna`, `fillna`, `rename` and others; `to_parquet` and
+      `to_csv`.
+    - Each DataFrame's origin was kept in a dictionary keyed by object identity, cleaned up when the frame was freed.
+    - Ran probe 9's job, unchanged, with the argument `2026-11-01`. Output summarised in "Library-specific adapters".
 
 ### Sources (search results; the documentation pages themselves were not reachable from this session)
 
@@ -563,4 +609,6 @@ reviewer. It cannot be *proof*. It is not deterministic, and nothing checks it. 
 | CloudTrail records the byte ranges of partial `GetObject` reads | a Parquet read of an S3 object, then the event |
 | Snowflake's access history records lineage from inputs to the columns a statement writes | an `INSERT ... SELECT` in a test account, then `ACCESS_HISTORY` |
 | How many real pandas jobs a syntax-tree analyser can read end to end | run probe 9's analyser, extended, over a sample of the real jobs |
+| How much of a real job the pandas tracer follows end to end, and how often jobs mix pandas, Polars and DuckDB | probe 12's tracer over a sample of the real jobs |
+| DuckDB statements can be captured from its Python API without changing the job | wrap `duckdb.sql` and try a connection's `execute`, which is compiled |
 | Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
