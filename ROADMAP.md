@@ -3996,8 +3996,15 @@ Extend verification engine to support multiple execution engines.
       write through the `invaract` package (`@invaract.job`, `invaract.read`, `invaract.write`); outputs checked and
       staged, published together only when the run passed; no Java where jobs run (a native-image checker). First
       version: Parquet and CSV on local and mounted file systems
-  - [ ] Milestone 0: the checker as a GraalVM native image, passing the design's criteria (gating)
-  - [ ] The checker protocol, the package, conformance, `invaract-lint`, the user guide, the first release
+  - [x] Milestone 0: the checker as a GraalVM native image, passing the design's criteria (gating). `pythonio-adapter`'s
+        `PythonIoCheck`, built by CI's `pythonio-native-checker` job: the same replies as the JVM on 23 recorded protocol
+        cases, contracts, organisational policy, `ref://` locations and every built-in sink included; 6 to 15 ms a run;
+        41 MB, 14 MB compressed (docs/PYTHONIO_ADAPTER.md)
+  - [ ] The checker protocol: `open`, `write`, `finish` done with milestone 0; a `read` request, and dry-run mode
+  - [ ] Conformance: the kit's scenarios already run through the checker as the package will drive it; the run through
+        real Python jobs comes with the package. A staged-publish enforcement point, so the user pages stop saying earlier
+        writes "have already happened"
+  - [ ] The package, `invaract-lint`, the user guide, the first release
   - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
   - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

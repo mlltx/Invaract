@@ -8,6 +8,7 @@
     {"name": "adapter-testkit", "role": "kit", "published": true, "mutation": true, "sparkMatrix": true},
     {"name": "spark-adapter", "role": "adapter", "published": true, "mutation": true, "capabilities": "invaract-capabilities-spark.yaml", "sparkMatrix": true, "doc": "docs/SPARK_ADAPTER.md"},
     {"name": "beam-adapter", "role": "adapter", "published": true, "mutation": true, "capabilities": "invaract-capabilities-beam.yaml", "doc": "docs/BEAM_ADAPTER.md", "docStandard": true, "status": "complete"},
+    {"name": "pythonio-adapter", "role": "adapter", "published": false, "mutation": true, "built": false, "capabilities": "invaract-capabilities-pythonio.yaml", "doc": "docs/PYTHONIO_ADAPTER.md", "docStandard": true, "status": "in-progress"},
     {"name": "plugin", "role": "harness", "published": false, "mutation": false},
     {"name": "runner", "role": "harness", "published": false, "mutation": false},
     {"name": "notification-kafka", "role": "extension", "published": false, "mutation": false, "built": false},

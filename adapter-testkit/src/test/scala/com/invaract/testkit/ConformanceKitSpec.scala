@@ -208,6 +208,44 @@ class ConformanceKitSpec extends AnyFunSuite {
     AdapterCapabilities.parse(rewritten.toString).fold(e => throw new AssertionError(e.mkString("; ")), identity)
   }
 
+  // --- per-write read attribution -----------------------------------------------------------------
+
+  private val partialInputs = declaring(Map("check.inputExistence" -> (("partial", Some("which reads fed a write is not known")))))
+
+  test("an adapter that cannot attribute reads to a write is held to a scenario's violations except the missing input attribution shows") {
+    val stray = scenario("an-undeclared-second-write-is-blocked")
+    assert(stray.expect == Expectation.Reject(Set(ViolationType.OutputLocationMismatch, ViolationType.MissingInput)))
+    assert(Conformance.expectationFor(stray, partialInputs) == Right(Conformance.Expected.RejectExactly(Set(ViolationType.OutputLocationMismatch))))
+    assert(Conformance.expectationFor(stray, ReferenceAdapter.declared) == Right(Conformance.Expected.RejectExactly(stray.expect.asInstanceOf[Expectation.Reject].violationTypes)))
+  }
+
+  test("only the scenarios listed for per-write read attribution are relaxed, and only their missing input") {
+    assert(Scenarios.perWriteReadAttribution.keySet.subsetOf(Scenarios.all.map(_.id).toSet))
+    assert(Scenarios.perWriteReadAttribution.values.forall(_.trim.nonEmpty))
+    // a missing input that is not about attribution is still required of an adapter declaring check.inputExistence partial
+    val notRead = scenario("declared-input-not-read")
+    assert(Conformance.expectationFor(notRead, partialInputs) == Right(Conformance.Expected.RejectExactly(Set(ViolationType.MissingInput))))
+    // the relaxed scenario still has to be blocked
+    Scenarios.all.filter(s => Scenarios.perWriteReadAttribution.contains(s.id)).foreach { s =>
+      assert(Conformance.expectationFor(s, partialInputs).exists(_ != Conformance.Expected.Pass), s.id)
+    }
+  }
+
+  test("the relaxed scenario is judged on what remains: the location mismatch alone conforms, a pass does not") {
+    // an adapter that publishes no events, so the verdict alone is judged
+    val silent = declaring(
+      Map(
+        "check.inputExistence" -> (("partial", Some("which reads fed a write is not known"))),
+        "reporting.notifications" -> (("unsupported", Some("publishes nothing")))
+      )
+    )
+    val stray = scenario("an-undeclared-second-write-is-blocked")
+    val expected = Conformance.expectationFor(stray, silent).fold(r => fail(r), identity)
+    assert(Conformance.judge(expected, new RecordingSink().rejected(Set(ViolationType.OutputLocationMismatch)), silent, None, Analysis(), 2) == ScenarioVerdict.Conforms)
+    assert(Conformance.judge(expected, new RecordingSink().rejected(stray.expect.asInstanceOf[Expectation.Reject].violationTypes), silent, None, Analysis(), 2).isInstanceOf[ScenarioVerdict.Diverges])
+    assert(Conformance.judge(expected, new RecordingSink().passed, silent, None, Analysis(), 2).isInstanceOf[ScenarioVerdict.Diverges])
+  }
+
   test("an adapter that honestly declares check.format unsupported must block a contract that declares a format, with UNSUPPORTED_CONTRACT_FEATURE") {
     val honest = new ReferenceAdapter(declaring(Map("check.format" -> (("unsupported", Some("this engine has no format concept"))))))
     val report = Conformance.evaluate(honest)

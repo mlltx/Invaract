@@ -1,0 +1,5 @@
+version: "1.0"
+policies:
+  - id: outputs-described
+    type: require_dataset_description
+    scope: outputs

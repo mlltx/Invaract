@@ -75,7 +75,10 @@ don't present it as something external consumers would bind to.
   runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
   submitted through a wrapper runner named by `--runner`, the second adapter after
   `spark-adapter` — see docs/BEAM_ADAPTER.md; it also checks pipelines written with Beam's Python SDK, through the
-  `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md)
+  `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md),
+  `pythonio-adapter` (in progress: the checker for plain Python jobs that read and write through the planned `invaract`
+  package, built as a GraalVM native program so no Java is needed where jobs run — see docs/PYTHON_IO_ADAPTER_DESIGN.md
+  and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)

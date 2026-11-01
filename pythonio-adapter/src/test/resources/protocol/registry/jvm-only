@@ -1,0 +1,1 @@
+The registry client is named by class; the native program can load only classes built into it, and this stub lives in the tests.

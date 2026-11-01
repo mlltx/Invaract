@@ -1,0 +1,26 @@
+id: orders_report
+version: "1.0.0"
+inputs:
+  - { name: orders,    location: data/in/orders,        format: parquet }
+  - { name: customers, location: data/in/customers.csv, format: csv }
+outputs:
+  - name: report
+    type: DATA_ASSET
+    description: Revenue per region.
+    location: ref://report_dir
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }
+        - { name: lines,  type: "array<struct<sku:string,qty:int>>" }
+  - name: audit
+    type: DATA_ASSET
+    description: One row per order processed.
+    location: data/out/audit
+    format: csv
+    schema:
+      fields:
+        - { name: order_id, type: long, required: true }
+        - { name: status,   type: string }
