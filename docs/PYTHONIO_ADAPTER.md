@@ -9,13 +9,13 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 3 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 4 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
-the package and comes out as the declaration promises, and the declaration's enforcement point is `staged-publish`. Nothing
-is released yet (the platform wheels carrying the native
-checker are milestone 5), so the user pages list the engine as "in development".
+the package and comes out as the declaration promises, and the declaration's enforcement point is `staged-publish`.
+`invaract-lint` (`lint/`) flags the reads and writes a job makes around the package. Nothing is released yet (the platform
+wheels carrying the native checker are milestone 5), so the user pages list the engine as "in development".
 
 ## What it is
 
@@ -35,6 +35,8 @@ finished and every answer was yes.
 | `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
 | `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
+| `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
+| `lint/tests` | the lint's pytest suite, including the example job before and after it adopted the package |
 
 ### The protocol
 
@@ -202,7 +204,7 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
 | A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
 | An output format the package cannot write yet (`delta`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
-| A write or read made around the package | ❓ not seen by the checker; the lint (milestone 4) | — |
+| A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
 ## Type mapping
 
@@ -272,6 +274,32 @@ Milestone 3 (design section 12) runs the kit's scenarios as real Python jobs, an
   published together only if the whole run passed. The user pages now say that for this engine, not `in-engine-blocking`'s
   "writes the job made before it have already happened".
 
+## Milestone 4: the lint
+
+Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads and writes made outside the package (decision
+5):
+
+- **What it flags.** It flags a call by the name it resolves to through the file's imports, so an alias (`import pandas as
+  pd`, `from pyarrow import parquet as pq`) is no way around it. There are four codes:
+  - reads (`IVR001`);
+  - writes (`IVR002`): pyarrow's writers, a frame's `to_*` and `write_*` *given a destination* (`df.to_csv()` alone returns
+    text), `sink_*`, `open` in a mode that writes or one not spelled out, `Path.write_text`;
+  - connections (`IVR003`): database drivers, `sqlalchemy`, cloud storage clients;
+  - SQL that reads or writes files (`IVR004`): `COPY`, `ATTACH`, `read_parquet(...)`, a quoted path after `FROM`.
+- **What it does not do.** It checks only that such calls are present, as the design asks. It does not follow names reached
+  dynamically (`getattr`, `__import__`).
+- **Exceptions.** A call is kept with `# invaract: allow` on any of its lines, which shows in review. The conformance job uses
+  this for the two lines that make its inputs.
+- **Running it.** `invaract-lint [paths]` exits 0, 1 (findings) or 2 (a file it cannot parse). `--format github` prints each
+  finding as a pull-request annotation, and the README shows a pre-commit hook. It has no dependencies.
+- **Tests.**
+  - 71 pytest tests, on Python 3.10 to 3.13. They include the example job before it adopted the package (4 findings, the
+    survey's probe 14) and after (none).
+  - Mutation testing with `mutmut` (design section 10): 283 of 323 mutants killed (87.6%). The 40 that survive are argparse
+    help and description texts, and equivalent mutants. For example, a broken-file count of -1 still exits 2, `"UTF-8"` is
+    the same as `"utf-8"`, and the mode set `"XXwax+XX"` still catches every write mode.
+  - CI's `pythonio-lint` job runs the tests and lints the example and conformance jobs. It also runs `mutmut` with an 80% floor.
+
 ## Friction log
 
 - `dev/new-adapter` takes an engine name without a hyphen, so the design's `python-io-adapter` and engine `python-io` became
@@ -309,6 +337,10 @@ Milestone 3 (design section 12) runs the kit's scenarios as real Python jobs, an
   delimiter").
 - The design named Python 3.9 as the oldest supported release. CI's runners no longer offer it (it reached its end of life
   in October 2025), so the package requires 3.10, the oldest CI can test.
+- The design placed the lint at `python/invaract_lint/`, beside the package. A second package needs its own `pyproject.toml`
+  and root, so it is `lint/` instead.
+- Run over the package's own code, the lint finds exactly the package's three pyarrow reads and writes (`_frames.read_table`,
+  `_run._writer`). That is a check that it catches real I/O; the package is not a job, so it is not marked.
 - Both conformance specs record their results as `target/conformance/<adapter>.json`, and both are the adapter `pythonio`, so
   the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry

@@ -1,0 +1,2 @@
+[console_scripts]
+invaract-lint = invaract_lint.cli:main

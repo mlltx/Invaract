@@ -98,10 +98,11 @@ def make_input(dataset):
     ]
     table = pa.Table.from_arrays(columns, schema=schema)
     os.makedirs(dataset["location"], exist_ok=True)
+    # the data an earlier job wrote, made before the run: deliberately not through invaract
     if dataset["format"] == "csv":
-        csv.write_csv(table, os.path.join(dataset["location"], "part-0.csv"))
+        csv.write_csv(table, os.path.join(dataset["location"], "part-0.csv"))  # invaract: allow
     else:
-        pq.write_table(table, os.path.join(dataset["location"], "part-0.parquet"))
+        pq.write_table(table, os.path.join(dataset["location"], "part-0.parquet"))  # invaract: allow
 
 
 def qualified(table, index):

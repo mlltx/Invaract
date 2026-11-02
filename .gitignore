@@ -48,3 +48,5 @@ demo/output/**/*.json
 .env.local
 .env.*.local
 __pycache__/
+# mutmut's working copy (Python mutation testing)
+mutants/

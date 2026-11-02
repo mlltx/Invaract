@@ -77,9 +77,10 @@ don't present it as something external consumers would bind to.
   `spark-adapter` — see docs/BEAM_ADAPTER.md; it also checks pipelines written with Beam's Python SDK, through the
   `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md),
   `pythonio-adapter` (in progress: the checker for plain Python jobs that read and write through the `invaract`
-  package in `pythonio-adapter/python`, built as a GraalVM native program so no Java is needed where jobs run — see docs/PYTHON_IO_ADAPTER_DESIGN.md
-  and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies and runs the conformance scenarios as real
-  Python jobs, and `pythonio-python` runs the package's tests against the native build)
+  package in `pythonio-adapter/python`, built as a GraalVM native program so no Java is needed where jobs run, and
+  `invaract-lint` in `pythonio-adapter/lint`, the guard against reads and writes made around the package — see
+  docs/PYTHON_IO_ADAPTER_DESIGN.md and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies and runs the conformance scenarios as real
+  Python jobs, `pythonio-python` runs the package's tests against the native build, and `pythonio-lint` tests the lint)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -1015,7 +1016,7 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
   `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`
   or a `.github/actions/` composite changed; pushes always run them. It also gates the Beam matrix,
-  `pythonio-native-checker` and `pythonio-python` on a change to their own module or what they are built from
+  `pythonio-native-checker`, `pythonio-python` and `pythonio-lint` on a change to their own module or what they are built from
 - **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
   the job rebuilds every module
 - **`release-dry-run.yml`** (separate workflow, on changes to publishing files): signs and bundles all six
