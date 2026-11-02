@@ -590,6 +590,9 @@ jobs:
   pythonio-native-checker:
     name: Native checker (pythonio-adapter)
     runs-on: ubuntu-latest
+    # read-only: the token is used only to check out the code and to read GraalVM's public releases (setup-graalvm)
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
