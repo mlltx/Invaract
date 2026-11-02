@@ -83,7 +83,7 @@ object PythonIoConformanceAdapter {
     val name = nameOf(contract.outputs, output.location)
     List(
       json("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))),
-      json("op" -> "written", "name" -> name, "rows" -> 2L, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap)
+      json("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap)
     )
   }
 

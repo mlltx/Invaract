@@ -444,7 +444,7 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 | How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load | ask the teams; check the deployed notification and policy configurations |
 | How small the change is on real jobs | convert a sample of real jobs |
 | How often real jobs read or write outside the package | run the lint over the same sample |
-| ~~The kit decision on per-write read attribution (scenario 20)~~ | settled as D4 recommends: the kit's `Scenarios.perWriteReadAttribution` holds an adapter that declares `check.inputExistence` `partial` to scenario 20's other violation only |
+| ~~The kit decision on per-write read attribution (scenario 20)~~ | settled as D4 recommends: the kit's `Scenarios.partialExcuses` holds an adapter that declares `check.inputExistence` `partial` to scenario 20's other violation only |
 | Whether the PyPI names stay free until registered | register placeholder releases of `invaract` and `invaract-lint` |
 
 ## Evidence

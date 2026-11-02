@@ -5,7 +5,6 @@ package com.invaract.sparkadapter
 
 
 import com.invaract.verification.AdapterCapabilities
-import org.slf4j.LoggerFactory
 
 /** The Spark adapter's own declaration of what it verifies - loaded from
   * `invaract-capabilities-spark.yaml` (bundled in this module's jar), the same file the engine
@@ -19,21 +18,11 @@ import org.slf4j.LoggerFactory
   * taken in a real build.
   */
 private[sparkadapter] object SparkCapabilities {
-  private val logger = LoggerFactory.getLogger(SparkCapabilities.getClass)
-
   val ResourcePath = "invaract-capabilities-spark.yaml"
 
   lazy val declared: Option[AdapterCapabilities] = load(ResourcePath, SparkCapabilities.getClass.getClassLoader)
 
   /** The declaration at `path` on `classLoader`'s classpath, or `None` (logged) when it is absent or invalid. */
   private[sparkadapter] def load(path: String, classLoader: ClassLoader): Option[AdapterCapabilities] =
-    AdapterCapabilities.fromResource(path, classLoader) match {
-      case Some(Right(capabilities)) => Some(capabilities)
-      case Some(Left(errors)) =>
-        logger.warn(s"$path is invalid; the capability check is skipped: ${errors.mkString("; ")}")
-        None
-      case None =>
-        logger.warn(s"$path is missing from the classpath; the capability check is skipped")
-        None
-    }
+    AdapterCapabilities.load(path, classLoader)
 }

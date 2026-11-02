@@ -89,6 +89,42 @@ class VerificationPipelineSpec extends AnyFunSuite {
     }
   }
 
+  // --- evaluateWrite and reject ------------------------------------------------------------------
+
+  test("evaluateWrite: verifyWrite's verdict, publishing nothing and throwing nothing, pass or fail") {
+    val passed = VerificationPipeline.evaluateWrite(contract, checked(), VerificationOptions(), None)
+    assert(passed.passed && passed.violations.isEmpty && passed.contract == "pipe@1.0.0")
+    val failed = VerificationPipeline.evaluateWrite(contract, checked(output = Cols().add("id", LongType, nullable = false)), VerificationOptions(), None)
+    assert(!failed.passed)
+    assert(failed.violations.map(_.violationType) == List(ViolationType.MissingOutputField))
+    // the same verdict verifyWrite reaches and publishes
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException](
+      VerificationPipeline.verifyWrite(contract, checked(output = Cols().add("id", LongType, nullable = false)), VerificationOptions(), Some(sink))
+    )
+    assert(validationEvents(sink).head.violations == failed.violations)
+  }
+
+  test("evaluateWrite: a capability the adapter declares unsupported is part of the verdict") {
+    val noSchemas = CapabilityFixtures.parsed(Map("check.schema" -> (("unsupported", Some("no schemas")))))
+    val result = VerificationPipeline.evaluateWrite(contract, checked(), VerificationOptions(), Some(noSchemas))
+    assert(result.violations.map(_.violationType) == List(ViolationType.UnsupportedContractFeature))
+  }
+
+  test("reject: publishes the result as one FAILED validation for the run and job, then throws it, explained") {
+    val sink = new TestNotificationSink
+    val result = VerificationResult.of("pipe@1.0.0", List(Violations.undeclaredInput("in/secrets")))
+    val ex = intercept[ContractViolationException](
+      VerificationPipeline.reject(contract, result, Read(DatasetRef("in/secrets")), Some(sink), Some("run-3"), Some(JobInfo(engine = Some("toy"))))
+    )
+    assert(ex.result == result)
+    assert(ex.getMessage.contains("1. [UNDECLARED_INPUT]") && ex.getMessage.contains("Read(in/secrets)"))
+    val events = validationEvents(sink)
+    assert(events.map(e => (e.status, e.runId, e.job.flatMap(_.engine))) == List(("FAILED", Some("run-3"), Some("toy"))))
+    // with no sink it still throws
+    intercept[ContractViolationException](VerificationPipeline.reject(contract, result, Read(DatasetRef("in/secrets")), None, None, None))
+  }
+
   test("verifyWrite: a violation throws ContractViolationException, publishes FAILED first, and explains itself") {
     val sink = new TestNotificationSink
     val ex = intercept[ContractViolationException] {

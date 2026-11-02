@@ -48,7 +48,7 @@ capabilities:
       Every read names the declared input it reads, so a missing read and an undeclared read are known exactly. Which
       reads fed a write is not: the package sends every read made before the write (docs/PYTHON_ADAPTER_SURVEY.md, D4),
       so it never invents a missing input, but cannot report one only a single write's own reads would show (the kit's
-      Scenarios.perWriteReadAttribution). With rejectUndeclaredInputs, an earlier read of another output's input counts too.
+      Scenarios.partialExcuses). With rejectUndeclaredInputs, an earlier read of another output's input counts too.
   check.location:
     status: supported
     note: The package writes to the location the contract declares for the output it names, so the location is the contract's own.

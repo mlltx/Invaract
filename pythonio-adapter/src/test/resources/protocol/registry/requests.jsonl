@@ -2,7 +2,7 @@
 {"op": "read", "name": "orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "read", "name": "customers", "schema": [{"name": "customer_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}
-{"op": "written", "name": "report", "rows": 120, "nulls": {"region": 0, "total": 0, "lines": 7}}
+{"op": "written", "name": "report", "nulls": {"region": 0, "total": 0, "lines": 7}}
 {"op": "write", "name": "audit", "format": "csv", "saveMode": "overwrite", "schema": [{"name": "order_id", "type": "int64", "nullable": true}, {"name": "status", "type": "string", "nullable": true}]}
-{"op": "written", "name": "audit", "rows": 5000, "nulls": {"order_id": 0, "status": 12}}
+{"op": "written", "name": "audit", "nulls": {"order_id": 0, "status": 12}}
 {"op": "finish", "completed": true}

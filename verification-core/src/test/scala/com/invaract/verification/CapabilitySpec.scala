@@ -131,6 +131,13 @@ class CapabilitySpec extends AnyFunSuite {
 
   // --- fromResource ------------------------------------------------------------------------------
 
+  test("load gives the declaration, or None for one that is absent or invalid, and never throws") {
+    assert(AdapterCapabilities.load("capabilities-toy-fixture.yaml", getClass.getClassLoader).map(_.adapter).contains("toy"))
+    assert(AdapterCapabilities.load("no-such-declaration.yaml", getClass.getClassLoader).isEmpty)
+    assert(AdapterCapabilities.load("capabilities-broken-fixture.yaml", getClass.getClassLoader).isEmpty)
+    assert(AdapterCapabilities.fromResource("capabilities-broken-fixture.yaml", getClass.getClassLoader).exists(_.isLeft))
+  }
+
   test("fromResource reads a bundled declaration, and reports an absent one as None") {
     val caps = AdapterCapabilities.fromResource("capabilities-toy-fixture.yaml", getClass.getClassLoader)
     assert(caps.exists(_.isRight))

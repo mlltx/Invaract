@@ -55,6 +55,9 @@ private[invaract] object ArrowSchemas {
     LogicalField(text.substring(0, at), dataType, nullable)
   }
 
+  /** The type of a nested element, whose nullability the contract's types do not carry. */
+  private def typeOf(text: String): LogicalType = withNullability(text)._1
+
   private def withNullability(text: String): (LogicalType, Boolean) = {
     val t = text.trim
     if (t.endsWith(NotNull)) (dataTypeOf(t.stripSuffix(NotNull).trim), false) else (dataTypeOf(t), true)
@@ -70,11 +73,11 @@ private[invaract] object ArrowSchemas {
     case open =>
       val inner = t.substring(open + 1, t.lastIndexOf('>'))
       t.substring(0, open) match {
-        case "list" | "large_list" | "list_view" | "large_list_view" | "fixed_size_list" => LogicalType.ArrayType(withNullability(valueOf(inner))._1)
+        case "list" | "large_list" | "list_view" | "large_list_view" | "fixed_size_list" => LogicalType.ArrayType(typeOf(valueOf(inner)))
         case "struct" => LogicalType.StructType(topLevel(inner).map(field))
         case "map" =>
           topLevel(inner) match {
-            case key :: value :: Nil => LogicalType.MapType(withNullability(key)._1, withNullability(value)._1)
+            case key :: value :: Nil => LogicalType.MapType(typeOf(key), typeOf(value))
             case _                   => LogicalType.OtherType(t)
           }
         // a dictionary-encoded column holds values of its value type

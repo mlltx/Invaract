@@ -207,6 +207,22 @@ object AdapterCapabilities {
       case NonFatal(e) => Left(List(s"not valid YAML: ${e.getMessage}"))
     }
 
+  private lazy val logger = org.slf4j.LoggerFactory.getLogger(classOf[AdapterCapabilities])
+
+  /** An adapter's own declaration at `path` on `classLoader`'s classpath, as the adapter loads it at run time: never throws,
+    * since a missing or malformed declaration (a repackaged jar that dropped resources) must not take a job down; it yields
+    * `None` - the capability check is skipped - and is logged at WARN. */
+  private[invaract] def load(path: String, classLoader: ClassLoader): Option[AdapterCapabilities] =
+    fromResource(path, classLoader) match {
+      case Some(Right(capabilities)) => Some(capabilities)
+      case Some(Left(errors)) =>
+        logger.warn(s"$path is invalid; the capability check is skipped: ${errors.mkString("; ")}")
+        None
+      case None =>
+        logger.warn(s"$path is missing from the classpath; the capability check is skipped")
+        None
+    }
+
   /** `parse` of a classpath resource; `None` if the resource is absent. */
   def fromResource(path: String, classLoader: ClassLoader): Option[Either[List[String], AdapterCapabilities]] =
     Option(classLoader.getResourceAsStream(path)).map { stream =>

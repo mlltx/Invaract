@@ -40,6 +40,13 @@ class ConfigSourceSpec extends AnyFunSuite {
     assert(intercept[IllegalArgumentException](ConfigSource.flag(spark, "dryRun")).getMessage == "'spark.invaract.dryRun' must be true or false, not 'y'.")
   }
 
+  test("snakeCase spells a neutral name as the Python adapters do, every capital a word") {
+    assert(ConfigSource.snakeCase("contract") == "contract")
+    assert(ConfigSource.snakeCase("dryRun") == "dry_run")
+    assert(ConfigSource.snakeCase("orgPolicyOverlays") == "org_policy_overlays")
+    assert(ConfigSource.snakeCase("") == "")
+  }
+
   test("All lists every setting InvaractConf names, once: an adapter's spelling of the settings is checked against it") {
     val declared = InvaractConf.getClass.getDeclaredMethods.toList
       .filter(m => m.getParameterCount == 0 && m.getReturnType == classOf[String])
