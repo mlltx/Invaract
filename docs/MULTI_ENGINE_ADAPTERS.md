@@ -45,7 +45,8 @@ adapter-testkit/ (new, Stage 4)        engine-neutral conformance scenarios
 An adapter owes the core: a translation into `ir.Plan`, a `TypeMapper` into
 `contract.LogicalType`, a location normalizer, a config source, and a
 **declared capability set** — including *where* it can enforce (blocking inside
-the engine, a pre-submit gate, or observe-only). Anything the contract declares
+the engine, checking each write and publishing the outputs only once the whole run passed, a pre-submit
+gate, or observe-only). Anything the contract declares
 that the adapter cannot check must be reported as not evaluated, never silently
 passed.
 
@@ -256,7 +257,7 @@ does; a missing fingerprint does not).
 
 **The declaration** is one YAML file per adapter, `invaract-capabilities-<adapter>.yaml`, shipped as
 a resource of that adapter (Spark's: `spark-adapter/src/main/resources/`). It names the adapter, its
-engine, its *enforcement point* (`in-engine-blocking` / `pre-submit-gate` / `observe-only` — whether
+engine, its *enforcement point* (`in-engine-blocking` / `staged-publish` / `pre-submit-gate` / `observe-only` — whether
 a bad write can actually be stopped, which differs between engines far more than any single check),
 and a status for every capability: `supported`, `partial`, `unsupported` or `not-applicable`, each
 with a `note` where it is not plainly supported. **An undeclared capability is a parse error**, and

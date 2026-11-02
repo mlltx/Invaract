@@ -124,7 +124,7 @@ saying why. Rules that keep it honest:
   outcome, not a failure; the survey should say so in plain words.
 - `not-applicable` is for things that do not exist in the engine (a batch-only engine has no streaming), not for
   things that are merely hard.
-- The enforcement point (`in-engine-blocking`, `pre-submit-gate`, `observe-only`) is a decision with
+- The enforcement point (`in-engine-blocking`, `staged-publish`, `pre-submit-gate`, `observe-only`) is a decision with
   consequences for every row; it gets its own explanation.
 
 ## Phase 4 - Forecast every scenario

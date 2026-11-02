@@ -13,11 +13,10 @@
 adapter: pythonio
 engine: Python (invaract package, in development)
 enforcement:
-  point: in-engine-blocking
+  point: staged-publish
   note: >-
-    The job reads and writes through the invaract package. Each write is checked by PythonIoCheck before its data is
-    staged, and the staged outputs are published only once the whole run has passed; a refused write raises in the
-    job, so nothing it wrote becomes visible.
+    The job reads and writes through the invaract package, which stages each output beside its location and publishes it
+    by a rename; a refusal raises ContractViolation in the job.
 capabilities:
   read.batch:
     status: supported

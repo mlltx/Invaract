@@ -139,13 +139,18 @@ object EnforcementPoint {
   /** Inside the engine, before the operation executes, aborting it (Spark's check rule). */
   case object InEngineBlocking extends EnforcementPoint("in-engine-blocking", "Blocks inside the engine, before the operation executes")
 
+  /** Inside the job, before each output is staged, and again at the run's end: the outputs are published together only when the
+    * whole run passed, so a refused run publishes nothing, not even the writes it made before the refusal (the Python I/O
+    * adapter's package). */
+  case object StagedPublish extends EnforcementPoint("staged-publish", "Checks each write before it is staged; publishes the run's outputs only if the whole run passed")
+
   /** Before the job is submitted (a CI step, an orchestrator hook) - it can refuse to run it, but cannot see what the engine does at runtime. */
   case object PreSubmitGate extends EnforcementPoint("pre-submit-gate", "Gates before the job is submitted")
 
   /** After the fact - it reports a violation but cannot stop it. */
   case object ObserveOnly extends EnforcementPoint("observe-only", "Observes only; cannot block")
 
-  val all: List[EnforcementPoint] = List(InEngineBlocking, PreSubmitGate, ObserveOnly)
+  val all: List[EnforcementPoint] = List(InEngineBlocking, StagedPublish, PreSubmitGate, ObserveOnly)
   val byId: Map[String, EnforcementPoint] = all.map(p => p.id -> p).toMap
 }
 
@@ -183,7 +188,7 @@ object AdapterCapabilities {
     * adapter: spark
     * engine: Apache Spark 3.5
     * enforcement:
-    *   point: in-engine-blocking        # or pre-submit-gate, observe-only
+    *   point: in-engine-blocking        # or staged-publish, pre-submit-gate, observe-only
     *   note: ...
     * capabilities:
     *   read.batch:

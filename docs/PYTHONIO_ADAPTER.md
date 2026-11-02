@@ -9,10 +9,12 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 2 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 3 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
-the save modes, the settings, and the dry-run migration path. Nothing is released yet (the platform wheels carrying the native
+the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
+the package and comes out as the declaration promises, and the declaration's enforcement point is `staged-publish`. Nothing
+is released yet (the platform wheels carrying the native
 checker are milestone 5), so the user pages list the engine as "in development".
 
 ## What it is
@@ -121,7 +123,7 @@ rather than by investigating someone else's code.
 
 | # | Question | Finding | Evidence |
 |---|---|---|---|
-| 1 | Where can this engine be gated: inside it (blocking), before submission, or only observed? | Inside the job, at each `invaract.write`: the checker answers before the output is staged, and nothing is published until the run passed. Declared `in-engine-blocking`; the user pages' wording for that point ("writes the job made before it have already happened") understates staging, so a `staged-publish` point is a milestone 3 follow-up | design sections 3 and 4; the protocol cases |
+| 1 | Where can this engine be gated: inside it (blocking), before submission, or only observed? | Inside the job, at each `invaract.write`: the checker answers before the output is staged, and nothing is published until the run passed. Declared `staged-publish`, an enforcement point added for it in milestone 3: `in-engine-blocking`'s wording on the user pages ("writes the job made before it have already happened") is untrue with staging | design sections 3 and 4; the protocol cases |
 | 2 | What is knowable at that point: reads, writes, schema, plan, parameters? | Every read and write by its declared name, each write's format, save mode and Arrow schema (with null counts), the read inputs' schemas. Not the transformation: the job's own code is opaque (`UnknownPlan`) | design section 4; sink records survey, probes 12 to 14 |
 | 3 | How could a platform attach this to a job it does not own (the engine's own configuration surface)? | Settings are `INVARACT_*` environment variables, forwarded to `open` by their neutral names; adopting the package is a one-time code change by design (`config.zeroCodeInstall` unsupported) | `PythonIoConfigSource`; the `location-refs`, `org-policy-*` and `notifications*` cases |
 | 4 | How are datasets named, and how do they convert to the canonical `/`-separated location? | By the contract's own names; the location is the contract's, resolved through `INVARACT_LOCATION_MAP` for `ref://`. A name the contract does not declare stands for itself and lands on no declared output | `PythonIoCheck.write`; the `undeclared-output-refused` case |
@@ -132,14 +134,14 @@ rather than by investigating someone else's code.
 | 9 | What are its function names, especially the non-deterministic ones? | Not applicable: the checker never sees the transformation | — |
 | 10 | What changes data without being a plain write (truncate, row-level DML, rollback, scripts)? | Nothing inside the package. A write made around it is not seen; `invaract-lint` (milestone 4) is the guard | design section 7 |
 | 11 | Does it stream? Does it have a checkpoint or cache? | No streaming in the first version; no checkpoint or cache | design section 1 |
-| 12 | What runs in CI with no secrets: a real runner, an emulator, fixtures, or only a credentialed job? | Everything: local files, the checker in-process and as a native program, and the package under real Python against the native program | `pythonio-native-checker`; `pythonio-python`; `PythonIoConformanceSpec` |
+| 12 | What runs in CI with no secrets: a real runner, an emulator, fixtures, or only a credentialed job? | Everything: local files, the checker in-process and as a native program, and the package under real Python, against the native program and through every conformance scenario | `pythonio-native-checker`; `pythonio-python`; `PythonIoConformanceSpec`; `PythonIoPackageConformanceSpec` |
 
 ## Capability ledger
 
 One row per capability in `invaract-capabilities-pythonio.yaml`: the status it is declared with, and what backs that status.
-The conformance scenarios run through `PythonIoConformanceAdapter`, which sends the checker the protocol lines the package
-will send (through `Run.answer`, the path a real run's requests take); the run through real Python jobs comes with the
-package (milestone 3).
+The conformance scenarios run twice, and both runs must match the one baseline. `PythonIoPackageConformanceAdapter` runs each
+as a real Python job through the package (milestone 3). `PythonIoConformanceAdapter` plays the package in-process, sending the
+checker the same protocol lines through `Run.answer`, so it needs no Python and the checker's mutation testing can run it.
 
 | Capability | Declared | Backed by |
 |---|---|---|
@@ -249,6 +251,27 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
   pandas 3.1, Polars 2.1, DuckDB 2.0). CI's `pythonio-python` job runs them against the native program on Python 3.10 with
   the oldest libraries, and on 3.13 with the newest.
 
+## Milestone 3: conformance through real Python jobs
+
+Milestone 3 (design section 12) runs the kit's scenarios as real Python jobs, and gives staging its own enforcement point:
+
+- **`PythonIoPackageConformanceAdapter`** writes each scenario's job as JSON. `python/tests/conformance_job.py` runs it as a
+  team's job would run: the contract, the options and the notification sink as `INVARACT_*` variables, and the checker as
+  `PythonIoCheck` from the test run's own classpath. The job reads through `invaract.read`, joins, filters, groups and
+  projects with pyarrow, and writes through `invaract.write` with the format and save mode it uses itself. The verdict is read
+  back from its exit status (0, or 10 for a refusal) and the validation events its file sink wrote.
+- **Inputs hold empty values.** The kit describes inputs only by their schemas, and other adapters make them empty. This
+  adapter judges a required column by the empty values the data holds (decision 3), so each input gets one row with every
+  column set and, for each column it lets be empty, one row where only that column is empty. Values are positive and equal
+  row by row across inputs, so filters keep rows and joins match.
+- **All 42 scenarios conform** as real jobs, the same as in-process. That held on pyarrow 25 and 26, and on pandas 2.3 and
+  3.1. A sabotaged job (one that never writes) fails 20 scenarios, so the run tests the package and does not just pass.
+  Without Python (`INVARACT_TEST_PYTHON` without pyarrow) the scenarios are canceled; under `INVARACT_CONFORMANCE_STRICT=true`,
+  as CI's `pythonio-native-checker` job runs them, they fail.
+- **`staged-publish`** (`EnforcementPoint.StagedPublish`): each write is checked before it is staged, and the outputs are
+  published together only if the whole run passed. The user pages now say that for this engine, not `in-engine-blocking`'s
+  "writes the job made before it have already happened".
+
 ## Friction log
 
 - `dev/new-adapter` takes an engine name without a hyphen, so the design's `python-io-adapter` and engine `python-io` became
@@ -261,8 +284,9 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
   `Scenarios.partialExcuses` names, per scenario, the violations an adapter declaring a capability `partial` is excused from
   (here `MISSING_INPUT`, for `check.inputExistence`).
 - The user pages' sentence for `in-engine-blocking` says a job's earlier writes have already happened; with staging they have
-  not. Rather than add an enforcement point to `verification-core` before the package exists, the engine is labelled "in
-  development" and the follow-up is on the ROADMAP.
+  not. Milestone 3 added the `staged-publish` enforcement point to `verification-core` (`EnforcementPoint.StagedPublish`, with
+  its own wording in the kit's `CapabilityGuide`), and the declaration uses it. The engine stays labelled "in development"
+  until the first release.
 - Stryker4s leaves instrumented classes in `target/`; running the checker from that classpath afterwards fails with
   `NoClassDefFoundError: stryker4s/package$`. `sbt clean` first.
 - A `/simplify` pass (2026-11-02) moved what the adapter had copied or worked around into verification-core: one way to
@@ -285,6 +309,8 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
   delimiter").
 - The design named Python 3.9 as the oldest supported release. CI's runners no longer offer it (it reached its end of life
   in October 2025), so the package requires 3.10, the oldest CI can test.
+- Both conformance specs record their results as `target/conformance/<adapter>.json`, and both are the adapter `pythonio`, so
+  the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
 - The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
@@ -295,5 +321,3 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
 - How the native program behaves on Linux aarch64 and on macOS: only Linux x86_64 is built so far.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).
-- The kit's scenarios run as real Python jobs through the package (milestone 3). Until then, the scenarios are played by
-  `PythonIoConformanceAdapter`, and the package is held to the checker by its own tests.

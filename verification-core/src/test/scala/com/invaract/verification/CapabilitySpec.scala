@@ -42,8 +42,9 @@ class CapabilitySpec extends AnyFunSuite {
   test("the vocabularies of statuses and enforcement points are fixed and look up by id") {
     assert(Support.all.map(_.id) == List("supported", "partial", "unsupported", "not-applicable"))
     assert(Support.byId("partial") == Support.Partial)
-    assert(EnforcementPoint.all.map(_.id) == List("in-engine-blocking", "pre-submit-gate", "observe-only"))
+    assert(EnforcementPoint.all.map(_.id) == List("in-engine-blocking", "staged-publish", "pre-submit-gate", "observe-only"))
     assert(EnforcementPoint.byId("observe-only") == EnforcementPoint.ObserveOnly)
+    assert(EnforcementPoint.byId("staged-publish") == EnforcementPoint.StagedPublish)
     assert(EnforcementPoint.all.forall(_.description.nonEmpty))
   }
 
@@ -112,7 +113,7 @@ class CapabilitySpec extends AnyFunSuite {
     val errs = errors("adapter: ''\nengine: ' '\nenforcement:\n  point: somewhere\n")
     assert(errs.exists(_.contains("'adapter' is required")))
     assert(errs.exists(_.contains("'engine' is required")))
-    assert(errs.exists(e => e.contains("'enforcement.point' is required") && e.contains("in-engine-blocking, pre-submit-gate, observe-only")))
+    assert(errs.exists(e => e.contains("'enforcement.point' is required") && e.contains("in-engine-blocking, staged-publish, pre-submit-gate, observe-only")))
     assert(errs.exists(_.contains("'capabilities' is required")))
     // no enforcement block at all is the same problem
     assert(errors("adapter: x\nengine: y\ncapabilities: {}\n").exists(_.contains("'enforcement.point' is required")))

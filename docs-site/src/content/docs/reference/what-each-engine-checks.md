@@ -24,7 +24,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | Apache Beam (Java SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-apache-beam/) |
 | Apache Beam (Python SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-beam-python/) |
 | Apache Spark 3.5 | Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and the job fails; writes the job made before it have already happened. | [Guide](/guides/installing-the-enforcement-rule/) |
-| Python (invaract package, in development) | Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and the job fails; writes the job made before it have already happened. |  |
+| Python (invaract package, in development) | Checks each write inside the running job, before it is written, and holds every output back until the job ends. The outputs are published together only if the whole run passed, so a run that breaks the contract publishes nothing. |  |
 
 ## At a glance
 

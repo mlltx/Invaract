@@ -22,8 +22,8 @@ import com.invaract.verification.notification.{JobInfo, NotificationJson}
   * A column the kit's job can leave empty is sent with one empty value: the package counts what the data holds (decision 3), and
   * the kit's job is taken to produce one. A job the kit marks untranslatable hands `invaract.write` a table with no Arrow stream.
   *
-  * The package (`python/invaract`, milestone 2 of docs/PYTHON_IO_ADAPTER_DESIGN.md) is tested against the real checker on its
-  * own; running these scenarios as real Python jobs through it is milestone 3.
+  * `PythonIoPackageConformanceAdapter` runs the same scenarios as real Python jobs through the package itself; this one needs no
+  * Python, so the checker's own mutation testing runs it.
   */
 class PythonIoConformanceAdapter extends ConformanceAdapter {
 

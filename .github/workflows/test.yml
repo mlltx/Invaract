@@ -605,8 +605,23 @@ jobs:
       - name: Publish the engine modules locally (pythonio-adapter's libraryDependencies)
         uses: ./.github/actions/publish-engine-modules
 
+      # the conformance scenarios also run as real Python jobs through the invaract package
+      # (PythonIoPackageConformanceSpec), strictly: a missing Python environment fails the build rather than skipping them
+      - name: Set up Python for the package's conformance run
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install pyarrow
+        shell: bash
+        run: '"${{ steps.python.outputs.python-path }}" -m pip install pyarrow'
+
       - name: Test the checker and assemble its jar
         shell: bash
+        env:
+          INVARACT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+          INVARACT_CONFORMANCE_STRICT: "true"
         run: cd pythonio-adapter && sbt test assembly
 
       - name: Set up GraalVM
