@@ -2007,6 +2007,53 @@ with no new CVEs, per every sibling module's own investigation.
 canceled, including `KafkaNotificationSinkSpec`'s own round-trip tests
 against a real `KafkaProducer` built from properties (not a mock).
 
+## 7ab. `docs-site`'s `undici` and `contributor-docs`'s `vite` — a mirrored pair of findings, inverted between the two sites
+
+Two real Dependabot alerts, both transitive of Astro, both npm — but
+each one against a *different* one of this repository's two independent
+Astro Starlight sites, confirmed by checking each lockfile's own
+resolved versions rather than assuming either alert applied to both:
+
+| Site | Artifact | Before | After | Advisories |
+|---|---|---|---|---|
+| `docs-site` | `undici` (via `astro` 7.3.5) | 8.11.2 | 8.12.3 | 6 advisories bundled under one `npm audit` finding (GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm) |
+| `contributor-docs` | `vite` (via `astro` 7.3.5) | 8.3.0 | 8.3.5 | 6 advisories bundled under one `npm audit` finding (GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, GHSA-587h-7wmj-h5pm, GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22, GHSA-vfpm-58rq-9qcg) |
+
+**Checked which site each alert actually named, rather than fixing both
+coordinates in both lockfiles on the assumption they'd drifted
+together.** Both `package-lock.json` files declare `astro ^7.2.9`/
+`^7.3.5` and resolve it to the identical `7.3.5`, but each site's own npm
+resolution landed on a *different* side of the two findings:
+`docs-site` already had `vite` at a safe `8.3.5` (past the `8.3.3` fix)
+but a vulnerable `undici` at `8.11.2`; `contributor-docs` already had
+`undici` at a safe `8.12.3` but a vulnerable `vite` at `8.3.0`. Confirmed
+directly against each lockfile's `node_modules/<pkg>` resolved version
+before touching either file — this is the same "two independent Astro
+Starlight sites, two independent `package-lock.json` files, a fix in one
+does not propagate to the other" gap pattern this document's own history
+already recorded once for `devalue`, and that an earlier pass of this
+document left as `contributor-docs`'s own unresolved `undici` gap —
+except here the gap runs the other direction for each package, so
+fixing only the alert's own named package in its own named site (not
+reflexively mirroring the fix into the other site "for consistency")
+was the correct scope, confirmed by each site's own `npm audit` coming
+back clean afterward.
+
+**Both fixed via `npm audit fix`, purely transitive — neither site's own
+`package.json` names either package directly**, confirmed via `git
+diff`: `docs-site`'s lockfile changed exactly one line (`undici`);
+`contributor-docs`'s lockfile moved `vite` and the small cluster of its
+own transitives that version-lock against it (`@rolldown/binding-*`,
+`rolldown`, `@oxc-project/types`, `nanoid`, plus an incidental `zod`
+patch bump npm's own resolver picked up along the way) — no top-level
+package added or removed in either file.
+
+**Verified**: `npm audit` — 0 vulnerabilities in both sites, after. `npm
+run build` in both — `docs-site`: 43 pages built; `contributor-docs`: 28
+pages built (the generated-docs sync `contributor-docs` itself runs as
+part of that build, per `contributor-docs/README.md`). No build error,
+no changed output page count from before the bump in either site.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2201,6 +2248,19 @@ against a real `KafkaProducer` built from properties (not a mock).
       (re-checked, nothing to do). Confirmed via `Compile/dependencyTree`
       (single resolved version, no eviction) and a real `sbt test` run
       (8 passed, 0 failed, 0 canceled).
+- [x] Fix `docs-site`'s `undici` and `contributor-docs`'s `vite` alerts
+      (this change) — see §7ab: a mirrored pair of findings against
+      Astro's own transitives, inverted between the two independent
+      Astro Starlight sites (`docs-site` was vulnerable on `undici` but
+      already safe on `vite`; `contributor-docs` the other way around) —
+      checked each lockfile's own resolved versions before fixing either,
+      rather than assuming the two sites had drifted together. `undici`
+      8.11.2 → 8.12.3 in `docs-site`; `vite` 8.3.0 → 8.3.5 in
+      `contributor-docs`. Both via `npm audit fix`, purely transitive —
+      neither site's `package.json` names either package directly.
+      Confirmed via `npm audit` (0 vulnerabilities in both, after) and a
+      real `npm run build` in both (`docs-site`: 43 pages; `contributor-
+      docs`: 28 pages, no change in either's output page count).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

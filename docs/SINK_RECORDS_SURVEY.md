@@ -1,0 +1,749 @@
+# Sink records survey: what each destination's own records can prove about a job's writes
+
+> **Status: survey. No code exists.** It follows the native Python adapter survey (docs/PYTHON_ADAPTER_SURVEY.md). That
+> survey ended by moving away from watching a Python job from inside, and from relying on permissions, towards a different
+> idea: verify what a job wrote by reading the *destination's own record* of the changes made to it. This document asks, for
+> each destination a Python job is likely to write to, how far that record can be trusted.
+> Written: 2026-10-28. Probes run on this machine: Postgres 16 with pgaudit, MySQL 8.0, Delta Lake (delta-rs 1.6.6), Iceberg
+> (pyiceberg 0.12.0) and local files (Linux fanotify). The cloud services were not probed (no credentials); their rows rest on
+> search results and are marked UNVERIFIED where it matters. docs.aws.amazon.com, docs.cloud.google.com and
+> docs.snowflake.com are outside this session's allowed network, so their pages could not be read directly.
+
+## The short version
+
+**The requirement.** Two things, for a job Invaract does not change:
+- confirm that the job wrote to the places its contract declares, and nowhere else;
+- confirm that what it wrote at each place matches the place's declared kind (a data asset, or a readiness signal).
+
+**The approach.** Many destinations keep their own record of every change: a database's audit or change log, a cloud
+provider's access log, a table format's commit log. After a run, Invaract reads that record for the run's time window and
+attributes each change to the run or to someone else. That proof does not depend on which library the job used, which
+credentials it held, or what permissions anyone granted.
+
+**How confident each destination's record can make us** (details in section 3):
+
+| Destination | Confidence | Why, in one line |
+|---|---|---|
+| **Postgres** with pgaudit | **High** | Every write logged as it runs, with the run's label and transaction; commit status from the database itself (probe 1) |
+| **MySQL** | **Medium to high** | Binary log of committed changes with the connection, joined to the user; no per-run label (probe 2) |
+| **BigQuery** | **Medium to high** (unverified) | Jobs history plus audit logs of row changes, with the caller; streaming writes only in the audit logs |
+| **Delta Lake / Iceberg tables** | **High for what, low for who** | A complete commit history with operation, mode, rows and schema; no writer identity by default (probe 3) |
+| **S3** | **Medium** (unverified) | CloudTrail object-level events, opt-in, about 5 minutes late on average; server access logs are best effort and not enough |
+| **GCS** | **Medium** (unverified) | Data Access audit logs, off by default |
+| **Snowflake** | **Medium** (unverified) | Access history names modified objects, but can lag by hours |
+| **Parquet or CSV files** on the job's machine | **High** for Parquet, **medium** for CSV | No log of their own. A watch on the job's own view of the file system attributes every write, child processes included (probe 5); Parquet's footer states its schema and rows, CSV only names (probe 6) |
+| **Parquet or CSV files** on object storage | **Medium** (unverified) | As S3 and GCS below for who and when; the file's footer for what |
+| **SQLite, Kafka** | **Low** | No record of who wrote what; only before-and-after state |
+
+**The pattern behind the table.** The strongest destinations have three things:
+- a record of committed changes;
+- a label that reaches the record without changing the job;
+- immediate availability.
+
+Postgres has all three. Table formats have the first only. Cloud stores have the first two, but late. Plain files have none,
+so for them the machine has to keep the record.
+
+**Decisions for you.**
+1. Which destinations do your Python jobs actually write to? This survey ranked likely ones; your real list decides the
+   order of work.
+2. Accept that verification is per destination: a reader for each destination's record, not one mechanism for all.
+   *Recommend yes; it is what makes the proof independent of the job.*
+3. For destinations without attribution (table formats, SQLite, files without a machine-level watch), accept attribution by
+   time window and one writer per place, and say so in each run's report? *Recommend yes.*
+4. Require the records to be switched on (pgaudit, CloudTrail object-level events, GCS Data Access logs) as a precondition
+   for a destination to be "verified", and report the destination as unverifiable otherwise? *Recommend yes.*
+5. On the read side (section 4), check which inputs were read, not which columns, and leave the role check (whether a
+   `CONTROL` input fed the output) out of reach? *Recommend yes.* Snowflake is the one source that may do better.
+
+## 1. The questions asked of each destination
+
+For a record to prove "this run wrote here, and only here, and this is what it wrote", it has to answer five questions:
+
+| Question | Why it matters |
+|---|---|
+| **Complete**: does every kind of write appear (inserts, bulk loads, truncates, writes inside database functions, streaming)? | A write the record misses is a write nothing checks |
+| **Committed-only**: does it tell a change that stayed from one that was rolled back? | Probe 3 of the Python survey's enforce toy counted rolled-back rows as written |
+| **Attribution**: can each change be tied to this run, rather than another job writing at the same time? | Without it, another team's write looks like this job's |
+| **Delay**: how soon after the run is the record complete? | Verification, and any readiness step waiting on it, waits that long |
+| **Content**: does it give the place, the operation, the amount, and ideally the schema? | Classification (a data asset or a readiness signal) needs more than "something changed" |
+
+And one practical question: **what must be switched on**, by whom, at what cost.
+
+## 2. Which destinations are likely
+
+Ranked by judgement, not by measured usage: no usage data was available here. These are the places a Python data job
+commonly writes, through pandas, pyarrow, Polars, SQLAlchemy and the cloud clients:
+1. object storage: S3, GCS (Azure Blob was not surveyed);
+2. warehouses: BigQuery, Snowflake;
+3. operational databases: Postgres, MySQL;
+4. table formats on object storage: Delta Lake, Iceberg;
+5. local or shared file systems;
+6. less common for batch jobs: SQLite, Kafka.
+
+## 3. Destination by destination
+
+### Postgres
+
+- **The record.** pgaudit (Postgres's audit extension) logs each write statement as it runs, with the session's application
+  name and transaction number in the log line prefix. `pg_xact_status(xid)` says whether that transaction committed.
+- **How the run is labelled.** `PGAPPNAME=<run id>` in the job's environment. libpq-based drivers read it: psycopg2,
+  psycopg 3, and SQLAlchemy and pandas `to_sql` through them (probe 1). pg8000 does not read it (it is pure Python);
+  asyncpg is UNVERIFIED. A job that sets its own application name overrides the label.
+- **Probe 1 found.** One labelled run wrote in seven ways while another team wrote to the same table:
+  - **Explicit transaction:** logged with its transaction number; committed.
+  - **Autocommit:** logged with its transaction number (`xid=744`), unlike plain statement logging, which logs it with
+    `xid=0`.
+  - **Rolled back:** logged (`xid=740`); `pg_xact_status` says `aborted`, so it is excluded.
+  - **Bulk `COPY`:** logged, but without the table in the object columns (`WRITE,COPY,,,COPY gold.report FROM STDIN`). The
+    table is in the statement text, or in Postgres's change stream.
+  - **A function that writes elsewhere** (`SELECT gold.refresh()`): its inner insert into `gold.other` was logged as a write
+    of its own, with the same label.
+  - **`TRUNCATE`:** logged as `TRUNCATE TABLE`, with the table only in the statement text.
+  - **pandas `to_sql`:** logged with the label.
+  - **The other team's insert:** logged with its own label (`other-team`), so it is told apart.
+- **Delay.** Immediate: the line is written as the statement runs.
+- **Content.**
+  - The table: from pgaudit's object column, or from the statement text for `COPY` and `TRUNCATE`.
+  - The operation, and rows per statement (`pgaudit.log_rows`, 1 for each insert here and 0 for `COPY`).
+  - The schema: from `information_schema.columns`.
+- **What must be switched on.** All of it is set by a database administrator, with a restart:
+  - pgaudit in `shared_preload_libraries`, with `pgaudit.log = 'write'`;
+  - a log line prefix with `%a` and `%x`;
+  - read access to the log.
+
+  Logging writes only is far lighter than logging every statement.
+- **Alternative without pgaudit.** Postgres's change stream (logical decoding) lists committed changes per transaction,
+  `COPY` and `TRUNCATE` included. It needs `wal_level = logical` and a replication slot, which keeps write-ahead log until
+  read and can fill a disk if left unread. Plain statement logging misses the transaction number for autocommit writes
+  (the native Python survey, "Writing to databases").
+- **Confidence: High.** The run label is the weak point: it depends on the driver honouring `PGAPPNAME`, and on the job not
+  overriding it.
+
+### MySQL
+
+- **The record.**
+  - The binary log (row format) holds committed changes only, each transaction with the connection's thread id.
+  - The general log maps each thread id to the user who connected.
+- **Probe 2 found.**
+  - A rolled-back insert was absent from the binary log.
+  - An autocommit insert was present.
+  - Another user's insert to the same table carried a different thread id, and so a different user.
+- **How the run is labelled.** Only by database user. No environment variable sets a per-run label for the common drivers
+  (PyMySQL, mysql-connector), as far as checked (UNVERIFIED). Two concurrent runs of the same job under the same user cannot
+  be told apart.
+- **Delay.** Immediate.
+- **Content.**
+  - The table and operation, and the row images with `-v`.
+  - The original statement with `binlog_rows_query_log_events`.
+  - The schema: from `information_schema`.
+- **What must be switched on.**
+  - The binary log is usually on already, since replication uses it.
+  - The general log records every statement, reads included, so it is heavy. An audit plugin (MySQL Enterprise, Percona
+    or MariaDB) is the lighter alternative (UNVERIFIED).
+- **Confidence: Medium to high.** High when each job has its own database user and runs one at a time.
+
+### BigQuery (not probed: no credentials)
+
+- **The record.**
+  - The jobs history (`INFORMATION_SCHEMA.JOBS`) holds near real-time metadata about every job in a project, with 180 days
+    of history, clustered by `user_email` (search result).
+  - The audit logs record table data changes: inserted and deleted row counts, a truncation flag, the job or the Write API
+    stream that made the change, and a reason that distinguishes Write API writes (search result, from the
+    `BigQueryAuditMetadata.TableDataChange` reference).
+- **Streaming writes** do not create jobs, so they appear only in the audit logs (the native Python survey's probe 17
+  showed the client's `insertAll` request).
+- **How the run is labelled.** The service account the run uses (one per job, or one per run if the platform can mint
+  them). Job labels would need the job's code, or a client default, to set them (UNVERIFIED).
+- **Delay.** "Near real-time" for the jobs history; UNVERIFIED for the audit logs.
+- **Content.** The column names `destination_table`, `labels` and the DML row counts could not be read from the
+  documentation here (UNVERIFIED). The schema comes from the table itself (`tables.get`).
+- **Confidence: Medium to high, unverified.** One check settles it: a load, a DML statement and a streaming insert from a
+  test project, then the jobs history and the audit logs read back.
+
+### Delta Lake and Iceberg
+
+- **The record.** The table's own commit log: the table *is* its log, so it is complete and committed-only by construction.
+- **Probe 3 found.**
+  - **Delta**, written with delta-rs: each commit records
+    `operation: WRITE`, `operationParameters: {'mode': 'Overwrite' | 'Append'}`, `num_added_rows`, `num_added_files`, a
+    timestamp, `engineInfo: delta-rs:py-1.6.6`, and the schema.
+  - **Iceberg**, written with pyiceberg: each snapshot records `operation: append | delete`, `added-records`,
+    `added-data-files`, totals, a timestamp and the schema. An overwrite showed as a delete followed by an append.
+  - Neither recorded who made the commit. Custom commit metadata needs the job's code.
+- **How the run is labelled.** By time window only, unless the storage underneath has an audit log of who wrote the commit
+  file (S3 CloudTrail, GCS Data Access logs).
+- **Delay.** Immediate.
+- **Content.** The best of any destination: operation, mode, rows, files and schema, per commit.
+- **Confidence: High for what changed and how; low for who**, unless the storage's audit log is joined in.
+
+### S3 (not probed: no credentials, and AWS documentation outside the allowed network)
+
+- **The record.** CloudTrail object-level ("data") events: PutObject, DeleteObject and the rest. They are not logged by
+  default; a trail must be configured for the buckets (search result).
+- **Delay.** "CloudTrail typically delivers logs within an average of about 5 minutes of an API call. This time is not
+  guaranteed" (search result quoting the CloudTrail user guide).
+- **Not enough on its own.** S3 server access logs: "Server access log records are delivered on a best-effort basis", and
+  there is "no way to know whether all log records for a certain time interval have been delivered" (search result quoting
+  the S3 user guide).
+- **How the run is labelled.** The caller identity on each event. If the platform starts each run with its own assumed-role
+  session named after the run, the session name should appear in the event's identity (UNVERIFIED).
+- **Content.** The bucket and key, and the operation. No schema: that comes from reading the written files (the native
+  Python survey's probe 11).
+- **Confidence: Medium, unverified.** Late, and busy buckets produce large log volumes.
+
+### GCS (not probed)
+
+- **The record.** Data Access audit logs, type `DATA_WRITE`, covering object creation and deletion. These are "disabled by
+  default and aren't written unless explicitly enabled" (search result quoting the Cloud Storage audit-logging page).
+- **How the run is labelled.** The caller's identity (the service account).
+- **Delay.** UNVERIFIED.
+- **Confidence: Medium, unverified.**
+
+### Snowflake (not probed)
+
+- **The record.** `ACCOUNT_USAGE.ACCESS_HISTORY`: the objects each query modified, with the user and query id, kept for
+  365 days (search result).
+- **Delay.** Account Usage views have a latency of up to 2 to 3 hours (search result). The edition required is UNVERIFIED.
+- **How the run is labelled.** The user, or a query tag the platform can set as a user default (UNVERIFIED).
+- **Confidence: Medium, unverified.** The delay is the main cost: a readiness step waiting on it would wait hours.
+
+### Local or shared files
+
+- **The record.** None of their own. A machine-level watch can make one: fanotify (Linux's file-access notification, which
+  needs administrator capability) reports every file written on a file system, with the writing process.
+- **Probe 4 found.**
+  - The watch saw every write: pandas (Python), Polars (Rust), DuckDB (C++), a shell command started by the job, and
+    another team's write.
+  - Writes by the job's own process were attributed to the run.
+  - The shell command's write, and the other team's, came out as "unknown". Both processes had exited before their parent
+    could be looked up, so a short-lived child of the job is indistinguishable from an outsider.
+  - Tracking the process tree as it forks would close this: the kernel's process events, or Linux's audit system, which
+    records each process's parent and login identity at the moment of the call (UNVERIFIED here).
+- **Without a watch.** Before-and-after snapshots (the native Python survey's verifier) see that a declared place changed,
+  but not who changed it.
+- **Limits.**
+  - The watch sees writes made on this machine only. A shared file system written by other machines needs its own server's
+    audit.
+  - Containers may not grant the capability.
+- **Confidence: Medium with a watch and process tracking; low with snapshots only.**
+
+### Parquet and CSV files: the common case, in depth
+
+Writing Parquet or CSV files is the most common output of a Python data job. Probes 5 and 6 go further than probe 4 on
+the two hard parts: who wrote a file, and what is in it.
+
+**Who wrote it: watch the job's own view of the file system (probe 5).** The launcher starts the job in a private mount
+namespace, the job's own copies of the machine's mounts. It watches only those copies with fanotify (`FAN_MARK_MOUNT`).
+
+A write through them can only come from the job, or from a process it started. That holds however short-lived the process
+is, because nothing has to be looked up after the fact: the mount itself identifies the writer.
+
+The job wrote six files while another team wrote into the same folder:
+
+| Written by | Recorded as the run's |
+|---|---|
+| Polars (`write_parquet`) | yes |
+| DuckDB (`COPY ... TO`) | yes |
+| pandas (`to_csv`) | yes |
+| a short-lived shell command | yes |
+| a grandchild process | yes |
+| the job's `_SUCCESS` | yes |
+| another team, same folder | **no**: it went through the ordinary mount, not the job's view |
+
+This closes probe 4's gap: the shell command's write is now attributed by construction.
+
+**What the watch cannot see (probe 6).**
+- Deletes and renames. The kernel refuses those events on a mount mark (`Invalid argument`); it accepts them only on a
+  whole-file-system mark, which sees everyone.
+- So deletes, and the final name of a file written under a temporary name and renamed into place, come from comparing
+  the declared folders before and after the run.
+- A rename keeps the file's inode (its identity on disk). Matching the inode of a file the job wrote to the file that
+  ends up at the declared place should attribute a "write, then rename into place" to the run (UNVERIFIED).
+
+**What is in it: read the file, not the data (probe 6).**
+
+| File | Written by | What the file states, without reading its data |
+|---|---|---|
+| `part-0.parquet` | Polars | rows=2; `created_by: Polars (python) version 2.1.0`; schema `id: int64` |
+| `part-1.parquet` | DuckDB | rows=1; `created_by: DuckDB version v2.0.0`; schema `id: int32 not null` |
+| `typed.csv` | pandas | rows=3; header `id, amount, day, name` exactly; types only *inferred* from the values: `int64, double, date32, string` |
+| `summary.csv` | pandas | rows=1; header `id`; delimiter sniffing guessed `'i'`, wrongly, for a one-column file |
+| `_SUCCESS` | the job | an empty file: a marker |
+
+What this means:
+- **Parquet** states its exact schema, nullability and row count, and the library that wrote it, in a footer that can be
+  read without reading the data. On object storage that is a small read of the file's last bytes.
+- The DuckDB file shows why the check matters. `SELECT 3 AS id` is written as `int32 not null`, while Polars writes
+  `int64`. A contract that declares `long` rightly flags one of the two.
+- **CSV** states only names and rows. Types are a guess from the values; the contract should say whether a guess is
+  acceptable for each column. Delimiter detection is unreliable, so the contract should declare the delimiter (or it
+  defaults to `,`).
+
+**Classification and order.**
+- A data asset is a data file with rows and the declared columns: Parquet from its footer, CSV from its header and line
+  count.
+- A readiness signal is an empty or small non-data file.
+- The watch reports writes in the order they finished, so "the marker was written after every data file" can be checked
+  from the run's own events.
+
+**Save mode.** Comparing the declared folder before and after the run gives it:
+- files removed or replaced is overwrite;
+- only new files is append.
+
+**Confidence by where the files live.**
+
+| Where | Who | Complete | Content | Delay | Needs |
+|---|---|---|---|---|---|
+| a local disk or a mounted volume, on the job's machine | **High**: by construction (probe 5) | **High** for writes; deletes and renames from the before-and-after listing | **High** for Parquet; **medium** for CSV (types guessed) | immediate | Linux; administrator capability for the launcher (`unshare`, fanotify). Containers often lack it: the watch would then run on the host (UNVERIFIED) |
+| a shared file system (NFS), written from the job's machine | as above, if fanotify reports local writes to NFS (UNVERIFIED) | as above | as above | immediate | as above |
+| object storage (`s3://`, `gs://`) through pyarrow, fsspec or boto3 | the watch does not apply (a network write). CloudTrail or GCS Data Access logs: **medium** | as those logs | **High** for Parquet, by reading the footer afterwards | minutes | the audit logs switched on (S3 and GCS sections above) |
+
+### SQLite and Kafka (not probed)
+
+- **SQLite.** No log of who wrote what: only the file's state before and after, and table counts. Confidence: low.
+- **Kafka.** Brokers do not keep a per-producer record of writes by default. Attribution would need the authorizer's logs
+  of each producer principal (UNVERIFIED). Confidence: low, unverified.
+
+## 4. The read side
+
+The contract also declares what a job reads, and Invaract's input checks use that:
+- `MISSING_INPUT`: a declared input was never read;
+- `UNDECLARED_INPUT`: something undeclared was read.
+
+The same idea applies: the source's own record of reads, or the watch on the job's own view of the file system. Probes 7
+and 8 tested both.
+
+**Files (probe 7).** The private-view watch can also report files *opened* (`FAN_OPEN` on the job's mount copies). The job
+read in five ways while another process read the same Parquet file. Reported as the run's reads:
+- Polars, reading one column only;
+- DuckDB, through a glob (`'in/orders/*.parquet'`);
+- pandas `read_csv`;
+- pyarrow, memory-mapped;
+- a child process's `cat` of an undeclared `in/secret/salaries.parquet`.
+
+The other process's read was not reported.
+
+Two differences from writes:
+- **Noise.** Python and its libraries opened 871 other files in the same run (modules, shared libraries, configuration). A
+  read counts as a dataset read only outside the interpreter's own folders and the trusted places, as in the native Python
+  survey's D4.
+- **Granularity.** The watch says a file was opened, not which columns or rows were read. Polars read only `id`, but the
+  record shows only that the file was opened. "Read the orders" can be confirmed; "read only the declared columns" cannot.
+
+**Postgres (probe 8).** pgaudit with `pgaudit.log = 'read, write'` logs each read with the run's label, and names every
+table it touches:
+
+| The job's statement | Tables pgaudit named |
+|---|---|
+| a join of `raw.orders` and `raw.customers` | both |
+| `SELECT * FROM raw.order_summary` (a view) | the view **and** the two tables behind it |
+| `SELECT raw.total_pay()` (a function) | the call, **and** `hr.salaries`, read inside the function and never named by the job |
+| `COPY raw.customers TO STDOUT` | `raw.customers` |
+| pandas `read_sql` | `raw.orders`, plus SQLAlchemy's own reads of `pg_catalog`, which are easily filtered |
+| another team's read of `hr.salaries` | logged with their own label, so not the run's |
+
+Logging reads is heavier than logging writes, because a job usually reads more than it writes.
+
+**Elsewhere** (not probed; search results):
+- **Snowflake.** `ACCESS_HISTORY` records reads at column level. `direct_objects_accessed` holds what the query named;
+  `base_objects_accessed` holds the underlying tables and columns, views resolved to their base tables. It is the richest
+  read record of any source here, but it shares the 2 to 3 hours of delay, and "records in QUERY_HISTORY do not always get
+  recorded in ACCESS_HISTORY".
+- **BigQuery.** Reads through `tabledata.list` and query results are `DATA_READ` audit events. Whether the Storage Read API
+  (which pandas and BigQuery DataFrames use) is recorded, and whether Data Access logs are on by default, is UNVERIFIED. A
+  query job's referenced tables are in the jobs history (UNVERIFIED column name).
+- **S3 and GCS.** Reads are CloudTrail `GetObject` data events and GCS `DATA_READ` audit logs. Both are opt-in, and read
+  logging is heavier than write logging. Whether CloudTrail records the byte ranges of a Parquet reader's partial reads is
+  UNVERIFIED.
+- **MySQL.** The binary log has no reads, so only the general log (every statement as text, to be parsed) or an audit
+  plugin. Confidence: low to medium.
+- **Delta and Iceberg.** Reading leaves no trace in a table's commit log. It needs the watch, or the storage's read logs.
+
+**What no record gives.** Whether an input was *used* to build an output, rather than only read. Invaract's role check
+(a `CONTROL` input must not feed output data) needs lineage, which only a plan gives. The records give it in one case:
+SQL that the database itself runs, `INSERT ... SELECT`, where the statement text names both sides. Snowflake's access
+history may record such lineage; UNVERIFIED.
+
+**Confidence on the read side.**
+
+| Source | Which inputs were read | Which columns | Who | Delay |
+|---|---|---|---|---|
+| Parquet or CSV files on the job's machine (watch) | **High** (probe 7) | no | **High**, by construction | immediate |
+| Postgres with pgaudit | **High** (probe 8), views and functions included | no (tables only) | **High** (`PGAPPNAME`) | immediate |
+| Snowflake access history | **High** (unverified) | **yes** (unverified) | user | 2 to 3 hours |
+| BigQuery | **Medium** (unverified; the Storage Read API is the open question) | no | service account | unverified |
+| S3 or GCS | **Medium** (unverified; opt-in, heavy) | no | caller | minutes |
+| MySQL | **Low to medium** | no | database user | immediate |
+| Delta or Iceberg on their own | **None** | no | no | — |
+
+## 5. Reading the code: what the records cannot say
+
+The records prove *what happened*: where the job read and wrote, who did it, and what landed. They cannot say *how* the
+outputs were made: which filters, joins and groupings were applied, which columns were read, and which input columns each
+output column comes from. Invaract's transformation-shape rules and role check need those. Probes 9 to 11 tried three ways
+of reading them from the job itself, without changing it.
+
+**1. The Python syntax tree (probe 9).** A toy analyser of about 60 lines read a realistic pandas script without running it.
+It rebuilt this plan:
+
+```
+line 13: Write 'data/out/report/*.parquet'  (a pattern: * is decided at run time) (parquet)
+  Add column run_date = <a command-line argument>
+    Group by region: total = sum(amount), orders = count(order_id)
+      Join on customer_id (left)
+        Filter status Eq 'paid'
+          Read 'data/in/orders' (parquet)
+        Read 'data/in/customers.csv' (csv)
+```
+
+- **What it recovered.**
+  - `SOURCE = "data/in/orders"` was resolved through its constant.
+  - An f-string path became a folder pattern.
+  - A column set from `sys.argv` was marked as decided at run time.
+- **Where it stopped.**
+  - The team's own function `tidy(df)` became an opaque step, keeping the read beneath it.
+  - A `for` loop writing one file per region was reported as not analysed.
+- **What a real analyser would add.** Simple functions inlined, loops over constant lists unrolled, `argparse` defaults
+  resolved.
+- **Where any analyser stops.** Column names built at run time, paths from configuration files, code spread over many
+  modules, and notebooks. How much of a real estate of jobs falls in the first group is unknown, and should be measured on a
+  sample of the real jobs before anything is built.
+
+**2. The library's own plan, where there is one (probe 10).**
+- **Polars' lazy API** builds a plan before reading anything. `explain()` on a scan, filter, join and group-by gave the files
+  to scan (the glob already expanded), the filter (`SELECTION: col("status") == "paid"`), the join keys, the grouping, and
+  **exactly which columns will be read**: `PROJECT 3/5 COLUMNS`, so the orders' `note` and the customers' `email` are never
+  read. That is the column-level read the records cannot give.
+- **DuckDB's** `EXPLAIN` gave the same facts for SQL in a Python string. It had rewritten the left join as an equivalent right
+  join, so a reader of its plans must know its rewrites.
+- Neither plan exists for pandas, or for Polars' eager API.
+- Getting the plan without changing the job needs a small wrapper: `LazyFrame.collect` and `sink_*` are Python methods, so a
+  wrapper can record `explain()` first. Or, for DuckDB, `EXPLAIN` on the statement text.
+
+**3. SQL text, from the records themselves (probe 11).** pgaudit logs each statement's full text, so no code is needed in
+the job. sqlglot (a SQL parser) read an `INSERT ... SELECT` and gave:
+- the target table, the three tables read, and the columns filtered on (`o.status`, `cal.is_open`);
+- the join conditions and the grouping;
+- column lineage: `total` from `o.amount`, `region` from `c.region`, `run_date` from `cal.business_day`.
+
+The last of those is exactly the role check's case: a column of `control.calendar`, a `CONTROL` input, flows into the output.
+
+**4. A language model reading the code** is useful for *drafting*: a first contract for a job, or an explanation of it for a
+reviewer. It cannot be *proof*. It is not deterministic, and nothing checks it. Use it for migration, never for a verdict.
+
+**Recommendation.**
+- **Records for the proof:** where, who and what landed, for every job.
+- **The library's own plan, or the SQL text, for how the outputs were made,** wherever one exists: Polars lazy, DuckDB, SQL
+  sent to Postgres or BigQuery.
+- **The syntax tree only as a best effort for pandas.** Claim a transformation-shape rule or a role check only when the whole
+  path from read to write was analysed, and refuse safely otherwise.
+
+### Library-specific adapters, not one "Python" adapter
+
+"Python" is a language, not an engine; it offers no description of a job. The libraries a job uses are where descriptions
+exist, and each library offers a different one. So one adapter per library is easier, and more honest about what each can
+check, than one adapter for all Python. Destination records (sections 3 and 4) stay shared underneath all of them, for
+where, who and what landed.
+
+**pandas: trace it as it runs (probe 12).** pandas' functions are ordinary Python, so a tracer installed in the job's
+interpreter (the same way as the native Python survey's hook, with no change to the job) can attach to every DataFrame
+where it came from. On probe 9's job, it gave for each write the full chain from the reads, with:
+- the real paths (`data/out/report/2026-11-01.parquet`, the date filled in);
+- the real columns at each step;
+- the step inside the team's own function (`dropna()`), where the syntax tree saw only an opaque call;
+- **both iterations of the loop** (`by_region/eu.csv`, `by_region/us.csv`), which the syntax tree could not analyse.
+
+Because it sits at the write call, it can refuse a write before it happens, the way Spark is checked.
+
+Its costs:
+- pandas' surface is large. A generic wrapper keeps table-level lineage through any step, and only the steps a rule needs
+  (filters, joins, groupings) must be recognised one by one.
+- The chain breaks where data leaves pandas: through numpy (`df.values`), or into another library. Such a step must be
+  reported as untraced, not assumed.
+- Condition strings (`df.query("amount > 0")`) need parsing.
+- Every pandas release must be re-checked, as the Beam Python adapter re-records its fixtures per release.
+
+| Library | The job's description | How it is obtained without changing the job | Checks it supports | Effort | Confidence |
+|---|---|---|---|---|---|
+| **Polars, lazy API** | the library's own optimised plan (probe 10) | a wrapper records `explain()` at `collect()` or `sink_*` | locations, schema, filters, joins, groupings, **columns read**, lineage | small | **High** |
+| **DuckDB** | the library's own plan, and the SQL text | `EXPLAIN` on the statement; the Python API is compiled, so capturing the text needs wrapping its module functions (UNVERIFIED for connection methods) | as Polars | medium | **High** where the SQL text is caught |
+| **SQL sent to Postgres or BigQuery** | the SQL text, from the database's records | pgaudit, or BigQuery's jobs history; sqlglot for lineage (probe 11) | as Polars, plus the role check | small | **High** (Postgres tested) |
+| **pandas** | a trace of what ran (probe 12) | the tracer in the job's interpreter | locations, schema, filters, joins, groupings, table-level lineage; columns only as names flow | medium, with upkeep per release | **Medium to high** |
+| **Polars, eager API** | none of its own | a tracer like pandas' | as pandas | medium | **Medium** |
+| **anything else** | none | records only | where, who and what landed | — | as section 3 |
+
+**The risk to check first: mixed jobs.** A job that reads with pandas, hands the frame to Polars (`pl.from_pandas`) or to
+DuckDB (which can query a pandas DataFrame by its variable name), and writes from there, crosses adapters. The chain then
+holds only if the adapters share one record of where each frame came from. How often real jobs mix libraries should be
+measured before building more than one adapter.
+
+## 6. The low-change alternative: Invaract does the reading and writing
+
+Every approach above that reaches into the job depends on things that keep changing:
+- library internals (hooks, wrappers, tracers);
+- coding styles (the syntax tree);
+- operating-system privileges (the watch).
+
+The cost of keeping them working grows with libraries, destinations and releases. Giving up "zero change" for a *small*
+change removes that cost. The job declares its inputs and outputs by name, and Invaract does the reading and writing.
+
+**What the team changes (probe 13).** The whole diff for a typical pandas job:
+
+```diff
+-import pandas as pd
++import pandas as pd
++import invaract
+-def main():
+-    orders = pd.read_parquet("data/in/orders")
+-    customers = pd.read_csv("data/in/customers.csv")
++@invaract.job("contract.yaml")
++def main(orders: pd.DataFrame, customers: pd.DataFrame):
+     ...the transformation, unchanged...
+-    report.to_parquet("data/out/report/part-0.parquet", index=False)
+-    open("data/out/report/_SUCCESS", "w").close()
++    return {"report": report}
+```
+
+The decorator:
+1. reads each input the function names, from the contract's location, as the type the function asks for (a pandas
+   DataFrame, a Polars DataFrame, or a Polars LazyFrame);
+2. calls the function;
+3. checks each returned table against its declared output: columns, types, required columns;
+4. writes the outputs to staging and swaps them into place;
+5. writes the readiness marker.
+
+If anything fails, nothing is written. For a job that cannot be one function, the same library would offer explicit calls
+(`invaract.read("orders")`, `invaract.write(df, "report")`) inside a `with invaract.run("contract.yaml"):` block; not
+built in the toy.
+
+**Probe 13's runs:**
+
+| The job | Result |
+|---|---|
+| correct (pandas) | `wrote 'report' -> data/out/report (2 rows; region: string not null; total: int64 not null)`, then `readiness 'report_ready' written` |
+| `total` as text | `REFUSED OUTPUT_FIELD_TYPE_MISMATCH: total is string, the contract says long`; nothing written |
+| lost the `region` column | `REFUSED MISSING_OUTPUT_FIELD: 'report' has no column region`; nothing written |
+| returned an undeclared output | `REFUSED UNDECLARED_OUTPUT: the job returned 'debug_dump', which the contract does not declare`; nothing written |
+| correct (Polars, lazy) | Polars' full plan recorded before it ran (`PROJECT 3/5 COLUMNS`, `SELECTION: col("status") == "paid"`, the join, the grouping), then written as above |
+
+**How the requirements come out.**
+- **Wrote where it said: by construction.** The job names an output and Invaract writes it to the contract's location.
+- **Classification: by construction.** Data assets are written from returned tables; readiness markers are written by
+  Invaract, only after every asset passed.
+- **Schema: exact.** The check runs on the table in memory before writing. Invaract writes the file with the contract's own
+  types and required-ness, so the published schema says what the contract says: `region: string not null` here, although
+  pandas never marks a column required.
+- **Inputs: by construction.**
+  - The function can only take declared inputs, and a declared input it does not take is reported.
+  - Where the contract declares an input's columns, Invaract can read only those, so the job never sees an undeclared
+    column (an email address, say).
+- **Rules and lineage:** exact for Polars lazy jobs, from the plan the function returns. Not for pandas. That stays
+  out of reach, and is refused safely as before.
+
+**What it depends on.** Only public, stable interfaces:
+- conversion to Arrow (`pa.Table.from_pandas`, Polars' `to_arrow`);
+- pyarrow's Parquet and CSV reading and writing;
+- for the Polars plan, `explain()`. Its text is not a promised format; Polars' structured plan output should be checked for
+  stability (UNVERIFIED).
+
+No hooks, no wrapping of library internals, no privileges, nothing per release of pandas.
+
+**What it does not do.**
+- **I/O outside it.** A job can still write somewhere directly (`df.to_csv("elsewhere.csv")`). Two cheap checks cover that:
+  - a lint of the job's code for read and write calls outside Invaract. That checks only that such calls are *present*,
+    which a syntax tree answers reliably, unlike *what* they do;
+  - the destination records of section 3, for databases.
+- **Large outputs** are held in memory before the write, as pandas does anyway. Polars lazy outputs could stream to staging
+  (`sink_parquet`) instead.
+- **Partitioned outputs, appends and databases** need design. Databases mean writing through ADBC or SQLAlchemy, one per
+  kind of database, which adds a little upkeep.
+- **Where the checks run** is a choice:
+  - in Python, a second copy of the schema checks;
+  - or in Invaract's Java checker, called once per run with a description of every output, as the Beam Python adapter
+    does (about 0.9 s per call, Java needed where the job runs).
+
+### Jobs bigger than one function: three pieces (probe 14)
+
+**Decision (2026-11-01): readiness signals are dropped.** Every declared output is a data asset, so nothing in the design
+writes or checks a marker.
+
+A real job reads and writes in several functions and files, so the design has three pieces, not one:
+
+| Piece | Where it goes | What it does |
+|---|---|---|
+| `@invaract.job("contract.yaml")` | once, on the job's entry point | starts a run. At its end it checks that every declared output was written (and every declared input read), then publishes all the outputs together, or none |
+| `invaract.read("orders")` | wherever the job reads, in any function or file | reads a declared input by name from the contract's location; anything undeclared is refused at once |
+| `invaract.write(df, "report")` | wherever the job writes, in any function or file | checks the table against the contract there and then, and holds it in staging until the run ends |
+
+There are optional decorator forms of the last two: `@invaract.reads("customers")` passes the input in as a parameter, and
+`@invaract.writes("audit")` writes whatever the function returns. A read or write outside a run is an error that says to
+add `@invaract.job`.
+
+**The example.** A job spread over three files (`load.py`, `build.py`, `main.py`) that reads `orders` and `customers` and
+writes `report` and `audit`. The changes:
+- `load.py`: `pd.read_parquet("data/in/orders")` became `invaract.read("orders")`, and the CSV read became
+  `@invaract.reads("customers")`;
+- `build.py`: the audit's `to_parquet(...)` became `@invaract.writes("audit")` on a function that returns the table;
+- `main.py`: `@invaract.job("contract.yaml")` on `main`, and `report.to_parquet(...)` became
+  `invaract.write(report, "report")`; the `os.makedirs` lines went.
+
+No paths remain in the job: they are in the contract.
+
+| The job | Result |
+|---|---|
+| correct | both inputs read; `report` and `audit` checked and staged; at the run's end, both published |
+| a bug in `build.report` (`total` as text) | `REFUSED OUTPUT_FIELD_TYPE_MISMATCH: 'report'.total is string`, raised at the write; nothing published |
+| a bug in `build.audit` (`order_id` dropped) | `report` passed and was staged; `REFUSED MISSING_OUTPUT_FIELD: 'audit' has no column order_id`; **neither** output published |
+| `main` forgets the audit | `REFUSED MISSING_OUTPUT: ... 'audit', which the job never wrote`, found at the run's end; nothing published |
+| `main` writes `debug_dump` | `REFUSED UNDECLARED_OUTPUT: ... 'debug_dump'`; nothing published |
+
+After the correct run, the published schemas were exactly the contract's: `region: string not null; total: int64 not
+null` and `order_id: int64 not null; status: string`.
+
+## 7. What this means for the design
+
+- **A reader per destination.** Each destination gets a small reader that turns its record into the same neutral list:
+  place, operation, amount, committed or not, and who. Invaract's existing checks then judge that list against the
+  contract.
+- **Shape of the product.** This shifts Invaract's unit of work from the *engine* that runs a job to the *destination* a job
+  writes to. Any job, in any language, writing to a supported destination is covered. That is a strategic choice beyond this
+  survey.
+- **The run label is the linchpin.** Where a label reaches the record without changing the job (`PGAPPNAME`, a service
+  account per job, an assumed-role session per run), attribution is strong. Where none does, verification falls back to a
+  time window and one writer per place, and the report must say so.
+- **Delay sets when readiness can be published.** It is immediate for databases and table formats, minutes for CloudTrail,
+  and up to hours for Snowflake's access history.
+- **Classification needs content.** "A data asset received rows with the declared columns" and "a readiness signal
+  received a status row or a marker" come from the record's operation and row counts, plus the destination's schema
+  (`information_schema`, a table's own schema, a file's footer).
+
+## 8. Evidence log
+
+### Probes I ran (2026-10-28, not committed)
+
+1. **Postgres 16.15 with pgaudit** (installed from the Ubuntu package `postgresql-16-pgaudit`).
+   - Settings: `pgaudit.log = 'write, ddl'`, `pgaudit.log_relation = on`, `pgaudit.log_rows = on`, log line prefix
+     `app=%a user=%u xid=%x pid=%p`, `wal_level = logical`.
+   - One run labelled `PGAPPNAME=invaract-run-1` wrote in seven ways: psycopg2 2.9.13 for the explicit transaction, the
+     rollback, `COPY`, the function call, `TRUNCATE` and autocommit; pandas through SQLAlchemy 2.1.6 for `to_sql`.
+   - Before it, another connection labelled `other-team` inserted into the same table.
+   - The pgaudit lines and the logical-decoding stream are quoted in section 3.
+   - `pg_xact_status` returned `committed` for 739, 741 and 744, and `aborted` for 740.
+2. **MySQL 8.0.46.** Settings: `log-bin`, `binlog_format = ROW`, `binlog_rows_query_log_events = ON`, `general_log = ON`.
+   - Writers:
+     - user `other` inserted into `gold.report`;
+     - user `job`, through PyMySQL, inserted 2 rows and committed, then inserted into `gold.other` and rolled back;
+     - user `job`, through mysql-connector with autocommit, inserted into `gold.other`.
+   - `mysqlbinlog -v` showed thread ids 11 (other), 12 (job, the 2 rows) and 13 (job, autocommit), and no rolled-back row.
+     The general log mapped 11 to `other@localhost` and 12 and 13 to `job@localhost`.
+3. **Delta Lake and Iceberg.**
+   - delta-rs 1.6.6: an overwrite and an append of a 2-row pyarrow table. `DeltaTable.history()` is quoted in section 3.
+   - pyiceberg 0.12.0 with a SQLite catalog and a local warehouse: an append and an overwrite. Each snapshot's summary is
+     quoted in section 3.
+4. **fanotify.**
+   - Set-up: `fanotify_init(FAN_CLASS_NOTIF)`, then `fanotify_mark(FAN_MARK_FILESYSTEM, FAN_CLOSE_WRITE)` on the root file
+     system.
+   - The job wrote with Polars, DuckDB, pandas, a `sh -c` child and a plain `open`. Meanwhile another process wrote a file.
+   - Each event's process was traced up to the job's process.
+   - The job's own writes were attributed. The shell child and the other process came out "unknown: the process had already
+     exited".
+
+5. **fanotify on the job's own view.** The launcher's child called `unshare(CLONE_NEWNS)`, made its mounts private, marked
+   each disk or tmpfs mount of its own view with `FAN_MARK_MOUNT | FAN_CLOSE_WRITE` on a fanotify descriptor it inherited,
+   and then became the job. The job wrote with Polars, DuckDB and pandas, a `sh -c` child, a backgrounded grandchild and a
+   plain `open`. Another process wrote into the same `out/` folder, and elsewhere, at the same time. All seven of the job's
+   writes were reported, with their processes; neither of the other process's writes was.
+6. **What the files state, and what the watch cannot see.**
+   - `pyarrow.parquet.ParquetFile(...).metadata` gave rows and `created_by`, and `read_schema` the schema.
+   - `csv.Sniffer` and `pyarrow.csv.read_csv` gave the header and the inferred types; the sniffer guessed `'i'` as the
+     delimiter of a one-column file.
+   - `fanotify_init(FAN_REPORT_DFID_NAME)`, then a mount mark for `FAN_DELETE | FAN_MOVED_TO | FAN_CREATE`, was refused
+     with `Invalid argument`. A file-system mark for the same events was accepted.
+7. **Reads through the job's own view.**
+   - Set-up: as probe 5, with `FAN_OPEN` in place of `FAN_CLOSE_WRITE`, keeping only paths inside the job's folder.
+   - The job read with Polars (`columns=["id"]`), DuckDB (a glob), pandas `read_csv`, pyarrow with `memory_map=True`, and
+     a `sh -c "cat ..."` child. Another process read the same Parquet file.
+   - Result: the job's reads were reported (the Parquet file several times, once per open), and the child's read of
+     `in/secret/salaries.parquet`. The other process's read was not reported. 871 opens outside the job's folder were left
+     out.
+8. **Postgres reads with pgaudit.**
+   - Set-up: `pgaudit.log = 'read, write'`, `pgaudit.log_relation = on`.
+   - A run labelled `invaract-run-7` made a join, a read through a view, a call to a SQL function reading `hr.salaries`,
+     a `COPY ... TO STDOUT` and a pandas `read_sql`. Another connection, labelled `other-team`, read `hr.salaries`.
+   - The audit lines are summarised in section 4.
+
+9. **A syntax-tree analyser for pandas.** Python's `ast` module, matching:
+   - `pd.read_*` reads;
+   - `df[df[col] == value]` filters;
+   - `merge(on=..., how=...)`;
+   - `groupby(...).agg(name=(col, fn))`;
+   - `df[col] = ...`;
+   - `to_*` writes.
+
+   String constants and f-strings were resolved, and anything else became an opaque step. Output quoted in section 5.
+10. **Library plans.**
+    - Polars 2.1.0: `scan_parquet`, `scan_csv`, `filter`, `join`, `group_by().agg()` and `explain()`.
+    - DuckDB 2.0.0: `EXPLAIN` of the equivalent SQL, over a 5-column Parquet folder and a 3-column CSV file.
+11. **SQL lineage.** sqlglot 30.25.0: `parse_one` of an `INSERT ... SELECT` joining `raw.orders`, `raw.customers` and
+    `control.calendar`, then `sqlglot.lineage.lineage` for each output column.
+12. **A pandas tracer.**
+    - Set-up: pandas 2.3.3 functions wrapped in the job's interpreter: `read_parquet` and `read_csv`; `DataFrame.__getitem__`
+      (boolean filters and selections); `Series` comparisons, to carry the column into a filter; `merge`; `groupby` with
+      `DataFrameGroupBy.agg`; `__setitem__`; a generic wrapper for `dropna`, `fillna`, `rename` and others; `to_parquet` and
+      `to_csv`.
+    - Each DataFrame's origin was kept in a dictionary keyed by object identity, cleaned up when the frame was freed.
+    - Ran probe 9's job, unchanged, with the argument `2026-11-01`. Output summarised in "Library-specific adapters".
+13. **A low-change decorator (`@invaract.job`).**
+    - A toy library: it reads the inputs the function names (pyarrow, then `to_pandas`, `pl.from_arrow` or `pl.scan_*`),
+      converts returned tables to Arrow, checks them against the contract, and writes the outputs through staging, then the
+      readiness marker.
+    - Ran a pandas job correct and with three mistakes, and a Polars lazy job. Output summarised in section 6.
+14. **The three pieces, end to end.**
+    - A toy library with `job`, `read`, `write`, `reads` and `writes`; the run is held in a context variable; outputs are
+      staged per run and published together at its end.
+    - Ran a three-file pandas job (`python -m orders_job.main`) correct, and with four mistakes switched on in turn.
+      Output summarised in section 6, "Jobs bigger than one function".
+
+### Sources (search results; the documentation pages themselves were not reachable from this session)
+
+- [AWS CloudTrail: working with log files](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-working-with-log-files.html):
+  delivery "within an average of about 5 minutes ... not guaranteed".
+- [Amazon S3: server access logging](https://docs.aws.amazon.com/us_en/AmazonS3/latest/userguide/ServerLogs.html):
+  "delivered on a best-effort basis".
+- [CloudTrail data events for S3](https://docs.amazonaws.cn/en_us/awscloudtrail/latest/userguide/logging-data-events-with-cloudtrail.md):
+  object-level events, opt-in.
+- [BigQuery JOBS view](https://docs.cloud.google.com/bigquery/docs/information-schema-jobs): near real-time, 180 days,
+  clustered by `user_email`.
+- [BigQueryAuditMetadata.TableDataChange](https://docs.cloud.google.com/dotnet/docs/reference/Google.Cloud.Audit/latest/Google.Cloud.Audit.BigQueryAuditMetadata.Types.TableDataChange):
+  inserted and deleted row counts, truncation, the job or stream.
+- [Cloud Storage audit logs](https://docs.cloud.google.com/storage/docs/audit-logs) and
+  [Enable Data Access audit logs](https://docs.cloud.google.com/logging/docs/audit/configure-data-access): `DATA_WRITE`, off
+  by default.
+- [Snowflake Access History guide](https://docs.snowflake.com/user-guide/access-history): `direct_objects_accessed` and
+  `base_objects_accessed`, with columns.
+- [BigQuery audit logs overview](https://docs.cloud.google.com/bigquery/audit-logs): `DATA_READ` methods such as
+  `TableDataService.List`.
+- [Snowflake ACCESS_HISTORY](https://docs.snowflake.com/sql-reference/account-usage/access_history) and
+  [Account Usage](https://docs.snowflake.cn/sql-reference/account-usage): 365 days; up to 2 to 3 hours of latency.
+
+### Unverified
+
+| Claim | The cheapest check |
+|---|---|
+| BigQuery's jobs history has `destination_table`, `labels` and DML row counts, and its audit logs record streaming and Write API rows with the caller | a load, a DML statement and a streaming insert in a test project, then read both back |
+| An assumed-role session named per run appears in CloudTrail's S3 events | one PutObject with a named session, then the event |
+| GCS Data Access log delay, and Snowflake's edition requirement | a test bucket's write, timed; Snowflake's documentation |
+| asyncpg honours `PGAPPNAME` | probe 1 with asyncpg |
+| A MySQL driver can carry a per-run label without code, or an audit plugin records connection attributes | the drivers' documentation; probe 2 with Percona's or MariaDB's audit plugin |
+| A rename into a declared place can be attributed by matching inodes | probe 5 with a write-then-`os.replace` job |
+| fanotify reports writes made from this machine to an NFS mount | probe 5 on an NFS mount |
+| The launcher can run on platforms that deny containers administrator capability (the watch on the host instead) | probe 5 inside a container without `CAP_SYS_ADMIN`, and on its host |
+| BigQuery records Storage Read API reads, and its Data Access logs are on by default | a `read_gbq` (Storage Read API) from a test project, then the audit logs |
+| CloudTrail records the byte ranges of partial `GetObject` reads | a Parquet read of an S3 object, then the event |
+| Snowflake's access history records lineage from inputs to the columns a statement writes | an `INSERT ... SELECT` in a test account, then `ACCESS_HISTORY` |
+| How many real pandas jobs a syntax-tree analyser can read end to end | run probe 9's analyser, extended, over a sample of the real jobs |
+| How much of a real job the pandas tracer follows end to end, and how often jobs mix pandas, Polars and DuckDB | probe 12's tracer over a sample of the real jobs |
+| DuckDB statements can be captured from its Python API without changing the job | wrap `duckdb.sql` and try a connection's `execute`, which is compiled |
+| Polars' structured plan output (`serialize`) is stable enough to check rules from | read Polars' stability policy; compare the output across two releases |
+| How small the decorator's diff is across real jobs | convert a sample of the real jobs |
+| Kafka can attribute writes to a producer principal | a broker with authorizer logging at the right level |
