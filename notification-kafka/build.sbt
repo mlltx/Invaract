@@ -48,6 +48,28 @@ libraryDependencies ++= Seq(
 // in theory break some users").
 dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 
+// org.xerial.snappy:snappy-java: kafka-clients 3.9.2's own POM declares this at
+// 1.1.10.5, runtime scope (confirmed directly against the POM on Maven Central),
+// the same compression-codec role lz4-java plays above - and, unlike every other
+// module's own snappy-java finding so far (spark-adapter/plugin/runner/
+// beam-adapter, all test scope only, see those modules' build.sbt comments), this
+// one is real at runtime here: this module has no Spark/test-only Parquet reader
+// pulling it in - kafka-clients is this module's one, real, unscoped dependency
+// (see this file's own libraryDependencies comment above), and the sink passes a
+// caller's producer properties straight through, so a user who sets
+// compression.type=snappy on their notification sink actually loads this jar.
+// CVE-2026-90559/CVE-2026-93451 (see spark-adapter/build.sbt's identical comment
+// for the full technical detail of both): affected <= 1.1.10.8, fixed 1.1.10.9.
+// Pinned to 1.1.10.12, the same coordinate and version every other module in this
+// repo already carries for the identical CVE pair, reused rather than re-derived -
+// 1.1.10.9's own artifact hit the same Maven Central CDN 429 pattern CLAUDE.md
+// documents for `scalac-scoverage-plugin` (confirmed directly: the first
+// `dependencyTree` run against kafka-clients' own declared 1.1.10.5 node 429'd on
+// a snappy-java jar fetch, cleared on retry), and .10-.12 are a pure
+// Hadoop-compatibility superset with no new CVEs, per every sibling module's own
+// investigation.
+dependencyOverrides += "org.xerial.snappy" % "snappy-java" % "1.1.10.12"
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
