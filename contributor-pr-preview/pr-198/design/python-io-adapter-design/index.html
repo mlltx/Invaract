@@ -497,7 +497,7 @@ checker jar is also published, for the Java route and for teams with their own p
 <div class="sl-heading-wrapper level-h2"><h2 id="11-versions-and-compatibility">11. Versions and compatibility</h2><a class="sl-anchor-link" href="#11-versions-and-compatibility"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “11. Versions and compatibility”</span></a></div>
 <ul>
 <li>Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.</li>
-<li>Python 3.9 to 3.13.</li>
+<li>Python 3.10 to 3.13. (3.9 reached its end of life in October 2025, and CI’s runners no longer offer it; milestone 2.)</li>
 <li>pyarrow 15, the first with <code dir="auto">RecordBatchReader.from_stream</code> (14 lacks it; milestone 2).</li>
 <li>pandas 2.2, which added <code dir="auto">__arrow_c_stream__</code>; the package converts pandas with <code dir="auto">pa.Table.from_pandas</code> in any case, to leave
 out the row index (milestone 2).</li>

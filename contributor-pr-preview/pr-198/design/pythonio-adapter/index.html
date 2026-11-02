@@ -702,9 +702,9 @@ own variable, not a setting.</li>
 <li><strong>Exit status.</strong> An uncaught <code dir="auto">ContractViolation</code> ends the job with 1 (Python’s own status for an uncaught exception). An
 uncaught <code dir="auto">CheckNotRun</code> ends it with 2, set from <code dir="auto">sys.excepthook</code> once the traceback is printed.</li>
 <li><strong>Tests.</strong> 91 pytest tests: every refusal, the save modes, dry runs, the events, every frame library, the exit statuses, and
-the example job with each of probe 14’s bugs. They pass against the jar and against the native program, on Python 3.11 to
+the example job with each of probe 14’s bugs. They pass against the jar and against the native program, on Python 3.10 to
 3.13, with the oldest supported libraries (pyarrow 15, pandas 2.2, Polars 1.0, DuckDB 1.0) and the newest (pyarrow 26,
-pandas 3.1, Polars 2.1, DuckDB 2.0). CI’s <code dir="auto">pythonio-python</code> job runs them against the native program on Python 3.9 with
+pandas 3.1, Polars 2.1, DuckDB 2.0). CI’s <code dir="auto">pythonio-python</code> job runs them against the native program on Python 3.10 with
 the oldest libraries, and on 3.13 with the newest.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="friction-log">Friction log</h2><a class="sl-anchor-link" href="#friction-log"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Friction log”</span></a></div>
@@ -741,6 +741,8 @@ but 0, 1, 2, …; the example job’s audit was written with it. The package con
 Arrow stream; the package falls back to their own <code dir="auto">to_arrow()</code> and <code dir="auto">arrow()</code>.</li>
 <li>A contract has no CSV delimiter field, so CSV is read and written with a comma (design section 5 said “the contract’s
 delimiter”).</li>
+<li>The design named Python 3.9 as the oldest supported release. CI’s runners no longer offer it (it reached its end of life
+in October 2025), so the package requires 3.10, the oldest CI can test.</li>
 <li>Re-recording every case with <code dir="auto">cases.py --record</code> overwrote the JVM-only <code dir="auto">registry</code> case with a failure (its stub registry
 client is on the test classpath only). <code dir="auto">--record</code> now skips JVM-only cases, whose replies are written by hand.</li>
 <li>The registry client’s “not found” message says to add a jar “via spark-submit —jars”, which is Spark’s wording, in
@@ -753,5 +755,4 @@ verification-core; a Python job sees it too. Left for a wording pass across adap
 is set for it).</li>
 <li>The kit’s scenarios run as real Python jobs through the package (milestone 3). Until then, the scenarios are played by
 <code dir="auto">PythonIoConformanceAdapter</code>, and the package is held to the checker by its own tests.</li>
-<li>Python 3.9 and 3.10 locally: the package’s tests ran on 3.11 to 3.13 here; CI’s <code dir="auto">pythonio-python</code> job runs them on 3.9.</li>
 </ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/PYTHONIO_ADAPTER.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
