@@ -32,7 +32,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | D3 | **One translator for both SDKs** (`BeamTranslator`, parametrised by a `StepCatalogue`). A Python pipeline becomes the same `BeamStep` tree a Java one does. | The walk, what fails closed, unknown steps keeping the reads beneath them, steps that only report on writes (D14 of the Java adapter): written and tested once. Only "which steps are reads and writes" differs, and that is the catalogue (`JavaSteps`, `PythonSteps`). |
 | D4 | **The bridge is a separate program per submission** (`java -jar`), not a service or a native image. | The least machinery. A check takes under a second (0.9 s measured on a recorded pipeline). Java 11+ where jobs are submitted is the cost, stated in the declaration. |
 | D5 | **The Python catalogue keys on the source and sink classes**, not on transform names: every Python read is an `iobase.Read` whose `source` item names its source class, and every file read or write states `file_pattern` published by that class. | A short table (`PythonSteps.FileSources`, `FileSinks`) covers every file format; a new SDK transform built on a known source or sink needs no change. |
-| D6 | **Read a write's columns from what it states**: a Parquet write's pyarrow schema (`PyArrowSchemas`), an Avro write's schema, a BigQuery load's schema, else the data's row schema (`SchemaCoder`, rehydrated from the proto). No Python-side helper. | Everything the checks need is in the portable form; a helper reading private Python attributes would be a second, untested place that breaks on SDK releases. |
+| D6 | **Read a write's columns from what it states**: a Parquet write's pyarrow schema (`ArrowSchemas`, in verification-core since the Python I/O adapter shares it), an Avro write's schema, a BigQuery load's schema, else the data's row schema (`SchemaCoder`, rehydrated from the proto). No Python-side helper. | Everything the checks need is in the portable form; a helper reading private Python attributes would be a second, untested place that breaks on SDK releases. |
 | D7 | **Transformation-shape rules are unsupported.** | Python filters and joins are code. A contract with such a rule is refused with `UNSUPPORTED_CONTRACT_FEATURE` before anything else (`VerificationPipeline.requireSupported`, which both Beam adapters now call first). |
 | D8 | **The settings are spelled `--invaract_<snake_case>`** and the package forwards each one unchanged; the checker refuses one it does not know (exit 2). | A setting means the same on every engine. `InvaractConf.All` is the list; three tests tie the Java options, the checker and the Python flags to it (see "Maintaining it"). |
 | D9 | **CI runs real Python pipelines** through the real package and checker (`beam-python` job), and the translator's unit tests run on **recorded protos**, so `sbt test` needs no Python. | Fast unit tests everywhere; the end-to-end proof where Python is installed. |
@@ -46,7 +46,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | The translator, shared with Java pipelines | `beam-adapter/src/main/scala/.../BeamTranslator.scala` |
 | The step catalogues | `StepCatalogue.scala` (`JavaSteps`), `PythonSteps.scala` |
 | Reading the portable form | `PortablePipeline.scala` |
-| pyarrow schemas | `PyArrowSchemas.scala` |
+| pyarrow schemas | `ArrowSchemas.scala` (verification-core) |
 | The checker program | `PortableCheck.scala` (`PythonConfigSource` spells the settings) |
 | What differs from a Java pipeline | `BeamFrontEnd.scala` (`BeamFrontEnd.Python`: the engine name, the step catalogue, the declaration and the advice, kept together) |
 | What a refusal advises | `BeamAdvice.scala` (`BeamAdvice.Python`: the settings as Python spells them, the Python guide) |
@@ -110,7 +110,7 @@ permanent as the recorded fixtures. What building it added:
 | `check.location` | supported | scenarios 2, 20, 51 |
 | `check.outputsWritten` | supported | scenario 21 |
 | `check.schema` | partial | scenarios 3, 4, 12-14; dictionaries and untyped fields have none (`PythonStepsSpec`) |
-| `check.nestedTypes` | supported | scenarios 28, 29; `PyArrowSchemasSpec` |
+| `check.nestedTypes` | supported | scenarios 28, 29; `ArrowSchemasSpec` (verification-core) |
 | `check.format` | partial | scenarios 24, 25 |
 | `check.saveMode` | partial | scenarios 26, 27 (BigQuery) |
 | `check.catalogRegistration` | partial | scenarios 10, 11 (BigQuery) |

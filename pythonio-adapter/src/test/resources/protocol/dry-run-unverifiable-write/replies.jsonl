@@ -1,0 +1,3 @@
+{"mode": "dry-run", "ok": true}
+{"ok": false, "reason": "the write of 'report' cannot be described: a pandas Styler offers no __arrow_c_stream__", "status": "not-checked"}
+{"ok": true, "publish": true}

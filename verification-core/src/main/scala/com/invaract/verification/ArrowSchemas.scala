@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024 Invaract Contributors
 
-package com.invaract.beamadapter
+package com.invaract.verification
 
 import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
 
 import scala.util.Try
 
-/** The columns of a pyarrow schema as pyarrow prints it, which is how the Python SDK's Parquet write publishes the schema its
-  * files are written with (the `schema` display item of `WriteToParquet`):
+/** Arrow types as pyarrow names them, mapped to the contract's types: the one mapping every adapter that sees Arrow shares (the
+  * Beam Python adapter reads a Parquet write's printed schema with `parse`; the Python I/O adapter's checker is sent each
+  * column's `str(field.type)` and reads it with `dataType`).
+  *
+  * A whole schema, as pyarrow prints it, which is how the Python SDK's Parquet write publishes the schema its files are written
+  * with (the `schema` display item of `WriteToParquet`):
   *
   * {{{
   * id: int64 not null
@@ -23,13 +27,23 @@ import scala.util.Try
   * local date-time (`timestamp_ntz`), and a type with no neutral equivalent (an unsigned integer, a half float) keeps its own
   * name as an `OtherType`, which equals only itself. Anything that is not a schema in this form is `None`, never a guess.
   */
-private[beamadapter] object PyArrowSchemas {
+private[invaract] object ArrowSchemas {
 
+  /** A whole schema in pyarrow's printed form, or `None` when the text is not one. */
   def parse(text: String): Option[LogicalSchema] =
     Try {
       val lines = text.split("\n").toList.takeWhile(!_.startsWith("-- ")).filter(l => l.nonEmpty && !l.head.isWhitespace)
       if (lines.isEmpty) None else Some(LogicalSchema(lines.map(field)))
     }.toOption.flatten
+
+  /** One type as pyarrow names it (`str(field.type)`: `int64`, `list<item: string>`, `timestamp[us, tz=UTC]`), or `None` when the
+    * text is not a pyarrow type name. A type with no neutral equivalent is an `OtherType`, as in `parse`. */
+  def dataType(text: String): Option[LogicalType] = {
+    val t = text.trim
+    // a pyarrow type name starts with a letter, and a nested one closes what it opens
+    if (t.isEmpty || !t.head.isLetter || t.count(_ == '<') != t.count(_ == '>')) None
+    else Try(dataTypeOf(t)).toOption
+  }
 
   /** `name: type` (with ` not null` when the column may not be null). */
   private def field(text: String): LogicalField = {
@@ -43,7 +57,7 @@ private[beamadapter] object PyArrowSchemas {
 
   private def withNullability(text: String): (LogicalType, Boolean) = {
     val t = text.trim
-    if (t.endsWith(NotNull)) (dataType(t.stripSuffix(NotNull).trim), false) else (dataType(t), true)
+    if (t.endsWith(NotNull)) (dataTypeOf(t.stripSuffix(NotNull).trim), false) else (dataTypeOf(t), true)
   }
 
   private val NotNull = " not null"
@@ -51,7 +65,7 @@ private[beamadapter] object PyArrowSchemas {
   private val Timestamp = """timestamp\[\w+(, tz=(.+))?\]""".r
   private val Decimal = """decimal(?:32|64|128|256)\((\d+), (-?\d+)\)""".r
 
-  private def dataType(t: String): LogicalType = t.indexOf('<') match {
+  private def dataTypeOf(t: String): LogicalType = t.indexOf('<') match {
     case -1 => primitive(t)
     case open =>
       val inner = t.substring(open + 1, t.lastIndexOf('>'))
@@ -65,7 +79,7 @@ private[beamadapter] object PyArrowSchemas {
           }
         // a dictionary-encoded column holds values of its value type
         case "dictionary" =>
-          topLevel(inner).collectFirst { case v if v.startsWith("values=") => dataType(v.stripPrefix("values=")) }.getOrElse(LogicalType.OtherType(t))
+          topLevel(inner).collectFirst { case v if v.startsWith("values=") => dataTypeOf(v.stripPrefix("values=")) }.getOrElse(LogicalType.OtherType(t))
         case _ => LogicalType.OtherType(t)
       }
   }

@@ -4,8 +4,9 @@
     cases.py CASES_DIR [--record] [--native] [--max-seconds S] -- COMMAND...
 
 Each case is a directory holding `requests.jsonl` (one request per line), `replies.jsonl` (the reply expected for each), the
-files the requests name, and optionally `events.txt` (the event types a file sink must have written to `events.jsonl`, in
-order) and `http-events.txt` (the event types an HTTP sink must have posted to `${HTTP}`, a local endpoint the run provides). A case is copied to a fresh directory first, and `${CASE}` in any of its files becomes that directory, so the
+files the requests name, and optionally `events.txt` (the events a file sink must have written to `events.jsonl`, in order, each
+as its type and what it concluded: `CONTRACT_VALIDATION FAILED`) and `http-events.txt` (the same for the events an HTTP sink
+must have posted to `${HTTP}`, a local endpoint the run provides). A case is copied to a fresh directory first, and `${CASE}` in any of its files becomes that directory, so the
 requests can name the case's own files whatever runs them. COMMAND runs once per case in that directory, with the requests on
 its standard input: `java -jar invaract-pythonio-checker.jar`, or the native program built from it.
 
@@ -40,7 +41,7 @@ class Receiver:
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                received.append(json.loads(body)["eventType"])
+                received.append(describe(json.loads(body)))
                 self.send_response(200)
                 self.end_headers()
 
@@ -72,12 +73,19 @@ def json_lines(text):
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def describe(event):
+    """An event as `events.txt` records it: its type, then what it concluded (a validation's status; an inference's status and
+    self-check; a dry-run summary's merge status)."""
+    parts = [event["eventType"]] + [str(event[k]) for k in ("status", "selfCheck", "mergeStatus") if event.get(k) is not None]
+    return " ".join(parts)
+
+
 def event_types(directory):
     path = os.path.join(directory, "events.jsonl")
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        return [event["eventType"] for event in json_lines(f.read())]
+        return [describe(event) for event in json_lines(f.read())]
 
 
 def run_case(name, source, command, record, max_seconds):

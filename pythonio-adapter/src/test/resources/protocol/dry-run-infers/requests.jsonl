@@ -1,0 +1,7 @@
+{"op": "open", "settings": {"dryRun": "true", "notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "read", "name": "orders", "location": "data/in/orders", "format": "parquet", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
+{"op": "write", "name": "report", "location": "data/out/report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}
+{"op": "written", "name": "report", "rows": 120, "nulls": {"region": 0, "total": 0, "lines": 7}}
+{"op": "write", "name": "audit", "location": "data/out/audit", "format": "csv", "saveMode": "append", "schema": [{"name": "order_id", "type": "int64", "nullable": true}, {"name": "status", "type": "string", "nullable": true}]}
+{"op": "written", "name": "audit", "rows": 120, "nulls": {"order_id": 0, "status": 12}}
+{"op": "finish", "completed": true}

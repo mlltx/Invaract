@@ -40,4 +40,5 @@ static-data-quality-cannot-prove-a-passthrough
 static-data-quality-violation-blocks
 role-source-contributing-conforms
 role-control-contributing-contradicts
+untranslatable-write-fails-closed
 invalid-contract

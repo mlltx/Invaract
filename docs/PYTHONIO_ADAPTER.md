@@ -9,42 +9,58 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestone 0 done.** The checker, `PythonIoCheck`, exists and builds as a native program that gives the same replies
+**Status: milestones 0 and 1 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+`written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package that will drive it does not exist yet (milestone 2), so nothing here reaches a user;
 the user pages list the engine as "in development".
 
 ## What it is
 
 A Python job reads and writes through the `invaract` package by the names its contract gives (`invaract.read("orders")`,
-`invaract.write(df, "report")`). The package does no checking. It starts the checker once per run and sends it a description
-of each write: the output's name, the format and save mode it writes, the table's columns in the contract's types, and the
-inputs the run has read so far. The checker answers each request with a verdict, and the package publishes the staged outputs
-only when the run finished and every answer was yes.
+`invaract.write(df, "report")`). The package does no checking. It starts the checker once per run and describes to it each
+read and each write: the dataset's name, the format and save mode, each column's Arrow type, and the empty values each column
+holds. The checker answers each request with a verdict, and the package publishes the staged outputs only when the run
+finished and every answer was yes.
 
 | File | Does |
 |---|---|
-| `PythonIoRequests` | the protocol's requests (`open`, `write`, `finish`), parsed from one JSON object per line; `PythonIoConfigSource`, the settings by their neutral names (`INVARACT_<NAME>` in the job's environment) |
-| `PythonIoCheck` | the checker: `main` reads requests from standard input and writes one reply each to standard output; `Run` turns each request into what `VerificationPipeline` checks |
+| `PythonIoRequests` | the protocol's requests, parsed from one JSON object per line, with each column's Arrow type mapped by `ArrowSchemas` (verification-core); `PythonIoConfigSource`, the settings by their neutral names (`INVARACT_<NAME>` in the job's environment) |
+| `PythonIoCheck` | the checker: `main` reads requests from standard input and writes one reply each to standard output; `Run` turns each request into what `VerificationPipeline` checks, or, in a dry run, into a draft contract |
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
 
-The protocol, as the cases record it:
+### The protocol
 
-```
-{"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17"}}
-  -> {"ok": true, "contract": {"id": ..., "inputs": [...], "outputs": [{"name": "report", "location": ..., "format": ..., "fields": [...]}]}}
-{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite",
- "schema": [{"name": "total", "type": "long", "nullable": false}], "reads": [{"name": "orders", "schema": [...]}]}
-  -> {"ok": true}
-  or {"ok": false, "status": "refused", "violations": ["OUTPUT_FIELD_TYPE_MISMATCH"], "explanation": "..."}
-{"op": "finish", "completed": true}
-  -> {"ok": true, "publish": true}
-```
+One request per line from the package, one reply per line from the checker, as the recorded cases
+(`src/test/resources/protocol`) hold them. A column is `{"name", "type", "nullable", "nulls"}`: `type` is pyarrow's own name
+for it (`str(field.type)`: `int64`, `large_string`, `list<item: struct<sku: string, qty: int32>>`,
+`dictionary<values=string, indices=int8, ordered=0>`), `nullable` is Arrow's flag, and `nulls` how many empty values the data
+holds, where the data has been seen.
 
-A request the checker cannot check (a missing contract file, an unknown setting, a malformed request, a write before `open`)
-gets `{"ok": false, "status": "not-checked", "reason": ...}`, which the package treats as a refusal, so nothing is published
+| Request | The checker | Reply |
+|---|---|---|
+| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check | `{"ok": true, "mode": "enforce", "contract": {inputs, outputs with locations, formats and fields}}`, or `"mode": "dry-run"` |
+| `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), checks the columns against the input's, and records the read for every later write | `{"ok": true}` |
+| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location, format, save mode, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
+| `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
+| `{"op": "written", "name": "report", "rows": 120, "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
+| `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
+
+A refusal is `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`. A request the checker cannot check
+(a missing contract file, an unknown setting, a malformed request, a `written` with no `write` before it) gets
+`{"ok": false, "status": "not-checked", "reason": ...}`, which the package treats as a refusal, so nothing is published
 unchecked.
+
+**Why two requests per write.** The columns and their types are known before any data is written, so a write that cannot pass
+is refused before the job spends time staging it. Whether a required column holds an empty value is known only once the data
+has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so Arrow's flag
+cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a refusal; the
+`written` check is the verdict on the whole write.
+
+**Dry-run mode** (`INVARACT_DRY_RUN=true`). There is no contract, so `read` and `write` carry the job's own `location` and
+`format`. Every write is let through, each staged one gets a draft contract (`CONTRACT_INFERENCE`, with its self-check), and
+`finish` merges them into one draft for the job, named after it (`DRY_RUN_SUMMARY`), as Spark's and Beam's dry runs do.
 
 ## Milestone 0: the checker as a native program
 
@@ -70,6 +86,25 @@ covers a team's own notification sink, custom rule verifiers, custom policy eval
 `INVARACT_REGISTRY_CLIENT_CLASS`. The `registry` case is therefore JVM-only: its stub client lives in the tests. A team that
 needs its own plug-ins needs a build that includes them, or the Java route.
 
+**With milestone 1** (2026-11-02) the protocol grew to 38 recorded cases: reads, the two-step write, Arrow's type names, empty
+values in required columns, unverifiable writes and dry runs. The native program still gives the JVM's replies on all 37 that
+it can run, with no change to its configuration (the dry run's YAML writing and its events needed none), at 44 MB and at most
+31 ms a run.
+
+## Milestone 1: the protocol
+
+Milestone 1 (design section 12) is the checker's whole side of the protocol, tested with recorded descriptions and no Python:
+
+- **`read`** checks each read as it is made, and the checker keeps the run's reads, so a `write` no longer carries them.
+- **The two-step write** (`write`, then `written`) gives the early refusal and the data-based check of required columns
+  that design section 5 and decision 3 call for.
+- **Arrow's own type names.** The mapping (`ArrowSchemas`) moved from beam-adapter into verification-core, where both
+  adapters share it, and gained `dataType` for one type name.
+- **`unverifiable`** writes are refused (`UNVERIFIABLE_WRITE`), which made `failClosed.unverifiableWrites` partial: the kit's
+  scenario for it now conforms (42 scenarios in all).
+- **Dry-run mode** reuses the core's `ContractInference`, `DryRunSelfCheck` and `DryRunSummary`, so
+  `reporting.dryRunInference` is supported.
+
 ## Engine investigation
 
 The "engine" here is the `invaract` package, which this repository will write, so most questions are answered by the design
@@ -83,8 +118,8 @@ rather than by investigating someone else's code.
 | 4 | How are datasets named, and how do they convert to the canonical `/`-separated location? | By the contract's own names; the location is the contract's, resolved through `INVARACT_LOCATION_MAP` for `ref://`. A name the contract does not declare stands for itself and lands on no declared output | `PythonIoCheck.write`; the `undeclared-output-refused` case |
 | 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet` and `csv`, written by the package itself; no catalog in the first version | design decision 4 |
 | 6 | What are its write dispositions, and their defaults per operation? | `overwrite` and `append`, stated on every write | design section 2 |
-| 7 | How do its types map to `LogicalType` (including the ones with no equivalent)? | The package sends the contract's own type syntax, mapped from Arrow by the shared mapping (`PyArrowSchemas`); the checker parses it with `LogicalType.parse` and refuses a request whose type does not parse | `Requests.fields`; the `protocol-misuse` case |
-| 8 | What does nullability mean, per field and per table kind? | A column is not nullable when the written data has no empty value and the file is written `not null` (design decision 3) | design decision 3; the `required-column-nullable-refused` case |
+| 7 | How do its types map to `LogicalType` (including the ones with no equivalent)? | The package sends each column's Arrow type as pyarrow names it; the checker maps it with the shared `ArrowSchemas` (verification-core), keeps a type with no equivalent as itself, and refuses a request whose type is not an Arrow type name ("Type mapping" below) | `Requests.columns`; `ArrowSchemasSpec`; the `arrow-type-*` and `protocol-misuse` cases |
+| 8 | What does nullability mean, per field and per table kind? | A column is not nullable when the written data has no empty value (counted batch by batch and sent with `written`), and the file is written `not null` (design decision 3); with no count, Arrow's flag stands | design decision 3; the `required-column-*` cases |
 | 9 | What are its function names, especially the non-deterministic ones? | Not applicable: the checker never sees the transformation | — |
 | 10 | What changes data without being a plain write (truncate, row-level DML, rollback, scripts)? | Nothing inside the package. A write made around it is not seen; `invaract-lint` (milestone 4) is the guard | design section 7 |
 | 11 | Does it stream? Does it have a checkpoint or cache? | No streaming in the first version; no checkpoint or cache | design section 1 |
@@ -108,7 +143,7 @@ package (milestone 3).
 | `check.inputExistence` | partial | `declared-input-not-read`, `undeclared-input-rejected`, the `derived-from-*` scenarios; `an-undeclared-second-write-is-blocked` conforms through the kit's `Scenarios.perWriteReadAttribution` (every read counts toward every later write, D4) |
 | `check.location` | supported | `wrong-output-location`, `an-undeclared-second-write-is-blocked`; the `undeclared-output-refused` case |
 | `check.outputsWritten` | supported | `declared-output-never-written`; the `missing-output-refused` and `finish-defaults-to-completed` cases |
-| `check.schema` | supported | `missing-output-field`, `output-type-mismatch`, `extended-type-not-produced`, `output-nullability-mismatch`, the undeclared-column scenarios; the `input-schema-checked` and `column-names-are-case-sensitive` cases |
+| `check.schema` | supported | `missing-output-field`, `output-type-mismatch`, `extended-type-not-produced`, `output-nullability-mismatch` (a required column whose data holds an empty value), the undeclared-column scenarios; the `input-schema-*`, `required-column-*`, `arrow-type-*` and `column-names-are-case-sensitive` cases |
 | `check.nestedTypes` | supported | `nested-type-matches`, `nested-type-mismatch`; the `nested-type-refused` case |
 | `check.format` | supported | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | supported | `output-save-mode-matches`, `output-save-mode-mismatch` |
@@ -128,10 +163,10 @@ package (milestone 3).
 | `config.locationRefs` | supported | attested: `PythonIoProtocolCasesSpec` (the `location-refs` case) |
 | `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only) |
 | `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases |
-| `reporting.dryRunInference` | unsupported | the note: the checker answers a dry-run request as not checked (the `dry-run-not-available` case) until the package's dry-run path exists |
-| `failClosed.unverifiableWrites` | unsupported | the note: a write made around the package is not seen, so it is not refused; the lint is the guard |
+| `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
+| `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |
 
-41 of the kit's scenarios conform (`conformance-baseline-pythonio.txt`); the rest are skipped by the declaration.
+42 of the kit's scenarios conform (`conformance-baseline-pythonio.txt`); the rest are skipped by the declaration.
 
 ## Operation surface
 
@@ -142,24 +177,36 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 |---|---|---|
 | A write to a declared output, Parquet or CSV, overwrite or append | ✅ covered | the `passes` case; the format and save-mode scenarios |
 | A write to a name the contract does not declare | 🚫 fails closed | the `undeclared-output-refused` case |
-| A read of a declared input, with or without its columns | ✅ covered | the `input-schema-checked` case |
-| A read of an undeclared input, with `rejectUndeclaredInputs` | 🚫 fails closed | the `undeclared-input-refused` case |
+| A read of a declared input, its columns checked | ✅ covered | the `input-schema-checked`, `input-schema-refused` and `input-required-column-holds-nulls-refused` cases |
+| A read of a name the contract does not declare | 🚫 fails closed: the package has no location for it | the `read-undeclared-refused` and `undeclared-input-refused` cases |
+| A write whose output is missing an input the contract requires | 🚫 fails closed | the `missing-input-refused` case |
+| A table the package cannot describe (no Arrow stream) | 🚫 fails closed | the `unverifiable-write-refused` case |
+| A required column whose data holds an empty value | 🚫 fails closed, after staging and before publishing | the `required-column-holds-nulls-refused` case |
+| A dry run: reads and writes at the job's own locations | ✅ covered: let through, with drafts | the `dry-run-*` cases |
 | A run that ends without writing a declared output | 🚫 fails closed | the `missing-output-refused` case |
 | A run whose job failed (`completed: false`) | ✅ covered: nothing is published, no missing-output refusal | the `failed-run-publishes-nothing` case |
 | A run that ends without `finish` (the package was interrupted) | ✅ covered: its events are still delivered | the `events-delivered-without-finish` case |
-| A `read` request (the design's fourth request) | ❓ not built yet: reads arrive with the writes | — |
 | A write or read made around the package | ❓ not seen by the checker; the lint (milestone 4) | — |
 
 ## Type mapping
 
-The package maps Arrow types to the contract's types with the mapping shared with the Beam Python adapter (`PyArrowSchemas`,
-design section 4), and sends the contract's syntax. The checker's side is `LogicalType.parse`.
+The package sends each column's type as pyarrow names it (`str(field.type)`), and the checker maps it with `ArrowSchemas`
+(verification-core), the mapping the Beam Python adapter uses for a Parquet write's printed schema. The table is the Beam
+Python adapter's (docs/BEAM_PYTHON_ADAPTER.md); the strings were recorded from pyarrow 25.0.1.
 
-| Neutral type | PythonIo type | Notes |
+| Arrow (`str(field.type)`) | Contract type | Notes |
 |---|---|---|
-| every `LogicalType` | its contract spelling (`long`, `decimal(10,2)`, `array<struct<sku:string,qty:int>>`) | parsed by `LogicalType.parse`; nested types compared in full (`nested-type-refused` case) |
-| a type the grammar does not parse | refused as not checked | `protocol-misuse` case (`array<long`) |
-| Arrow to contract types | ❓ the package's side, with the package (milestone 2) | — |
+| `bool`, `int8`, `int16`, `int32`, `int64`, `float`, `double` | `boolean`, `byte`, `short`, `integer`, `long`, `float`, `double` | |
+| `string`, `large_string`, `string_view` | `string` | Polars sends `string_view` (sink records survey, probe 15) |
+| `binary`, `large_binary`, `binary_view`, `fixed_size_binary[n]` | `binary` | |
+| `date32[day]`, `date64[ms]` | `date` | |
+| `timestamp[unit, tz=...]` / `timestamp[unit]` | `timestamp` / `timestamp_ntz` | a time zone makes it an instant |
+| `time32[...]`, `time64[...]`, `month_day_nano_interval` | `time`, `interval` | |
+| `decimal32/64/128/256(p, s)` | `decimal(p,s)` up to 38 digits | wider has no equivalent |
+| `list<item: T>` and its large, view and fixed-size forms; `struct<...>`; `map<K, V>` | `array<T>`, `struct<...>`, `map<K,V>` | nested types compared in full (`nested-type-refused` case) |
+| `dictionary<values=T, ...>` | `T` | pandas sends a categorical column this way (`arrow-type-names` case) |
+| `uint8` to `uint64`, `halffloat`, `duration[...]`, `null` | itself | equal only to itself, so a contract type never matches it (`arrow-type-without-equivalent-refused` case) |
+| anything else, or text that is not a type name | refused as not checked | `protocol-misuse` case (`list<item: int64`) |
 
 ## Friction log
 
@@ -176,6 +223,10 @@ design section 4), and sends the contract's syntax. The checker's side is `Logic
   development" and the follow-up is on the ROADMAP.
 - Stryker4s leaves instrumented classes in `target/`; running the checker from that classpath afterwards fails with
   `NoClassDefFoundError: stryker4s/package$`. `sbt clean` first.
+- Milestone 0's protocol carried each write's reads and judged a required column by the frame's nullable flag. Both had to
+  change once the conformance adapter played the package faithfully: the package learns the reads one at a time, and pandas
+  sets the flag on every column. Milestone 1's `read` and `written` requests are the result; the recorded cases were
+  regenerated for them.
 
 ## Unverified items
 
@@ -183,4 +234,5 @@ design section 4), and sends the contract's syntax. The checker's side is `Logic
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).
 - The package's side of the protocol: everything the package is to send is, so far, what `PythonIoConformanceAdapter` and
-  the recorded cases send.
+  the recorded cases send. In particular, that pyarrow's `str(field.type)` is the same across the pyarrow releases the package
+  will support (recorded from 25.0.1 only).

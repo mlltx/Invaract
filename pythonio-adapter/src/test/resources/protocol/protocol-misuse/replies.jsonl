@@ -1,15 +1,23 @@
 {"ok": false, "reason": "a request must be a JSON object", "status": "not-checked"}
 {"ok": false, "reason": "a request must be a JSON object", "status": "not-checked"}
-{"ok": false, "reason": "unknown op 'launch': expected open, write or finish", "status": "not-checked"}
+{"ok": false, "reason": "unknown op 'launch': expected open, read, write, written or finish", "status": "not-checked"}
 {"ok": false, "reason": "the run must be opened first", "status": "not-checked"}
 {"ok": false, "reason": "a write must name the output it writes", "status": "not-checked"}
-{"contract": {"id": "orders_report", "inputs": [{"format": "parquet", "location": "data/in/orders", "name": "orders"}, {"format": "csv", "location": "data/in/customers.csv", "name": "customers"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}, {"name": "lines", "required": false, "type": "array<struct<sku:string,qty:int>>"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}, {"fields": [{"name": "order_id", "required": true, "type": "long"}, {"name": "status", "required": false, "type": "string"}], "format": "csv", "location": "data/out/audit", "name": "audit"}], "version": "1.0.0"}, "ok": true}
+{"contract": {"id": "orders_report", "inputs": [{"format": "parquet", "location": "data/in/orders", "name": "orders"}, {"format": "csv", "location": "data/in/customers.csv", "name": "customers"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}, {"name": "lines", "required": false, "type": "array<struct<sku:string,qty:int>>"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}, {"fields": [{"name": "order_id", "required": true, "type": "long"}, {"name": "status", "required": false, "type": "string"}], "format": "csv", "location": "data/out/audit", "name": "audit"}], "version": "1.0.0"}, "mode": "enforce", "ok": true}
 {"ok": false, "reason": "the run is already open", "status": "not-checked"}
+{"ok": false, "reason": "a read must name the input it reads", "status": "not-checked"}
 {"ok": false, "reason": "column 'total' of the write of 'report' has no type", "status": "not-checked"}
-{"ok": false, "reason": "column 'total' of the write of 'report' has the type 'array<long', which is not a contract type", "status": "not-checked"}
+{"ok": false, "reason": "column 'total' of the write of 'report' has the type 'list<item: int64', which is not an Arrow type", "status": "not-checked"}
 {"ok": false, "reason": "a column of the write of 'report' must be a JSON object", "status": "not-checked"}
-{"ok": false, "reason": "every read must name the input it read", "status": "not-checked"}
-{"ok": false, "reason": "every read must be a JSON object", "status": "not-checked"}
+{"ok": false, "reason": "a written must name the output it staged", "status": "not-checked"}
+{"ok": false, "reason": "IllegalStateException: no write of 'report' was described before it was staged", "status": "not-checked"}
+{"ok": false, "reason": "the empty values of column 'total' of 'report' must be a count, not '-1'", "status": "not-checked"}
+{"ok": false, "reason": "the rows of 'report' must be a count, not 'many'", "status": "not-checked"}
+{"ok": false, "reason": "the empty values of column 'order_id' of the read of 'orders' must be a count, not '1.5'", "status": "not-checked"}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
 {"ok": true}
 {"ok": true}
 {"ok": true, "publish": true}

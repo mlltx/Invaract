@@ -23,8 +23,8 @@ import scala.collection.JavaConverters._
   * A case is copied to a fresh directory, and `${CASE}` in any of its files becomes that directory; its `requests.jsonl` is
   * answered line by line, and each reply must equal the one in `replies.jsonl` (compared as JSON, with the directory written
   * back as `${CASE}`). When the case has an `events.txt`, the file sink it configures must have written those event types, in
-  * that order, to `events.jsonl`; when it has an `http-events.txt`, its HTTP sink must have posted those to `${HTTP}`, a local
-  * endpoint the run provides.
+  * that order, to `events.jsonl`, each as its type and what it concluded (`CONTRACT_VALIDATION FAILED`); when it has an
+  * `http-events.txt`, its HTTP sink must have posted those to `${HTTP}`, a local endpoint the run provides.
   */
 class PythonIoProtocolCasesSpec extends AnyFunSuite {
   import PythonIoProtocolCasesSpec._
@@ -48,6 +48,13 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
   }
 
   test(ContractRegistry)(assertCase("registry"))
+
+  test(DryRunInference) {
+    // every write is let through and gets a draft contract; the job's drafts are merged when it finishes
+    assertCase("dry-run-infers")
+    assert(runCase("dry-run-infers").events == List("CONTRACT_INFERENCE INFERRED PASSED", "CONTRACT_INFERENCE INFERRED PASSED", "DRY_RUN_SUMMARY MERGED"))
+    assertCase("dry-run-unverifiable-write")
+  }
 }
 
 object PythonIoProtocolCasesSpec {
@@ -58,6 +65,8 @@ object PythonIoProtocolCasesSpec {
     "location refs: a ref:// location is resolved through INVARACT_LOCATION_MAP when the run opens, and the write to it is checked"
   val ContractRegistry =
     "contract registry: INVARACT_CONTRACT naming a registry:// reference is fetched from INVARACT_REGISTRY_URL's registry and enforced"
+  val DryRunInference =
+    "dry-run inference: with INVARACT_DRY_RUN=true every write is let through, gets a draft contract, and the drafts are merged at the end"
 
   private val Placeholder = "${CASE}"
   private val HttpPlaceholder = "${HTTP}"
@@ -81,7 +90,11 @@ object PythonIoProtocolCasesSpec {
   private def lines(file: File): List[String] =
     if (!file.isFile) Nil else new String(Files.readAllBytes(file.toPath), StandardCharsets.UTF_8).split("\n").map(_.trim).filter(_.nonEmpty).toList
 
-  private def eventType(line: String): String = json(line).asInstanceOf[java.util.Map[String, AnyRef]].get("eventType").toString
+  /** An event as `events.txt` records it: its type, then what it concluded (as `native/cases.py` describes it). */
+  private def eventType(line: String): String = {
+    val event = json(line).asInstanceOf[java.util.Map[String, AnyRef]]
+    (event.get("eventType") :: List("status", "selfCheck", "mergeStatus").map(event.get).filter(_ != null)).mkString(" ")
+  }
 
   private def copy(from: Path, to: Path, url: String): Unit =
     Files.walk(from).iterator().asScala.foreach { source =>

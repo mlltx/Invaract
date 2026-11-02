@@ -4,6 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{Formats, LogicalSchema}
+import com.invaract.verification.ArrowSchemas
 
 /** The steps of a pipeline written with Beam's Python SDK, as its portable form describes them (`PortablePipeline`): the one
   * place that knows the Python SDK's class names and display-data keys (docs/BEAM_PYTHON_ADAPTER.md, D3).
@@ -137,7 +138,7 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
   private def writtenSchema(step: BeamStep, format: String): Option[LogicalSchema] =
     step.display.get("schema").filter(stated).flatMap { schema =>
       format match {
-        case Formats.Parquet => PyArrowSchemas.parse(schema)
+        case Formats.Parquet => ArrowSchemas.parse(schema)
         case Formats.Avro    => BeamSchemas.fromAvroJson(schema)
         case _               => None
       }
