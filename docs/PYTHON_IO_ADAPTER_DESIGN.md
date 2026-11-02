@@ -223,8 +223,8 @@ build. Organisational policy, the registry and plug-ins would then be unavailabl
   "cannot be empty" (the native Python survey, probe 8), so checking the schema's flag would refuse every pandas job. The
   written file then carries `not null` for each required column, so consumers see the contract's schema exactly.
 - **Formats.** Parquet and CSV in the first version.
-  - CSV inputs are read with the contract's delimiter (default `,`), not detected, since detection failed in the sink
-    records survey's probe 6.
+  - CSV inputs are read with a comma, not detected, since detection failed in the sink records survey's probe 6. (A
+    contract has no delimiter field; milestone 2 found this.)
   - Types are given to the reader from the contract's input schema where it lists them.
 - **Save modes**, from the contract, not chosen by the job:
   - `overwrite` replaces the output's folder at publish;
@@ -370,10 +370,12 @@ everything is local files.
 ## 11. Versions and compatibility
 
 - Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.
-- Python 3.9 to 3.13.
-- pyarrow: the oldest release with `RecordBatchReader.from_stream` and the C stream protocol (UNVERIFIED which one).
-- pandas: the release that added `__arrow_c_stream__` (UNVERIFIED, believed 2.2).
-- Polars and DuckDB: the releases that added it (UNVERIFIED).
+- Python 3.10 to 3.13. (3.9 reached its end of life in October 2025, and CI's runners no longer offer it; milestone 2.)
+- pyarrow 15, the first with `RecordBatchReader.from_stream` (14 lacks it; milestone 2).
+- pandas 2.2, which added `__arrow_c_stream__`; the package converts pandas with `pa.Table.from_pandas` in any case, to leave
+  out the row index (milestone 2).
+- Polars 1.0 and DuckDB 1.0: neither has the stream yet, so the package uses their own conversion; the tests pass on both
+  (milestone 2).
 
 An older frame library falls back to its own conversion to Arrow (`pa.Table.from_pandas`, Polars' `to_arrow`), which are
 long-standing public functions. The CI matrix tests the oldest and newest supported release of each.
@@ -405,6 +407,11 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 2. **The package** (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
    dry-run path with `location=`. pytest tests, and the end-to-end example of the sink records survey's probe 14 made
    permanent.
+
+   **Result (2026-11-02): done.** `pythonio-adapter/python/invaract`, with 91 pytest tests against the real checker (the jar
+   and the native program), and probe 14's job in `examples/orders_job` with a test for each of its bugs. The checker gained
+   the inputs' declared columns in `open`'s reply and a check of `location=` with a contract in force. Details, and what the
+   build found, are in docs/PYTHONIO_ADAPTER.md.
 3. **Conformance** (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.
    Started with milestone 0: the kit's scenarios already run through the checker, as the package will drive it, and 41
    conform. What remains is running them as real Python jobs, and a `staged-publish` enforcement point in
@@ -439,7 +446,7 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 
 | Question | How to settle it |
 |---|---|
-| The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol | their changelogs, then the CI matrix |
+| ~~The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol~~ | settled by milestone 2 (section 11): pyarrow 15, pandas 2.2, Polars 1.0 and DuckDB 1.0, held by CI's `pythonio-python` job |
 | ~~Whether the checker builds as a native image, with which reflection configuration, at what size and start-up~~ | settled by milestone 0 (section 12): it does, with a few lines of configuration, at 41 MB and 6 to 15 ms a run |
 | How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load | ask the teams; check the deployed notification and policy configurations |
 | How small the change is on real jobs | convert a sample of real jobs |

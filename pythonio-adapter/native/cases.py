@@ -13,7 +13,8 @@ its standard input: `java -jar invaract-pythonio-checker.jar`, or the native pro
 PythonIoProtocolCasesSpec runs the same cases inside the JVM; this script holds the native program to the same replies
 (milestone 0, docs/PYTHON_IO_ADAPTER_DESIGN.md). `--native` skips a case holding a `jvm-only` file, which says why: a case
 that needs a class the native program cannot load by name. `--record` writes each case's replies and events instead of
-comparing them, for a new case; read what it wrote before committing it. `--max-seconds` fails a case that takes longer,
+comparing them, for a new case; read what it wrote before committing it. It skips a `jvm-only` case too, whose replies are
+written by hand. `--max-seconds` fails a case that takes longer,
 start-up included.
 """
 import argparse
@@ -153,7 +154,8 @@ def main():
         source = os.path.join(args.cases, name)
         if not os.path.isdir(source):
             continue
-        if args.native and os.path.exists(os.path.join(source, "jvm-only")):
+        if (args.native or args.record) and os.path.exists(os.path.join(source, "jvm-only")):
+            # its classes are on the test classpath only, so no checker this script runs can give its replies
             print(f"SKIP {name}: jvm-only")
             continue
         problems, elapsed = run_case(name, source, command, args.record, args.max_seconds)

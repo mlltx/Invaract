@@ -8,7 +8,7 @@ import com.invaract.ir
 import com.invaract.ir.{DatasetRef, UnknownPlan}
 import com.invaract.verification.{
   AttachPlan, AttachSetup, CheckedWrite, ContractInference, ContractViolationException, DryRunReporting, DryRunSelfCheck, InferredWrite,
-  SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup, Violations
+  LocationMatching, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup, Violations
 }
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationJson, NotificationSink}
 import org.slf4j.LoggerFactory
@@ -133,6 +133,7 @@ private[pythonioadapter] final class Run {
     val location = locate(r.name, r.location, "read", run)(_.inputs)
     run.contract.foreach { c =>
       val violations = c.inputs.find(_.name == r.name) match {
+        case Some(input) if !LocationMatching.matches(input.location, location) => List(Violations.undeclaredInput(location))
         case Some(input) => SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true)
         case None        => List(Violations.undeclaredInput(r.name))
       }
@@ -201,12 +202,14 @@ private[pythonioadapter] final class Run {
 
   private def flush(run: Opened): Unit = DryRunReporting.flush(run.sink, logger, PythonIoCheck.FlushTimeoutMs)
 
-  /** Where a read or write lands: in a dry run, where the job says; in enforcement, where the contract declares the dataset it
-    * names, or, for a name it does not declare, the name itself, which lands on no declared dataset. */
+  /** Where a read or write lands: where the job says, if it says (`location=`, which a dry run needs and which, with a contract
+    * in force, is checked like any other location, so a forgotten one cannot point a write elsewhere); otherwise where the
+    * contract declares the dataset it names, or, for a name it does not declare, the name itself, which lands on no declared
+    * dataset. */
   private def locate(name: String, location: Option[String], verb: String, run: Opened)(declared: Contract => List[Dataset]): String =
     run.contract match {
       case None    => location.getOrElse(throw new IllegalArgumentException(s"a dry-run $verb of '$name' must say where it ${verb}s (location)"))
-      case Some(c) => declared(c).find(_.name == name).fold(name)(_.location)
+      case Some(c) => location.getOrElse(declared(c).find(_.name == name).fold(name)(_.location))
     }
 
   /** The write as the checker sees it: what the run has read, then the team's own code, then the write. */
@@ -276,15 +279,16 @@ private[pythonioadapter] object Run {
     Map(
       "id" -> c.id,
       "version" -> c.version,
-      "inputs" -> c.inputs.map(dataset(_, withColumns = false)),
-      "outputs" -> c.outputs.map(dataset(_, withColumns = true))
+      "inputs" -> c.inputs.map(dataset),
+      "outputs" -> c.outputs.map(dataset)
     )
 
-  private def dataset(d: Dataset, withColumns: Boolean): Map[String, Any] =
-    Map("name" -> d.name, "location" -> d.location) ++
+  /** A dataset's name, location, format and save mode, and its declared columns: an input's are the ones the package reads, with
+    * their types, and an output's the ones whose required-ness the written file states. */
+  private def dataset(d: Dataset): Map[String, Any] =
+    Map("name" -> d.name, "location" -> d.location, "fields" -> d.schema.fields.map(f => Map("name" -> f.name, "type" -> f.fieldType, "required" -> f.required))) ++
       d.format.map("format" -> _) ++
-      d.saveMode.map("saveMode" -> _) ++
-      (if (withColumns) Map("fields" -> d.schema.fields.map(f => Map("name" -> f.name, "type" -> f.fieldType, "required" -> f.required))) else Map.empty)
+      d.saveMode.map("saveMode" -> _)
 
   def refused(e: ContractViolationException): Map[String, Any] =
     Map("ok" -> false, "status" -> "refused", "violations" -> e.result.violations.map(_.violationType), "explanation" -> e.getMessage)

@@ -9,10 +9,11 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 and 1 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 2 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
-as the JVM. The `invaract` Python package that will drive it does not exist yet (milestone 2), so nothing here reaches a user;
-the user pages list the engine as "in development".
+as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
+the save modes, the settings, and the dry-run migration path. Nothing is released yet (the platform wheels carrying the native
+checker are milestone 5), so the user pages list the engine as "in development".
 
 ## What it is
 
@@ -29,6 +30,9 @@ finished and every answer was yes.
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
+| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
+| `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar) |
+| `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 
 ### The protocol
 
@@ -40,9 +44,9 @@ holds, where the data has been seen.
 
 | Request | The checker | Reply |
 |---|---|---|
-| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check | `{"ok": true, "mode": "enforce", "contract": {inputs, outputs with locations, formats and fields}}`, or `"mode": "dry-run"` |
-| `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), checks the columns against the input's, and records the read for every later write | `{"ok": true}` |
-| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location, format, save mode, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
+| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
+| `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and records the read for every later write | `{"ok": true}` |
+| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
 | `{"op": "written", "name": "report", "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
 | `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
@@ -57,6 +61,11 @@ is refused before the job spends time staging it. Whether a required column hold
 has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so Arrow's flag
 cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a refusal; the
 `written` check is the verdict on the whole write.
+
+**`location` with a contract in force.** A job migrated from a dry run may still say where it reads and writes
+(`location=`). The checker then checks that location like any other, so an argument left behind cannot point a read or a write
+somewhere the contract does not declare (`location-given-agrees`, `read-location-disagrees-refused`,
+`write-location-disagrees-refused`).
 
 **Dry-run mode** (`INVARACT_DRY_RUN=true`). There is no contract, so `read` and `write` carry the job's own `location` and
 `format`. Every write is let through, each staged one gets a draft contract (`CONTRACT_INFERENCE`, with its self-check), and
@@ -117,13 +126,13 @@ rather than by investigating someone else's code.
 | 3 | How could a platform attach this to a job it does not own (the engine's own configuration surface)? | Settings are `INVARACT_*` environment variables, forwarded to `open` by their neutral names; adopting the package is a one-time code change by design (`config.zeroCodeInstall` unsupported) | `PythonIoConfigSource`; the `location-refs`, `org-policy-*` and `notifications*` cases |
 | 4 | How are datasets named, and how do they convert to the canonical `/`-separated location? | By the contract's own names; the location is the contract's, resolved through `INVARACT_LOCATION_MAP` for `ref://`. A name the contract does not declare stands for itself and lands on no declared output | `PythonIoCheck.write`; the `undeclared-output-refused` case |
 | 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet` and `csv`, written by the package itself; no catalog in the first version | design decision 4 |
-| 6 | What are its write dispositions, and their defaults per operation? | `overwrite` and `append`, stated on every write | design section 2 |
+| 6 | What are its write dispositions, and their defaults per operation? | All four of `SaveModes`, from the contract: `overwrite` (the folder replaced at publish), `append` (files named after the run added), `error` (refused if the output holds data), `ignore` (nothing published if it does). With none declared, `overwrite`, as the pandas and Polars calls it replaces do | `invaract/_run.py`; `test_run.py`'s save-mode tests |
 | 7 | How do its types map to `LogicalType` (including the ones with no equivalent)? | The package sends each column's Arrow type as pyarrow names it; the checker maps it with the shared `ArrowSchemas` (verification-core), keeps a type with no equivalent as itself, and refuses a request whose type is not an Arrow type name ("Type mapping" below) | `Requests.columns`; `ArrowSchemasSpec`; the `arrow-type-*` and `protocol-misuse` cases |
 | 8 | What does nullability mean, per field and per table kind? | A column is not nullable when the written data has no empty value (counted batch by batch and sent with `written`), and the file is written `not null` (design decision 3); with no count, Arrow's flag stands | design decision 3; the `required-column-*` cases |
 | 9 | What are its function names, especially the non-deterministic ones? | Not applicable: the checker never sees the transformation | — |
 | 10 | What changes data without being a plain write (truncate, row-level DML, rollback, scripts)? | Nothing inside the package. A write made around it is not seen; `invaract-lint` (milestone 4) is the guard | design section 7 |
 | 11 | Does it stream? Does it have a checkpoint or cache? | No streaming in the first version; no checkpoint or cache | design section 1 |
-| 12 | What runs in CI with no secrets: a real runner, an emulator, fixtures, or only a credentialed job? | Everything: local files, the checker in-process and as a native program, and (from milestone 2) a real Python interpreter | `pythonio-native-checker`; `PythonIoConformanceSpec` |
+| 12 | What runs in CI with no secrets: a real runner, an emulator, fixtures, or only a credentialed job? | Everything: local files, the checker in-process and as a native program, and the package under real Python against the native program | `pythonio-native-checker`; `pythonio-python`; `PythonIoConformanceSpec` |
 
 ## Capability ledger
 
@@ -186,6 +195,11 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A run that ends without writing a declared output | 🚫 fails closed | the `missing-output-refused` case |
 | A run whose job failed (`completed: false`) | ✅ covered: nothing is published, no missing-output refusal | the `failed-run-publishes-nothing` case |
 | A run that ends without `finish` (the package was interrupted) | ✅ covered: its events are still delivered | the `events-delivered-without-finish` case |
+| A `location=` argument, with a contract in force | ✅ covered when it is the contract's; 🚫 fails closed when it is not | the `location-given-agrees` and `*-location-disagrees-refused` cases; `test_run.py` |
+| Each save mode, against an output that holds data and one that does not | ✅ covered | `test_run.py`'s save-mode tests |
+| A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
+| A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
+| An output format the package cannot write yet (`delta`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
 | A write or read made around the package | ❓ not seen by the checker; the lint (milestone 4) | — |
 
 ## Type mapping
@@ -207,6 +221,33 @@ Python adapter's (docs/BEAM_PYTHON_ADAPTER.md); the strings were recorded from p
 | `dictionary<values=T, ...>` | `T` | pandas sends a categorical column this way (`arrow-type-names` case) |
 | `uint8` to `uint64`, `halffloat`, `duration[...]`, `null` | itself | equal only to itself, so a contract type never matches it (`arrow-type-without-equivalent-refused` case) |
 | anything else, or text that is not a type name | refused as not checked | `protocol-misuse` case (`list<item: int64`) |
+
+## Milestone 2: the package
+
+Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`, and its tests against the real checker:
+
+- **The API** is the design's: `@invaract.job()` (or `with invaract.run():`), `invaract.read(name, as_=...)`,
+  `invaract.write(frame, name)`, and the decorators `@invaract.reads` and `@invaract.writes`.
+- **Writing.** Any object with `__arrow_c_stream__` is accepted. A pandas frame goes through `pa.Table.from_pandas` without its
+  row index, and a Polars LazyFrame runs batch by batch. Polars and DuckDB releases from before the Arrow stream use their own
+  conversion. Each write is described to the checker before anything is staged. It is then written batch by batch to a staging
+  folder beside its location, with `not null` on each required column. A required column's first empty value ends the write,
+  and the checker refuses it.
+- **Publishing.** When the job returns and `finish` says to publish, each staged output is moved into place by a rename, per
+  its save mode, with the previous version moved aside until every output is in place. A job that fails, or that catches a
+  refusal and carries on, publishes nothing.
+- **Reading.** Parquet or CSV, a file or a folder. Only the columns the contract lists are read, and CSV columns are read as the
+  contract's types.
+- **Settings** are the `INVARACT_*` variables named in `invaract/_settings.py`, forwarded by their neutral names.
+  `PythonIoSettingsSpec` holds that list to the checker's. `INVARACT_CHECKER` names the checker program; it is the package's
+  own variable, not a setting.
+- **Exit status.** An uncaught `ContractViolation` ends the job with 1 (Python's own status for an uncaught exception). An
+  uncaught `CheckNotRun` ends it with 2, set from `sys.excepthook` once the traceback is printed.
+- **Tests.** 91 pytest tests: every refusal, the save modes, dry runs, the events, every frame library, the exit statuses, and
+  the example job with each of probe 14's bugs. They pass against the jar and against the native program, on Python 3.10 to
+  3.13, with the oldest supported libraries (pyarrow 15, pandas 2.2, Polars 1.0, DuckDB 1.0) and the newest (pyarrow 26,
+  pandas 3.1, Polars 2.1, DuckDB 2.0). CI's `pythonio-python` job runs them against the native program on Python 3.10 with
+  the oldest libraries, and on 3.13 with the newest.
 
 ## Friction log
 
@@ -233,12 +274,26 @@ Python adapter's (docs/BEAM_PYTHON_ADAPTER.md); the strings were recorded from p
   change once the conformance adapter played the package faithfully: the package learns the reads one at a time, and pandas
   sets the flag on every column. Milestone 1's `read` and `written` requests are the result; the recorded cases were
   regenerated for them.
+- Milestone 2's package needed two things from the checker that milestone 1 had not given it: the inputs' declared columns in
+  `open`'s reply (to read only those, and CSV with the contract's types), and a check of `location=` with a contract in force
+  (the design's guard against an argument left behind after a migration). Both are checker changes with recorded cases.
+- pandas' `__arrow_c_stream__` carries the row index as a column (`__index_level_0__`) once a filter has made it anything
+  but 0, 1, 2, ...; the example job's audit was written with it. The package converts a pandas frame without its index.
+- pyarrow 14 has no `RecordBatchReader.from_stream`, so the package needs pyarrow 15. Polars 1.0 and DuckDB 1.0 have no
+  Arrow stream; the package falls back to their own `to_arrow()` and `arrow()`.
+- A contract has no CSV delimiter field, so CSV is read and written with a comma (design section 5 said "the contract's
+  delimiter").
+- The design named Python 3.9 as the oldest supported release. CI's runners no longer offer it (it reached its end of life
+  in October 2025), so the package requires 3.10, the oldest CI can test.
+- Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry
+  client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
+- The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
+  verification-core; a Python job sees it too. Left for a wording pass across adapters.
 
 ## Unverified items
 
 - How the native program behaves on Linux aarch64 and on macOS: only Linux x86_64 is built so far.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).
-- The package's side of the protocol: everything the package is to send is, so far, what `PythonIoConformanceAdapter` and
-  the recorded cases send. In particular, that pyarrow's `str(field.type)` is the same across the pyarrow releases the package
-  will support (recorded from 25.0.1 only).
+- The kit's scenarios run as real Python jobs through the package (milestone 3). Until then, the scenarios are played by
+  `PythonIoConformanceAdapter`, and the package is held to the checker by its own tests.
