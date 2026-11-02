@@ -699,6 +699,14 @@ object Scenarios {
     )
   )
 
+  /** The scenarios a partial `check.inputExistence` is excused a `MISSING_INPUT` in, with why: the shape the excuse had before it
+    * named its capability (it shipped on main with the Python I/O adapter's milestone 0). Kept so code compiled against that
+    * keeps linking; read `partialExcuses`. */
+  @deprecated("read partialExcuses, which names the capability and the excused violations", "0.4.0")
+  val perWriteReadAttribution: Map[String, String] = partialExcuses.collect {
+    case (id, e) if e.capability == Capability.CheckInputExistence && e.violationTypes.contains(ViolationType.MissingInput) => id -> e.why
+  }
+
   /** Everything the kit does not verify with a job: `attested` plus `gaps`. */
   val notCovered: Map[Capability, String] = attested ++ gaps
 
