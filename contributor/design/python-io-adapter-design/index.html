@@ -277,8 +277,8 @@ Null counts are summed per batch, and a required column’s first empty value fa
 written file then carries <code dir="auto">not null</code> for each required column, so consumers see the contract’s schema exactly.</li>
 <li><strong>Formats.</strong> Parquet and CSV in the first version.
 <ul>
-<li>CSV inputs are read with the contract’s delimiter (default <code dir="auto">,</code>), not detected, since detection failed in the sink
-records survey’s probe 6.</li>
+<li>CSV inputs are read with a comma, not detected, since detection failed in the sink records survey’s probe 6. (A
+contract has no delimiter field; milestone 2 found this.)</li>
 <li>Types are given to the reader from the contract’s input schema where it lists them.</li>
 </ul>
 </li>
@@ -497,10 +497,12 @@ checker jar is also published, for the Java route and for teams with their own p
 <div class="sl-heading-wrapper level-h2"><h2 id="11-versions-and-compatibility">11. Versions and compatibility</h2><a class="sl-anchor-link" href="#11-versions-and-compatibility"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “11. Versions and compatibility”</span></a></div>
 <ul>
 <li>Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.</li>
-<li>Python 3.9 to 3.13.</li>
-<li>pyarrow: the oldest release with <code dir="auto">RecordBatchReader.from_stream</code> and the C stream protocol (UNVERIFIED which one).</li>
-<li>pandas: the release that added <code dir="auto">__arrow_c_stream__</code> (UNVERIFIED, believed 2.2).</li>
-<li>Polars and DuckDB: the releases that added it (UNVERIFIED).</li>
+<li>Python 3.10 to 3.13. (3.9 reached its end of life in October 2025, and CI’s runners no longer offer it; milestone 2.)</li>
+<li>pyarrow 15, the first with <code dir="auto">RecordBatchReader.from_stream</code> (14 lacks it; milestone 2).</li>
+<li>pandas 2.2, which added <code dir="auto">__arrow_c_stream__</code>; the package converts pandas with <code dir="auto">pa.Table.from_pandas</code> in any case, to leave
+out the row index (milestone 2).</li>
+<li>Polars 1.0 and DuckDB 1.0: neither has the stream yet, so the package uses their own conversion; the tests pass on both
+(milestone 2).</li>
 </ul>
 <p>An older frame library falls back to its own conversion to Arrow (<code dir="auto">pa.Table.from_pandas</code>, Polars’ <code dir="auto">to_arrow</code>), which are
 long-standing public functions. The CI matrix tests the oldest and newest supported release of each.</p>
@@ -535,6 +537,10 @@ The protocol is listed in docs/PYTHONIO_ADAPTER.md.</p>
 <p><strong>The package</strong> (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
 dry-run path with <code dir="auto">location=</code>. pytest tests, and the end-to-end example of the sink records survey’s probe 14 made
 permanent.</p>
+<p><strong>Result (2026-11-02): done.</strong> <code dir="auto">pythonio-adapter/python/invaract</code>, with 91 pytest tests against the real checker (the jar
+and the native program), and probe 14’s job in <code dir="auto">examples/orders_job</code> with a test for each of its bugs. The checker gained
+the inputs’ declared columns in <code dir="auto">open</code>’s reply and a check of <code dir="auto">location=</code> with a contract in force. Details, and what the
+build found, are in docs/PYTHONIO_ADAPTER.md.</p>
 </li>
 <li>
 <p><strong>Conformance</strong> (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.
@@ -648,7 +654,7 @@ pyiceberg.</li>
 
 
 
-<table><thead><tr><th>Question</th><th>How to settle it</th></tr></thead><tbody><tr><td>The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol</td><td>their changelogs, then the CI matrix</td></tr><tr><td><del>Whether the checker builds as a native image, with which reflection configuration, at what size and start-up</del></td><td>settled by milestone 0 (section 12): it does, with a few lines of configuration, at 41 MB and 6 to 15 ms a run</td></tr><tr><td>How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load</td><td>ask the teams; check the deployed notification and policy configurations</td></tr><tr><td>How small the change is on real jobs</td><td>convert a sample of real jobs</td></tr><tr><td>How often real jobs read or write outside the package</td><td>run the lint over the same sample</td></tr><tr><td><del>The kit decision on per-write read attribution (scenario 20)</del></td><td>settled as D4 recommends: the kit’s <code dir="auto">Scenarios.partialExcuses</code> holds an adapter that declares <code dir="auto">check.inputExistence</code> <code dir="auto">partial</code> to scenario 20’s other violation only</td></tr><tr><td>Whether the PyPI names stay free until registered</td><td>register placeholder releases of <code dir="auto">invaract</code> and <code dir="auto">invaract-lint</code></td></tr></tbody></table>
+<table><thead><tr><th>Question</th><th>How to settle it</th></tr></thead><tbody><tr><td><del>The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol</del></td><td>settled by milestone 2 (section 11): pyarrow 15, pandas 2.2, Polars 1.0 and DuckDB 1.0, held by CI’s <code dir="auto">pythonio-python</code> job</td></tr><tr><td><del>Whether the checker builds as a native image, with which reflection configuration, at what size and start-up</del></td><td>settled by milestone 0 (section 12): it does, with a few lines of configuration, at 41 MB and 6 to 15 ms a run</td></tr><tr><td>How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load</td><td>ask the teams; check the deployed notification and policy configurations</td></tr><tr><td>How small the change is on real jobs</td><td>convert a sample of real jobs</td></tr><tr><td>How often real jobs read or write outside the package</td><td>run the lint over the same sample</td></tr><tr><td><del>The kit decision on per-write read attribution (scenario 20)</del></td><td>settled as D4 recommends: the kit’s <code dir="auto">Scenarios.partialExcuses</code> holds an adapter that declares <code dir="auto">check.inputExistence</code> <code dir="auto">partial</code> to scenario 20’s other violation only</td></tr><tr><td>Whether the PyPI names stay free until registered</td><td>register placeholder releases of <code dir="auto">invaract</code> and <code dir="auto">invaract-lint</code></td></tr></tbody></table>
 <div class="sl-heading-wrapper level-h2"><h2 id="evidence">Evidence</h2><a class="sl-anchor-link" href="#evidence"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Evidence”</span></a></div>
 <ul>
 <li><strong>Probe 15 (2026-11-01).</strong>
