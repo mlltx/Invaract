@@ -233,8 +233,8 @@ notification sinks, dry-run inference and the checks themselves already exist, h
 mutation and API-compatibility gates. A Python copy would drift from them.</p>
 <p><strong>No Java where jobs run (decision 2).</strong> Most users’ Python workers have no Java. So the checker is compiled ahead of time
 with GraalVM <code dir="auto">native-image</code> into a standalone program, one per platform, shipped inside the Python package’s wheels. The
-package starts it exactly as it would start Java: same protocol, same process model. Start-up should be milliseconds rather
-than about a second (UNVERIFIED until the first milestone builds it).</p>
+package starts it exactly as it would start Java: same protocol, same process model. Milestone 0 measured it: a whole run
+of a recorded case, start-up included, takes 6 to 15 ms natively, against about 0.45 s on the JVM.</p>
 <p>What compiling ahead of time costs:</p>
 <ul>
 <li><strong>Plug-ins loaded by class name.</strong>
@@ -248,11 +248,12 @@ configuration.</li>
 declaration and the user guide must say so.</li>
 </ul>
 </li>
-<li><strong>Libraries that use reflection.</strong> The Scala runtime and SnakeYAML (contract parsing) may need reflection configuration;
-GraalVM’s tracing agent, run over the checker’s test suite, generates it (UNVERIFIED).</li>
+<li><strong>Libraries that use reflection.</strong> Very little was needed. GraalVM’s tracing agent, run over the recorded protocol cases,
+found only the file sink’s constructor, two <code dir="auto">java.sql</code> classes SnakeYAML looks up, and the capability declaration as a
+resource. The configuration committed in the jar (<code dir="auto">META-INF/native-image/</code>) lists those and the other built-in sinks.</li>
 <li><strong>A build per platform:</strong> Linux x86_64 and aarch64, macOS arm64 and x86_64, and Windows if users need it. Each is built in
-CI with GraalVM’s GitHub Action, since the GraalVM download is blocked from this session (HTTP 403) and was not tried here.</li>
-<li><strong>Wheel size.</strong> A native image of the checker is likely tens of megabytes per platform (UNVERIFIED).</li>
+CI with GraalVM’s GitHub Action; Linux x86_64 is built today (CI’s <code dir="auto">pythonio-native-checker</code> job).</li>
+<li><strong>Wheel size.</strong> 41 MB for Linux x86_64, 14 MB compressed, which is roughly what a wheel carries.</li>
 </ul>
 <p><strong>The fallback, only if the native image fails the first milestone’s criteria.</strong> Re-implement in Python the narrow set of
 checks this adapter needs: contract parsing, schema, location, format, save mode, outputs written and inputs read. Hold
@@ -401,6 +402,15 @@ survey, probe 3). It is off by default, because it is the kind of mechanism this
 </li>
 <li><strong>not applicable:</strong> row-level changes and their rules, schema-only changes, boundary resolution.</li>
 </ul>
+<p>As built with milestone 0 (<code dir="auto">invaract-capabilities-pythonio.yaml</code>), three entries differ from this draft:</p>
+<ul>
+<li><code dir="auto">reporting.dryRunInference</code> is unsupported until the package’s dry-run path exists. The checker answers a dry-run
+request as not checked.</li>
+<li><code dir="auto">failClosed.unverifiableWrites</code> is unsupported, not partial. The kit’s scenario for it is an operation the adapter cannot
+describe, and it expects that operation to be refused. A write made around the package is never refused: it is not
+seen. The lint is the guard.</li>
+<li>The engine is labelled “in development” on the user pages until the package exists.</li>
+</ul>
 <p><code dir="auto">./dev/adapter-survey</code> with that declaration says the kit would expect, of its 55 scenarios:</p>
 <ul>
 <li><strong>27 to be checked:</strong>
@@ -452,7 +462,7 @@ job’s data is never published unchecked.</p>
 <li>
 <p>The validation event carries:</p>
 <ul>
-<li>the engine <code dir="auto">python-io</code>;</li>
+<li>the engine <code dir="auto">pythonio</code>;</li>
 <li>the Python version;</li>
 <li>the versions of pyarrow and of each frame library used;</li>
 <li>the job’s entry point;</li>
@@ -463,12 +473,13 @@ job’s data is never published unchecked.</p>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="10-repository-layout-build-ci-and-release">10. Repository layout, build, CI and release</h2><a class="sl-anchor-link" href="#10-repository-layout-build-ci-and-release"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “10. Repository layout, build, CI and release”</span></a></div>
 <ul>
-<li><strong>The module.</strong> A new sbt module, <code dir="auto">python-io-adapter</code>, generated by <code dir="auto">dev/new-adapter python-io</code> once approved. It holds:
+<li><strong>The module.</strong> The sbt module <code dir="auto">pythonio-adapter</code>, generated by <code dir="auto">dev/new-adapter pythonio</code> (an adapter’s name has no
+hyphen). It holds:
 <ul>
 <li>the Scala checker (<code dir="auto">PythonIoCheck</code>, the helper’s entry point), its declaration, and its conformance and attestation
 tests;</li>
-<li>the Python package, in <code dir="auto">python-io-adapter/python/invaract/</code>, with pytest tests;</li>
-<li>the lint, in <code dir="auto">python-io-adapter/python/invaract_lint/</code>.</li>
+<li>the Python package, in <code dir="auto">pythonio-adapter/python/invaract/</code>, with pytest tests;</li>
+<li>the lint, in <code dir="auto">pythonio-adapter/python/invaract_lint/</code>.</li>
 </ul>
 </li>
 <li><strong>Repository registration.</strong> <code dir="auto">modules.json</code> gets the module, and <code dir="auto">check_modules.py</code> names every file that must list it.
@@ -507,6 +518,12 @@ x86_64 first. It passes if:</p>
 <li>its size suits a wheel.</li>
 </ul>
 <p>If it fails, the Python fallback of section 4 replaces it, and this design is revised.</p>
+<p><strong>Result (2026-11-01): passed.</strong> GraalVM CE 21.0.2 builds it in about 75 s. It gives the same replies as the JVM on 23
+recorded protocol cases (<code dir="auto">pythonio-adapter/src/test/resources/protocol</code>). The cases cover a pass, each kind of refusal,
+organisational policy, <code dir="auto">ref://</code> locations, the file, HTTP, logging and fan-out sinks, a bad contract and protocol
+misuse. Each whole run takes 6 to 15 ms. The program is 41 MB, 14 MB compressed. One case is JVM-only: a registry
+client is named by class, and a native program loads only the classes built into it (section 4’s plug-in limit).
+The fallback is not needed. Details are in docs/PYTHONIO_ADAPTER.md.</p>
 </li>
 <li>
 <p><strong>The checker protocol</strong> (small to medium). <code dir="auto">PythonIoCheck</code>, with <code dir="auto">open</code>, <code dir="auto">write</code>, <code dir="auto">read</code> and <code dir="auto">finish</code>, over the shared
@@ -518,7 +535,11 @@ dry-run path with <code dir="auto">location=</code>. pytest tests, and the end-t
 permanent.</p>
 </li>
 <li>
-<p><strong>Conformance</strong> (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.</p>
+<p><strong>Conformance</strong> (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.
+Started with milestone 0: the kit’s scenarios already run through the checker, as the package will drive it, and 41
+conform. What remains is running them as real Python jobs, and a <code dir="auto">staged-publish</code> enforcement point in
+<code dir="auto">verification-core</code>. The user pages’ wording for <code dir="auto">in-engine-blocking</code> says a job’s earlier writes “have already
+happened”, which staging makes untrue.</p>
 </li>
 <li>
 <p><strong>The lint</strong> (small).</p>
@@ -625,7 +646,7 @@ pyiceberg.</li>
 
 
 
-<table><thead><tr><th>Question</th><th>How to settle it</th></tr></thead><tbody><tr><td>The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol</td><td>their changelogs, then the CI matrix</td></tr><tr><td>Whether the checker builds as a native image, with which reflection configuration, at what size and start-up</td><td>milestone 0, in CI with GraalVM’s GitHub Action</td></tr><tr><td>How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load</td><td>ask the teams; check the deployed notification and policy configurations</td></tr><tr><td>How small the change is on real jobs</td><td>convert a sample of real jobs</td></tr><tr><td>How often real jobs read or write outside the package</td><td>run the lint over the same sample</td></tr><tr><td>The kit decision on per-write read attribution (scenario 20)</td><td>the open decision D4 of docs/PYTHON_ADAPTER_SURVEY.md</td></tr><tr><td>Whether the PyPI names stay free until registered</td><td>register placeholder releases of <code dir="auto">invaract</code> and <code dir="auto">invaract-lint</code></td></tr></tbody></table>
+<table><thead><tr><th>Question</th><th>How to settle it</th></tr></thead><tbody><tr><td>The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol</td><td>their changelogs, then the CI matrix</td></tr><tr><td><del>Whether the checker builds as a native image, with which reflection configuration, at what size and start-up</del></td><td>settled by milestone 0 (section 12): it does, with a few lines of configuration, at 41 MB and 6 to 15 ms a run</td></tr><tr><td>How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load</td><td>ask the teams; check the deployed notification and policy configurations</td></tr><tr><td>How small the change is on real jobs</td><td>convert a sample of real jobs</td></tr><tr><td>How often real jobs read or write outside the package</td><td>run the lint over the same sample</td></tr><tr><td><del>The kit decision on per-write read attribution (scenario 20)</del></td><td>settled as D4 recommends: the kit’s <code dir="auto">Scenarios.perWriteReadAttribution</code> holds an adapter that declares <code dir="auto">check.inputExistence</code> <code dir="auto">partial</code> to scenario 20’s other violation only</td></tr><tr><td>Whether the PyPI names stay free until registered</td><td>register placeholder releases of <code dir="auto">invaract</code> and <code dir="auto">invaract-lint</code></td></tr></tbody></table>
 <div class="sl-heading-wrapper level-h2"><h2 id="evidence">Evidence</h2><a class="sl-anchor-link" href="#evidence"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Evidence”</span></a></div>
 <ul>
 <li><strong>Probe 15 (2026-11-01).</strong>

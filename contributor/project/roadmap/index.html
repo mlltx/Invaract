@@ -4079,8 +4079,15 @@ write through the <code dir="auto">invaract</code> package (<code dir="auto">@in
 staged, published together only when the run passed; no Java where jobs run (a native-image checker). First
 version: Parquet and CSV on local and mounted file systems
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> Milestone 0: the checker as a GraalVM native image, passing the design’s criteria (gating)</li>
-<li class="task-list-item"><input type="checkbox" disabled> The checker protocol, the package, conformance, <code dir="auto">invaract-lint</code>, the user guide, the first release</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Milestone 0: the checker as a GraalVM native image, passing the design’s criteria (gating). <code dir="auto">pythonio-adapter</code>’s
+<code dir="auto">PythonIoCheck</code>, built by CI’s <code dir="auto">pythonio-native-checker</code> job: the same replies as the JVM on 23 recorded protocol
+cases, contracts, organisational policy, <code dir="auto">ref://</code> locations and every built-in sink included; 6 to 15 ms a run;
+41 MB, 14 MB compressed (docs/PYTHONIO_ADAPTER.md)</li>
+<li class="task-list-item"><input type="checkbox" disabled> The checker protocol: <code dir="auto">open</code>, <code dir="auto">write</code>, <code dir="auto">finish</code> done with milestone 0; a <code dir="auto">read</code> request, and dry-run mode</li>
+<li class="task-list-item"><input type="checkbox" disabled> Conformance: the kit’s scenarios already run through the checker as the package will drive it; the run through
+real Python jobs comes with the package. A staged-publish enforcement point, so the user pages stop saying earlier
+writes “have already happened”</li>
+<li class="task-list-item"><input type="checkbox" disabled> The package, <code dir="auto">invaract-lint</code>, the user guide, the first release</li>
 <li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> object storage (S3, GCS, Azure) for reads and writes</li>
 <li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> Delta Lake and Iceberg outputs (atomic publishing on object storage)</li>
 </ul>
