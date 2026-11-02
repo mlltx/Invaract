@@ -142,7 +142,7 @@ def generate(repo, engine, display, out):
     write(os.path.join(out, doc_path(engine)), template("ENGINE_ADAPTER.md.tmpl"))
     # sbt plugins and the sbt version are the kit's, copied as they are
     kit_project = os.path.join(repo, "adapter-testkit", "project")
-    for f in ("build.properties", "coverage.sbt", "mima.sbt", "pgp.sbt", "sonatype.sbt", "stryker4s.sbt"):
+    for f in ("build.properties", "coverage.sbt", "mima.sbt", "pgp.sbt", "sbom.sbt", "sonatype.sbt", "stryker4s.sbt"):
         write(os.path.join(module, "project", f), read(os.path.join(kit_project, f)))
     return name
 

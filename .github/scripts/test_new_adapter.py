@@ -54,6 +54,8 @@ class Generated(unittest.TestCase):
             "src/test/scala/com/invaract/demoadapter/DemoAttestedClaimsSpec.scala",
             "src/test/scala/com/invaract/demoadapter/DemoCapabilitiesSpec.scala",
             "project/build.properties",
+            # CI's sbom job runs `sbt makeBom` in every module
+            "project/sbom.sbt",
         ]:
             self.assertIn(expected, files)
 
