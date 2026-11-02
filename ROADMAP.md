@@ -4002,7 +4002,7 @@ Extend verification engine to support multiple execution engines.
         41 MB, 14 MB compressed (docs/PYTHONIO_ADAPTER.md)
   - [x] Milestone 1, the checker protocol: `open`, `read`, `write` and `written` (the empty values of a staged write,
         decision 3), `finish`, over Arrow's type names (`ArrowSchemas`, moved into verification-core); unverifiable
-        writes refused; dry-run mode with merged drafts. 38 recorded cases, identical natively
+        writes refused; dry-run mode with merged drafts. 40 recorded cases, identical natively
   - [ ] Conformance: the kit's scenarios already run through the checker as the package will drive it; the run through
         real Python jobs comes with the package. A staged-publish enforcement point, so the user pages stop saying earlier
         writes "have already happened"

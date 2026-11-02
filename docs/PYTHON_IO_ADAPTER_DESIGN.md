@@ -400,7 +400,7 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 
    **Result (2026-11-02): done.** `read`, the two-step write (`write`, then `written` with null counts), Arrow's type names
    through `ArrowSchemas` (now in `verification-core`), unverifiable writes, and dry-run mode with drafts merged at the end.
-   38 recorded cases; the native program gives the JVM's replies on the 37 it can run. 42 of the kit's scenarios conform.
+   40 recorded cases; the native program gives the JVM's replies on the 39 it can run. 42 of the kit's scenarios conform.
    The protocol is listed in docs/PYTHONIO_ADAPTER.md.
 2. **The package** (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
    dry-run path with `location=`. pytest tests, and the end-to-end example of the sink records survey's probe 14 made

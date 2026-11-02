@@ -86,8 +86,8 @@ covers a team's own notification sink, custom rule verifiers, custom policy eval
 `INVARACT_REGISTRY_CLIENT_CLASS`. The `registry` case is therefore JVM-only: its stub client lives in the tests. A team that
 needs its own plug-ins needs a build that includes them, or the Java route.
 
-**With milestone 1** (2026-11-02) the protocol grew to 38 recorded cases: reads, the two-step write, Arrow's type names, empty
-values in required columns, unverifiable writes and dry runs. The native program still gives the JVM's replies on all 37 that
+**With milestone 1** (2026-11-02) the protocol grew to 40 recorded cases: reads, the two-step write, Arrow's type names, empty
+values in required columns, unverifiable writes and dry runs. The native program still gives the JVM's replies on all 39 that
 it can run, with no change to its configuration (the dry run's YAML writing and its events needed none), at 44 MB and at most
 31 ms a run.
 
