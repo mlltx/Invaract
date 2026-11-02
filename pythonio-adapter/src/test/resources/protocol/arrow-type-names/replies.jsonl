@@ -1,0 +1,8 @@
+{"contract": {"id": "orders_report", "inputs": [{"format": "parquet", "location": "data/in/orders", "name": "orders"}, {"format": "csv", "location": "data/in/customers.csv", "name": "customers"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}, {"name": "lines", "required": false, "type": "array<struct<sku:string,qty:int>>"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}, {"fields": [{"name": "order_id", "required": true, "type": "long"}, {"name": "status", "required": false, "type": "string"}], "format": "csv", "location": "data/out/audit", "name": "audit"}], "version": "1.0.0"}, "mode": "enforce", "ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true, "publish": true}

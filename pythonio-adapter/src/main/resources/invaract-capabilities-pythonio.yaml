@@ -57,7 +57,10 @@ capabilities:
     note: The checker records each output written and, when the run finishes, refuses one that never wrote a declared output.
   check.schema:
     status: supported
-    note: The written table's columns, types and nullability come from its Arrow schema, mapped to the contract's types by the package.
+    note: >-
+      The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared
+      ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the
+      staged data holds (decision 3), not against the frame library's nullable flag.
   check.nestedTypes:
     status: supported
   check.format:
@@ -127,13 +130,14 @@ capabilities:
     status: supported
     note: Set with INVARACT_NOTIFICATION_CONFIG; the checker delivers a run's events before it ends.
   reporting.dryRunInference:
-    status: unsupported
-    summary: Dry-run mode, which writes a contract from what a job does, is not available for Python jobs yet.
-    note: The checker answers a dry-run request as not checked; inferring a contract from a run comes with the package.
-  failClosed.unverifiableWrites:
-    status: unsupported
-    summary: A write made with the invaract package is always checked, but one made around it (straight to a file) is not seen; the invaract-lint check finds those in the job's code.
+    status: supported
     note: >-
-      The package has no write it cannot describe, so nothing it does is unverifiable; but a write made around it is
-      invisible to the checker and is not blocked. invaract-lint, run before the job, is the guard against those
-      (docs/PYTHON_IO_ADAPTER_DESIGN.md).
+      Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract
+      (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
+  failClosed.unverifiableWrites:
+    status: partial
+    summary: A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
+    note: >-
+      A table invaract.write cannot read as Arrow (it offers no __arrow_c_stream__) is refused as unverifiable, never written
+      unchecked. A write made around the package is invisible to the checker and is not blocked; invaract-lint, run before
+      the job, is the guard against those (docs/PYTHON_IO_ADAPTER_DESIGN.md).

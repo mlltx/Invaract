@@ -93,13 +93,13 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
 |---|---|---|---|---|
 | [Sends events to your systems](#sends-events-to-your-systems) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 
 ### Safety net
 
 | Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
 |---|---|---|---|---|
-| [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 
 ## Where each engine falls short
 
@@ -188,6 +188,7 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
+- [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
 
 **Not checked**
 
@@ -203,8 +204,6 @@ Everything not listed here is checked in full.
 - [Tracks sensitive columns](#tracks-sensitive-columns): Sensitivity is followed through column lineage, which a Python job's own code does not give. No sensitivity report is produced; tags on the contract's fields are kept but not followed through the job.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): Which input columns feed which output columns is the job's own code, which is not checked. Checks that rely on it, such as proving value constraints, are not available.
 - [Turn it on without changing the job](#turn-it-on-without-changing-the-job): A Python job adopts Invaract with a one-time change, reading and writing through the invaract package; its settings then come from INVARACT_ environment variables. The job's own code has to install Invaract.
-- [Writes a starting contract for you](#writes-a-starting-contract-for-you): Dry-run mode, which writes a contract from what a job does, is not available for Python jobs yet. There is no dry-run mode: contracts are written by hand.
-- [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A write made with the invaract package is always checked, but one made around it (straight to a file) is not seen; the invaract-lint check finds those in the job's code. A write it cannot understand may go through unchecked.
 
 **Does not apply**
 

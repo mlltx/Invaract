@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024 Invaract Contributors
 
-package com.invaract.beamadapter
+package com.invaract.verification
 
 import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** The schema a Python Parquet write publishes, as pyarrow prints it (docs/BEAM_PYTHON_ADAPTER.md, D5). The texts are pyarrow's own
   * output for the schemas named, taken from a real `WriteToParquet` (record_fixtures.py records one in parquet_job.pb). */
-class PyArrowSchemasSpec extends AnyFunSuite {
+class ArrowSchemasSpec extends AnyFunSuite {
   import LogicalType._
 
   private def columns(text: String): List[(String, LogicalType, Boolean)] =
-    PyArrowSchemas.parse(text).getOrElse(fail(s"not parsed: $text")).fields.map(f => (f.name, f.dataType, f.nullable))
+    ArrowSchemas.parse(text).getOrElse(fail(s"not parsed: $text")).fields.map(f => (f.name, f.dataType, f.nullable))
 
   test("one column per unindented line, nullable unless it says not null") {
     assert(columns("id: int64 not null\namount: int64") == List(("id", LongType, false), ("amount", LongType, true)))
@@ -81,15 +81,40 @@ class PyArrowSchemasSpec extends AnyFunSuite {
   }
 
   test("text that is not a pyarrow schema is no schema, never a guess") {
-    assert(PyArrowSchemas.parse("").isEmpty)
-    assert(PyArrowSchemas.parse("  child 0, item: string").isEmpty, "only indented lines")
-    assert(PyArrowSchemas.parse("-- schema metadata --\nid: int64").isEmpty, "nothing before the metadata")
-    assert(PyArrowSchemas.parse("{'fields': []}").isEmpty, "a dictionary, not name: type lines")
-    assert(PyArrowSchemas.parse("id int64").isEmpty)
-    assert(PyArrowSchemas.parse(": int64").isEmpty, "a column with no name")
+    assert(ArrowSchemas.parse("").isEmpty)
+    assert(ArrowSchemas.parse("  child 0, item: string").isEmpty, "only indented lines")
+    assert(ArrowSchemas.parse("-- schema metadata --\nid: int64").isEmpty, "nothing before the metadata")
+    assert(ArrowSchemas.parse("{'fields': []}").isEmpty, "a dictionary, not name: type lines")
+    assert(ArrowSchemas.parse("id int64").isEmpty)
+    assert(ArrowSchemas.parse(": int64").isEmpty, "a column with no name")
   }
 
   test("a column name that itself holds a colon is cut at the first colon and space") {
-    assert(PyArrowSchemas.parse("a:b: int64") == Some(LogicalSchema(List(LogicalField("a:b", LongType)))))
+    assert(ArrowSchemas.parse("a:b: int64") == Some(LogicalSchema(List(LogicalField("a:b", LongType)))))
+  }
+
+  // --- one type, as `str(field.type)` names it (the Python I/O adapter's checker) ---------------------------------------------
+
+  test("one type maps as the same type in a schema does, nested and parameterised types included") {
+    // the strings are pyarrow 25.0.1's str(type) for pa.int64(), pa.list_(pa.struct(...)), pa.timestamp("ns", tz="UTC"), ...
+    assert(ArrowSchemas.dataType("int64") == Some(LongType))
+    assert(ArrowSchemas.dataType(" string ") == Some(StringType), "surrounding spaces")
+    assert(ArrowSchemas.dataType("list<item: struct<sku: string, qty: int32>>") ==
+      Some(ArrayType(StructType(List(LogicalField("sku", StringType), LogicalField("qty", IntegerType))))))
+    assert(ArrowSchemas.dataType("timestamp[ns, tz=UTC]") == Some(TimestampType))
+    assert(ArrowSchemas.dataType("fixed_size_list<item: int32>[3]") == Some(ArrayType(IntegerType)))
+    assert(ArrowSchemas.dataType("dictionary<values=string, indices=int8, ordered=0>") == Some(StringType))
+    assert(ArrowSchemas.dataType("struct<a: int64 not null>") == Some(StructType(List(LogicalField("a", LongType, nullable = false)))))
+    assert(ArrowSchemas.dataType("halffloat") == Some(OtherType("halffloat")), "no neutral equivalent: itself")
+  }
+
+  test("text that is not one pyarrow type name is no type, never a guess") {
+    assert(ArrowSchemas.dataType("").isEmpty)
+    assert(ArrowSchemas.dataType("   ").isEmpty)
+    assert(ArrowSchemas.dataType("<int64>").isEmpty, "a name starts with a letter")
+    assert(ArrowSchemas.dataType("1nt64").isEmpty)
+    assert(ArrowSchemas.dataType("list<item: int64").isEmpty, "unclosed")
+    assert(ArrowSchemas.dataType("list<item: int64>>").isEmpty, "closed twice")
+    assert(ArrowSchemas.dataType("struct<a: >").isEmpty, "a field with no type throws inside, and is no type")
   }
 }

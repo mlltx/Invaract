@@ -21,6 +21,7 @@ class PythonIoAttestedClaimsSpec extends AttestedClaimsSpec {
   override protected def attestations: Map[Capability, Attestation] = Map(
     Capability.PolicyOrganizational -> protocol(PythonIoProtocolCasesSpec.OrganizationalPolicy),
     Capability.ConfigLocationRefs -> protocol(PythonIoProtocolCasesSpec.LocationRefs),
-    Capability.ConfigContractRegistry -> protocol(PythonIoProtocolCasesSpec.ContractRegistry)
+    Capability.ConfigContractRegistry -> protocol(PythonIoProtocolCasesSpec.ContractRegistry),
+    Capability.ReportingDryRun -> protocol(PythonIoProtocolCasesSpec.DryRunInference)
   )
 }

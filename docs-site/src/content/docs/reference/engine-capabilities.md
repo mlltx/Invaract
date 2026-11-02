@@ -94,13 +94,13 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
 | `reporting.notifications` | Validation and write events are published to a notification sink. | verified (2) | ✅ | ✅ | ✅ | ✅ |
-| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | attested | ◐ | ◐ | ✖ | ✅ |
+| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | attested | ◐ | ◐ | ✅ | ✅ |
 
 ### Fail-closed behaviour
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | verified (1) | ◐ | ◐ | ✖ | ✅ |
+| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | verified (1) | ◐ | ◐ | ◐ | ✅ |
 
 ## What the conformance suite checks
 
@@ -128,7 +128,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 |---|---|---|
 | `beam` | 44 | 55 |
 | `beam-python` | 44 | 55 |
-| `pythonio` | 41 | 55 |
+| `pythonio` | 42 | 55 |
 | `spark` | 55 | 55 |
 
 ## Notes
@@ -202,7 +202,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.inputExistence` — partial: Every read names the declared input it reads, so a missing read and an undeclared read are known exactly. Which reads fed a write is not: the package sends every read made before the write (docs/PYTHON_ADAPTER_SURVEY.md, D4), so it never invents a missing input, but cannot report one only a single write's own reads would show (the kit's Scenarios.perWriteReadAttribution). With rejectUndeclaredInputs, an earlier read of another output's input counts too.
 - `check.location` — supported: The package writes to the location the contract declares for the output it names, so the location is the contract's own.
 - `check.outputsWritten` — supported: The checker records each output written and, when the run finishes, refuses one that never wrote a declared output.
-- `check.schema` — supported: The written table's columns, types and nullability come from its Arrow schema, mapped to the contract's types by the package.
+- `check.schema` — supported: The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the staged data holds (decision 3), not against the frame library's nullable flag.
 - `check.format` — supported: The package writes the format itself (Parquet or CSV) and says which.
 - `check.saveMode` — supported: The package writes the save mode itself (overwrite or append) and says which.
 - `check.catalogRegistration` — unsupported: The first version writes files on local or mounted storage only; catalogs come with Delta and Iceberg (milestone 6).
@@ -221,8 +221,8 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `config.locationRefs` — supported: Set with INVARACT_LOCATION_MAP, resolved when the run opens.
 - `config.contractRegistry` — supported: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
 - `reporting.notifications` — supported: Set with INVARACT_NOTIFICATION_CONFIG; the checker delivers a run's events before it ends.
-- `reporting.dryRunInference` — unsupported: The checker answers a dry-run request as not checked; inferring a contract from a run comes with the package.
-- `failClosed.unverifiableWrites` — unsupported: The package has no write it cannot describe, so nothing it does is unverifiable; but a write made around it is invisible to the checker and is not blocked. invaract-lint, run before the job, is the guard against those (docs/PYTHON_IO_ADAPTER_DESIGN.md).
+- `reporting.dryRunInference` — supported: Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
+- `failClosed.unverifiableWrites` — partial: A table invaract.write cannot read as Arrow (it offers no __arrow_c_stream__) is refused as unverifiable, never written unchecked. A write made around the package is invisible to the checker and is not blocked; invaract-lint, run before the job, is the guard against those (docs/PYTHON_IO_ADAPTER_DESIGN.md).
 
 ### spark
 

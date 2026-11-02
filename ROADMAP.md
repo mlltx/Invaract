@@ -3997,10 +3997,12 @@ Extend verification engine to support multiple execution engines.
       staged, published together only when the run passed; no Java where jobs run (a native-image checker). First
       version: Parquet and CSV on local and mounted file systems
   - [x] Milestone 0: the checker as a GraalVM native image, passing the design's criteria (gating). `pythonio-adapter`'s
-        `PythonIoCheck`, built by CI's `pythonio-native-checker` job: the same replies as the JVM on 23 recorded protocol
+        `PythonIoCheck`, built by CI's `pythonio-native-checker` job: the same replies as the JVM on 27 recorded protocol
         cases, contracts, organisational policy, `ref://` locations and every built-in sink included; 6 to 15 ms a run;
         41 MB, 14 MB compressed (docs/PYTHONIO_ADAPTER.md)
-  - [ ] The checker protocol: `open`, `write`, `finish` done with milestone 0; a `read` request, and dry-run mode
+  - [x] Milestone 1, the checker protocol: `open`, `read`, `write` and `written` (the empty values of a staged write,
+        decision 3), `finish`, over Arrow's type names (`ArrowSchemas`, moved into verification-core); unverifiable
+        writes refused; dry-run mode with merged drafts. 40 recorded cases, identical natively
   - [ ] Conformance: the kit's scenarios already run through the checker as the package will drive it; the run through
         real Python jobs comes with the package. A staged-publish enforcement point, so the user pages stop saying earlier
         writes "have already happened"

@@ -172,7 +172,9 @@ checker.
 **One helper process per run.** It is started by `@invaract.job` and talks over JSON lines on standard input and output:
 - `open`: the settings and the job's details; returns the resolved contract (names, locations, formats, schemas, save
   modes), or the refusal;
-- `read` and `write`: one description each; returns the verdict;
+- `read` and `write`: one description each; returns the verdict. A write is described twice: by `write` before any of it
+  is staged (columns and types, so a write that cannot pass is refused early), and by `written` once it is (the empty values
+  each column holds, for decision 3);
 - `finish`: what was read and written, and whether the job completed; returns the final verdict and publishes the event.
 
 **Why the existing checker, not Python.** Contract parsing, validation, organisational policy, location maps, the registry,
@@ -205,9 +207,10 @@ checks this adapter needs: contract parsing, schema, location, format, save mode
 it to the Scala implementation with a shared set of recorded cases, run against both in CI, so a difference fails the
 build. Organisational policy, the registry and plug-ins would then be unavailable to Python jobs until ported.
 
-**Type mapping.** Arrow types map to the contract's types through one mapping shared with the Beam Python adapter. That
-mapping is `PyArrowSchemas`, which already covers `large_string`, `string_view`, dictionaries, lists, structs and maps; it
-moves into `verification-core` and gains a structured input form.
+**Type mapping.** Arrow types map to the contract's types through one mapping shared with the Beam Python adapter:
+`ArrowSchemas` in `verification-core` (moved there from the Beam adapter's `PyArrowSchemas` in milestone 1). It covers
+`large_string`, `string_view`, dictionaries, lists, structs and maps; the package sends each column's `str(field.type)`, which
+`ArrowSchemas.dataType` reads.
 
 ## 5. Data handling
 
@@ -297,13 +300,10 @@ The draft declaration:
   - `config.zeroCodeInstall`.
 - **not applicable:** row-level changes and their rules, schema-only changes, boundary resolution.
 
-As built with milestone 0 (`invaract-capabilities-pythonio.yaml`), three entries differ from this draft:
-- `reporting.dryRunInference` is unsupported until the package's dry-run path exists. The checker answers a dry-run
-  request as not checked.
-- `failClosed.unverifiableWrites` is unsupported, not partial. The kit's scenario for it is an operation the adapter cannot
-  describe, and it expects that operation to be refused. A write made around the package is never refused: it is not
-  seen. The lint is the guard.
-- The engine is labelled "in development" on the user pages until the package exists.
+As built (`invaract-capabilities-pythonio.yaml`, milestone 1), the declaration matches this draft, except that the engine is
+labelled "in development" on the user pages until the package exists. `failClosed.unverifiableWrites` is partial because a
+table the package cannot describe is refused (`UNVERIFIABLE_WRITE`), which is what the kit's scenario for it checks. A write
+made around the package is never refused, because it is not seen; the lint is the guard.
 
 `./dev/adapter-survey` with that declaration says the kit would expect, of its 55 scenarios:
 - **27 to be checked:**
@@ -397,6 +397,11 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    The fallback is not needed. Details are in docs/PYTHONIO_ADAPTER.md.
 1. **The checker protocol** (small to medium). `PythonIoCheck`, with `open`, `write`, `read` and `finish`, over the shared
    Arrow mapping. Tested with recorded descriptions; no Python needed.
+
+   **Result (2026-11-02): done.** `read`, the two-step write (`write`, then `written` with null counts), Arrow's type names
+   through `ArrowSchemas` (now in `verification-core`), unverifiable writes, and dry-run mode with drafts merged at the end.
+   40 recorded cases; the native program gives the JVM's replies on the 39 it can run. 42 of the kit's scenarios conform.
+   The protocol is listed in docs/PYTHONIO_ADAPTER.md.
 2. **The package** (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
    dry-run path with `location=`. pytest tests, and the end-to-end example of the sink records survey's probe 14 made
    permanent.
