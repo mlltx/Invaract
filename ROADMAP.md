@@ -3992,6 +3992,14 @@ Extend verification engine to support multiple execution engines.
       still to do
 - [x] Every declared output must be written (`check.outputsWritten`): Beam refuses the pipeline before it
       runs; Spark reports at application end, with an opt-in failing exit status
+- [ ] Python I/O adapter (docs/PYTHON_IO_ADAPTER_DESIGN.md, decisions settled 2026-11-01): Python jobs read and
+      write through the `invaract` package (`@invaract.job`, `invaract.read`, `invaract.write`); outputs checked and
+      staged, published together only when the run passed; no Java where jobs run (a native-image checker). First
+      version: Parquet and CSV on local and mounted file systems
+  - [ ] Milestone 0: the checker as a GraalVM native image, passing the design's criteria (gating)
+  - [ ] The checker protocol, the package, conformance, `invaract-lint`, the user guide, the first release
+  - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
+  - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 
