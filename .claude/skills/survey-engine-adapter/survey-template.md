@@ -198,7 +198,7 @@ failed, why it matters, what to do>
 |---|---|---|---|---|
 | | | | | |
 
-**Enforcement point:** `<in-engine-blocking | pre-submit-gate | observe-only>` - <what that means for what can be blocked>.
+**Enforcement point:** `<in-engine-blocking | staged-publish | pre-submit-gate | observe-only>` - <what that means for what can be blocked>.
 
 ### 7.2 Scenario by scenario
 

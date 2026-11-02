@@ -4008,9 +4008,10 @@ Extend verification engine to support multiple execution engines.
         dry-run migration path with `location=` (checked by the checker once a contract is in force). 91 pytest tests
         against the jar and the native program, the oldest supported libraries and the newest (CI's `pythonio-python`);
         the sink records survey's probe 14 kept as `examples/orders_job`
-  - [ ] Conformance: the kit's scenarios already run through the checker as the package drives it; running them as
-        real Python jobs remains. A staged-publish enforcement point, so the user pages stop saying earlier writes "have
-        already happened"
+  - [x] Milestone 3, conformance: all 42 conforming scenarios also run as real Python jobs through the package
+        (`PythonIoPackageConformanceSpec`, strict in CI's `pythonio-native-checker`), against the same baseline as the
+        in-process run; the new `staged-publish` enforcement point (verification-core), so the user pages no longer say
+        a refused Python run's earlier writes "have already happened"
   - [ ] `invaract-lint`, the user guide, the platform wheels carrying the native checker, the first release
   - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
   - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)

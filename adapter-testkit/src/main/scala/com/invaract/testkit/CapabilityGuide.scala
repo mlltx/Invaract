@@ -47,6 +47,9 @@ object CapabilityGuide {
     EnforcementPoint.InEngineBlocking ->
       ("Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and " +
         "the job fails; writes the job made before it have already happened."),
+    EnforcementPoint.StagedPublish ->
+      ("Checks each write inside the running job, before it is written, and holds every output back until the job ends. The " +
+        "outputs are published together only if the whole run passed, so a run that breaks the contract publishes nothing."),
     EnforcementPoint.PreSubmitGate ->
       "Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all.",
     EnforcementPoint.ObserveOnly -> "Watches the job and reports what breaks the contract, but cannot stop it."

@@ -417,6 +417,11 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    conform. What remains is running them as real Python jobs, and a `staged-publish` enforcement point in
    `verification-core`. The user pages' wording for `in-engine-blocking` says a job's earlier writes "have already
    happened", which staging makes untrue.
+
+   **Result (2026-11-02): done.** All 42 conforming scenarios run as real Python jobs through the package
+   (`PythonIoPackageConformanceSpec`, strict in CI), alongside the in-process run, against the one baseline. The declaration's
+   enforcement point is the new `staged-publish`. The conformance run uses one Python release (3.13, current pyarrow); the
+   version matrix of section 10 runs the package's own tests (`pythonio-python`). Details are in docs/PYTHONIO_ADAPTER.md.
 4. **The lint** (small).
 5. **The user guide, and the first release** (small).
 6. **Immediately after the first release, committed and tracked until delivered (decision 4):**

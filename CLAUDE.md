@@ -78,8 +78,8 @@ don't present it as something external consumers would bind to.
   `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md),
   `pythonio-adapter` (in progress: the checker for plain Python jobs that read and write through the `invaract`
   package in `pythonio-adapter/python`, built as a GraalVM native program so no Java is needed where jobs run — see docs/PYTHON_IO_ADAPTER_DESIGN.md
-  and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies, and `pythonio-python` runs the
-  package's tests against it)
+  and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies and runs the conformance scenarios as real
+  Python jobs, and `pythonio-python` runs the package's tests against the native build)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
