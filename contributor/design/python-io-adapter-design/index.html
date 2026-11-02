@@ -548,6 +548,10 @@ Started with milestone 0: the kit’s scenarios already run through the checker,
 conform. What remains is running them as real Python jobs, and a <code dir="auto">staged-publish</code> enforcement point in
 <code dir="auto">verification-core</code>. The user pages’ wording for <code dir="auto">in-engine-blocking</code> says a job’s earlier writes “have already
 happened”, which staging makes untrue.</p>
+<p><strong>Result (2026-11-02): done.</strong> All 42 conforming scenarios run as real Python jobs through the package
+(<code dir="auto">PythonIoPackageConformanceSpec</code>, strict in CI), alongside the in-process run, against the one baseline. The declaration’s
+enforcement point is the new <code dir="auto">staged-publish</code>. The conformance run uses one Python release (3.13, current pyarrow); the
+version matrix of section 10 runs the package’s own tests (<code dir="auto">pythonio-python</code>). Details are in docs/PYTHONIO_ADAPTER.md.</p>
 </li>
 <li>
 <p><strong>The lint</strong> (small).</p>
