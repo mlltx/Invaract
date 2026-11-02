@@ -370,7 +370,7 @@ everything is local files.
 ## 11. Versions and compatibility
 
 - Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.
-- Python 3.9 to 3.13.
+- Python 3.10 to 3.13. (3.9 reached its end of life in October 2025, and CI's runners no longer offer it; milestone 2.)
 - pyarrow 15, the first with `RecordBatchReader.from_stream` (14 lacks it; milestone 2).
 - pandas 2.2, which added `__arrow_c_stream__`; the package converts pandas with `pa.Table.from_pandas` in any case, to leave
   out the row index (milestone 2).

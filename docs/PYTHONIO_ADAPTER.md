@@ -244,9 +244,9 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
 - **Exit status.** An uncaught `ContractViolation` ends the job with 1 (Python's own status for an uncaught exception). An
   uncaught `CheckNotRun` ends it with 2, set from `sys.excepthook` once the traceback is printed.
 - **Tests.** 91 pytest tests: every refusal, the save modes, dry runs, the events, every frame library, the exit statuses, and
-  the example job with each of probe 14's bugs. They pass against the jar and against the native program, on Python 3.11 to
+  the example job with each of probe 14's bugs. They pass against the jar and against the native program, on Python 3.10 to
   3.13, with the oldest supported libraries (pyarrow 15, pandas 2.2, Polars 1.0, DuckDB 1.0) and the newest (pyarrow 26,
-  pandas 3.1, Polars 2.1, DuckDB 2.0). CI's `pythonio-python` job runs them against the native program on Python 3.9 with
+  pandas 3.1, Polars 2.1, DuckDB 2.0). CI's `pythonio-python` job runs them against the native program on Python 3.10 with
   the oldest libraries, and on 3.13 with the newest.
 
 ## Friction log
@@ -283,6 +283,8 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
   Arrow stream; the package falls back to their own `to_arrow()` and `arrow()`.
 - A contract has no CSV delimiter field, so CSV is read and written with a comma (design section 5 said "the contract's
   delimiter").
+- The design named Python 3.9 as the oldest supported release. CI's runners no longer offer it (it reached its end of life
+  in October 2025), so the package requires 3.10, the oldest CI can test.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
 - The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
@@ -295,4 +297,3 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
   is set for it).
 - The kit's scenarios run as real Python jobs through the package (milestone 3). Until then, the scenarios are played by
   `PythonIoConformanceAdapter`, and the package is held to the checker by its own tests.
-- Python 3.9 and 3.10 locally: the package's tests ran on 3.11 to 3.13 here; CI's `pythonio-python` job runs them on 3.9.

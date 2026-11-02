@@ -652,8 +652,8 @@ jobs:
 
   # The `invaract` Python package (pythonio-adapter/python, milestone 2 of docs/PYTHON_IO_ADAPTER_DESIGN.md): its pytest suite
   # against the native checker the job above builds, the program the package's wheels will carry. Two rows: the oldest Python
-  # and frame-library releases the package supports (pyproject.toml; Polars and DuckDB that old have no Arrow stream, so their
-  # own conversion is used), and the newest.
+  # and frame-library releases the package supports (pyproject.toml; the runners have no Python 3.9, which is past its end
+  # of life, and Polars and DuckDB that old have no Arrow stream, so their own conversion is used), and the newest.
   pythonio-python:
     name: Python package (pythonio-adapter, ${{ matrix.libraries }})
     needs: [changes, pythonio-native-checker]
@@ -666,7 +666,7 @@ jobs:
       matrix:
         include:
           - libraries: oldest
-            python-version: "3.9"
+            python-version: "3.10"
             install: 'pyarrow==15.0.0 pandas==2.2.0 "numpy<2" polars==1.0.0 duckdb==1.0.0'
           - libraries: newest
             python-version: "3.13"
