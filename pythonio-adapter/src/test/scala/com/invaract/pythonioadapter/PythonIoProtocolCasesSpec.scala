@@ -34,7 +34,7 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     cases.foreach(c => assert(new File(c, "requests.jsonl").isFile && new File(c, "replies.jsonl").isFile, c.getName))
   }
 
-  cases.foreach(c => test(s"protocol case: ${c.getName}")(assertCase(c.getName)))
+  cases.foreach(c => test(s"protocol case: ${c.getName}") { assertCase(c.getName); () })
 
   test(OrganizationalPolicy) {
     // a contract that breaks the policy is refused when the run opens; one that keeps it opens and is checked
@@ -43,16 +43,15 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
   }
 
   test(LocationRefs) {
-    assertCase("location-refs")
-    assert(runCase("location-refs").replies.head.toString.contains("s3://lake/reports/orders"))
+    // the contract the run opens on names the resolved location, not the ref:// one
+    assert(assertCase("location-refs").replies.head.toString.contains("s3://lake/reports/orders"))
   }
 
   test(ContractRegistry)(assertCase("registry"))
 
   test(DryRunInference) {
-    // every write is let through and gets a draft contract; the job's drafts are merged when it finishes
+    // every write is let through and gets a draft contract (events.txt: INFERRED, self-check PASSED); the drafts are merged
     assertCase("dry-run-infers")
-    assert(runCase("dry-run-infers").events == List("CONTRACT_INFERENCE INFERRED PASSED", "CONTRACT_INFERENCE INFERRED PASSED", "DRY_RUN_SUMMARY MERGED"))
     assertCase("dry-run-unverifiable-write")
   }
 }
@@ -76,14 +75,8 @@ object PythonIoProtocolCasesSpec {
   /** Every case, by name. */
   val cases: List[File] = root.listFiles().filter(_.isDirectory).sortBy(_.getName).toList
 
-  final case class Outcome(
-      replies: List[AnyRef],
-      expected: List[AnyRef],
-      events: List[String],
-      expectedEvents: List[String],
-      httpEvents: List[String],
-      expectedHttpEvents: List[String]
-  )
+  /** What a run of a case did: its replies, and the events its file and HTTP sinks received. */
+  final case class Outcome(replies: List[AnyRef], events: List[String], httpEvents: List[String])
 
   private def json(line: String): AnyRef = new Yaml(new SafeConstructor(new LoaderOptions)).load[AnyRef](line)
 
@@ -115,7 +108,7 @@ object PythonIoProtocolCasesSpec {
     receiver.createContext(
       "/events",
       exchange => {
-        posted.add(eventType(new String(readAll(exchange.getRequestBody), StandardCharsets.UTF_8)))
+        posted.add(eventType(new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)))
         exchange.sendResponseHeaders(200, -1)
         exchange.close()
       }
@@ -127,32 +120,20 @@ object PythonIoProtocolCasesSpec {
       val requests = new String(Files.readAllBytes(work.resolve("requests.jsonl")), StandardCharsets.UTF_8)
       PythonIoCheck.serve(new BufferedReader(new StringReader(requests)), new PrintStream(out, true, "UTF-8"))
       val replies = new String(out.toByteArray, StandardCharsets.UTF_8).replace(work.toString, Placeholder)
-      Outcome(
-        replies.split("\n").map(_.trim).filter(_.nonEmpty).map(json).toList,
-        lines(new File(source, "replies.jsonl")).map(json),
-        lines(work.resolve("events.jsonl").toFile).map(eventType),
-        lines(new File(source, "events.txt")),
-        posted.asScala.toList,
-        lines(new File(source, "http-events.txt"))
-      )
+      Outcome(replies.split("\n").map(_.trim).filter(_.nonEmpty).map(json).toList, lines(work.resolve("events.jsonl").toFile).map(eventType), posted.asScala.toList)
     } finally receiver.stop(0)
   }
 
-  private def readAll(in: java.io.InputStream): Array[Byte] = {
-    val out = new ByteArrayOutputStream
-    val buffer = new Array[Byte](8192)
-    Iterator.continually(in.read(buffer)).takeWhile(_ != -1).foreach(n => out.write(buffer, 0, n))
-    out.toByteArray
-  }
-
-  def assertCase(name: String): Unit = {
+  /** Runs the case `name` and holds it to its recorded replies and events; returns what it did. */
+  def assertCase(name: String): Outcome = {
+    val source = new File(root, name)
     val outcome = runCase(name)
-    assert(outcome.replies.size == outcome.expected.size, s"$name: ${outcome.replies.size} replies, expected ${outcome.expected.size}")
-    outcome.replies.zip(outcome.expected).zipWithIndex.foreach { case ((actual, expected), i) =>
-      assert(actual == expected, s"$name: reply ${i + 1}")
-    }
-    assert(outcome.events == outcome.expectedEvents, s"$name: events")
-    assert(outcome.httpEvents == outcome.expectedHttpEvents, s"$name: HTTP events")
+    val expected = lines(new File(source, "replies.jsonl")).map(json)
+    assert(outcome.replies.size == expected.size, s"$name: ${outcome.replies.size} replies, expected ${expected.size}")
+    outcome.replies.zip(expected).zipWithIndex.foreach { case ((actual, wanted), i) => assert(actual == wanted, s"$name: reply ${i + 1}") }
+    assert(outcome.events == lines(new File(source, "events.txt")), s"$name: events")
+    assert(outcome.httpEvents == lines(new File(source, "http-events.txt")), s"$name: HTTP events")
+    outcome
   }
 
 }

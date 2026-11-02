@@ -12,7 +12,6 @@
 {"ok": false, "reason": "a written must name the output it staged", "status": "not-checked"}
 {"ok": false, "reason": "IllegalStateException: no write of 'report' was described before it was staged", "status": "not-checked"}
 {"ok": false, "reason": "the empty values of column 'total' of 'report' must be a count, not '-1'", "status": "not-checked"}
-{"ok": false, "reason": "the rows of 'report' must be a count, not 'many'", "status": "not-checked"}
 {"ok": false, "reason": "the empty values of column 'order_id' of the read of 'orders' must be a count, not '1.5'", "status": "not-checked"}
 {"ok": true}
 {"ok": true}

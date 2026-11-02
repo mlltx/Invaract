@@ -1,0 +1,2 @@
+# A declaration AdapterCapabilities.parse refuses: it names an adapter and nothing else (CapabilitySpec).
+adapter: broken

@@ -44,7 +44,7 @@ holds, where the data has been seen.
 | `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), checks the columns against the input's, and records the read for every later write | `{"ok": true}` |
 | `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location, format, save mode, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
-| `{"op": "written", "name": "report", "rows": 120, "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
+| `{"op": "written", "name": "report", "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
 | `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
 
 A refusal is `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`. A request the checker cannot check
@@ -140,7 +140,7 @@ package (milestone 3).
 | `write.streaming` | unsupported | the note: no streaming write in the first version |
 | `write.rowLevelDml` | not-applicable | the note: the package writes whole outputs |
 | `write.stateChange` | not-applicable | the note: no operation changes a table without writing rows |
-| `check.inputExistence` | partial | `declared-input-not-read`, `undeclared-input-rejected`, the `derived-from-*` scenarios; `an-undeclared-second-write-is-blocked` conforms through the kit's `Scenarios.perWriteReadAttribution` (every read counts toward every later write, D4) |
+| `check.inputExistence` | partial | `declared-input-not-read`, `undeclared-input-rejected`, the `derived-from-*` scenarios; `an-undeclared-second-write-is-blocked` conforms through the kit's `Scenarios.partialExcuses` (every read counts toward every later write, D4) |
 | `check.location` | supported | `wrong-output-location`, `an-undeclared-second-write-is-blocked`; the `undeclared-output-refused` case |
 | `check.outputsWritten` | supported | `declared-output-never-written`; the `missing-output-refused` and `finish-defaults-to-completed` cases |
 | `check.schema` | supported | `missing-output-field`, `output-type-mismatch`, `extended-type-not-produced`, `output-nullability-mismatch` (a required column whose data holds an empty value), the undeclared-column scenarios; the `input-schema-*`, `required-column-*`, `arrow-type-*` and `column-names-are-case-sensitive` cases |
@@ -217,12 +217,18 @@ Python adapter's (docs/BEAM_PYTHON_ADAPTER.md); the strings were recorded from p
   contract.
 - The kit's scenario `an-undeclared-second-write-is-blocked` expected a `MISSING_INPUT` that only per-write read attribution
   shows, which this adapter cannot have (D4 of the native Python survey). It was settled with a kit change, as D4 recommends:
-  `Scenarios.perWriteReadAttribution`, applied to an adapter declaring `check.inputExistence` `partial`.
+  `Scenarios.partialExcuses` names, per scenario, the violations an adapter declaring a capability `partial` is excused from
+  (here `MISSING_INPUT`, for `check.inputExistence`).
 - The user pages' sentence for `in-engine-blocking` says a job's earlier writes have already happened; with staging they have
   not. Rather than add an enforcement point to `verification-core` before the package exists, the engine is labelled "in
   development" and the follow-up is on the ROADMAP.
 - Stryker4s leaves instrumented classes in `target/`; running the checker from that classpath afterwards fails with
   `NoClassDefFoundError: stryker4s/package$`. `sbt clean` first.
+- A `/simplify` pass (2026-11-02) moved what the adapter had copied or worked around into verification-core: one way to
+  refuse (`VerificationPipeline.reject`), a write's verdict without publishing it (`evaluateWrite`, so the pre-check no longer
+  runs the pipeline twice), dry-run reporting shared with Beam (`DryRunReporting`, which also guards the final flush), loading
+  a capability declaration (`AdapterCapabilities.load`, used by every adapter and the scaffold) and the settings' snake-case
+  spelling (`ConfigSource.snakeCase`, shared with the Beam Python adapter).
 - Milestone 0's protocol carried each write's reads and judged a required column by the frame's nullable flag. Both had to
   change once the conformance adapter played the package faithfully: the package learns the reads one at a time, and pandas
   sets the flag on every column. Milestone 1's `read` and `written` requests are the result; the recorded cases were

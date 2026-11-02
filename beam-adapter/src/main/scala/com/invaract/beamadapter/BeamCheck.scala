@@ -5,8 +5,8 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser, Formats, LogicalSchema, RuleType}
 import com.invaract.ir.{UnknownPlan, Write}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, TrustedSteps, VerificationOptions, VerificationPipeline, Violation}
-import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunReporting, DryRunSelfCheck, InferredWrite, OutputChecker, TrustedSteps, VerificationOptions, VerificationPipeline, Violation}
+import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
 
@@ -126,18 +126,8 @@ final class BeamCheck private[beamadapter] (
     }
     // the whole job is known before it runs, so its summary is published straight away rather than when it ends; every draft
     // is merged, a degraded one included (as Spark merges it), so the summary describes every write a draft describes
-    val counts = outcomes.groupBy(_._1).map { case (status, all) => status -> all.size.toLong }
-    val mergeable = outcomes.flatMap(_._2)
-    val summary = DryRunSummary.event(counts, mergeable, job, System.currentTimeMillis(), Map.empty)
-    sink match {
-      case Some(s) =>
-        s.publish(summary)
-        try s.flush(BeamCheck.FlushTimeoutMs)
-        catch { case NonFatal(e) => logger.warn(s"Invaract dry run could not flush its sink: $e") }
-      case None =>
-        logger.info(s"Invaract dry run summary: ${summary.statusCounts.toList.sorted.map { case (k, v) => s"$k=$v" }.mkString(", ")}; " +
-          s"merge ${summary.mergeStatus}${summary.mergedContractYaml.map("\n" + _).getOrElse(summary.mergeConflicts.map("\n  " + _).mkString)}")
-    }
+    DryRunReporting.summary(sink, logger, job, outcomes)
+    DryRunReporting.flush(sink, logger, BeamCheck.FlushTimeoutMs)
   }
 
   private def report(
@@ -146,17 +136,7 @@ final class BeamCheck private[beamadapter] (
       location: Option[String],
       yaml: Option[String],
       selfCheck: Option[(String, List[Violation], List[String])] = None
-  ): Unit =
-    sink match {
-      case Some(s) =>
-        val (selfCheckStatus, selfCheckViolations, selfCheckNotes) =
-          selfCheck.fold[(Option[String], List[Violation], List[String])]((None, Nil, Nil)) { case (s, v, n) => (Some(s), v, n) }
-        s.publish(ContractInferenceEvent(
-          status, reason, location, yaml, selfCheckStatus, selfCheckViolations, selfCheckNotes, None, job, System.currentTimeMillis(), Map.empty
-        ))
-      case None =>
-        logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
-    }
+  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck)
 }
 
 private[beamadapter] object BeamCheck {

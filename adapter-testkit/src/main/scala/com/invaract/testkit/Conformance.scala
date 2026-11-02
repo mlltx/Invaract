@@ -67,9 +67,8 @@ final case class ConformanceReport(adapter: String, results: List[ScenarioResult
   * So a scenario's expected verdict is its neutral one, unless the adapter declares unsupported a
   * capability the scenario's contract relies on - then the right answer is the loud rejection
   * `UNSUPPORTED_CONTRACT_FEATURE`, never a quiet pass; or declares something not applicable to the
-  * engine (or a needed operation unsupported) - then the scenario does not apply. An adapter that declares
-  * `check.inputExistence` `partial` is not held to a `MISSING_INPUT` that only per-write read attribution
-  * shows (`Scenarios.perWriteReadAttribution`).
+  * engine (or a needed operation unsupported) - then the scenario does not apply. An adapter that declares a
+  * capability `partial` is not held to the violations a scenario excuses it from (`Scenarios.partialExcuses`).
   */
 object Conformance {
 
@@ -90,10 +89,8 @@ object Conformance {
           Right(scenario.expect match {
             case Expectation.Pass => Expected.Pass
             case Expectation.Reject(types) =>
-              // an adapter that cannot attribute reads to a write is not held to a missing input only attribution shows
-              val unattributed =
-                capabilities.supportOf(Capability.CheckInputExistence) == Support.Partial && Scenarios.perWriteReadAttribution.contains(scenario.id)
-              Expected.RejectExactly(if (unattributed) types - ViolationType.MissingInput else types)
+              val excused = Scenarios.partialExcuses.get(scenario.id).filter(e => capabilities.supportOf(e.capability) == Support.Partial)
+              Expected.RejectExactly(types -- excused.fold(Set.empty[String])(_.violationTypes))
           })
     }
   }

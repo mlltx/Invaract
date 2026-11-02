@@ -589,6 +589,8 @@ jobs:
   # the bar here is 50 MB compressed). The program is uploaded for inspection.
   pythonio-native-checker:
     name: Native checker (pythonio-adapter)
+    needs: changes
+    if: needs.changes.outputs.pythonio == 'true'
     runs-on: ubuntu-latest
     # read-only: the token is used only to check out the code and to read GraalVM's public releases (setup-graalvm)
     permissions:
@@ -1116,6 +1118,8 @@ jobs:
       # beam-adapter has its own matrix (beam-version-matrix), re-run by a change to it or to what it is built from; a
       # change to beam-adapter alone does not re-run the Spark/Delta/Iceberg matrices (modules.json, sparkMatrix)
       beam: ${{ steps.detect.outputs.beam }}
+      # pythonio-adapter's native build, re-run by a change to it or to what it is built from
+      pythonio: ${{ steps.detect.outputs.pythonio }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1129,6 +1133,7 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "beam=true" >> "$GITHUB_OUTPUT"
+            echo "pythonio=true" >> "$GITHUB_OUTPUT"
             echo "Not a pull request: version matrices always run."
             exit 0
           fi
@@ -1148,6 +1153,13 @@ jobs:
             echo "beam=true" >> "$GITHUB_OUTPUT"
           else
             echo "beam=false" >> "$GITHUB_OUTPUT"
+          fi
+          # the native checker: pythonio-adapter and what it is built from
+          PYTHONIO_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit pythonio-adapter .github/workflows/test.yml .github/actions)
+          if [ -n "$PYTHONIO_CHANGED" ]; then
+            echo "pythonio=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pythonio=false" >> "$GITHUB_OUTPUT"
           fi
 
   spark-version-matrix:

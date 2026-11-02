@@ -92,7 +92,7 @@ private[beamadapter] object PythonConfigSource {
   val Prefix = "invaract_"
 
   /** `dryRun` as the Python package spells it after the prefix: `dry_run`. */
-  def flag(name: String): String = name.flatMap(c => if (c.isUpper) "_" + c.toLower else c.toString)
+  def flag(name: String): String = ConfigSource.snakeCase(name)
 
   /** How a Python pipeline is given the setting `name`: `--invaract_dry_run`. */
   def spelling(name: String): String = "--" + Prefix + flag(name)

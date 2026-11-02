@@ -219,14 +219,20 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(Conformance.expectationFor(stray, ReferenceAdapter.declared) == Right(Conformance.Expected.RejectExactly(stray.expect.asInstanceOf[Expectation.Reject].violationTypes)))
   }
 
+  test("an excuse belongs to its capability: another capability declared partial excuses nothing") {
+    val stray = scenario("an-undeclared-second-write-is-blocked")
+    val otherPartial = declaring(Map("check.format" -> (("partial", Some("only some formats")))))
+    assert(Conformance.expectationFor(stray, otherPartial) == Right(Conformance.Expected.RejectExactly(stray.expect.asInstanceOf[Expectation.Reject].violationTypes)))
+  }
+
   test("only the scenarios listed for per-write read attribution are relaxed, and only their missing input") {
-    assert(Scenarios.perWriteReadAttribution.keySet.subsetOf(Scenarios.all.map(_.id).toSet))
-    assert(Scenarios.perWriteReadAttribution.values.forall(_.trim.nonEmpty))
+    assert(Scenarios.partialExcuses.keySet.subsetOf(Scenarios.all.map(_.id).toSet))
+    assert(Scenarios.partialExcuses.values.forall(e => e.why.trim.nonEmpty && e.violationTypes.nonEmpty))
     // a missing input that is not about attribution is still required of an adapter declaring check.inputExistence partial
     val notRead = scenario("declared-input-not-read")
     assert(Conformance.expectationFor(notRead, partialInputs) == Right(Conformance.Expected.RejectExactly(Set(ViolationType.MissingInput))))
     // the relaxed scenario still has to be blocked
-    Scenarios.all.filter(s => Scenarios.perWriteReadAttribution.contains(s.id)).foreach { s =>
+    Scenarios.all.filter(s => Scenarios.partialExcuses.contains(s.id)).foreach { s =>
       assert(Conformance.expectationFor(s, partialInputs).exists(_ != Conformance.Expected.Pass), s.id)
     }
   }

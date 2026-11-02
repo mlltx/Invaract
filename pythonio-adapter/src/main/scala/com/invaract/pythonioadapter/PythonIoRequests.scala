@@ -23,8 +23,8 @@ private[pythonioadapter] object Request {
   final case class Open(settings: Map[String, String], job: JobDetails) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
-    * each holds. `location` and `format` are the job's own only in dry-run mode, where there is no contract to give them. */
-  final case class Read(name: String, location: Option[String], format: Option[String], schema: List[Column]) extends Request
+    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. */
+  final case class Read(name: String, location: Option[String], schema: List[Column]) extends Request
 
   /** A table the job hands to `invaract.write`, described before any of it is staged: the output's name, the format and save
     * mode the package writes, and the table's columns. `unverifiable` says why the package could not describe the table (it
@@ -39,8 +39,8 @@ private[pythonioadapter] object Request {
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
-    * counted batch by batch as it was written, and how many rows. */
-  final case class Written(name: String, rows: Option[Long], nulls: Map[String, Long]) extends Request
+    * counted batch by batch as it was written. */
+  final case class Written(name: String, nulls: Map[String, Long]) extends Request
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
@@ -58,11 +58,9 @@ private[pythonioadapter] final case class JobDetails(
   * Arrow lets it hold empty values, and, where the data has been seen, how many it holds. */
 private[pythonioadapter] final case class Column(name: String, dataType: LogicalType, nullable: Boolean, nulls: Option[Long]) {
 
-  /** Whether the column holds empty values (decision 3: what the data holds, not what the frame library's flag says), or, with
-    * no count, whether Arrow lets it. */
-  def holdsNulls: Boolean = nulls.fold(nullable)(_ > 0)
-
-  def field(nullable: Boolean): LogicalField = LogicalField(name, dataType, nullable)
+  /** The column as the checks see it, given how many empty values it holds: nullable when it holds one (decision 3: what the
+    * data holds, not what the frame library's flag says), or, with no count, when Arrow lets it. */
+  def field(nulls: Option[Long]): LogicalField = LogicalField(name, dataType, nulls.fold(nullable)(_ > 0))
 }
 
 private[pythonioadapter] object Requests {
@@ -89,17 +87,15 @@ private[pythonioadapter] object Requests {
     }
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
-    val settings = section(m, "settings").map { case (k, v) => k -> String.valueOf(v) }
     val job = section(m, "job")
-    val libraries = section(job, "libraries").map { case (k, v) => k -> String.valueOf(v) }
-    Right(Request.Open(settings, JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), libraries)))
+    Right(Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries"))))
   }
 
   private def read(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a read must name the input it reads")
       schema <- columns(m.get("schema"), s"the read of '$name'")
-    } yield Request.Read(name, text(m, "location"), text(m, "format"), schema)
+    } yield Request.Read(name, text(m, "location"), schema)
 
   private def write(m: Map[String, AnyRef]): Either[String, Request] =
     for {
@@ -110,11 +106,8 @@ private[pythonioadapter] object Requests {
   private def written(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a written must name the output it staged")
-      rows <- m.get("rows").fold[Either[String, Option[Long]]](Right(None))(count(_, s"the rows of '$name'").map(Some(_)))
-      nulls <- section(m, "nulls").toList.foldRight[Either[String, Map[String, Long]]](Right(Map.empty)) { case ((column, n), rest) =>
-        for { tail <- rest; c <- count(n, s"the empty values of column '$column' of '$name'") } yield tail + (column -> c)
-      }
-    } yield Request.Written(name, rows, nulls)
+      nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
+    } yield Request.Written(name, nulls.toMap)
 
   private def count(value: AnyRef, what: String): Either[String, Long] = value match {
     case n: java.lang.Number if n.longValue >= 0 && n.doubleValue == n.longValue.toDouble => Right(n.longValue)
@@ -123,22 +116,24 @@ private[pythonioadapter] object Requests {
 
   /** Columns as `{"name": ..., "type": ..., "nullable": ..., "nulls": ...}`, the type as pyarrow names it (`str(field.type)`). */
   private def columns(value: Option[AnyRef], what: String): Either[String, List[Column]] =
-    list(value).foldRight[Either[String, List[Column]]](Right(Nil)) { (item, rest) =>
-      for {
-        tail <- rest
-        column <- item match {
-          case f: JMap[_, _] =>
-            val m = asMap(f)
-            for {
-              name <- text(m, "name").toRight(s"a column of $what has no name")
-              typeText <- text(m, "type").toRight(s"column '$name' of $what has no type")
-              logical <- ArrowSchemas.dataType(typeText).toRight(s"column '$name' of $what has the type '$typeText', which is not an Arrow type")
-              nulls <- m.get("nulls").fold[Either[String, Option[Long]]](Right(None))(count(_, s"the empty values of column '$name' of $what").map(Some(_)))
-            } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls)
-          case _ => Left(s"a column of $what must be a JSON object")
-        }
-      } yield column :: tail
+    traverse(list(value)) {
+      case f: JMap[_, _] =>
+        val m = asMap(f)
+        for {
+          name <- text(m, "name").toRight(s"a column of $what has no name")
+          typeText <- text(m, "type").toRight(s"column '$name' of $what has no type")
+          logical <- ArrowSchemas.dataType(typeText).toRight(s"column '$name' of $what has the type '$typeText', which is not an Arrow type")
+          nulls <- traverse(m.get("nulls").toList)(count(_, s"the empty values of column '$name' of $what"))
+        } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls.headOption)
+      case _ => Left(s"a column of $what must be a JSON object")
     }
+
+  /** `f` of every item, or the first item's error. */
+  private def traverse[A, B](items: List[A])(f: A => Either[String, B]): Either[String, List[B]] =
+    items.foldRight[Either[String, List[B]]](Right(Nil))((item, rest) => for { tail <- rest; b <- f(item) } yield b :: tail)
+
+  /** A section of string values (`settings`, `libraries`), each value as text. */
+  private def strings(m: Map[String, AnyRef], key: String): Map[String, String] = section(m, key).map { case (k, v) => k -> String.valueOf(v) }
 
   private def asMap(m: JMap[_, _]): Map[String, AnyRef] = m.asScala.map { case (k, v) => String.valueOf(k) -> v.asInstanceOf[AnyRef] }.toMap
 
@@ -172,5 +167,5 @@ private[pythonioadapter] object PythonIoConfigSource {
   val Known: Set[String] = InvaractConf.All.toSet -- NotApplicable
 
   /** How a job's environment spells the setting `name`: `orgPolicy` is `INVARACT_ORG_POLICY`. */
-  def variable(name: String): String = "INVARACT_" + name.flatMap(c => if (c.isUpper) "_" + c else c.toUpper.toString)
+  def variable(name: String): String = "INVARACT_" + ConfigSource.snakeCase(name).toUpperCase(java.util.Locale.ROOT)
 }

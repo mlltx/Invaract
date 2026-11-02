@@ -4,7 +4,6 @@
 package com.invaract.pythonioadapter
 
 import com.invaract.verification.AdapterCapabilities
-import org.slf4j.LoggerFactory
 
 /** The PythonIo adapter's own declaration of what it verifies - loaded from
   * `invaract-capabilities-pythonio.yaml` (bundled in this module's jar), the same file the engine
@@ -16,21 +15,11 @@ import org.slf4j.LoggerFactory
   * `PythonIoCapabilitiesSpec` proves the shipped file parses, so that path is never taken in a real build.
   */
 object PythonIoCapabilities {
-  private val logger = LoggerFactory.getLogger(PythonIoCapabilities.getClass)
-
   val ResourcePath = "invaract-capabilities-pythonio.yaml"
 
   lazy val declared: Option[AdapterCapabilities] = load(ResourcePath, PythonIoCapabilities.getClass.getClassLoader)
 
   /** The declaration at `path` on `classLoader`'s classpath, or `None` (logged) when it is absent or invalid. */
   def load(path: String, classLoader: ClassLoader): Option[AdapterCapabilities] =
-    AdapterCapabilities.fromResource(path, classLoader) match {
-      case Some(Right(capabilities)) => Some(capabilities)
-      case Some(Left(errors)) =>
-        logger.warn(s"$path is invalid; the capability check is skipped: ${errors.mkString("; ")}")
-        None
-      case None =>
-        logger.warn(s"$path is missing from the classpath; the capability check is skipped")
-        None
-    }
+    AdapterCapabilities.load(path, classLoader)
 }

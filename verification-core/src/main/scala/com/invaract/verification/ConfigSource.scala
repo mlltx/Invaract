@@ -40,6 +40,10 @@ object ConfigSource {
       }
     }
 
+  /** A neutral name in snake case (`dryRun` is `dry_run`): how the Python adapters spell a setting (`--invaract_dry_run` for a
+    * Beam Python pipeline, `INVARACT_DRY_RUN` in a Python I/O job's environment), so the two never spell it differently. */
+  private[invaract] def snakeCase(name: String): String = name.flatMap(c => if (c.isUpper) "_" + c.toLower else c.toString)
+
   /** Nothing configured. */
   val empty: ConfigSource = new ConfigSource {
     def get(name: String): Option[String] = None

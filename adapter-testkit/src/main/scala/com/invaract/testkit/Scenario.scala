@@ -214,6 +214,10 @@ object ScenarioOutcome {
 /** What a conforming adapter must do with a scenario. */
 sealed trait Expectation
 
+/** The violations of a scenario's expectation an adapter that declares `capability` `partial` is not held to, and `why` a
+  * partial adapter cannot report them (`Scenarios.partialExcuses`). */
+final case class PartialExcuse(capability: Capability, violationTypes: Set[String], why: String)
+
 object Expectation {
   case object Pass extends Expectation
 

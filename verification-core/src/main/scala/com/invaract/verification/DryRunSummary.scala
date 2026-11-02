@@ -5,7 +5,10 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser, ContractValidator, LogicalSchema}
 import com.invaract.ir.Plan
-import com.invaract.verification.notification.{DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus, SelfCheckStatus}
+import com.invaract.verification.notification.{
+  ContractInferenceEvent, DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus, NotificationSink, SelfCheckStatus
+}
+import org.slf4j.Logger
 
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
@@ -71,5 +74,55 @@ private[invaract] object DryRunSelfCheck {
       }
     } catch {
       case NonFatal(e) => (SelfCheckStatus.Error, Nil, List(s"self-check threw ${e.getClass.getSimpleName}: ${e.getMessage}"))
+    }
+}
+
+/** How an adapter that sees each write as it is judged (Beam's pipeline, the Python I/O adapter's run) reports its dry run: each
+  * write's draft (`ContractInferenceEvent`) and the job's summary (`DryRunSummaryEvent`) published to the sink, or, with none,
+  * logged at INFO, in the same words for every such adapter. Spark reports through `DryRunReporter`, which publishes at the end of
+  * the application. */
+private[invaract] object DryRunReporting {
+
+  /** One write's outcome: `status` an `InferenceStatus`, `yaml` the draft, `selfCheck` its `DryRunSelfCheck`. */
+  def inference(
+      sink: Option[NotificationSink],
+      logger: Logger,
+      job: JobInfo,
+      status: String,
+      reason: Option[String],
+      location: Option[String],
+      yaml: Option[String],
+      selfCheck: Option[(String, List[Violation], List[String])]
+  ): Unit =
+    sink match {
+      case Some(s) =>
+        s.publish(
+          ContractInferenceEvent(
+            status, reason, location, yaml, selfCheck.map(_._1), selfCheck.fold(List.empty[Violation])(_._2), selfCheck.fold(List.empty[String])(_._3),
+            None, job, System.currentTimeMillis(), Map.empty
+          )
+        )
+      case None =>
+        logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
+    }
+
+  /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred. */
+  def summary(sink: Option[NotificationSink], logger: Logger, job: JobInfo, outcomes: Seq[(String, Option[Contract])]): Unit = {
+    val counts = outcomes.groupBy(_._1).map { case (status, all) => status -> all.size.toLong }
+    val summary = DryRunSummary.event(counts, outcomes.flatMap(_._2).toList, job, System.currentTimeMillis(), Map.empty)
+    sink match {
+      case Some(s) => s.publish(summary)
+      case None =>
+        logger.info(s"Invaract dry run summary: ${summary.statusCounts.toList.sorted.map { case (k, v) => s"$k=$v" }.mkString(", ")}; " +
+          s"merge ${summary.mergeStatus}${summary.mergedContractYaml.map("\n" + _).getOrElse(summary.mergeConflicts.map("\n  " + _).mkString)}")
+    }
+  }
+
+  /** Waits up to `timeoutMs` for the sink to deliver what it was given; a sink that cannot is logged, never thrown, so a run's
+    * own outcome does not depend on its notifications. */
+  def flush(sink: Option[NotificationSink], logger: Logger, timeoutMs: Long): Unit =
+    sink.foreach { s =>
+      try s.flush(timeoutMs)
+      catch { case NonFatal(e) => logger.warn(s"Invaract could not flush its notification sink: $e") }
     }
 }

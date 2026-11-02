@@ -1013,7 +1013,8 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
   `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`
-  or a `.github/actions/` composite changed; pushes always run them
+  or a `.github/actions/` composite changed; pushes always run them. It also gates the Beam matrix and
+  `pythonio-native-checker` on a change to their own module or what they are built from
 - **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
   the job rebuilds every module
 - **`release-dry-run.yml`** (separate workflow, on changes to publishing files): signs and bundles all six

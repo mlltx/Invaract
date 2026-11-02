@@ -686,15 +686,26 @@ object Scenarios {
     * why. An adapter's claim on one of these is reported as an unchecked gap, not as passing. */
   val gaps: Map[Capability, String] = Map.empty
 
-  /** Scenarios whose expected `MISSING_INPUT` comes from holding one write to the reads that fed it, keyed by scenario id,
-    * with why. An adapter that cannot tell which reads fed which write declares `check.inputExistence` `partial`, and is
-    * held to the scenario's other violations only: it treats every read before a write as feeding it, so it never reports
-    * a missing input for a valid job, but cannot report one that only a single write's own reads would show
-    * (docs/PYTHON_ADAPTER_SURVEY.md, D4). An adapter that declares it `supported` is held to the whole set. */
-  val perWriteReadAttribution: Map[String, String] = Map(
-    "an-undeclared-second-write-is-blocked" ->
+  /** What an adapter that declares a capability `partial` is excused from in a scenario's expected violations, by scenario
+    * id; one that declares it `supported` is held to the whole set (`Conformance.expectationFor`). */
+  val partialExcuses: Map[String, PartialExcuse] = Map(
+    // An adapter that cannot tell which reads fed which write (the Python I/O adapter: every read before a write counts as
+    // feeding it, so it never reports a missing input for a valid job) cannot report one that only a single write's own reads
+    // would show (docs/PYTHON_ADAPTER_SURVEY.md, D4).
+    "an-undeclared-second-write-is-blocked" -> PartialExcuse(
+      Capability.CheckInputExistence,
+      Set(ViolationType.MissingInput),
       "the stray copy of the customers is reported for not reading the orders, which the job did read before an earlier write"
+    )
   )
+
+  /** The scenarios a partial `check.inputExistence` is excused a `MISSING_INPUT` in, with why: the shape the excuse had before it
+    * named its capability (it shipped on main with the Python I/O adapter's milestone 0). Kept so code compiled against that
+    * keeps linking; read `partialExcuses`. */
+  @deprecated("read partialExcuses, which names the capability and the excused violations", "0.4.0")
+  val perWriteReadAttribution: Map[String, String] = partialExcuses.collect {
+    case (id, e) if e.capability == Capability.CheckInputExistence && e.violationTypes.contains(ViolationType.MissingInput) => id -> e.why
+  }
 
   /** Everything the kit does not verify with a job: `attested` plus `gaps`. */
   val notCovered: Map[Capability, String] = attested ++ gaps

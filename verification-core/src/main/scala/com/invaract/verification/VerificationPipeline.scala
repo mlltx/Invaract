@@ -100,8 +100,24 @@ object VerificationPipeline {
       job: Option[JobInfo] = None
   ): Unit = {
     requireValidContract(contract, sink, runId, job)
-    val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
     val checked = write
+    val result = evaluateWrite(contract, checked, options, capabilities)
+    publishValidation(contract, result, sink, runId, job)
+    if (!result.passed) {
+      throw new ContractViolationException(result, explain(contract, checked.plan, result))
+    }
+  }
+
+  /** `verifyWrite`'s verdict on `checked`, published nowhere and thrown by no one: for an adapter that judges a write more than
+    * once (the Python I/O adapter checks a write's columns before its data is staged, and its empty values after) and publishes
+    * only the verdict that counts. Assumes `contract` is valid (`requireValidContract`). */
+  private[invaract] def evaluateWrite(
+      contract: Contract,
+      checked: CheckedWrite,
+      options: VerificationOptions,
+      capabilities: Option[AdapterCapabilities]
+  ): VerificationResult = {
+    val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
 
     // The plan's shape (reads, unknown nodes, aggregates, joins, filters) is
     // gathered once here and shared by every verifier below, instead of each
@@ -177,7 +193,7 @@ object VerificationPipeline {
     val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, planFacts) else Nil
     val roleConsistencyViolations = RoleConsistencyVerifier.violations(contract, roleConformanceResults)
 
-    val result = VerificationResult.of(
+    VerificationResult.of(
       structuralResult.contract,
       capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
       fingerprints,
@@ -185,10 +201,6 @@ object VerificationPipeline {
       roleConformanceResults,
       structuralResult.unverifiableInputs
     )
-    publishValidation(contract, result, sink, runId, job)
-    if (!result.passed) {
-      throw new ContractViolationException(result, explain(contract, checked.plan, result))
-    }
   }
 
   /** The distinct `sourceType`s of `unknownPlans` the engine declared a lineage boundary, in
@@ -279,11 +291,7 @@ object VerificationPipeline {
   ): Unit = {
     requireValidContract(contract, sink, runId, job)
     val missing = OutputChecker.unwrittenOutputs(contract.outputs, writeLocations)
-    if (missing.nonEmpty) {
-      val result = VerificationResult.of(s"${contract.id}@${contract.version}", missing)
-      publishValidation(contract, result, sink, runId, job)
-      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
-    }
+    if (missing.nonEmpty) reject(contract, VerificationResult.of(s"${contract.id}@${contract.version}", missing), translatedPlan, sink, runId, job)
   }
 
   /** Refuses `contract` before any write is judged when it relies on something `capabilities` declares unsupported (see
@@ -306,11 +314,7 @@ object VerificationPipeline {
   ): Unit = {
     requireValidContract(contract, sink, runId, job)
     val unsupported = CapabilityCheck.violations(contract, options, capabilities)
-    if (unsupported.nonEmpty) {
-      val result = VerificationResult.of(s"${contract.id}@${contract.version}", unsupported)
-      publishValidation(contract, result, sink, runId, job)
-      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
-    }
+    if (unsupported.nonEmpty) reject(contract, VerificationResult.of(s"${contract.id}@${contract.version}", unsupported), translatedPlan, sink, runId, job)
   }
 
   /** The fail-closed response: an operation that looks like it writes or
@@ -332,9 +336,22 @@ object VerificationPipeline {
       job: Option[JobInfo] = None
   ): Nothing = {
     val violation = Violations.unverifiableWrite(operation, s"${contract.id}@${contract.version}")
-    val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+    reject(contract, VerificationResult.of(s"${contract.id}@${contract.version}", List(violation)), translatedPlan, sink, runId, job)
+  }
+
+  /** The one way a check refuses: `result` published as a FAILED validation, then thrown with the standard explanation of
+    * `plan`. Every rejection in this object ends here, and so does an adapter's own check of something the pipeline does not
+    * judge (the Python I/O adapter's check of a read as it is made). */
+  private[invaract] def reject(
+      contract: Contract,
+      result: VerificationResult,
+      plan: ir.Plan,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo]
+  ): Nothing = {
     publishValidation(contract, result, sink, runId, job)
-    throw new ContractViolationException(result, explain(contract, translatedPlan, result))
+    throw new ContractViolationException(result, explain(contract, plan, result))
   }
 
   /** Throws if `contract` itself is structurally unsound per
@@ -366,14 +383,12 @@ object VerificationPipeline {
       val customRuleTypeViolations = unresolvableCustomRuleTypes.map { case (ruleType, className, message) =>
         Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
       }
-      val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
-      publishValidation(contract, result, sink, runId, job)
       // Reads as a plain sentence rather than a parenthesized fragment:
       // PlanPrinter already wraps an UnknownPlan as "UnknownPlan(<description>)",
       // so an inner "(...)" too would render as a confusing doubled "((...))".
       val describedPlan =
         ir.UnknownPlan("no transformation plan exists yet - contract validation failed before any plan was checked")
-      throw new ContractViolationException(result, explain(contract, describedPlan, result))
+      reject(contract, VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations), describedPlan, sink, runId, job)
     }
   }
 
