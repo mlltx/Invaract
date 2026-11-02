@@ -4080,10 +4080,12 @@ staged, published together only when the run passed; no Java where jobs run (a n
 version: Parquet and CSV on local and mounted file systems
 <ul class="contains-task-list">
 <li class="task-list-item"><input type="checkbox" checked disabled> Milestone 0: the checker as a GraalVM native image, passing the design’s criteria (gating). <code dir="auto">pythonio-adapter</code>’s
-<code dir="auto">PythonIoCheck</code>, built by CI’s <code dir="auto">pythonio-native-checker</code> job: the same replies as the JVM on 23 recorded protocol
+<code dir="auto">PythonIoCheck</code>, built by CI’s <code dir="auto">pythonio-native-checker</code> job: the same replies as the JVM on 27 recorded protocol
 cases, contracts, organisational policy, <code dir="auto">ref://</code> locations and every built-in sink included; 6 to 15 ms a run;
 41 MB, 14 MB compressed (docs/PYTHONIO_ADAPTER.md)</li>
-<li class="task-list-item"><input type="checkbox" disabled> The checker protocol: <code dir="auto">open</code>, <code dir="auto">write</code>, <code dir="auto">finish</code> done with milestone 0; a <code dir="auto">read</code> request, and dry-run mode</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Milestone 1, the checker protocol: <code dir="auto">open</code>, <code dir="auto">read</code>, <code dir="auto">write</code> and <code dir="auto">written</code> (the empty values of a staged write,
+decision 3), <code dir="auto">finish</code>, over Arrow’s type names (<code dir="auto">ArrowSchemas</code>, moved into verification-core); unverifiable
+writes refused; dry-run mode with merged drafts. 40 recorded cases, identical natively</li>
 <li class="task-list-item"><input type="checkbox" disabled> Conformance: the kit’s scenarios already run through the checker as the package will drive it; the run through
 real Python jobs comes with the package. A staged-publish enforcement point, so the user pages stop saying earlier
 writes “have already happened”</li>
