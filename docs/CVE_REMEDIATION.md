@@ -1889,6 +1889,111 @@ in §7p-§7x.
 version, no evictions. `sbt test`: 360 passed, 0 failed, 26 canceled —
 identical to every prior run on this module.
 
+## 7z. `beam-adapter`'s fourteenth finding: `wire-runtime-jvm`, a sibling coordinate `wire-runtime`'s own override doesn't reach
+
+One more real Dependabot alert against `beam-adapter`, test scope,
+confirmed via `sbt Test/dependencyTree` (sole winner, no eviction):
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `com.squareup.wire:wire-runtime-jvm` | 4.9.3 (via `beam-sdks-java-io-google-cloud-platform`/`-io-kafka`/`-extensions-sql`) | 6.4.5 | CVE-2026-45799 |
+
+**A different artifactId the existing override doesn't reach, the same
+lesson `org.lz4:lz4-java`/`at.yawk.lz4:lz4-java` already taught (§7v).**
+`wire-runtime-jvm` is a distinct Maven coordinate from `wire-runtime`,
+which §7x already pinned to 6.4.5 for a different CVE (CVE-2026-63126).
+`dependencyOverrides` only resolves version conflicts *within* a
+groupId:artifactId, so that existing override does nothing for this one
+— confirmed via `dependencyTree`, which shows `wire-runtime-jvm:4.9.3`
+resolving on its own, unaffected by the sibling pin.
+
+**CVE-2026-45799** (GHSA-7xpr-hc2w-34m9, CVSS not Critical but a real
+decode-time DoS): Wire's protobuf group-skip logic never rejected a
+negative length before skipping a length-delimited field inside a group,
+so a crafted 10-byte payload throws an unchecked exception instead of
+Wire's own documented checked decode failure — any service decoding
+untrusted protobuf without its own guard against an unchecked exception
+from the decoder can be crashed by it. This is the *earlier*, originally
+disclosed bug; CVE-2026-63126 (§7x) is a later, separate advisory for an
+*incomplete* fix of this one in the decoder's length-handling path —
+checked directly rather than assumed, since the two numbers are easy to
+conflate. The advisory text explicitly lists `wire-runtime-jvm` alongside
+`wire-runtime` with identical ranges (affected `<= 6.2.0` and
+`7.0.0-alpha01`/`02`, fixed `6.3.0`/`7.0.0-alpha03`) — not a coordinate
+it leaves unaddressed.
+
+**A "discontinued legacy artifact" framing that doesn't hold up, checked
+rather than trusted.** Several mirrors of this advisory describe
+`wire-runtime-jvm` as a discontinued coordinate that "will not receive a
+patched release," pointing at older confirmed-vulnerable 5.3.1/5.3.3
+releases. Checked directly against Maven Central's own
+`maven-metadata.xml` for this exact artifactId: real releases continue
+well past the fix, through `6.4.0`, `6.4.1`, `6.4.5`, `6.4.6`, `6.4.7`,
+and into the `7.x` line (`7.0.0` through `7.1.2`) — so "discontinued"
+describes those old 5.x releases' own support status, not an absent fix
+for this finding. Pinned to `6.4.5`, not the advisory's bare `6.3.0`
+floor: the same version already chosen for the sibling `wire-runtime`
+coordinate (§7x), for the same consistent-release-line reasoning that
+pin used — an examined, already-tested version in this exact codebase —
+and confirmed to actually exist for this coordinate too via the same
+Maven Central check.
+
+**Reachability**: test scope only, same as every other finding in
+§7p-§7y.
+
+**Verified**: `sbt Test/dependencyTree` — resolves to a single version
+(`6.4.5`), no evictions, confirmed alongside the sibling `wire-runtime`
+override resolving independently to the same version. `sbt test`: 360
+passed, 0 failed, 26 canceled — identical to every prior run on this
+module.
+
+## 7ab. `docs-site`'s `undici` and `contributor-docs`'s `vite` — a mirrored pair of findings, inverted between the two sites
+
+Two real Dependabot alerts, both transitive of Astro, both npm — but
+each one against a *different* one of this repository's two independent
+Astro Starlight sites, confirmed by checking each lockfile's own
+resolved versions rather than assuming either alert applied to both:
+
+| Site | Artifact | Before | After | Advisories |
+|---|---|---|---|---|
+| `docs-site` | `undici` (via `astro` 7.3.5) | 8.11.2 | 8.12.3 | 6 advisories bundled under one `npm audit` finding (GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm) |
+| `contributor-docs` | `vite` (via `astro` 7.3.5) | 8.3.0 | 8.3.5 | 6 advisories bundled under one `npm audit` finding (GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, GHSA-587h-7wmj-h5pm, GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22, GHSA-vfpm-58rq-9qcg) |
+
+**Checked which site each alert actually named, rather than fixing both
+coordinates in both lockfiles on the assumption they'd drifted
+together.** Both `package-lock.json` files declare `astro ^7.2.9`/
+`^7.3.5` and resolve it to the identical `7.3.5`, but each site's own npm
+resolution landed on a *different* side of the two findings:
+`docs-site` already had `vite` at a safe `8.3.5` (past the `8.3.3` fix)
+but a vulnerable `undici` at `8.11.2`; `contributor-docs` already had
+`undici` at a safe `8.12.3` but a vulnerable `vite` at `8.3.0`. Confirmed
+directly against each lockfile's `node_modules/<pkg>` resolved version
+before touching either file — this is the same "two independent Astro
+Starlight sites, two independent `package-lock.json` files, a fix in one
+does not propagate to the other" gap pattern this document's own history
+already recorded once for `devalue`, and that an earlier pass of this
+document left as `contributor-docs`'s own unresolved `undici` gap —
+except here the gap runs the other direction for each package, so
+fixing only the alert's own named package in its own named site (not
+reflexively mirroring the fix into the other site "for consistency")
+was the correct scope, confirmed by each site's own `npm audit` coming
+back clean afterward.
+
+**Both fixed via `npm audit fix`, purely transitive — neither site's own
+`package.json` names either package directly**, confirmed via `git
+diff`: `docs-site`'s lockfile changed exactly one line (`undici`);
+`contributor-docs`'s lockfile moved `vite` and the small cluster of its
+own transitives that version-lock against it (`@rolldown/binding-*`,
+`rolldown`, `@oxc-project/types`, `nanoid`, plus an incidental `zod`
+patch bump npm's own resolver picked up along the way) — no top-level
+package added or removed in either file.
+
+**Verified**: `npm audit` — 0 vulnerabilities in both sites, after. `npm
+run build` in both — `docs-site`: 43 pages built; `contributor-docs`: 28
+pages built (the generated-docs sync `contributor-docs` itself runs as
+part of that build, per `contributor-docs/README.md`). No build error,
+no changed output page count from before the bump in either site.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2057,6 +2162,33 @@ identical to every prior run on this module.
       already carries. Confirmed via `dependencyTree` (both
       single-version, no evictions) and a real `sbt test` run (360
       passed, 0 failed, 26 canceled).
+- [x] Fix `beam-adapter`'s `wire-runtime-jvm` alert (this change) — see
+      §7z: CVE-2026-45799 (GHSA-7xpr-hc2w-34m9, the original, earlier
+      advisory `wire-runtime` itself was separately re-flagged for under
+      an incomplete fix, §7x's CVE-2026-63126). A different artifactId
+      from `wire-runtime` the existing override doesn't reach — the same
+      "override doesn't cross-apply to a different coordinate" lesson as
+      §7v's `org.lz4`/`at.yawk.lz4` pair. `4.9.3` → `6.4.5`, matching the
+      sibling `wire-runtime` pin rather than the advisory's bare `6.3.0`
+      floor. Checked, and ruled out, a "discontinued legacy artifact"
+      framing some advisory mirrors use — Maven Central's own metadata
+      shows real releases for this exact coordinate through `6.4.7` and
+      into `7.x`. Confirmed via `dependencyTree` (single resolved
+      version, no eviction) and a real `sbt test` run (360 passed, 0
+      failed, 26 canceled).
+- [x] Fix `docs-site`'s `undici` and `contributor-docs`'s `vite` alerts
+      (this change) — see §7ab: a mirrored pair of findings against
+      Astro's own transitives, inverted between the two independent
+      Astro Starlight sites (`docs-site` was vulnerable on `undici` but
+      already safe on `vite`; `contributor-docs` the other way around) —
+      checked each lockfile's own resolved versions before fixing either,
+      rather than assuming the two sites had drifted together. `undici`
+      8.11.2 → 8.12.3 in `docs-site`; `vite` 8.3.0 → 8.3.5 in
+      `contributor-docs`. Both via `npm audit fix`, purely transitive —
+      neither site's `package.json` names either package directly.
+      Confirmed via `npm audit` (0 vulnerabilities in both, after) and a
+      real `npm run build` in both (`docs-site`: 43 pages; `contributor-
+      docs`: 28 pages, no change in either's output page count).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

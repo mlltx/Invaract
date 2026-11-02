@@ -382,6 +382,39 @@ dependencyOverrides += "io.airlift" % "aircompressor" % "2.0.3"
 // unexamined jump" judgment as the kaml 0.53.0 override above.
 dependencyOverrides += "com.squareup.wire" % "wire-runtime" % "6.4.5"
 
+// com.squareup.wire:wire-runtime-jvm: a DIFFERENT artifactId from wire-runtime above -
+// dependencyOverrides only resolves version conflicts *within* a groupId:artifactId, so
+// the override two lines up does nothing for this coordinate, the same
+// "override doesn't cross-apply to a different artifact" lesson this file's own
+// org.lz4:lz4-java / at.yawk.lz4:lz4-java pair already taught (see that override's
+// comment above). A transitive of the same three dependents -
+// beam-sdks-java-io-google-cloud-platform/beam-sdks-java-extensions-sql/
+// beam-sdks-java-io-kafka 2.77.0 (test scope) - resolving to 4.9.3, the sole winner
+// (confirmed via `dependencyTree`: the only other node, 4.5.0, shows
+// "evicted by: 4.9.3"; 4.9.3 itself has no eviction). CVE-2026-45799
+// (GHSA-7xpr-hc2w-34m9): Wire's protobuf group-skip logic never rejected a negative
+// length before skipping a length-delimited field inside a group, so a crafted
+// 10-byte payload throws an unchecked exception instead of Wire's own documented
+// checked decode failure - a decoding-side DoS for any service that decodes untrusted
+// protobuf and doesn't separately guard against an unchecked exception from its
+// decoder. The advisory explicitly lists `wire-runtime-jvm` alongside `wire-runtime`
+// with the identical affected/patched ranges (<= 6.2.0 and 7.0.0-alpha01/02, fixed
+// 6.3.0/7.0.0-alpha03) - not the unrelated, later, incomplete-fix CVE-2026-63126 the
+// `wire-runtime` override above addresses; that one only ever shipped against
+// `wire-runtime` itself, confirmed via its own advisory text, which names no `-jvm`
+// coordinate. Despite the "discontinued legacy artifact" framing some mirrors of this
+// advisory use (pointing at `wire-runtime-jvm` 5.3.1/5.3.3 specifically), Maven
+// Central's own metadata shows releases for this exact coordinate continuing well past
+// the fix, through 6.4.7 and into the 7.x line - so "discontinued" describes those old
+// 5.x releases' own support status, not an absence of a real fixed artifact to move to
+// here. Pinned to 6.4.5, not the advisory's bare 6.3.0 floor: the same version already
+// chosen for the sibling `wire-runtime` coordinate two lines up, for the same
+// consistent-release-line reasoning that override's own comment gives (an examined,
+// already-tested version in this exact codebase, not a second never-before-verified
+// pin), and confirmed to actually exist for this coordinate too via the same Maven
+// Central metadata check above.
+dependencyOverrides += "com.squareup.wire" % "wire-runtime-jvm" % "6.4.5"
+
 // com.google.guava:guava: a transitive of beam-runners-flink-1.19/
 // beam-sdks-java-io-kafka/beam-sdks-java-io-google-cloud-platform/
 // beam-sdks-java-extensions-sql 2.77.0 and hadoop-client/hadoop-common 3.4.1 (all test
