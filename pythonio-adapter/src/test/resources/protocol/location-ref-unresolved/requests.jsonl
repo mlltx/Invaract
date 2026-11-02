@@ -1,0 +1,1 @@
+{"op": "open", "settings": {"contract": "${CASE}/contract.yaml", "locationMap": "${CASE}/locations.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3"}}}

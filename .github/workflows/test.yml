@@ -528,6 +528,126 @@ jobs:
           path: adapter-testkit/target/stryker4s-report/**
           if-no-files-found: warn
 
+  # pythonio-adapter (docs/PYTHON_IO_ADAPTER_DESIGN.md): the checker Python jobs reading and writing through the `invaract`
+  # package are checked by. Like adapter-testkit it has no engine of its own to set up, so it runs whole-module on pushes and
+  # incrementally on a PR, at the break threshold in pythonio-adapter/build.sbt.
+  mutation-testing-pythonio-adapter:
+    name: Mutation testing (pythonio-adapter)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally (pythonio-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Mutation test pythonio-adapter
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: cd pythonio-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
+
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "pythonio-adapter/src/main/scala/" | grep '\.scala$' | sed "s|^pythonio-adapter/||" || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "=== pythonio-adapter: no changed files under src/main/scala, skipping ==="
+          else
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== pythonio-adapter: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd pythonio-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-pythonio-adapter
+          path: pythonio-adapter/target/stryker4s-report/**
+          if-no-files-found: warn
+
+  # pythonio-adapter's checker as a native program (docs/PYTHON_IO_ADAPTER_DESIGN.md, milestone 0). Python jobs run without
+  # Java, so the checker ships in the invaract package's wheels compiled with GraalVM native-image. This job holds the native
+  # program to milestone 0's bar: it builds with the configuration committed in the jar (META-INF/native-image), answers
+  # every recorded protocol case exactly as the JVM does (PythonIoProtocolCasesSpec runs the same cases in `sbt test`), each
+  # whole run, start-up included, takes under a second, and it is small enough for a wheel (PyPI refuses a file over 100 MB;
+  # the bar here is 50 MB compressed). The program is uploaded for inspection.
+  pythonio-native-checker:
+    name: Native checker (pythonio-adapter)
+    runs-on: ubuntu-latest
+    # read-only: the token is used only to check out the code and to read GraalVM's public releases (setup-graalvm)
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally (pythonio-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Test the checker and assemble its jar
+        shell: bash
+        run: cd pythonio-adapter && sbt test assembly
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the native checker
+        shell: bash
+        run: |
+          cd pythonio-adapter
+          mkdir -p target/native
+          native-image -jar target/scala-2.12/invaract-pythonio-checker-*.jar -o target/native/invaract-pythonio-checker
+
+      - name: Run the protocol cases against the native checker
+        shell: bash
+        run: |
+          cd pythonio-adapter
+          python3 native/cases.py src/test/resources/protocol --native --max-seconds 1 -- "$PWD/target/native/invaract-pythonio-checker"
+
+      - name: Check the native checker's size
+        shell: bash
+        run: |
+          cd pythonio-adapter/target/native
+          SIZE=$(stat -c %s invaract-pythonio-checker)
+          COMPRESSED=$(gzip -9 -c invaract-pythonio-checker | wc -c)
+          echo "native checker: $SIZE bytes, $COMPRESSED bytes compressed"
+          echo "Native checker: $((SIZE / 1048576)) MB, $((COMPRESSED / 1048576)) MB compressed" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COMPRESSED" -gt $((50 * 1048576)) ]; then
+            echo "::error::the native checker is $COMPRESSED bytes compressed, more than the 50 MB a wheel can carry comfortably"
+            exit 1
+          fi
+
+      - name: Upload the native checker
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pythonio-native-checker-linux-x64
+          path: pythonio-adapter/target/native/invaract-pythonio-checker
+          if-no-files-found: warn
+
   # beam-adapter (docs/BEAM_ADAPTER.md): the Apache Beam adapter. It has no Spark dependency, so like
   # adapter-testkit and verification-core it skips the Spark cache sequence and runs its own suite (Beam's
   # in-process DirectRunner) whole-module on pushes and incrementally on a PR. The break threshold is the
@@ -1736,7 +1856,7 @@ jobs:
           set -o pipefail
           # Every module in modules.json; check_modules.py fails when this list drifts from it.
           pids=()
-          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter beam-adapter runner notification-kafka registry-client; do
+          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter beam-adapter runner notification-kafka registry-client pythonio-adapter; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -1837,12 +1957,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

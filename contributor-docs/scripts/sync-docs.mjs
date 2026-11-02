@@ -139,6 +139,13 @@ const PAGES = [
     order: 9,
   },
   {
+    src: 'docs/PYTHONIO_ADAPTER.md',
+    slug: 'design/pythonio-adapter',
+    section: 'Design Docs',
+    label: 'Python I/O Adapter',
+    order: 10,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

@@ -1,0 +1,1 @@
+{"ok": false, "reason": "LocationResolutionException: The contract declares 'ref://report_dir', but the location map '${CASE}/locations.properties' (named by 'INVARACT_LOCATION_MAP') has no line for 'report_dir'; the ids it maps are: other_dir.", "status": "not-checked"}

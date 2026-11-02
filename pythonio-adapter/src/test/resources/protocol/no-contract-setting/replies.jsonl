@@ -1,0 +1,1 @@
+{"ok": false, "reason": "IllegalStateException: A contract is required: set 'INVARACT_CONTRACT' (or 'INVARACT_DRY_RUN=true' for dry-run mode, which needs no contract at all).", "status": "not-checked"}

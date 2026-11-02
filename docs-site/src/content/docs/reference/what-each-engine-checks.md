@@ -24,6 +24,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | Apache Beam (Java SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-apache-beam/) |
 | Apache Beam (Python SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-beam-python/) |
 | Apache Spark 3.5 | Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and the job fails; writes the job made before it have already happened. | [Guide](/guides/installing-the-enforcement-rule/) |
+| Python (invaract package, in development) | Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and the job fails; writes the job made before it have already happened. |  |
 
 ## At a glance
 
@@ -31,74 +32,74 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Which reads and writes it sees
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Batch reads](#batch-reads) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Streaming reads](#streaming-reads) | ✅ Yes | ◐ Partly | ✅ Yes |
-| [Batch writes](#batch-writes) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Streaming writes](#streaming-writes) | ✅ Yes | ✅ Yes | ◐ Partly |
-| [MERGE, UPDATE and DELETE](#merge-update-and-delete) | — Doesn't apply | — Doesn't apply | ✅ Yes |
-| [Table rollbacks and similar changes](#table-rollbacks-and-similar-changes) | — Doesn't apply | — Doesn't apply | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Batch reads](#batch-reads) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| [Streaming reads](#streaming-reads) | ✅ Yes | ◐ Partly | ✅ Yes | ✖ No |
+| [Batch writes](#batch-writes) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| [Streaming writes](#streaming-writes) | ✅ Yes | ✅ Yes | ◐ Partly | ✖ No |
+| [MERGE, UPDATE and DELETE](#merge-update-and-delete) | — Doesn't apply | — Doesn't apply | ✅ Yes | — Doesn't apply |
+| [Table rollbacks and similar changes](#table-rollbacks-and-similar-changes) | — Doesn't apply | — Doesn't apply | ✅ Yes | — Doesn't apply |
 
 ### What it checks about each write
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Required inputs are read](#required-inputs-are-read) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Writes land where the contract says](#writes-land-where-the-contract-says) | ✅ Yes | ✅ Yes | ◐ Partly |
-| [Every promised output is written](#every-promised-output-is-written) | ✅ Yes | ✅ Yes | ◐ Partly |
-| [Columns match the contract](#columns-match-the-contract) | ◐ Partly | ◐ Partly | ✅ Yes |
-| [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes |
-| [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes |
-| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Required inputs are read](#required-inputs-are-read) | ✅ Yes | ✅ Yes | ✅ Yes | ◐ Partly |
+| [Writes land where the contract says](#writes-land-where-the-contract-says) | ✅ Yes | ✅ Yes | ◐ Partly | ✅ Yes |
+| [Every promised output is written](#every-promised-output-is-written) | ✅ Yes | ✅ Yes | ◐ Partly | ✅ Yes |
+| [Columns match the contract](#columns-match-the-contract) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
 
 ### Rules a contract can declare
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete) | — Doesn't apply | — Doesn't apply | ◐ Partly |
-| [Rules about the transformation's shape](#rules-about-the-transformations-shape) | ◐ Partly | ✖ No | ✅ Yes |
-| [Your own rule types](#your-own-rule-types) | ✖ No | ✖ No | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete) | — Doesn't apply | — Doesn't apply | ◐ Partly | — Doesn't apply |
+| [Rules about the transformation's shape](#rules-about-the-transformations-shape) | ◐ Partly | ✖ No | ✅ Yes | ✖ No |
+| [Your own rule types](#your-own-rule-types) | ✖ No | ✖ No | ✅ Yes | ✖ No |
 
 ### Deeper analysis
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Proves value constraints](#proves-value-constraints) | ✖ No | ✖ No | ✅ Yes |
-| [Datasets are used as their declared type says](#datasets-are-used-as-their-declared-type-says) | ✖ No | ✖ No | ✅ Yes |
-| [Fingerprints the transformation's logic](#fingerprints-the-transformations-logic) | ✖ No | ✖ No | ✅ Yes |
-| [Recognizes built-in functions](#recognizes-built-in-functions) | ✖ No | ✖ No | ✅ Yes |
-| [Tracks sensitive columns](#tracks-sensitive-columns) | ✖ No | ✖ No | ✅ Yes |
-| [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs) | ✖ No | ✖ No | ◐ Partly |
-| [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches) | — Doesn't apply | — Doesn't apply | ◐ Partly |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Proves value constraints](#proves-value-constraints) | ✖ No | ✖ No | ✅ Yes | ✖ No |
+| [Datasets are used as their declared type says](#datasets-are-used-as-their-declared-type-says) | ✖ No | ✖ No | ✅ Yes | ✖ No |
+| [Fingerprints the transformation's logic](#fingerprints-the-transformations-logic) | ✖ No | ✖ No | ✅ Yes | ✖ No |
+| [Recognizes built-in functions](#recognizes-built-in-functions) | ✖ No | ✖ No | ✅ Yes | ✖ No |
+| [Tracks sensitive columns](#tracks-sensitive-columns) | ✖ No | ✖ No | ✅ Yes | ✖ No |
+| [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs) | ✖ No | ✖ No | ◐ Partly | ✖ No |
+| [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches) | — Doesn't apply | — Doesn't apply | ◐ Partly | — Doesn't apply |
 
 ### Organization-wide policy
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Organization-wide policy](#organization-wide-policy) | ✅ Yes | ✅ Yes | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Organization-wide policy](#organization-wide-policy) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Setting it up
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Turn it on without changing the job](#turn-it-on-without-changing-the-job) | ◐ Partly | ◐ Partly | ✅ Yes |
-| [Locations resolved when the job starts](#locations-resolved-when-the-job-starts) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Contracts from a registry](#contracts-from-a-registry) | ✅ Yes | ✅ Yes | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Turn it on without changing the job](#turn-it-on-without-changing-the-job) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Locations resolved when the job starts](#locations-resolved-when-the-job-starts) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| [Contracts from a registry](#contracts-from-a-registry) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Reporting
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Sends events to your systems](#sends-events-to-your-systems) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Sends events to your systems](#sends-events-to-your-systems) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
 
 ### Safety net
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 |
-|---|---|---|---|
-| [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand) | ◐ Partly | ◐ Partly | ✅ Yes |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+|---|---|---|---|---|
+| [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
 
 ## Where each engine falls short
 
@@ -179,6 +180,38 @@ Everything not listed here is checked in full.
 - [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete): Checked in full for Delta Lake and Iceberg copy-on-write tables. On an Iceberg merge-on-read table, an `allowed_update_columns` rule cannot be checked, so the UPDATE is refused rather than let through.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): A user-defined function is a black box: an output column it computes is traced only to the columns passed into it.
 - [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches): A checkpoint or cache made after Invaract was installed is seen through. One made before, or one Spark has dropped from its cache, hides what is behind it.
+
+### Python (invaract package, in development)
+
+Everything not listed here is checked in full.
+
+**Checked in part**
+
+- [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
+
+**Not checked**
+
+- [Streaming reads](#streaming-reads): Python jobs read whole datasets; reading a stream is not checked. A streaming read it cannot place is reported as unverifiable rather than checked.
+- [Streaming writes](#streaming-writes): Python jobs write whole datasets; writing a stream is not checked. A streaming write it does not recognize is refused, not passed unchecked.
+- [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Python jobs write files; registering an output in a catalog is not checked yet. Refused if your contract relies on it.
+- [Rules about the transformation's shape](#rules-about-the-transformations-shape): What a Python job does between its reads and writes is its own code, which is not checked. Refused if your contract relies on it.
+- [Your own rule types](#your-own-rule-types): Custom rules judge a job's plan, and a Python job's plan is its own code, which is not checked. Refused if your contract relies on it.
+- [Proves value constraints](#proves-value-constraints): Data quality rules need the transformation, which for a Python job is its own code. Refused if you turn on `staticDataQuality`.
+- [Datasets are used as their declared type says](#datasets-are-used-as-their-declared-type-says): Column roles need column lineage, which a Python job's own code does not give. Refused if you turn on `roleConsistency`.
+- [Fingerprints the transformation's logic](#fingerprints-the-transformations-logic): A fingerprint of the transformation needs the transformation, which for a Python job is its own code. Turning `computeFingerprint` on does not stop the job; no fingerprint is published, and a warning in the log says why.
+- [Recognizes built-in functions](#recognizes-built-in-functions): Which functions a Python job calls is its own code, which is not checked. Only fingerprints use it.
+- [Tracks sensitive columns](#tracks-sensitive-columns): Sensitivity is followed through column lineage, which a Python job's own code does not give. No sensitivity report is produced; tags on the contract's fields are kept but not followed through the job.
+- [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): Which input columns feed which output columns is the job's own code, which is not checked. Checks that rely on it, such as proving value constraints, are not available.
+- [Turn it on without changing the job](#turn-it-on-without-changing-the-job): A Python job adopts Invaract with a one-time change, reading and writing through the invaract package; its settings then come from INVARACT_ environment variables. The job's own code has to install Invaract.
+- [Writes a starting contract for you](#writes-a-starting-contract-for-you): Dry-run mode, which writes a contract from what a job does, is not available for Python jobs yet. There is no dry-run mode: contracts are written by hand.
+- [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A write made with the invaract package is always checked, but one made around it (straight to a file) is not seen; the invaract-lint check finds those in the job's code. A write it cannot understand may go through unchecked.
+
+**Does not apply**
+
+- [MERGE, UPDATE and DELETE](#merge-update-and-delete): The invaract package writes whole outputs; it has no row-level MERGE, UPDATE or DELETE.
+- [Table rollbacks and similar changes](#table-rollbacks-and-similar-changes): The invaract package has no operation that changes a table without writing rows.
+- [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete): The invaract package has no row-level changes, so there are no row-level rules to apply.
+- [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches): The invaract package has no checkpoint or cache to see through.
 
 ## What each check means
 

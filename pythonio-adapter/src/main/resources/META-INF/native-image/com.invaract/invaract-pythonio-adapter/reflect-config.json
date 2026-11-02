@@ -1,0 +1,8 @@
+[
+  {"name": "com.invaract.verification.notification.LoggingNotificationSink", "methods": [{"name": "<init>", "parameterTypes": []}]},
+  {"name": "com.invaract.verification.notification.FileNotificationSink", "methods": [{"name": "<init>", "parameterTypes": []}]},
+  {"name": "com.invaract.verification.notification.HttpNotificationSink", "methods": [{"name": "<init>", "parameterTypes": []}]},
+  {"name": "com.invaract.verification.notification.FanOutNotificationSink", "methods": [{"name": "<init>", "parameterTypes": []}]},
+  {"name": "java.sql.Date"},
+  {"name": "java.sql.Timestamp"}
+]
