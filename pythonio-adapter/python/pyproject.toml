@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "invaract"
+version = "0.1.0"
+description = "Reads and writes a Python job's data by the names its data contract gives, and publishes only what the contract allows."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = ["pyarrow>=15"]
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.2"]
+polars = ["polars>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/mlltx/Invaract"
+
+[tool.setuptools]
+packages = ["invaract"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

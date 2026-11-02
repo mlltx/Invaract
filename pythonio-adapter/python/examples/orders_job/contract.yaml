@@ -1,0 +1,43 @@
+# The contract of the example job: where its data lives, and what it must write. The job itself names no paths.
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: data/in/orders
+    format: parquet
+    schema:
+      fields:
+        - { name: order_id,    type: long,   required: true }
+        - { name: customer_id, type: long,   required: true }
+        - { name: amount,      type: long,   required: true }
+        - { name: status,      type: string, required: true }
+  - name: customers
+    location: data/in/customers.csv
+    format: csv
+    schema:
+      fields:
+        - { name: customer_id, type: long,   required: true }
+        - { name: region,      type: string, required: true }
+outputs:
+  - name: report
+    type: DATA_ASSET
+    description: Revenue from paid orders, per region.
+    location: data/out/report
+    format: parquet
+    saveMode: overwrite
+    derivedFrom: [orders, customers]
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }
+  - name: audit
+    type: DATA_ASSET
+    description: One row per paid order processed.
+    location: data/out/audit
+    format: parquet
+    saveMode: overwrite
+    derivedFrom: [orders]
+    schema:
+      fields:
+        - { name: order_id, type: long,   required: true }
+        - { name: status,   type: string }
