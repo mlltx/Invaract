@@ -477,7 +477,7 @@ hyphen). It holds:
 <li>the Scala checker (<code dir="auto">PythonIoCheck</code>, the helper’s entry point), its declaration, and its conformance and attestation
 tests;</li>
 <li>the Python package, in <code dir="auto">pythonio-adapter/python/invaract/</code>, with pytest tests;</li>
-<li>the lint, in <code dir="auto">pythonio-adapter/python/invaract_lint/</code>.</li>
+<li>the lint, in <code dir="auto">pythonio-adapter/lint/invaract_lint/</code> (its own package root; milestone 4).</li>
 </ul>
 </li>
 <li><strong>Repository registration.</strong> <code dir="auto">modules.json</code> gets the module, and <code dir="auto">check_modules.py</code> names every file that must list it.
@@ -555,6 +555,10 @@ version matrix of section 10 runs the package’s own tests (<code dir="auto">py
 </li>
 <li>
 <p><strong>The lint</strong> (small).</p>
+<p><strong>Result (2026-11-02): done.</strong> <code dir="auto">invaract-lint</code> in <code dir="auto">pythonio-adapter/lint</code>: section 7’s checks, with <code dir="auto"># invaract: allow</code>
+exceptions, a command line for CI and pre-commit, and 71 tests. Run over the example job before it adopted the package, it
+finds its four reads and writes, and none after. Mutation testing with <code dir="auto">mutmut</code>: 87.9%. Details are in
+docs/PYTHONIO_ADAPTER.md.</p>
 </li>
 <li>
 <p><strong>The user guide, and the first release</strong> (small).</p>
