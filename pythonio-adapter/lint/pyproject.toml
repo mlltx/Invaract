@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "invaract-lint"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Finds the reads and writes a Python job makes outside the invaract package."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -19,6 +19,9 @@ Homepage = "https://github.com/mlltx/Invaract"
 
 [tool.setuptools]
 packages = ["invaract_lint"]
+
+[tool.setuptools.dynamic]
+version = { attr = "invaract_lint.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -50,7 +50,3 @@ demo/output/**/*.json
 __pycache__/
 # mutmut's working copy (Python mutation testing)
 mutants/
-# what pip install of a Python package leaves in its source folder
-*.egg-info/
-pythonio-adapter/lint/build/
-pythonio-adapter/python/build/

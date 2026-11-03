@@ -426,7 +426,7 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
 
    **Result (2026-11-02): done.** `invaract-lint` in `pythonio-adapter/lint`: section 7's checks, with `# invaract: allow`
    exceptions, a command line for CI and pre-commit, and 71 tests. Run over the example job before it adopted the package, it
-   finds its four reads and writes, and none after. Mutation testing with `mutmut`: 87.6%. Details are in
+   finds its four reads and writes, and none after. Mutation testing with `mutmut`: 87.9%. Details are in
    docs/PYTHONIO_ADAPTER.md.
 5. **The user guide, and the first release** (small).
 6. **Immediately after the first release, committed and tracked until delivered (decision 4):**

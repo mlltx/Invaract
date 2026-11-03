@@ -41,8 +41,10 @@ _MODULE_CALLS = [
     (re.compile(r"polars\.(?:read|scan)_\w+"), READ),
     (re.compile(_PYARROW_IO + r"\.(?:read_\w+|open_\w+|dataset|ParquetFile|ParquetDataset)"), READ),
     (re.compile(r"duckdb\.(?:read_\w+|from_csv_auto|from_parquet)"), READ),
-    (re.compile(_PYARROW_IO + r"\.(?:write_\w+|new_\w+|ParquetWriter|CSVWriter|RecordBatchFileWriter|RecordBatchStreamWriter)"), WRITE),
-    (re.compile(r"(?:sqlite3|psycopg2|psycopg|pymysql|pyodbc|cx_Oracle|oracledb|duckdb|mysql\.connector|snowflake\.connector)\.connect"), CONNECT),
+    (re.compile(_PYARROW_IO + r"\.(?:write_\w+|new_\w+|ParquetWriter|CSVWriter"
+                              r"|RecordBatchFileWriter|RecordBatchStreamWriter)"), WRITE),
+    (re.compile(r"(?:sqlite3|psycopg2|psycopg|pymysql|pyodbc|cx_Oracle|oracledb|duckdb"
+                r"|mysql\.connector|snowflake\.connector)\.connect"), CONNECT),
     (re.compile(r"sqlalchemy\.create_engine|google\.cloud\.bigquery\.Client|google\.cloud\.storage\.Client"), CONNECT),
     (re.compile(r"boto3\.(?:client|resource)|s3fs\.S3FileSystem|gcsfs\.GCSFileSystem|adlfs\.AzureBlobFileSystem"), CONNECT),
     (re.compile(r"fsspec\.(?:open|open_files|filesystem)"), CONNECT),
@@ -62,8 +64,10 @@ _DESTINATIONS = {
 }
 #: Methods that always write: Polars' streaming sinks, a ``Path``'s writers.
 _ALWAYS_WRITE = {"sink_parquet", "sink_csv", "sink_ipc", "sink_ndjson", "write_text", "write_bytes"}
-#: Functions that open a file, with the mode as their second argument.
+#: Functions that open a file, with the mode as their second argument (the builtin ``open`` resolves to ``"open"``).
 _OPENERS = {"open", "io.open", "codecs.open"}
+#: Mode letters that write.
+_WRITE_MODE = frozenset("wax+")
 #: Methods that run SQL given as their first argument.
 _SQL_METHODS = {"sql", "execute", "executemany", "query"}
 _FILE_SQL = re.compile(r"\b(?:COPY|ATTACH|EXPORT\s+DATABASE)\b|\bread_(?:parquet|csv|json)\w*\s*\(|\bFROM\s+'", re.IGNORECASE)
@@ -105,7 +109,7 @@ def check_source(source, path="<source>"):
         code = _classify(node, imports)
         if code is None:
             continue
-        if any(line in allowed for line in range(node.lineno, (node.end_lineno or node.lineno) + 1)):
+        if not allowed.isdisjoint(range(node.lineno, node.end_lineno + 1)):
             continue
         findings.append(Finding(path, node.lineno, node.col_offset + 1, code, ast.unparse(node.func)))
     return sorted(findings, key=lambda f: (f.line, f.col))
@@ -119,6 +123,8 @@ def check_file(path):
 
 def _allowed_lines(source):
     lines = set()
+    if "invaract" not in source:
+        return lines  # no marker can be there: skip tokenizing
     for token in tokenize.generate_tokens(io.StringIO(source).readline):
         if token.type == tokenize.COMMENT and ALLOW.search(token.string):
             lines.add(token.start[0])
@@ -127,8 +133,8 @@ def _allowed_lines(source):
 
 def _imports(tree):
     """What each name bound by an import stands for, as a dotted path: ``pd`` -> ``pandas``, ``pq`` -> ``pyarrow.parquet``,
-    ``read_csv`` -> ``pandas.read_csv``."""
-    names = {}
+    ``read_csv`` -> ``pandas.read_csv``. The builtin ``open`` stands for ``open`` unless an import rebinds it."""
+    names = {"open": "open"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -161,9 +167,7 @@ def _classify(call, imports):
             if pattern.fullmatch(name):
                 return code
         if name in _OPENERS:
-            return _open_mode(call)
-    if isinstance(call.func, ast.Name) and call.func.id == "open" and "open" not in imports:
-        return _open_mode(call)
+            return _mode_writes(_argument(call, 1, "mode"))
     if isinstance(call.func, ast.Attribute):
         method = call.func.attr
         if method in _ALWAYS_WRITE:
@@ -172,14 +176,10 @@ def _classify(call, imports):
             return WRITE
         if method == "open" and name is None:
             # Path(...).open(mode): the mode is its first argument
-            return _mode_writes(call.args[0] if call.args else _keyword(call, "mode"))
+            return _mode_writes(_argument(call, 0, "mode"))
         if method in _SQL_METHODS and call.args and _FILE_SQL.search(_text(call.args[0])):
             return SQL
     return None
-
-
-def _open_mode(call):
-    return _mode_writes(call.args[1] if len(call.args) > 1 else _keyword(call, "mode"))
 
 
 def _mode_writes(mode):
@@ -187,12 +187,15 @@ def _mode_writes(mode):
     if mode is None:
         return None
     if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
-        return WRITE if set(mode.value) & set("wax+") else None
+        return WRITE if _WRITE_MODE.intersection(mode.value) else None
     return WRITE
 
 
-def _keyword(call, name):
-    return next((k.value for k in call.keywords if k.arg == name), None)
+def _argument(call, position, keyword):
+    """The argument at ``position``, or else the one passed as ``keyword``; ``None`` when neither is given."""
+    if len(call.args) > position:
+        return call.args[position]
+    return next((k.value for k in call.keywords if k.arg == keyword), None)
 
 
 def _text(node):

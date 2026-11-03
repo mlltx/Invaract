@@ -295,9 +295,9 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
 - **Tests.**
   - 71 pytest tests, on Python 3.10 to 3.13. They include the example job before it adopted the package (4 findings, the
     survey's probe 14) and after (none).
-  - Mutation testing with `mutmut` (design section 10): 283 of 323 mutants killed (87.6%). The 40 that survive are argparse
+  - Mutation testing with `mutmut` (design section 10): 283 of 322 mutants killed (87.9%). The 39 that survive are argparse
     help and description texts, and equivalent mutants. For example, a broken-file count of -1 still exits 2, `"UTF-8"` is
-    the same as `"utf-8"`, and the mode set `"XXwax+XX"` still catches every write mode.
+    the same as `"utf-8"`, and the default path label `"<source>"` is only a name.
   - CI's `pythonio-lint` job runs the tests and lints the example and conformance jobs. It also runs `mutmut` with an 80% floor.
 
 ## Friction log
