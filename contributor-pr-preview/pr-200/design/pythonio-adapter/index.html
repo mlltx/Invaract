@@ -760,9 +760,9 @@ finding as a pull-request annotation, and the README shows a pre-commit hook. It
 <ul>
 <li>71 pytest tests, on Python 3.10 to 3.13. They include the example job before it adopted the package (4 findings, the
 survey’s probe 14) and after (none).</li>
-<li>Mutation testing with <code dir="auto">mutmut</code> (design section 10): 283 of 323 mutants killed (87.6%). The 40 that survive are argparse
+<li>Mutation testing with <code dir="auto">mutmut</code> (design section 10): 283 of 322 mutants killed (87.9%). The 39 that survive are argparse
 help and description texts, and equivalent mutants. For example, a broken-file count of -1 still exits 2, <code dir="auto">"UTF-8"</code> is
-the same as <code dir="auto">"utf-8"</code>, and the mode set <code dir="auto">"XXwax+XX"</code> still catches every write mode.</li>
+the same as <code dir="auto">"utf-8"</code>, and the default path label <code dir="auto">"&#x3C;source>"</code> is only a name.</li>
 <li>CI’s <code dir="auto">pythonio-lint</code> job runs the tests and lints the example and conformance jobs. It also runs <code dir="auto">mutmut</code> with an 80% floor.</li>
 </ul>
 </li>
