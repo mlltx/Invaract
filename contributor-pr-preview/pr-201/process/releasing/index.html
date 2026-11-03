@@ -245,7 +245,12 @@ distribution: one built from source would carry no checker.</li>
 <p>A platform wheel’s tag is read from the checker it carries (<code dir="auto">.github/scripts/python_wheel.py</code>): the
 newest glibc symbol version the Linux program needs (<code dir="auto">manylinux_&#x3C;x>_&#x3C;y></code>), or the macOS program’s
 minimum OS version. A checker built on a newer runner image gets a narrower tag, never one that claims
-more than it runs on. <code dir="auto">python_wheel.py version</code> refuses a release whose package, checker
+more than it runs on. On macOS the linker records the build machine’s own release as that minimum unless
+told otherwise, so the workflow links the checker for macOS 11 (<code dir="auto">MACOSX_DEPLOYMENT_TARGET</code> and
+<code dir="auto">-mmacosx-version-min</code>), and checks each wheel’s tag. A further job installs each native wheel on an
+older runner image than the one that built it (Ubuntu 22.04, macOS 14) with Python 3.10 and runs the
+example job, so a wheel whose tag pip accepts there but whose checker does not run is caught before it
+is published. <code dir="auto">python_wheel.py version</code> refuses a release whose package, checker
 (<code dir="auto">pythonio-adapter/build.sbt</code>) and lint versions differ, and the workflow refuses a tag that does not
 name that version.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="one-time-setup-a-human-must-do-this">One-time setup (a human must do this)</h2><a class="sl-anchor-link" href="#one-time-setup-a-human-must-do-this"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “One-time setup (a human must do this)”</span></a></div>
