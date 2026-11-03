@@ -4012,7 +4012,10 @@ Extend verification engine to support multiple execution engines.
         (`PythonIoPackageConformanceSpec`, strict in CI's `pythonio-native-checker`), against the same baseline as the
         in-process run; the new `staged-publish` enforcement point (verification-core), so the user pages no longer say
         a refused Python run's earlier writes "have already happened"
-  - [ ] `invaract-lint`, the user guide, the platform wheels carrying the native checker, the first release
+  - [x] Milestone 4, `invaract-lint` (`pythonio-adapter/lint`): flags reads, writes, connections and file SQL made outside
+        the package, by the names calls resolve to through imports; `# invaract: allow` exceptions; CI and pre-commit use;
+        71 tests, mutmut 87.9% (CI's `pythonio-lint`, 80% floor)
+  - [ ] The user guide, the platform wheels carrying the native checker, the first release
   - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
   - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "invaract-lint"
+dynamic = ["version"]
+description = "Finds the reads and writes a Python job makes outside the invaract package."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+invaract-lint = "invaract_lint.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mlltx/Invaract"
+
+[tool.setuptools]
+packages = ["invaract_lint"]
+
+[tool.setuptools.dynamic]
+version = { attr = "invaract_lint.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# mutation testing: `mutmut run` here (docs/PYTHONIO_ADAPTER.md, milestone 4)
+[tool.mutmut]
+source_paths = ["invaract_lint/"]
+pytest_add_cli_args_test_selection = ["tests/"]

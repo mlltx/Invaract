@@ -713,6 +713,62 @@ jobs:
           cd pythonio-adapter/python
           python -m pytest -v
 
+  # invaract-lint (pythonio-adapter/lint, milestone 4 of docs/PYTHON_IO_ADAPTER_DESIGN.md): the guard against reads and writes
+  # made outside the invaract package. Its tests on the oldest and newest Python it supports, the lint itself over the
+  # example job and the conformance job (each a job the package's tests run), and mutation testing with mutmut, held to an
+  # 80% floor (measured 87.9%; the survivors are help texts and equivalent mutants, docs/PYTHONIO_ADAPTER.md).
+  pythonio-lint:
+    name: invaract-lint (pythonio-adapter, Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.pythonio == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the lint
+        shell: bash
+        run: python -m pip install ./pythonio-adapter/lint pytest
+
+      - name: Test the lint
+        shell: bash
+        run: cd pythonio-adapter/lint && python -m pytest -v
+
+      # the tests already check these two are clean; this runs the installed command, as a team's CI would
+      - name: Run the installed command over the example job and the conformance job
+        shell: bash
+        run: invaract-lint --format github pythonio-adapter/python/examples pythonio-adapter/python/tests/conformance_job.py
+
+      - name: Mutation test the lint
+        if: matrix.python-version == '3.13'
+        shell: bash
+        run: |
+          python -m pip install "mutmut==3.8.1"
+          cd pythonio-adapter/lint
+          mutmut run > /dev/null
+          mutmut export-cicd-stats
+          python - <<'EOF'
+          import json
+          stats = json.load(open("mutants/mutmut-cicd-stats.json"))
+          print(json.dumps(stats))
+          score = 100 * stats["killed"] / stats["total"]
+          print(f"mutation score: {score:.1f}% ({stats['killed']} of {stats['total']} killed)")
+          if score < 80:
+              print(f"::error::invaract-lint mutation score {score:.1f}% is below 80%")
+              raise SystemExit(1)
+          EOF
+
   # beam-adapter (docs/BEAM_ADAPTER.md): the Apache Beam adapter. It has no Spark dependency, so like
   # adapter-testkit and verification-core it skips the Spark cache sequence and runs its own suite (Beam's
   # in-process DirectRunner) whole-module on pushes and incrementally on a PR. The break threshold is the
@@ -2032,12 +2088,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, pythonio-lint, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.pythonio-lint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

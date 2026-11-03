@@ -355,7 +355,7 @@ everything is local files.
   - the Scala checker (`PythonIoCheck`, the helper's entry point), its declaration, and its conformance and attestation
     tests;
   - the Python package, in `pythonio-adapter/python/invaract/`, with pytest tests;
-  - the lint, in `pythonio-adapter/python/invaract_lint/`.
+  - the lint, in `pythonio-adapter/lint/invaract_lint/` (its own package root; milestone 4).
 - **Repository registration.** `modules.json` gets the module, and `check_modules.py` names every file that must list it.
   The user documentation gets a guide, "Using Invaract with Python jobs".
 - **Gates.**
@@ -423,6 +423,11 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    enforcement point is the new `staged-publish`. The conformance run uses one Python release (3.13, current pyarrow); the
    version matrix of section 10 runs the package's own tests (`pythonio-python`). Details are in docs/PYTHONIO_ADAPTER.md.
 4. **The lint** (small).
+
+   **Result (2026-11-02): done.** `invaract-lint` in `pythonio-adapter/lint`: section 7's checks, with `# invaract: allow`
+   exceptions, a command line for CI and pre-commit, and 71 tests. Run over the example job before it adopted the package, it
+   finds its four reads and writes, and none after. Mutation testing with `mutmut`: 87.9%. Details are in
+   docs/PYTHONIO_ADAPTER.md.
 5. **The user guide, and the first release** (small).
 6. **Immediately after the first release, committed and tracked until delivered (decision 4):**
    - **Object storage** (S3, GCS, Azure), for reading and for writing.
