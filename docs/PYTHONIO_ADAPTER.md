@@ -326,6 +326,13 @@ Milestone 5 (design section 10) is the user guide and what a release needs:
   a passing run and refuse a failing one. On a `python-v<version>` tag it publishes to PyPI (trusted publishing, the `pypi`
   environment) and attaches everything to a GitHub release; on a pull request that changes how the packages are built, it
   stops before publishing.
+- **What the first run of the workflow showed** (this PR, 2026-11-03). On all four platforms the native checker gave the JVM's
+  replies on all 42 recorded cases (`registry` skipped as JVM-only; median 9 to 38 ms a case), weighed 40 to 43 MB, and
+  its wheel installed and ran the example job. The Linux wheels were tagged `manylinux_2_34_x86_64` and
+  `manylinux_2_34_aarch64`. The macOS wheels were tagged `macosx_26_0_arm64` and `macosx_15_0_x86_64`: the linker records
+  the runner's own release as the minimum, which would have kept the native wheel from every Mac older than the runner. The
+  workflow now links them for macOS 11, checks each wheel's tag, and installs each native wheel on an older runner image
+  (Ubuntu 22.04, macOS 14) before publishing.
 - **One version.** The package, the checker and the lint are released under one tag, so `python_wheel.py version` refuses
   a release where they differ, and each `pyproject.toml` reads its package's `__version__` rather than stating it again.
 
@@ -387,7 +394,8 @@ Milestone 5 (design section 10) is the user guide and what a release needs:
 
 ## Unverified items
 
-- How the native program behaves on Linux aarch64 and on macOS: `release-python.yml` builds it there and runs the protocol
-  cases and the example job against it; until that workflow has run on all four platforms, only Linux x86_64 is proven.
+- The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
+  CI offers are macOS 14 and Ubuntu 22.04 (glibc 2.35). An Intel Mac older than macOS 15 likewise: macOS 15 is the only
+  Intel runner image.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).

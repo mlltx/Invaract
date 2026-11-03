@@ -93,10 +93,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x86_64, os: ubuntu-latest }
-          - { platform: linux-aarch64, os: ubuntu-24.04-arm }
-          - { platform: macos-arm64, os: macos-latest }
-          - { platform: macos-x86_64, os: macos-15-intel }
+          # tag: what the wheel's platform tag must start with. On Linux it follows the glibc symbols the program needs; on
+          # macOS the checker is linked for macOS 11, not for the runner's own release (which the linker uses by default)
+          - { platform: linux-x86_64, os: ubuntu-latest, tag: manylinux_ }
+          - { platform: linux-aarch64, os: ubuntu-24.04-arm, tag: manylinux_ }
+          - { platform: macos-arm64, os: macos-latest, tag: macosx_11_0_ }
+          - { platform: macos-x86_64, os: macos-15-intel, tag: macosx_11_0_ }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -123,7 +125,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/native"
-          native-image -jar "$RUNNER_TEMP"/jar/invaract-pythonio-checker-*.jar -o "$RUNNER_TEMP/native/invaract-pythonio-checker"
+          OPTIONS=()
+          if [ "$RUNNER_OS" = macOS ]; then
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            OPTIONS=(-H:NativeLinkerOption=-mmacosx-version-min=11.0)
+          fi
+          native-image "${OPTIONS[@]}" -jar "$RUNNER_TEMP"/jar/invaract-pythonio-checker-*.jar -o "$RUNNER_TEMP/native/invaract-pythonio-checker"
 
       # the same replies as the JVM, as the native-checker CI job holds on Linux x86_64, on this platform too
       - name: Run the protocol cases against the native checker
@@ -134,7 +141,14 @@ jobs:
 
       - name: Build the wheel
         shell: bash
-        run: python .github/scripts/python_wheel.py native --checker "$RUNNER_TEMP/native/invaract-pythonio-checker" --out dist
+        run: |
+          python .github/scripts/python_wheel.py native --checker "$RUNNER_TEMP/native/invaract-pythonio-checker" --out dist
+          WHEEL=$(basename dist/*.whl)
+          echo "Wheel: $WHEEL" >> "$GITHUB_STEP_SUMMARY"
+          case "$WHEEL" in
+            *-py3-none-${{ matrix.tag }}*) ;;
+            *) echo "::error::$WHEEL is not tagged ${{ matrix.tag }}*"; exit 1 ;;
+          esac
 
       # the wheel the release will publish, installed with pip, finds its own checker and runs the example job
       - name: Install the wheel and run the example job
@@ -161,6 +175,38 @@ jobs:
           name: native-checker-${{ matrix.platform }}
           path: checker/*
           if-no-files-found: error
+
+  # Each native wheel installed and run on an older system than the one that built it (the oldest runner image of each
+  # kind), with the oldest Python the package supports: pip must accept its tag there, and the checker must run.
+  native-wheel-elsewhere:
+    name: Wheel (${{ matrix.platform }}) on ${{ matrix.os }}
+    needs: native-wheel
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, os: ubuntu-22.04 }
+          - { platform: linux-aarch64, os: ubuntu-22.04-arm }
+          - { platform: macos-arm64, os: macos-14 }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v7
+        with:
+          name: invaract-wheel-${{ matrix.platform }}
+          path: dist
+
+      - name: Install the wheel and run the example job
+        shell: bash
+        run: python .github/scripts/python_wheel.py smoke --wheel dist/*.whl --expect native --extra pandas
 
   java-wheel:
     name: Wheel (any platform, with Java)
@@ -240,7 +286,7 @@ jobs:
   publish:
     name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/python-v')
-    needs: [version, native-wheel, java-wheel, lint]
+    needs: [version, native-wheel, native-wheel-elsewhere, java-wheel, lint]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

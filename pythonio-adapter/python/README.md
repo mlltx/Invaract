@@ -28,7 +28,7 @@ batch by batch into staging), a pyarrow Table or RecordBatchReader. A pandas fra
 
 **The checker.** The checks are Invaract's own, made by its checker program. The package starts it once per run and
 describes each read and write to it (names, columns, types, empty values; never the data). The wheels for Linux (x86_64,
-aarch64) and macOS (arm64, x86_64) carry it as a native program. On any other platform the wheel carries it as a Java
+aarch64; glibc 2.34 or later) and macOS 11 or later (arm64, x86_64) carry it as a native program. On any other platform the wheel carries it as a Java
 program, which needs Java 11 or later (`JAVA_HOME`, or `java` on the `PATH`). `INVARACT_CHECKER` names a checker of your
 own instead: a native program, or `java -jar invaract-pythonio-checker-<version>.jar`. A source checkout carries none, so
 it needs `INVARACT_CHECKER` (`cd pythonio-adapter && sbt assembly` builds the jar).
