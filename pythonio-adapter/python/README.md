@@ -33,6 +33,12 @@ program, which needs Java 11 or later (`JAVA_HOME`, or `java` on the `PATH`). `I
 own instead: a native program, or `java -jar invaract-pythonio-checker-<version>.jar`. A source checkout carries none, so
 it needs `INVARACT_CHECKER` (`cd pythonio-adapter && sbt assembly` builds the jar).
 
+**Formats and storage.** Parquet and CSV files on local and mounted file systems; Delta Lake and Iceberg tables
+(`pip install "invaract[delta]"`, `"invaract[iceberg]"`), local or on S3, each output committed in one transaction when the
+run passes and created if it does not exist; Parquet and CSV reads from S3. A Parquet or CSV output on object storage is
+refused, since object storage cannot publish files all at once. An Iceberg location is `<catalog>.<namespace>.<table>`,
+with the catalog configured as pyiceberg configures any (`PYICEBERG_CATALOG__<NAME>__*`).
+
 **Settings** come from the environment, so a platform can configure a job it does not own: `INVARACT_CONTRACT`,
 `INVARACT_DRY_RUN`, `INVARACT_NOTIFY_CONFIG`, `INVARACT_LOCATION_MAP`, `INVARACT_ORG_POLICY`, `INVARACT_REGISTRY_URL` and
 the rest of `invaract/_settings.py`.

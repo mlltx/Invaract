@@ -26,7 +26,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 |---|---|---|
 | `beam` | Apache Beam (Java SDK) | Gates before the job is submitted — A wrapper runner, named by --runner, receives the constructed pipeline in run(), reads its graph (before any step executes), verifies it against the contract, and either throws (the pipeline is never submitted) or hands it to the real runner. Nothing inside a running pipeline is intercepted. |
 | `beam-python` | Apache Beam (Python SDK) | Gates before the job is submitted — A wrapper runner, named by --runner=invaract_beam.InvaractRunner, receives the constructed pipeline in run_pipeline(), writes its portable form (the language-neutral description every Beam SDK produces) to a file, and runs the Java checker on it before any step executes; the pipeline is handed to the real runner only if the checker lets it through. Nothing inside a running pipeline is intercepted. |
-| `pythonio` | Python (invaract package) | Checks each write before it is staged; publishes the run's outputs only if the whole run passed — The job reads and writes through the invaract package, which stages each output beside its location and publishes it by a rename; a refusal raises ContractViolation in the job. |
+| `pythonio` | Python (invaract package) | Checks each write before it is staged; publishes the run's outputs only if the whole run passed — The job reads and writes through the invaract package, which stages each output (Parquet or CSV files beside their location, published by a rename; a Delta or Iceberg table's data uncommitted, published by one commit); a refusal raises ContractViolation in the job. |
 | `spark` | Apache Spark 3.5 | Blocks inside the engine, before the operation executes — A SparkSessionExtensions check rule runs on the analyzed plan and aborts the write before it executes (ContractEnforcementRule); a QueryExecutionListener additionally reports completed writes. |
 
 ## Capability matrix
@@ -193,18 +193,18 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 
 ### pythonio
 
-- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly.
-- `read.streaming` — unsupported: The first version reads whole files (Parquet, CSV); there is no streaming read in the package.
+- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV files, local or on object storage, and Delta and Iceberg tables.
+- `read.streaming` — unsupported: The package reads whole datasets (files and tables); there is no streaming read in it.
 - `write.batch` — supported: Writes go through invaract.write by the output's declared name; the table's columns are read from the data frame (Arrow).
-- `write.streaming` — unsupported: The first version writes whole files; there is no streaming write in the package.
+- `write.streaming` — unsupported: The package writes whole datasets; there is no streaming write in it.
 - `write.rowLevelDml` — not-applicable: The package writes whole outputs (overwrite or append) and offers no row-level change.
 - `write.stateChange` — not-applicable: The package offers no operation that commits a schema or table change without writing rows.
 - `check.inputExistence` — partial: Every read names the declared input it reads, so a missing read and an undeclared read are known exactly. Which reads fed a write is not: the package sends every read made before the write (docs/PYTHON_ADAPTER_SURVEY.md, D4), so it never invents a missing input, but cannot report one only a single write's own reads would show (the kit's Scenarios.partialExcuses). With rejectUndeclaredInputs, an earlier read of another output's input counts too.
 - `check.location` — supported: The package writes to the location the contract declares for the output it names, so the location is the contract's own.
 - `check.outputsWritten` — supported: The checker records each output written and, when the run finishes, refuses one that never wrote a declared output.
 - `check.schema` — supported: The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the staged data holds (decision 3), not against the frame library's nullable flag.
-- `check.format` — supported: The package writes the format itself (Parquet or CSV) and says which.
-- `check.saveMode` — supported: The package writes the save mode itself (overwrite or append) and says which.
+- `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
+- `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
 - `check.catalogRegistration` — unsupported: The first version writes files on local or mounted storage only; catalogs come with Delta and Iceberg (milestone 6).
 - `rules.dml` — not-applicable: No row-level MERGE, UPDATE or DELETE exists to judge.
 - `rules.planShape` — unsupported: The transformation is the team's own pandas, Polars or DuckDB code; the checker sees only reads and writes.

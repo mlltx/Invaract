@@ -9,7 +9,8 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 5 done; the first release waits on PyPI's one-time setup.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 5 done, and milestone 6 for Delta, Iceberg and S3; the first release waits on PyPI's one-time
+setup, and Google Cloud Storage and Azure on tests.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
@@ -34,7 +35,8 @@ finished and every answer was yes.
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
 | `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
-| `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar) |
+| `python/invaract/_storage.py`, `_tables.py` | where a location lives (local, or object storage by its URI); Delta and Iceberg tables: reading them, and outputs staged uncommitted and committed at publish (milestone 6) |
+| `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar); `test_tables.py` needs the `delta` and `iceberg` extras and moto, and runs strictly in CI (`INVARACT_TEST_TABLES=true`) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
 | `lint/tests` | the lint's pytest suite, including the example job before and after it adopted the package |
@@ -205,7 +207,14 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | Each save mode, against an output that holds data and one that does not | ✅ covered | `test_run.py`'s save-mode tests |
 | A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
 | A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
-| An output format the package cannot write yet (`delta`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
+| An output format the package cannot write (`orc`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
+| A Delta output, local or on S3: created, overwrite, append, error, ignore; a refused or failed run | ✅ covered: one commit at publish, the table created if missing; a refused or failed run leaves the table as it was and no file of its own | `test_tables.py`'s Delta tests |
+| An Iceberg output: created with its namespace, each save mode, a refused or failed run | ✅ covered: one transaction at publish | `test_tables.py`'s Iceberg tests |
+| A read of a Delta or Iceberg input, its declared columns only | ✅ covered | `test_a_delta_input_*`, `test_an_iceberg_input_*` |
+| A read of Parquet or CSV files on S3 | ✅ covered | `test_plain_parquet_and_csv_inputs_are_read_from_object_storage` |
+| A Parquet or CSV output on object storage | 🚫 fails closed: refused before anything is written (decided 2026-11-03) | `test_a_plain_output_on_object_storage_is_refused_before_anything_is_written` |
+| A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
+| Google Cloud Storage and Azure (`gs://`, `abfss://`) | ❓ not investigated: the same libraries' code paths, with no emulator in CI yet | none |
 | A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
 ## Type mapping
@@ -336,6 +345,40 @@ Milestone 5 (design section 10) is the user guide and what a release needs:
 - **One version.** The package, the checker and the lint are released under one tag, so `python_wheel.py version` refuses
   a release where they differ, and each `pyproject.toml` reads its package's `__version__` rather than stating it again.
 
+## Milestone 6: tables and object storage
+
+Milestone 6 (design section 12) is object storage, and Delta Lake and Iceberg outputs. Object storage has no rename, so the
+design left it for a design of its own (section 5). Probes first (2026-11-03, deltalake 1.6.6, pyiceberg 0.12.0, pyarrow
+26.0.1, moto 5.2.5 for S3):
+
+- **delta-rs can commit later.** Parquet files written into a table's folder are invisible until a commit names them, and
+  `create_table_with_add_actions` / `DeltaTable.create_write_transaction` commit given files in one transaction, append or
+  overwrite. A table created this way keeps a required column not-null and refuses an empty value in it. The same on S3.
+- **pyiceberg commits a transaction.** Writes inside an open transaction are invisible until it is committed; an abandoned
+  one leaves the table as it was; `create_table_transaction` creates a table and its data in one commit. A catalog is
+  configured by environment (`PYICEBERG_CATALOG__<NAME>__*`). The same with the warehouse on S3.
+- **Reads need no settings of Invaract's own**: pyarrow and delta-rs take S3 from the standard `AWS_*` variables.
+
+Two decisions followed, both the user's (2026-11-03): a Parquet or CSV *output* on object storage is refused (readers could
+see a copy-then-delete half done; reads are fine), and a Delta or Iceberg output that does not exist is created by the run
+that passes, in the same commit.
+
+What was built:
+
+- `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
+  Reads of Parquet and CSV go through pyarrow's own file systems.
+- `_tables.DeltaOutput`: each write is a Parquet file staged uncommitted, in the table's folder when it is local, on local
+  disk when it is on object storage (uploaded at publish); publishing commits them all in one transaction, creating the
+  table if needed. `ignore` and `error` look at whether the table holds files.
+- `_tables.IcebergOutput`: each write is held until publishing, which writes and commits it in one transaction (creating
+  the namespace and table if needed), since pyiceberg writes a table in one piece. `error` and `ignore` look at the current
+  snapshot's record count.
+- Extras `invaract[delta]` (deltalake 1.0 or later) and `invaract[iceberg]` (pyiceberg 0.9 or later, which needs pyarrow
+  17); without them, a table format stops the run with `CheckNotRun` naming the extra.
+- Tests: `test_tables.py`, 46 tests, local and on S3 (moto in-process), including a real job writing to S3 that must exit.
+  They pass on the oldest releases the extras allow (deltalake 1.0.0, pyiceberg 0.9.0, pyarrow 17.0.0, Python 3.10) and
+  the newest; CI runs both, strictly.
+
 ## Friction log
 
 - `dev/new-adapter` takes an engine name without a hyphen, so the design's `python-io-adapter` and engine `python-io` became
@@ -391,9 +434,24 @@ Milestone 5 (design section 10) is the user guide and what a release needs:
   the reader to correct it when reviewing the draft.
 - The version was written in four places (each package's `pyproject.toml` and `__init__.py`). Each `pyproject.toml` now
   reads its package's `__init__.py`.
+- deltalake 1.6's `DeltaTable.to_pyarrow_table()`, used on S3, leaves the process unable to exit (it hung until killed);
+  `to_pyarrow_dataset().to_table()` does not. The package reads the second way, and a test runs a real job against S3 with
+  a timeout.
+- pyarrow's S3 file system recreates an empty "folder" object when it deletes the last file under a prefix, and
+  `delete_dir` recreates the parent's; deleting a refused run's staged files left `report/` behind. A Delta output on object
+  storage therefore stages on local disk and uploads only at publish, so a refused run never writes to the bucket.
+- pyiceberg refuses a frame whose columns are nullable when the table's are required, even with no empty values; the
+  package marks required columns not-null before writing, as it does for files.
+- pyiceberg reads its `PYICEBERG_` variables once, when imported. A job's are set before it starts; the tests reload them.
+- After an overwrite, a Delta table keeps the replaced files for time travel until it is vacuumed; "nothing left behind"
+  means no file that no commit ever named.
 
 ## Unverified items
 
+- Google Cloud Storage and Azure: `gs://` and `abfss://` locations go through pyarrow, delta-rs and pyiceberg as S3 does,
+  but no emulator runs them in CI yet (open in ROADMAP.md).
+- Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3's conditional writes, which moto accepted;
+  not checked against AWS itself, nor two runs racing.
 - The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
   CI offers are macOS 14 and Ubuntu 22.04 (glibc 2.35). An Intel Mac older than macOS 15 likewise: macOS 15 is the only
   Intel runner image.

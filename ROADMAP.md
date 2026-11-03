@@ -4021,8 +4021,12 @@ Extend verification engine to support multiple execution engines.
         wheel carrying the checker jar (run with Java elsewhere) and `invaract-lint`, installs each and runs the example
         job with it, and publishes to PyPI by trusted publishing on a `python-v<version>` tag (docs/RELEASING.md)
   - [ ] The first release on PyPI: the one-time PyPI setup in docs/RELEASING.md, then the `python-v0.1.0` tag
-  - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
-  - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)
+  - [x] **Follow-fast (milestone 6):** Delta Lake and Iceberg outputs and inputs, each output committed in one transaction
+        when the run passes, the table created if missing (`invaract[delta]`, `invaract[iceberg]`); S3 for reads and for
+        table outputs; plain-file outputs on object storage refused (decided 2026-11-03). Tested locally and on S3 (moto),
+        oldest and newest library releases (CI's `pythonio-python`)
+  - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage and Azure verified end to end (against emulators
+        in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

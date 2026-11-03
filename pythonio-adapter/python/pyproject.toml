@@ -14,6 +14,9 @@ dependencies = ["pyarrow>=15"]
 [project.optional-dependencies]
 pandas = ["pandas>=2.2"]
 polars = ["polars>=1.0"]
+# Delta Lake and Iceberg tables (milestone 6); an Iceberg catalog's own extra comes from pyiceberg (pyiceberg[glue], ...)
+delta = ["deltalake>=1.0"]
+iceberg = ["pyiceberg[pyarrow]>=0.9"]
 
 [project.urls]
 Homepage = "https://github.com/mlltx/Invaract"

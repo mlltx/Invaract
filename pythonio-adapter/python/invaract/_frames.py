@@ -57,6 +57,26 @@ def null_counts(batch):
     return {name: batch.column(i).null_count for i, name in enumerate(batch.schema.names)}
 
 
+def with_required(schema, required):
+    """``schema`` with each column in ``required`` made not-null: what an output is written as, so readers see the contract's
+    schema (decision 3)."""
+    return pa.schema([f.with_nullable(False) if f.name in required else f for f in schema], metadata=schema.metadata)
+
+
+def take(schema, target, batches, required, write):
+    """Hands each batch, as ``target``, to ``write`` and returns the empty values each column held. A required column's first
+    empty value ends it: the checker refuses that write, so nothing more is written."""
+    nulls = dict.fromkeys(schema.names, 0)
+    for batch in batches:
+        counts = null_counts(batch)
+        for column, n in counts.items():
+            nulls[column] += n
+        if any(counts.get(column) for column in required):
+            break
+        write(pa.RecordBatch.from_arrays(batch.columns, schema=target))
+    return nulls
+
+
 def as_frame(table, kind):
     """The table read, as the frame library ``kind`` names."""
     if kind == "arrow":
@@ -92,12 +112,18 @@ def arrow_type(contract_type):
 
 
 def read_table(location, fmt, fields):
-    """The dataset at ``location`` (a file or a folder of files) in format ``fmt``: only the columns the contract lists, when it
-    lists any, and, for CSV, each read as the contract's type. A declared column the data lacks is left for the checker to
-    refuse."""
+    """The dataset at ``location`` in format ``fmt``: a file or a folder of files, local or on object storage, or a Delta or
+    Iceberg table. Only the columns the contract lists are read, when it lists any, and, for CSV, each as the contract's
+    type. A declared column the data lacks is left for the checker to refuse."""
     import pyarrow.dataset as ds
 
+    from . import _storage, _tables
+
     declared = [f["name"] for f in fields]
+    if fmt == "delta":
+        return _tables.read_delta(location, declared)
+    if fmt == "iceberg":
+        return _tables.read_iceberg(location, declared)
     if fmt == "csv":
         import pyarrow.csv as csv
 
@@ -106,7 +132,7 @@ def read_table(location, fmt, fields):
     elif fmt == "parquet":
         file_format = "parquet"
     else:
-        raise ValueError(f"invaract cannot read format {fmt!r}: it reads parquet and csv")
-    dataset = ds.dataset(location, format=file_format)
+        raise ValueError(f"invaract cannot read format {fmt!r}: it reads parquet, csv, delta and iceberg")
+    dataset = ds.dataset(_storage.uri(location), format=file_format)
     columns = [n for n in declared if n in dataset.schema.names] if declared else None
     return dataset.to_table(columns=columns)

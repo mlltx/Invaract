@@ -1,0 +1,407 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2024 Invaract Contributors
+"""Delta Lake and Iceberg tables and object storage (milestone 6): a table output is staged during the run and committed only
+when the run passed, in one commit; a refused or failed run leaves the table as it was, and nothing of its own behind. Object
+storage is S3, served in-process by moto; plain Parquet or CSV outputs there are refused."""
+import json
+import os
+import subprocess
+import sys
+import textwrap
+
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
+import invaract
+from invaract import _storage
+from conftest import PYTHON, output, write_contract
+
+if os.environ.get("INVARACT_TEST_TABLES") == "true":
+    # CI's table rows: the libraries must be there, so these tests can never pass by being skipped
+    import deltalake  # noqa: F401
+    import moto  # noqa: F401
+    import pyiceberg  # noqa: F401
+    import sqlalchemy  # noqa: F401
+else:
+    deltalake = pytest.importorskip("deltalake")
+    pytest.importorskip("pyiceberg")
+    pytest.importorskip("sqlalchemy")
+
+import pyiceberg.catalog  # noqa: E402
+from pyiceberg.catalog import load_catalog  # noqa: E402
+from pyiceberg.utils.config import Config  # noqa: E402
+
+REPORT = pd.DataFrame({"region": ["north", "south"], "total": [10, 20]})
+MORE = pd.DataFrame({"region": ["east"], "total": [40]})
+ICEBERG = "lake.sales.report"
+
+
+# ---- where data lives --------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("location,scheme,remote", [
+    ("data/out/report", None, False), ("/abs/report", None, False), ("file:///abs/report", "file", False),
+    ("s3://bucket/report", "s3", True), ("S3A://bucket/report", "s3a", True), ("gs://bucket/report", "gs", True),
+    ("gcs://bucket/report", "gcs", True), ("az://container/report", "az", True), ("abfss://c@a.dfs.core.windows.net/r", "abfss", True),
+    ("hdfs://namenode/report", "hdfs", False), ("lake.sales.report", None, False),
+])
+def test_where_a_location_lives(location, scheme, remote):
+    assert (_storage.scheme(location), _storage.on_object_storage(location)) == (scheme, remote)
+
+
+def test_a_location_as_the_libraries_take_it(tmp_path):
+    assert _storage.uri("data/out") == os.path.join(str(tmp_path), "data", "out")
+    assert _storage.uri("file:///abs/report") == "/abs/report"
+    assert _storage.uri("s3://bucket/report") == "s3://bucket/report"
+
+
+# ---- Delta -------------------------------------------------------------------------------------------------------------
+
+def delta_rows(location="data/out/report"):
+    table = deltalake.DeltaTable(_storage.uri(location))
+    return sorted(table.to_pyarrow_dataset().to_table().to_pylist(), key=lambda r: r["region"]), table
+
+
+def leftovers(location="data/out/report"):
+    """Files in a Delta table's folder that no commit ever named (an overwritten file stays, named by an older commit, until
+    the table is vacuumed)."""
+    folder = _storage.uri(location)
+    if not os.path.isdir(folder):
+        return []
+    log, named = os.path.join(folder, "_delta_log"), set()
+    for commit in sorted(os.listdir(log)) if os.path.isdir(log) else []:
+        if commit.endswith(".json"):
+            with open(os.path.join(log, commit), encoding="utf-8") as f:
+                named |= {json.loads(line)["add"]["path"] for line in f if '"add"' in line}
+    return sorted(f for f in os.listdir(folder) if f != "_delta_log" and f not in named)
+
+
+def existing_delta(rows=(("west", 5),), location="data/out/report"):
+    deltalake.write_deltalake(_storage.uri(location), pa.table({"region": [r for r, _ in rows], "total": [t for _, t in rows]}))
+
+
+def test_a_delta_output_is_created_in_one_commit_with_every_write_and_its_required_columns_not_null():
+    write_contract(outputs=output(fmt="delta"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+        invaract.write(MORE, "report")
+        assert not os.path.isdir("data/out/report/_delta_log"), "no table before the run ends"
+    rows, table = delta_rows()
+    assert rows == [{"region": "east", "total": 40}, {"region": "north", "total": 10}, {"region": "south", "total": 20}]
+    assert table.version() == 0 and [h["operation"] for h in table.history()] == ["CREATE TABLE"]
+    assert [(f.name, f.nullable) for f in table.schema().fields] == [("region", False), ("total", False)]
+    assert leftovers() == []
+
+
+def test_a_refused_run_creates_no_delta_table_and_leaves_no_files():
+    write_contract(outputs=output(fmt="delta") + output(name="audit", location="data/out/audit", fmt="delta"))
+    with pytest.raises(invaract.ContractViolation):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT.astype({"total": str}), "audit")
+    assert leftovers() == [] and not os.path.isdir("data/out/report/_delta_log")
+
+
+def test_a_failed_job_leaves_an_existing_delta_table_as_it_was():
+    existing_delta()
+    write_contract(outputs=output(fmt="delta"))
+    with pytest.raises(ZeroDivisionError):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            1 / 0
+    rows, table = delta_rows()
+    assert rows == [{"region": "west", "total": 5}] and table.version() == 0 and leftovers() == []
+
+
+@pytest.mark.parametrize("mode,expected,version", [
+    ("overwrite", ["north", "south"], 1),
+    ("append", ["north", "south", "west"], 1),
+    ("ignore", ["west"], 0),
+])
+def test_delta_save_modes_on_a_table_with_rows(mode, expected, version):
+    existing_delta()
+    write_contract(outputs=output(fmt="delta", save_mode=mode))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    rows, table = delta_rows()
+    assert [r["region"] for r in rows] == expected and table.version() == version and leftovers() == []
+
+
+def test_delta_error_refuses_a_table_with_rows_and_commits_nothing():
+    existing_delta()
+    write_contract(outputs=output(fmt="delta", save_mode="error"))
+    with pytest.raises(FileExistsError, match="already holds data"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    rows, table = delta_rows()
+    assert rows == [{"region": "west", "total": 5}] and table.version() == 0 and leftovers() == []
+
+
+@pytest.mark.parametrize("mode", ["error", "ignore", "append", "overwrite"])
+def test_every_save_mode_creates_a_delta_table_that_does_not_exist(mode):
+    write_contract(outputs=output(fmt="delta", save_mode=mode))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    assert [r["region"] for r in delta_rows()[0]] == ["north", "south"]
+
+
+def test_an_empty_value_in_a_required_column_of_a_delta_output_is_refused():
+    existing_delta()
+    write_contract(outputs=output(fmt="delta"))
+    with pytest.raises(invaract.ContractViolation):
+        with invaract.run("contract.yaml"):
+            invaract.write(pd.DataFrame({"region": ["north", None], "total": [1, 2]}), "report")
+    assert delta_rows()[1].version() == 0 and leftovers() == []
+
+
+def test_a_delta_input_is_read_with_only_its_declared_columns():
+    deltalake.write_deltalake(_storage.uri("data/in/orders"), pa.table({"order_id": [1, 2], "region": ["n", None], "extra": [0, 0]}))
+    write_contract(inputs="  - name: orders\n    location: data/in/orders\n    format: delta\n    schema:\n      fields:\n"
+                          "        - { name: order_id, type: long, required: true }\n        - { name: region, type: string }\n",
+                   outputs=output())
+    with invaract.run("contract.yaml"):
+        orders = invaract.read("orders", as_="arrow")
+        invaract.write(REPORT, "report")
+    assert orders.column_names == ["order_id", "region"] and orders.num_rows == 2
+
+
+def test_a_delta_input_that_does_not_exist_is_an_error():
+    write_contract(inputs="  - name: orders\n    location: data/in/orders\n    format: delta\n", outputs=output())
+    with pytest.raises(FileNotFoundError, match="no Delta table at data/in/orders"):
+        with invaract.run("contract.yaml"):
+            invaract.read("orders")
+
+
+# ---- Iceberg -----------------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def catalog(monkeypatch, tmp_path):
+    """The catalog ``lake``: SQLite, with its warehouse in the test's folder, configured as a platform would, by environment."""
+    os.makedirs(tmp_path / "warehouse")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__TYPE", "sql")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__URI", f"sqlite:///{tmp_path}/catalog.db")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__WAREHOUSE", f"file://{tmp_path}/warehouse")
+    return reconfigure(monkeypatch)
+
+
+def reconfigure(monkeypatch):
+    """pyiceberg reads its PYICEBERG_ variables once, when imported; a job's are set before it starts, a test's after."""
+    monkeypatch.setattr(pyiceberg.catalog, "_ENV_CONFIG", Config())
+    return load_catalog("lake")
+
+
+def iceberg_rows(catalog, identifier="sales.report"):
+    table = catalog.load_table(identifier)
+    return sorted(r["region"] for r in table.scan().to_arrow().to_pylist()), table
+
+
+def existing_iceberg(catalog, regions=("west",)):
+    catalog.create_namespace_if_not_exists("sales")
+    schema = pa.schema([pa.field("region", pa.string(), nullable=False), pa.field("total", pa.int64(), nullable=False)])
+    table = catalog.create_table("sales.report", schema=schema)
+    table.append(pa.table({"region": list(regions), "total": [5] * len(regions)}, schema=schema))
+
+
+def test_an_iceberg_output_and_its_namespace_are_created_in_one_commit(catalog):
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+        invaract.write(MORE, "report")
+        assert not catalog.table_exists("sales.report"), "no table before the run ends"
+    regions, table = iceberg_rows(catalog)
+    assert regions == ["east", "north", "south"] and len(table.snapshots()) == 1
+    assert [(f.name, f.required) for f in table.schema().fields] == [("region", True), ("total", True)]
+
+
+def test_a_refused_run_creates_no_iceberg_table(catalog):
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg") + output(name="audit", location="lake.sales.audit", fmt="iceberg"))
+    with pytest.raises(invaract.ContractViolation):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT.astype({"total": str}), "audit")
+    assert not catalog.table_exists("sales.report") and not catalog.table_exists("sales.audit")
+
+
+@pytest.mark.parametrize("mode,expected,snapshots", [
+    ("overwrite", ["north", "south"], 3),  # the overwrite commits a delete and an append, as one transaction
+    ("append", ["north", "south", "west"], 2),
+    ("ignore", ["west"], 1),
+])
+def test_iceberg_save_modes_on_a_table_with_rows(catalog, mode, expected, snapshots):
+    existing_iceberg(catalog)
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg", save_mode=mode))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    regions, table = iceberg_rows(catalog)
+    assert regions == expected and len(table.snapshots()) == snapshots
+
+
+def test_iceberg_error_refuses_a_table_with_rows_and_commits_nothing(catalog):
+    existing_iceberg(catalog)
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg", save_mode="error"))
+    with pytest.raises(FileExistsError, match="already holds data"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    regions, table = iceberg_rows(catalog)
+    assert regions == ["west"] and len(table.snapshots()) == 1
+
+
+def test_iceberg_error_and_ignore_write_a_table_with_no_rows(catalog):
+    existing_iceberg(catalog, regions=())
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg", save_mode="error"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    assert iceberg_rows(catalog)[0] == ["north", "south"]
+
+
+def test_a_failed_job_leaves_an_existing_iceberg_table_as_it_was(catalog):
+    existing_iceberg(catalog)
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg"))
+    with pytest.raises(ZeroDivisionError):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            1 / 0
+    regions, table = iceberg_rows(catalog)
+    assert regions == ["west"] and len(table.snapshots()) == 1
+
+
+def test_an_iceberg_input_is_read_with_only_its_declared_columns(catalog):
+    existing_iceberg(catalog, regions=("west", "east"))
+    write_contract(inputs=f"  - name: orders\n    location: {ICEBERG}\n    format: iceberg\n    schema:\n      fields:\n"
+                          "        - { name: total, type: long, required: true }\n", outputs=output())
+    with invaract.run("contract.yaml"):
+        orders = invaract.read("orders", as_="arrow")
+        invaract.write(REPORT, "report")
+    assert orders.column_names == ["total"] and orders.num_rows == 2
+
+
+@pytest.mark.parametrize("location", ["lake", "lake.report", ".sales.report"])
+def test_an_iceberg_location_names_its_catalog_namespace_and_table(catalog, location):
+    write_contract(outputs=output(location=location, fmt="iceberg"))
+    with pytest.raises(invaract.CheckNotRun, match=r"an Iceberg location is <catalog>\.<namespace>\.<table>"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+
+
+# ---- a library that is not installed -----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fmt,module,location", [("delta", "deltalake", "data/out/report"), ("iceberg", "pyiceberg", ICEBERG)])
+def test_a_table_format_whose_library_is_missing_is_not_checked(monkeypatch, fmt, module, location):
+    monkeypatch.setitem(sys.modules, module, None)
+    write_contract(outputs=output(location=location, fmt=fmt))
+    with pytest.raises(invaract.CheckNotRun, match=rf'needs the {module} package .*pip install "invaract\[{fmt}\]"'):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+
+
+# ---- object storage (S3, served by moto) -------------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def s3_server():
+    moto_server = pytest.importorskip("moto.server")
+    server = moto_server.ThreadedMotoServer(ip_address="127.0.0.1", port=0)
+    server.start()
+    host, port = server.get_host_and_port()
+    yield f"http://{host}:{port}"
+    server.stop()
+
+
+@pytest.fixture
+def s3(s3_server, monkeypatch):
+    """A fresh bucket on the moto server, reached through the standard AWS variables alone, as a job's would be."""
+    import uuid
+
+    import boto3
+
+    for name, value in {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test", "AWS_REGION": "us-east-1",
+                        "AWS_ENDPOINT_URL": s3_server, "AWS_ALLOW_HTTP": "true", "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}.items():
+        monkeypatch.setenv(name, value)
+    bucket = f"lake-{uuid.uuid4().hex[:8]}"
+    boto3.client("s3").create_bucket(Bucket=bucket)
+    return bucket
+
+
+def test_a_plain_output_on_object_storage_is_refused_before_anything_is_written(s3):
+    import boto3
+
+    for fmt in ("parquet", "csv"):
+        write_contract(outputs=output(location=f"s3://{s3}/report", fmt=fmt))
+        with pytest.raises(invaract.CheckNotRun, match=rf"will not write 'report' as {fmt} files to s3://{s3}/report: object "
+                                                       "storage has no rename.*delta or iceberg"):
+            with invaract.run("contract.yaml"):
+                invaract.write(REPORT, "report")
+    assert boto3.client("s3").list_objects_v2(Bucket=s3).get("KeyCount") == 0
+
+
+def test_plain_parquet_and_csv_inputs_are_read_from_object_storage(s3):
+    import pyarrow.fs as fs
+
+    s3fs, _ = fs.FileSystem.from_uri(f"s3://{s3}/in")
+    pq.write_table(pa.table({"order_id": [1, 2]}), f"{s3}/in/orders/part-0.parquet", filesystem=s3fs)
+    with s3fs.open_output_stream(f"{s3}/in/customers.csv") as out:
+        out.write(b"customer_id,region\n1,north\n")
+    write_contract(inputs=f"  - name: orders\n    location: s3://{s3}/in/orders\n    format: parquet\n"
+                          f"  - name: customers\n    location: s3://{s3}/in/customers.csv\n    format: csv\n    schema:\n"
+                          "      fields:\n        - { name: customer_id, type: long, required: true }\n", outputs=output())
+    with invaract.run("contract.yaml"):
+        assert invaract.read("orders", as_="arrow").column("order_id").to_pylist() == [1, 2]
+        assert invaract.read("customers", as_="arrow").schema.field("customer_id").type == pa.int64()
+        invaract.write(REPORT, "report")
+
+
+def test_a_delta_output_on_object_storage_is_committed_only_when_the_run_passes(s3):
+    import boto3
+
+    location = f"s3://{s3}/report"
+    write_contract(outputs=output(location=location, fmt="delta"))
+    with pytest.raises(invaract.ContractViolation):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(pd.DataFrame({"region": [None], "total": [1]}), "report")
+    assert [o["Key"] for o in boto3.client("s3").list_objects_v2(Bucket=s3).get("Contents", [])] == [], "the refused run's files are deleted"
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    table = deltalake.DeltaTable(location)
+    assert table.to_pyarrow_dataset().to_table().num_rows == 2 and table.version() == 0
+
+
+def test_an_iceberg_output_with_its_warehouse_on_object_storage(s3, monkeypatch, tmp_path):
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__TYPE", "sql")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__URI", f"sqlite:///{tmp_path}/catalog.db")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__WAREHOUSE", f"s3://{s3}/warehouse")
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__S3__ENDPOINT", os.environ["AWS_ENDPOINT_URL"])
+    catalog = reconfigure(monkeypatch)
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    assert iceberg_rows(catalog)[0] == ["north", "south"]
+
+
+def test_a_job_writing_delta_to_object_storage_exits_when_it_ends(s3, tmp_path):
+    """deltalake 1.6's to_pyarrow_table leaves a process that used S3 unable to exit; the package must not."""
+    write_contract(inputs=f"  - name: orders\n    location: s3://{s3}/in\n    format: delta\n",
+                   outputs=output(location=f"s3://{s3}/report", fmt="delta"))
+    deltalake.write_deltalake(f"s3://{s3}/in", pa.table({"region": ["n"], "total": [1]}))
+    script = textwrap.dedent(f"""\
+        import sys
+        sys.path.insert(0, {PYTHON!r})
+        import invaract
+        with invaract.run("contract.yaml"):
+            invaract.write(invaract.read("orders"), "report")
+        """)
+    done = subprocess.run([sys.executable, "-c", script], env=os.environ.copy(), timeout=60, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert deltalake.DeltaTable(f"s3://{s3}/report").to_pyarrow_dataset().to_table().num_rows == 1
+
+
+def test_a_dry_run_writes_a_delta_table_where_the_job_says_and_drafts_its_contract(monkeypatch):
+    from conftest import events, notify_to_file
+
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_DRY_RUN", "true")
+    with invaract.run():
+        invaract.write(REPORT, "report", location="data/out/report", format="delta")
+    assert [r["region"] for r in delta_rows()[0]] == ["north", "south"]
+    draft = events()[-1]["mergedContractYaml"]
+    assert "location: data/out/report" in draft and "format: delta" in draft

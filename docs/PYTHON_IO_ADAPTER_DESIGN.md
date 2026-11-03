@@ -235,8 +235,10 @@ build. Organisational policy, the registry and plug-ins would then be unavailabl
   rename is atomic per output. Across several outputs, publishing is ordered, not atomic: a crash between two renames
   leaves the first published. The run's event records exactly what was published.
 - **Object storage** (S3, GCS) has no rename. Publishing would be a copy, then a delete, which readers can see half done.
-  So object storage waits for a design of its own. Writing a Delta or Iceberg table is the likely answer: its commit is
-  atomic, and both were probed in the sink records survey.
+  Milestone 6 settled it (decided 2026-11-03): a Parquet or CSV *output* on object storage is refused before anything is
+  written, and an output there is a Delta or Iceberg table, whose commit is atomic. Reads of plain files from object
+  storage are allowed. A Delta or Iceberg output that does not exist yet is created by the run that passes, in the same
+  commit as its data.
 
 ## 6. Configuration and external attachability
 
@@ -448,6 +450,15 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    - it is listed in ROADMAP.md as open items;
    - it is not displaced by other Python I/O work;
    - each release note until it lands states what is still missing.
+
+   **Result (2026-11-03): Delta, Iceberg and S3 done; GCS and Azure not yet tested.** Two decisions, taken with probes in
+   hand (section 5): plain-file outputs on object storage are refused, and a missing table is created. A Delta output's
+   files are staged uncommitted (in the table's folder, or on local disk for object storage) and committed in one
+   transaction at publish; an Iceberg output is held until publish and written in one transaction, creating its namespace
+   and table if needed. Reads of Parquet and CSV files from object storage, and of Delta and Iceberg tables. Tested
+   locally and on S3 (moto), on the oldest releases the extras allow (deltalake 1.0, pyiceberg 0.9 with pyarrow 17) and
+   the newest. `gs://` and `abfss://` go through the same libraries but have no emulator in CI yet, which stays open in
+   ROADMAP.md. Details are in docs/PYTHONIO_ADAPTER.md.
 7. **Later, each on its own:** partitioned outputs, Polars lazy plans for the transformation-shape rules, databases.
 
 ## 13. Decisions (settled 2026-11-01)

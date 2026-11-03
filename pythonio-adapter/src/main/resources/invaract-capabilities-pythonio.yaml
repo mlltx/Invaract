@@ -16,23 +16,26 @@ guide: /guides/using-invaract-with-python/
 enforcement:
   point: staged-publish
   note: >-
-    The job reads and writes through the invaract package, which stages each output beside its location and publishes it
-    by a rename; a refusal raises ContractViolation in the job.
+    The job reads and writes through the invaract package, which stages each output (Parquet or CSV files beside their
+    location, published by a rename; a Delta or Iceberg table's data uncommitted, published by one commit); a refusal
+    raises ContractViolation in the job.
 capabilities:
   read.batch:
     status: supported
-    note: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly.
+    note: >-
+      Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV
+      files, local or on object storage, and Delta and Iceberg tables.
   read.streaming:
     status: unsupported
     summary: Python jobs read whole datasets; reading a stream is not checked.
-    note: The first version reads whole files (Parquet, CSV); there is no streaming read in the package.
+    note: The package reads whole datasets (files and tables); there is no streaming read in it.
   write.batch:
     status: supported
     note: Writes go through invaract.write by the output's declared name; the table's columns are read from the data frame (Arrow).
   write.streaming:
     status: unsupported
     summary: Python jobs write whole datasets; writing a stream is not checked.
-    note: The first version writes whole files; there is no streaming write in the package.
+    note: The package writes whole datasets; there is no streaming write in it.
   write.rowLevelDml:
     status: not-applicable
     summary: The invaract package writes whole outputs; it has no row-level MERGE, UPDATE or DELETE.
@@ -65,10 +68,10 @@ capabilities:
     status: supported
   check.format:
     status: supported
-    note: The package writes the format itself (Parquet or CSV) and says which.
+    note: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
   check.saveMode:
     status: supported
-    note: The package writes the save mode itself (overwrite or append) and says which.
+    note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
   check.catalogRegistration:
     status: unsupported
     summary: Python jobs write files; registering an output in a catalog is not checked yet.
