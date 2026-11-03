@@ -4105,11 +4105,12 @@ wheel carrying the checker jar (run with Java elsewhere) and <code dir="auto">in
 job with it, and publishes to PyPI by trusted publishing on a <code dir="auto">python-v&#x3C;version></code> tag (docs/RELEASING.md)</li>
 <li class="task-list-item"><input type="checkbox" disabled> The first release on PyPI: the one-time PyPI setup in docs/RELEASING.md, then the <code dir="auto">python-v0.1.0</code> tag</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-fast (milestone 6):</strong> Delta Lake and Iceberg outputs and inputs, each output committed in one transaction
-when the run passes, the table created if missing (<code dir="auto">invaract[delta]</code>, <code dir="auto">invaract[iceberg]</code>); S3 for reads and for
-table outputs; plain-file outputs on object storage refused (decided 2026-11-03). Tested locally and on S3 (moto),
-oldest and newest library releases (CI’s <code dir="auto">pythonio-python</code>)</li>
-<li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> Google Cloud Storage and Azure verified end to end (against emulators
-in CI); the code path is the same libraries’, untested</li>
+when the run passes, the table created if missing (<code dir="auto">invaract[delta]</code>, <code dir="auto">invaract[iceberg]</code>); plain-file outputs on
+HDFS (staged and renamed) and on object storage (copied, <code dir="auto">_SUCCESS</code> last, Spark-style; decided 2026-11-03); reads
+from both. Tested locally, on S3 (moto) and on HDFS through a stand-in file system, oldest and newest library
+releases (CI’s <code dir="auto">pythonio-python</code>)</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> Google Cloud Storage, Azure and a real HDFS cluster verified end to end
+(emulators or a cluster in CI); the code path is the same libraries’, untested</li>
 </ul>
 </li>
 <li class="task-list-item"><input type="checkbox" disabled> SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with <code dir="auto">survey-engine-adapter</code></li>

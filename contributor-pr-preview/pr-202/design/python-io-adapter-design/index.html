@@ -294,10 +294,13 @@ version is moved aside for rollback, then the staging folder is renamed into pla
 rename is atomic per output. Across several outputs, publishing is ordered, not atomic: a crash between two renames
 leaves the first published. The run’s event records exactly what was published.</li>
 <li><strong>Object storage</strong> (S3, GCS) has no rename. Publishing would be a copy, then a delete, which readers can see half done.
-Milestone 6 settled it (decided 2026-11-03): a Parquet or CSV <em>output</em> on object storage is refused before anything is
-written, and an output there is a Delta or Iceberg table, whose commit is atomic. Reads of plain files from object
-storage are allowed. A Delta or Iceberg output that does not exist yet is created by the run that passes, in the same
-commit as its data.</li>
+Milestone 6 settled it (decided 2026-11-03). A Parquet or CSV output on object storage is published as Spark and Hadoop
+publish one: staged on local disk, and only when the run passed, the old <code dir="auto">_SUCCESS</code> removed, the files uploaded, the
+old ones deleted (overwrite) and <code dir="auto">_SUCCESS</code> written last. A reader that waits for <code dir="auto">_SUCCESS</code> sees a complete output;
+others can see the publish half done. (The first decision refused such outputs; it was reversed the same day, since
+writing Parquet to GCS or S3 is what teams expect.) A Delta or Iceberg table is the choice when no reader may see a
+publish half done. HDFS has an atomic rename, so a plain output there is staged and renamed as on a local disk. A
+Delta or Iceberg output that does not exist yet is created by the run that passes, in the same commit as its data.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="6-configuration-and-external-attachability">6. Configuration and external attachability</h2><a class="sl-anchor-link" href="#6-configuration-and-external-attachability"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. Configuration and external attachability”</span></a></div>
 <p>Every setting can be given without touching the job, as environment variables spelled <code dir="auto">INVARACT_&#x3C;NAME></code>. The decorator’s
@@ -587,8 +590,9 @@ pyiceberg.</li>
 <li>it is not displaced by other Python I/O work;</li>
 <li>each release note until it lands states what is still missing.</li>
 </ul>
-<p><strong>Result (2026-11-03): Delta, Iceberg and S3 done; GCS and Azure not yet tested.</strong> Two decisions, taken with probes in
-hand (section 5): plain-file outputs on object storage are refused, and a missing table is created. A Delta output’s
+<p><strong>Result (2026-11-03): Delta, Iceberg, HDFS and object storage done; tested on S3, not yet on GCS, Azure or a real HDFS
+cluster.</strong> Two decisions, taken with probes in hand (section 5): plain-file outputs on object storage are published
+Spark-style, with <code dir="auto">_SUCCESS</code> last, and a missing table is created. Plain-file outputs on HDFS are staged and renamed. A Delta output’s
 files are staged uncommitted (in the table’s folder, or on local disk for object storage) and committed in one
 transaction at publish; an Iceberg output is held until publish and written in one transaction, creating its namespace
 and table if needed. Reads of Parquet and CSV files from object storage, and of Delta and Iceberg tables. Tested
