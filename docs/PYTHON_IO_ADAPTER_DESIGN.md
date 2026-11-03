@@ -301,7 +301,7 @@ The draft declaration:
 - **not applicable:** row-level changes and their rules, schema-only changes, boundary resolution.
 
 As built (`invaract-capabilities-pythonio.yaml`, milestone 1), the declaration matches this draft, except that the engine is
-labelled "in development" on the user pages until the package exists. `failClosed.unverifiableWrites` is partial because a
+labelled "in development" on the user pages until the first release (milestone 5 removed the label). `failClosed.unverifiableWrites` is partial because a
 table the package cannot describe is refused (`UNVERIFIABLE_WRITE`), which is what the kit's scenario for it checks. A write
 made around the package is never refused, because it is not seen; the lint is the guard.
 
@@ -429,6 +429,15 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    finds its four reads and writes, and none after. Mutation testing with `mutmut`: 87.9%. Details are in
    docs/PYTHONIO_ADAPTER.md.
 5. **The user guide, and the first release** (small).
+
+   **Result (2026-11-03): built; the release itself waits on PyPI's one-time setup.** The docs-site guide "Use Invaract
+   with Python Jobs", from real runs of the example job. `release-python.yml` builds the native checker and a wheel on
+   each platform of section 11, tagged from the program itself (its glibc version, or its minimum macOS version), and a
+   pure-Python wheel carrying the checker jar, which the package runs with Java (11 or later) where no native wheel
+   matches; each wheel is installed and runs the example job before anything is published. `invaract-lint` is
+   released with them, under one version. Publishing is PyPI's trusted publishing on a `python-v<version>` tag; the
+   names, the trusted publishers and the `pypi` environment are a maintainer's one-time setup (docs/RELEASING.md).
+   Details are in docs/PYTHONIO_ADAPTER.md.
 6. **Immediately after the first release, committed and tracked until delivered (decision 4):**
    - **Object storage** (S3, GCS, Azure), for reading and for writing.
    - **Delta Lake and Iceberg outputs.** Their commits are atomic, which is what makes publishing safe on object storage.

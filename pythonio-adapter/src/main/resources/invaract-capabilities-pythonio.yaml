@@ -7,11 +7,12 @@
 # something says so, with a reason. Anything other than `supported` needs a `note` (for contributors)
 # and a `summary` (one plain sentence for users: the "What Each Engine Checks" page, written by EngineGuidePage).
 #
-# Written from docs/PYTHON_IO_ADAPTER_DESIGN.md and held to the conformance kit: PythonIoConformanceAdapter runs each
-# scenario through the checker (PythonIoCheck) as the `invaract` package will drive it, one protocol request per read
-# and write. The package itself (milestone 1) is not built yet; until it is, nothing here reaches a user.
+# Written from docs/PYTHON_IO_ADAPTER_DESIGN.md and held to the conformance kit twice: PythonIoConformanceAdapter runs each
+# scenario through the checker (PythonIoCheck) one protocol request per read and write, and
+# PythonIoPackageConformanceAdapter runs it as a real Python job through the `invaract` package.
 adapter: pythonio
-engine: Python (invaract package, in development)
+engine: Python (invaract package)
+guide: /guides/using-invaract-with-python/
 enforcement:
   point: staged-publish
   note: >-

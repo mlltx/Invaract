@@ -23,7 +23,7 @@ SETTINGS = {
     "orgPolicyOverlays": "Comma-separated paths of further organisational policy layers.",
     "rejectUndeclaredInputs": "true: a read of a dataset the contract does not declare is refused (it always is here).",
     "rejectUndeclaredFields": "true: a column the contract does not declare is refused.",
-    "computeFingerprint": "true: compute a semantic fingerprint (unsupported for Python jobs, so a run with it is refused).",
+    "computeFingerprint": "true: compute a semantic fingerprint (not computed for Python jobs: a warning is logged, the run goes on).",
     "staticDataQuality": "true: prove the contract's value constraints (unsupported for Python jobs, so a run with it is refused).",
     "roleConsistency": "true: check each input's declared role (unsupported for Python jobs, so a run with it is refused).",
 }

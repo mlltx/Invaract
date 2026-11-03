@@ -60,6 +60,7 @@ export default defineConfig({
 								{ label: 'Install and Configure in Code', slug: 'guides/calling-invaract-explicitly' },
 								{ label: 'Use with Apache Beam (Java)', slug: 'guides/using-invaract-with-apache-beam' },
 								{ label: 'Use with Beam Python Pipelines', slug: 'guides/using-invaract-with-beam-python' },
+								{ label: 'Use with Python Jobs', slug: 'guides/using-invaract-with-python' },
 							],
 						},
 						{

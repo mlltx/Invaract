@@ -1719,6 +1719,11 @@ jobs:
         shell: bash
         run: cd .github/scripts && python3 -m unittest -v test_check_modules test_new_adapter
 
+      # python_wheel.py tags the invaract package's platform wheels from the native checker each carries (release-python.yml)
+      - name: Unit-test python_wheel.py
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_python_wheel
+
       - name: Module registry check (modules.json against every file that lists modules)
         shell: bash
         run: python3 .github/scripts/check_modules.py

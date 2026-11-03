@@ -9,13 +9,14 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 4 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 5 done; the first release waits on PyPI's one-time setup.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
 the package and comes out as the declaration promises, and the declaration's enforcement point is `staged-publish`.
-`invaract-lint` (`lint/`) flags the reads and writes a job makes around the package. Nothing is released yet (the platform
-wheels carrying the native checker are milestone 5), so the user pages list the engine as "in development".
+`invaract-lint` (`lint/`) flags the reads and writes a job makes around the package. The user guide is written, and
+`release-python.yml` builds, tests and (on a `python-v<version>` tag) publishes the wheels; nothing is on PyPI until a
+maintainer has done docs/RELEASING.md's one-time setup and pushed the first tag.
 
 ## What it is
 
@@ -37,6 +38,7 @@ finished and every answer was yes.
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
 | `lint/tests` | the lint's pytest suite, including the example job before and after it adopted the package |
+| `.github/scripts/python_wheel.py` | the release's wheels: a platform wheel around a native checker, tagged from the program itself; the pure-Python wheel around the jar; the version check; the smoke test each wheel passes before it is published |
 
 ### The protocol
 
@@ -300,6 +302,33 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
     the same as `"utf-8"`, and the default path label `"<source>"` is only a name.
   - CI's `pythonio-lint` job runs the tests and lints the example and conformance jobs. It also runs `mutmut` with an 80% floor.
 
+## Milestone 5: the user guide and the release
+
+Milestone 5 (design section 10) is the user guide and what a release needs:
+
+- **The guide.** docs-site's "Use Invaract with Python Jobs": installing, adopting the package in a job, a refused run, the
+  dry-run migration, the lint, the settings, and formats and save modes. Every example is from a real run of the example
+  job (`examples/orders_job`) or of its dry-run form. The configuration reference has a Python column, the troubleshooting
+  page lists every `CheckNotRun` message, and the declaration names the guide and drops "in development".
+- **The checker each wheel carries.** `_checker.command()` runs `INVARACT_CHECKER` if it is set, else the native checker at
+  `invaract/bin/` (platform wheels), else the jar at `invaract/lib/` (the pure-Python wheel) with `JAVA_HOME`'s `java` or
+  the one on the `PATH`. With a jar but no Java, or neither, the run stops with `CheckNotRun` naming what to install or set.
+- **The wheels.** `.github/scripts/python_wheel.py` builds the package's wheel around one of the two and, for a native
+  checker, retags it for the platform the program runs on: the newest `GLIBC_x.y` it names on Linux (`manylinux_x_y`), its
+  minimum OS version on macOS (`macosx_<major>_0` from macOS 11 on, the form pip matches). A checker built on a newer
+  runner image therefore narrows the tag rather than overstating it. On this environment's x86_64 Linux, a program
+  needing glibc 2.34 was tagged `manylinux_2_34_x86_64` (what `objdump -T` reports), and pip installed it with its
+  executable bit.
+- **The release workflow.** `release-python.yml` builds the jar once, then on each of `ubuntu-latest`, `ubuntu-24.04-arm`,
+  `macos-latest` and `macos-15-intel` the native checker, the protocol cases against it, and the wheel; the pure-Python wheel
+  with Python 3.10 and Java 11 (the oldest of each supported); and `invaract-lint`. Every wheel is installed in a new
+  virtual environment and runs the example job with no `INVARACT_CHECKER`: it must run the checker the wheel carries, publish
+  a passing run and refuse a failing one. On a `python-v<version>` tag it publishes to PyPI (trusted publishing, the `pypi`
+  environment) and attaches everything to a GitHub release; on a pull request that changes how the packages are built, it
+  stops before publishing.
+- **One version.** The package, the checker and the lint are released under one tag, so `python_wheel.py version` refuses
+  a release where they differ, and each `pyproject.toml` reads its package's `__version__` rather than stating it again.
+
 ## Friction log
 
 - `dev/new-adapter` takes an engine name without a hyphen, so the design's `python-io-adapter` and engine `python-io` became
@@ -347,9 +376,18 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
 - The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
   verification-core; a Python job sees it too. Left for a wording pass across adapters.
+- The package's help text for `computeFingerprint` said a run with it is refused. Writing the guide's settings table from
+  real runs showed it is not: like Beam, the run goes on and the checker logs that no fingerprint is published. Static data
+  quality and role consistency are refused when the run opens (`UNSUPPORTED_CONTRACT_FEATURE`). The help text now says so.
+- A dry run's draft lists, as each output's `derivedFrom`, every input read before it was written (D4): the example job's
+  audit is drawn from the orders only, but the draft says the customers too, because they were read first. The guide tells
+  the reader to correct it when reviewing the draft.
+- The version was written in four places (each package's `pyproject.toml` and `__init__.py`). Each `pyproject.toml` now
+  reads its package's `__init__.py`.
 
 ## Unverified items
 
-- How the native program behaves on Linux aarch64 and on macOS: only Linux x86_64 is built so far.
+- How the native program behaves on Linux aarch64 and on macOS: `release-python.yml` builds it there and runs the protocol
+  cases and the example job against it; until that workflow has run on all four platforms, only Linux x86_64 is proven.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).

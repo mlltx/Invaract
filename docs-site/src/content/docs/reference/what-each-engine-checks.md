@@ -24,7 +24,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | Apache Beam (Java SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-apache-beam/) |
 | Apache Beam (Python SDK) | Checks the whole pipeline before it is handed to a runner. If anything breaks the contract, nothing runs at all. | [Guide](/guides/using-invaract-with-beam-python/) |
 | Apache Spark 3.5 | Checks each write inside the running job, just before it happens. A write that breaks the contract is stopped and the job fails; writes the job made before it have already happened. | [Guide](/guides/installing-the-enforcement-rule/) |
-| Python (invaract package, in development) | Checks each write inside the running job, before it is written, and holds every output back until the job ends. The outputs are published together only if the whole run passed, so a run that breaks the contract publishes nothing. |  |
+| Python (invaract package) | Checks each write inside the running job, before it is written, and holds every output back until the job ends. The outputs are published together only if the whole run passed, so a run that breaks the contract publishes nothing. | [Guide](/guides/using-invaract-with-python/) |
 
 ## At a glance
 
@@ -32,7 +32,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Which reads and writes it sees
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Batch reads](#batch-reads) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [Streaming reads](#streaming-reads) | ✅ Yes | ◐ Partly | ✅ Yes | ✖ No |
@@ -43,7 +43,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### What it checks about each write
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Required inputs are read](#required-inputs-are-read) | ✅ Yes | ✅ Yes | ✅ Yes | ◐ Partly |
 | [Writes land where the contract says](#writes-land-where-the-contract-says) | ✅ Yes | ✅ Yes | ◐ Partly | ✅ Yes |
@@ -56,7 +56,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Rules a contract can declare
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete) | — Doesn't apply | — Doesn't apply | ◐ Partly | — Doesn't apply |
 | [Rules about the transformation's shape](#rules-about-the-transformations-shape) | ◐ Partly | ✖ No | ✅ Yes | ✖ No |
@@ -64,7 +64,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Deeper analysis
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Proves value constraints](#proves-value-constraints) | ✖ No | ✖ No | ✅ Yes | ✖ No |
 | [Datasets are used as their declared type says](#datasets-are-used-as-their-declared-type-says) | ✖ No | ✖ No | ✅ Yes | ✖ No |
@@ -76,13 +76,13 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Organization-wide policy
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Organization-wide policy](#organization-wide-policy) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Setting it up
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Turn it on without changing the job](#turn-it-on-without-changing-the-job) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
 | [Locations resolved when the job starts](#locations-resolved-when-the-job-starts) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
@@ -90,14 +90,14 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 ### Reporting
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Sends events to your systems](#sends-events-to-your-systems) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 
 ### Safety net
 
-| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package, in development) |
+| Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
 | [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 
@@ -181,7 +181,7 @@ Everything not listed here is checked in full.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): A user-defined function is a black box: an output column it computes is traced only to the columns passed into it.
 - [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches): A checkpoint or cache made after Invaract was installed is seen through. One made before, or one Spark has dropped from its cache, hides what is behind it.
 
-### Python (invaract package, in development)
+### Python (invaract package)
 
 Everything not listed here is checked in full.
 
