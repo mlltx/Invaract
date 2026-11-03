@@ -9,8 +9,8 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 5 done, and milestone 6 for Delta, Iceberg and S3; the first release waits on PyPI's one-time
-setup, and Google Cloud Storage and Azure on tests.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 6 done; the first release waits on PyPI's one-time setup, and Google Cloud Storage, Azure and
+a real HDFS cluster on tests.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
@@ -35,7 +35,7 @@ finished and every answer was yes.
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
 | `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
-| `python/invaract/_storage.py`, `_tables.py` | where a location lives (local, or object storage by its URI); Delta and Iceberg tables: reading them, and outputs staged uncommitted and committed at publish (milestone 6) |
+| `python/invaract/_storage.py`, `_files.py`, `_tables.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (renamed into place locally and on HDFS, copied with `_SUCCESS` last on object storage); Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6) |
 | `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar); `test_tables.py` needs the `delta` and `iceberg` extras and moto, and runs strictly in CI (`INVARACT_TEST_TABLES=true`) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
@@ -212,9 +212,11 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | An Iceberg output: created with its namespace, each save mode, a refused or failed run | ✅ covered: one transaction at publish | `test_tables.py`'s Iceberg tests |
 | A read of a Delta or Iceberg input, its declared columns only | ✅ covered | `test_a_delta_input_*`, `test_an_iceberg_input_*` |
 | A read of Parquet or CSV files on S3 | ✅ covered | `test_plain_parquet_and_csv_inputs_are_read_from_object_storage` |
-| A Parquet or CSV output on object storage | 🚫 fails closed: refused before anything is written (decided 2026-11-03) | `test_a_plain_output_on_object_storage_is_refused_before_anything_is_written` |
+| A Parquet or CSV output on object storage, each save mode; a refused run | ✅ covered: copied into place at publish, `_SUCCESS` last; a refused run never writes to the bucket | `test_a_plain_output_on_object_storage_*`, `test_object_storage_*`, `test_a_refused_run_never_writes_a_plain_output_to_object_storage` |
+| A Parquet or CSV output on HDFS, each save mode; a refused run | ✅ covered through pyarrow's file-system interface (a local file system stands in for HDFS) | `test_an_hdfs_*`, `test_a_refused_run_leaves_hdfs_as_it_was` |
+| A Parquet or CSV output on a file system Invaract does not know (`ftp://`, ...) | 🚫 fails closed: `CheckNotRun`, nothing written anywhere | `test_a_location_on_a_file_system_invaract_does_not_know_is_refused_not_written_locally` |
 | A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
-| Google Cloud Storage and Azure (`gs://`, `abfss://`) | ❓ not investigated: the same libraries' code paths, with no emulator in CI yet | none |
+| Google Cloud Storage, Azure and a real HDFS cluster | ❓ not investigated: the same libraries' code paths, with no emulator or cluster in CI yet | none |
 | A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
 ## Type mapping
@@ -359,14 +361,19 @@ design left it for a design of its own (section 5). Probes first (2026-11-03, de
   configured by environment (`PYICEBERG_CATALOG__<NAME>__*`). The same with the warehouse on S3.
 - **Reads need no settings of Invaract's own**: pyarrow and delta-rs take S3 from the standard `AWS_*` variables.
 
-Two decisions followed, both the user's (2026-11-03): a Parquet or CSV *output* on object storage is refused (readers could
-see a copy-then-delete half done; reads are fine), and a Delta or Iceberg output that does not exist is created by the run
-that passes, in the same commit.
+Two decisions followed, both the user's (2026-11-03): a Delta or Iceberg output that does not exist is created by the run
+that passes, in the same commit; and a Parquet or CSV *output* on object storage was at first refused (readers could see a
+copy-then-delete half done), then, the same day, allowed Spark-style, since writing Parquet to GCS or S3 is what teams
+expect: staged on local disk, and at publish the old `_SUCCESS` removed, the files uploaded, the old ones deleted
+(overwrite), `_SUCCESS` written last. HDFS, which has an atomic rename, stages and renames as a local disk does.
 
 What was built:
 
 - `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
-  Reads of Parquet and CSV go through pyarrow's own file systems.
+  Reads of Parquet and CSV go through pyarrow's own file systems, HDFS included.
+- `_files`: plain-file outputs. `LocalFileOutput` is milestone 2's, unchanged; `HadoopFileOutput` does the same on HDFS
+  through pyarrow's file system (staged beside the location, `move` into place); `ObjectStorageFileOutput` stages on local
+  disk and copies at publish, `_SUCCESS` last. Any other URI scheme is refused.
 - `_tables.DeltaOutput`: each write is a Parquet file staged uncommitted, in the table's folder when it is local, on local
   disk when it is on object storage (uploaded at publish); publishing commits them all in one transaction, creating the
   table if needed. `ignore` and `error` look at whether the table holds files.
@@ -375,9 +382,9 @@ What was built:
   snapshot's record count.
 - Extras `invaract[delta]` (deltalake 1.0 or later) and `invaract[iceberg]` (pyiceberg 0.9 or later, which needs pyarrow
   17); without them, a table format stops the run with `CheckNotRun` naming the extra.
-- Tests: `test_tables.py`, 46 tests, local and on S3 (moto in-process), including a real job writing to S3 that must exit.
-  They pass on the oldest releases the extras allow (deltalake 1.0.0, pyiceberg 0.9.0, pyarrow 17.0.0, Python 3.10) and
-  the newest; CI runs both, strictly.
+- Tests: `test_tables.py`, 60 tests, local, on S3 (moto in-process) and on HDFS through a local pyarrow file system
+  standing in for it, including a real job writing to S3 that must exit. They pass on the oldest releases the extras allow
+  (deltalake 1.0.0, pyiceberg 0.9.0, pyarrow 17.0.0, Python 3.10) and the newest; CI runs both, strictly.
 
 ## Friction log
 
@@ -443,6 +450,10 @@ What was built:
 - pyiceberg refuses a frame whose columns are nullable when the table's are required, even with no empty values; the
   package marks required columns not-null before writing, as it does for files.
 - pyiceberg reads its `PYICEBERG_` variables once, when imported. A job's are set before it starts; the tests reload them.
+- Milestone 2's plain-file output used `os` paths, so an `hdfs://` location made a local folder named `hdfs:` before pyarrow
+  reached for HDFS, and publishing renamed local paths: HDFS outputs had never worked, and any other URI scheme was
+  treated as a local path. Found when the user asked for Parquet on HDFS; `_files` now dispatches on the scheme and
+  refuses one it does not know.
 - After an overwrite, a Delta table keeps the replaced files for time travel until it is vacuumed; "nothing left behind"
   means no file that no commit ever named.
 
@@ -450,6 +461,8 @@ What was built:
 
 - Google Cloud Storage and Azure: `gs://` and `abfss://` locations go through pyarrow, delta-rs and pyiceberg as S3 does,
   but no emulator runs them in CI yet (open in ROADMAP.md).
+- A real HDFS cluster: the HDFS output is tested through pyarrow's file-system interface with a local file system standing
+  in; pyarrow's own Hadoop file system (libhdfs) is not run in CI.
 - Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3's conditional writes, which moto accepted;
   not checked against AWS itself, nor two runs racing.
 - The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images

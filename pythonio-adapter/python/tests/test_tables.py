@@ -322,16 +322,83 @@ def s3(s3_server, monkeypatch):
     return bucket
 
 
-def test_a_plain_output_on_object_storage_is_refused_before_anything_is_written(s3):
+def keys(bucket, prefix=""):
+    """The bucket's objects, leaving out empty "folder" markers ("out/report/"): pyarrow leaves one wherever it deletes a
+    file, as Hadoop's S3 client does, and readers ignore them."""
     import boto3
 
-    for fmt in ("parquet", "csv"):
-        write_contract(outputs=output(location=f"s3://{s3}/report", fmt=fmt))
-        with pytest.raises(invaract.CheckNotRun, match=rf"will not write 'report' as {fmt} files to s3://{s3}/report: object "
-                                                       "storage has no rename.*delta or iceberg"):
-            with invaract.run("contract.yaml"):
-                invaract.write(REPORT, "report")
-    assert boto3.client("s3").list_objects_v2(Bucket=s3).get("KeyCount") == 0
+    listed = boto3.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix).get("Contents", [])
+    return sorted(o["Key"] for o in listed if not o["Key"].endswith("/"))
+
+
+def put(bucket, key, body=b"old"):
+    import boto3
+
+    boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=body)
+
+
+def run_writes(*frames, fmt="parquet", mode="overwrite", location):
+    write_contract(outputs=output(location=location, fmt=fmt, save_mode=mode))
+    with invaract.run("contract.yaml") as run:
+        for frame in frames:
+            invaract.write(frame, "report")
+    return run.run_id
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "csv"])
+def test_a_plain_output_on_object_storage_is_published_with_success_written_last(s3, fmt):
+    run_id = run_writes(REPORT, MORE, fmt=fmt, location=f"s3://{s3}/out/report")
+    assert keys(s3) == [f"out/report/_SUCCESS", f"out/report/part-{run_id}-00001.{fmt}", f"out/report/part-{run_id}-00002.{fmt}"]
+    import pyarrow.dataset as ds
+
+    table = ds.dataset(f"s3://{s3}/out/report", format=fmt).to_table()
+    assert sorted(table.column("region").to_pylist()) == ["east", "north", "south"]
+
+
+def test_an_object_storage_overwrite_replaces_every_old_file_and_marker(s3):
+    put(s3, "out/report/part-old.parquet")
+    put(s3, "out/report/year=2025/part-older.parquet")
+    put(s3, "out/report/_SUCCESS", b"")
+    run_id = run_writes(REPORT, location=f"s3://{s3}/out/report")
+    assert keys(s3) == ["out/report/_SUCCESS", f"out/report/part-{run_id}-00001.parquet"]
+
+
+def test_an_object_storage_append_keeps_the_old_files_and_rewrites_success(s3):
+    put(s3, "out/report/part-old.parquet")
+    put(s3, "out/report/_SUCCESS", b"")
+    run_id = run_writes(REPORT, mode="append", location=f"s3://{s3}/out/report")
+    assert keys(s3) == sorted(["out/report/_SUCCESS", "out/report/part-old.parquet", f"out/report/part-{run_id}-00001.parquet"])
+
+
+@pytest.mark.parametrize("mode,old,written", [("ignore", True, False), ("ignore", False, True), ("error", False, True)])
+def test_object_storage_ignore_and_error(s3, mode, old, written):
+    if old:
+        put(s3, "out/report/part-old.parquet")
+    run_writes(REPORT, mode=mode, location=f"s3://{s3}/out/report")
+    assert ("out/report/_SUCCESS" in keys(s3)) == written
+
+
+def test_object_storage_error_refuses_an_output_with_data_and_writes_nothing(s3):
+    put(s3, "out/report/part-old.parquet")
+    with pytest.raises(FileExistsError, match="already holds data"):
+        run_writes(REPORT, mode="error", location=f"s3://{s3}/out/report")
+    assert keys(s3) == ["out/report/part-old.parquet"]
+
+
+def test_a_refused_run_never_writes_a_plain_output_to_object_storage(s3):
+    put(s3, "out/report/part-old.parquet")
+    with pytest.raises(invaract.ContractViolation):
+        run_writes(REPORT, pd.DataFrame({"region": [None], "total": [1]}), location=f"s3://{s3}/out/report")
+    assert keys(s3) == ["out/report/part-old.parquet"]
+
+
+def test_a_location_on_a_file_system_invaract_does_not_know_is_refused_not_written_locally():
+    write_contract(outputs=output(location="ftp://host/out/report"))
+    with pytest.raises(invaract.CheckNotRun, match="cannot write files to ftp://host/out/report: it writes to local and mounted "
+                                                   r"file systems, HDFS \(hdfs://, viewfs://\) and object storage"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert not os.path.exists("ftp:")
 
 
 def test_plain_parquet_and_csv_inputs_are_read_from_object_storage(s3):
@@ -405,3 +472,73 @@ def test_a_dry_run_writes_a_delta_table_where_the_job_says_and_drafts_its_contra
     assert [r["region"] for r in delta_rows()[0]] == ["north", "south"]
     draft = events()[-1]["mergedContractYaml"]
     assert "location: data/out/report" in draft and "format: delta" in draft
+
+
+# ---- HDFS: the same staging and rename, through a pyarrow file system --------------------------------------------------
+
+@pytest.fixture
+def hdfs(monkeypatch, tmp_path):
+    """hdfs://namenode/... served by a local pyarrow file system rooted in the test's folder: the package's HDFS output goes
+    through pyarrow's file-system interface only, so this runs exactly its code (a real cluster needs Hadoop's libhdfs)."""
+    import pyarrow.fs as fs
+
+    root = tmp_path / "hdfs"
+    root.mkdir()
+    real = _storage.filesystem
+
+    def filesystem(location):
+        if str(location).startswith("hdfs://namenode/"):
+            return fs.SubTreeFileSystem(str(root), fs.LocalFileSystem()), str(location)[len("hdfs://namenode/"):]
+        return real(location)
+
+    monkeypatch.setattr(_storage, "filesystem", filesystem)
+    return root
+
+
+def hdfs_files(root, path="warehouse"):
+    return sorted(os.path.relpath(os.path.join(d, f), root) for d, _, fs_ in os.walk(root / path) for f in fs_)
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "csv"])
+def test_an_hdfs_output_is_staged_beside_its_location_and_renamed_into_place(hdfs, fmt):
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report", fmt=fmt))
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+        assert os.listdir(hdfs / "warehouse") == [f".report.invaract-staging-{run.run_id}"], "staged beside it, on HDFS"
+    assert hdfs_files(hdfs) == [f"warehouse/report/part-{run.run_id}-00001.{fmt}"]
+
+
+def test_an_hdfs_overwrite_replaces_the_folder_and_leaves_nothing_beside_it(hdfs):
+    os.makedirs(hdfs / "warehouse" / "report")
+    pq.write_table(pa.table({"region": ["old"], "total": [1]}), hdfs / "warehouse" / "report" / "old.parquet")
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report"))
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+    assert hdfs_files(hdfs) == [f"warehouse/report/part-{run.run_id}-00001.parquet"]
+
+
+def test_an_hdfs_append_adds_and_ignore_and_error_respect_what_is_there(hdfs):
+    os.makedirs(hdfs / "warehouse" / "report")
+    pq.write_table(pa.table({"region": ["old"], "total": [1]}), hdfs / "warehouse" / "report" / "old.parquet")
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report", save_mode="append"))
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+    assert hdfs_files(hdfs) == ["warehouse/report/old.parquet", f"warehouse/report/part-{run.run_id}-00001.parquet"]
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report", save_mode="ignore"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    assert len(hdfs_files(hdfs)) == 2 and os.listdir(hdfs / "warehouse") == ["report"]
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report", save_mode="error"))
+    with pytest.raises(FileExistsError, match="already holds data"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert len(hdfs_files(hdfs)) == 2 and os.listdir(hdfs / "warehouse") == ["report"]
+
+
+def test_a_refused_run_leaves_hdfs_as_it_was(hdfs):
+    write_contract(outputs=output(location="hdfs://namenode/warehouse/report"))
+    with pytest.raises(invaract.ContractViolation):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(pd.DataFrame({"region": [None], "total": [1]}), "report")
+    assert os.listdir(hdfs / "warehouse") == []

@@ -4022,11 +4022,12 @@ Extend verification engine to support multiple execution engines.
         job with it, and publishes to PyPI by trusted publishing on a `python-v<version>` tag (docs/RELEASING.md)
   - [ ] The first release on PyPI: the one-time PyPI setup in docs/RELEASING.md, then the `python-v0.1.0` tag
   - [x] **Follow-fast (milestone 6):** Delta Lake and Iceberg outputs and inputs, each output committed in one transaction
-        when the run passes, the table created if missing (`invaract[delta]`, `invaract[iceberg]`); S3 for reads and for
-        table outputs; plain-file outputs on object storage refused (decided 2026-11-03). Tested locally and on S3 (moto),
-        oldest and newest library releases (CI's `pythonio-python`)
-  - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage and Azure verified end to end (against emulators
-        in CI); the code path is the same libraries', untested
+        when the run passes, the table created if missing (`invaract[delta]`, `invaract[iceberg]`); plain-file outputs on
+        HDFS (staged and renamed) and on object storage (copied, `_SUCCESS` last, Spark-style; decided 2026-11-03); reads
+        from both. Tested locally, on S3 (moto) and on HDFS through a stand-in file system, oldest and newest library
+        releases (CI's `pythonio-python`)
+  - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
+        (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

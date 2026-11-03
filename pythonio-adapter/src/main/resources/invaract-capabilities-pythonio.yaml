@@ -16,15 +16,15 @@ guide: /guides/using-invaract-with-python/
 enforcement:
   point: staged-publish
   note: >-
-    The job reads and writes through the invaract package, which stages each output (Parquet or CSV files beside their
-    location, published by a rename; a Delta or Iceberg table's data uncommitted, published by one commit); a refusal
-    raises ContractViolation in the job.
+    The job reads and writes through the invaract package, which stages each output and publishes it only if the whole
+    run passed: Parquet or CSV files by a rename (local, HDFS) or a copy with _SUCCESS written last (object storage), a
+    Delta or Iceberg table by one commit; a refusal raises ContractViolation in the job.
 capabilities:
   read.batch:
     status: supported
     note: >-
       Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV
-      files, local or on object storage, and Delta and Iceberg tables.
+      files (local, HDFS, object storage) and Delta and Iceberg tables.
   read.streaming:
     status: unsupported
     summary: Python jobs read whole datasets; reading a stream is not checked.

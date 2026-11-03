@@ -340,8 +340,9 @@ jobs:
             Attached: the wheels and invaract-lint's distributions as published to PyPI, the checker jar (run with
             `java -jar`, for INVARACT_CHECKER), and the native checker for each platform a wheel is built for.
 
-            Supported: Parquet and CSV files on local and mounted file systems; Delta Lake and Iceberg tables
-            (`invaract[delta]`, `invaract[iceberg]`), local or on S3; Parquet and CSV reads from S3. Not yet tested
-            (docs/PYTHON_IO_ADAPTER_DESIGN.md, milestone 6, committed to come next): Google Cloud Storage and Azure.
+            Supported: Parquet and CSV files on local and mounted file systems, HDFS and object storage; Delta Lake and
+            Iceberg tables (`invaract[delta]`, `invaract[iceberg]`). Tested on S3; not yet tested against the real
+            services (docs/PYTHON_IO_ADAPTER_DESIGN.md, milestone 6, committed to come next): Google Cloud Storage, Azure
+            and an HDFS cluster.
           files: release/*
           fail_on_unmatched_files: true

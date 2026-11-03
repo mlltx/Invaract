@@ -230,7 +230,7 @@ name that version.
    one package and not the other, re-run the failed jobs; to change what a published version contains,
    release a new version.
 6. Until docs/PYTHON_IO_ADAPTER_DESIGN.md's milestone 6 is complete, each release note says what is still
-   missing (Google Cloud Storage and Azure, not yet tested); the workflow's release body does.
+   missing (Google Cloud Storage, Azure and a real HDFS cluster, not yet tested); the workflow's release body does.
 
 ## Dry run
 

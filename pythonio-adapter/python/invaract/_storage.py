@@ -2,9 +2,8 @@
 # Copyright 2024 Invaract Contributors
 """Where a location lives: a local or mounted file system, or object storage (S3, GCS, Azure) named by its URI.
 
-Reads work from either. A plain Parquet or CSV output is published by renaming its staging folder into place, which object
-storage cannot do (it has no rename; a copy then a delete can be seen half done), so such an output is refused there: an
-output on object storage is a Delta or Iceberg table, whose commit is atomic (docs/PYTHONIO_ADAPTER.md, milestone 6).
+Reads work from either. Object storage has no rename, so a plain Parquet or CSV output there is published by copying, as
+Spark does (``_files``), and a Delta or Iceberg table there by its own atomic commit (``_tables``).
 Credentials and endpoints come from each library's own standard sources (``AWS_*``, ``GOOGLE_APPLICATION_CREDENTIALS``,
 ``AZURE_STORAGE_*``), never from Invaract.
 """

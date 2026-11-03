@@ -6,20 +6,19 @@ anything was refused or the job failed, none."""
 import functools
 import os
 import platform
-import shutil
 import sys
 import threading
 import uuid
 
 import pyarrow as pa
 
-from . import _frames, _storage, _tables
+from . import _files, _frames, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
 
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
-#: Plain files, published by renaming their staging folder into place: local and mounted file systems only.
+#: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
 FILE_FORMATS = ("parquet", "csv")
 FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
@@ -132,9 +131,6 @@ class Run:
         if fmt not in FORMATS or mode not in SAVE_MODES:
             raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
-        if fmt in FILE_FORMATS and _storage.on_object_storage(where):
-            raise CheckNotRun(f"Invaract will not write '{name}' as {fmt} files to {where}: object storage has no rename, so plain "
-                              "files there cannot be published all at once. Declare the output as a delta or iceberg table.")
         out = self._outputs.get(name) or self._outputs.setdefault(name, _output(where, fmt, mode, self.run_id))
         if out.mode == "error" and out.has_data():
             raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
@@ -185,95 +181,7 @@ def _output(location, fmt, mode, run_id):
         return _tables.DeltaOutput(location, mode, run_id)
     if fmt == "iceberg":
         return _tables.IcebergOutput(location, mode, run_id)
-    return _FileOutput(location, fmt, mode, run_id)
-
-
-class _FileOutput:
-    """One output of plain files: its staging folder, beside its location so that publishing is a rename on the same file
-    system."""
-
-    def __init__(self, location, fmt, mode, run_id):
-        self.target = _storage.uri(location)
-        self.fmt = fmt
-        parent, base = os.path.split(self.target)
-        self.staging = os.path.join(parent, f".{base}.invaract-staging-{run_id}")
-        self.previous = os.path.join(parent, f".{base}.invaract-previous-{run_id}")
-        self.mode = mode
-        self.run_id = run_id
-        self.files = 0
-
-    def has_data(self):
-        return _has_data(self.target)
-
-    def stage(self, schema, batches, required):
-        """Writes the batches to a new file in staging, with ``not null`` on each required column, and returns the empty values
-        each column holds (``_frames.take``)."""
-        os.makedirs(self.staging, exist_ok=True)
-        self.files += 1
-        path = os.path.join(self.staging, f"part-{self.run_id}-{self.files:05d}.{self.fmt}")
-        target = _frames.with_required(schema, required)
-        try:
-            writer = _writer(path, self.fmt, target)
-            try:
-                return _frames.take(schema, target, batches, required, writer.write_batch)
-            finally:
-                writer.close()
-        except BaseException:
-            _remove(path)
-            raise
-
-    def publish(self):
-        if not os.path.isdir(self.staging):
-            return
-        if self.mode == "append":
-            os.makedirs(self.target, exist_ok=True)
-            for f in sorted(os.listdir(self.staging)):
-                destination = os.path.join(self.target, f)
-                if os.path.exists(destination):
-                    raise FileExistsError(f"Invaract will not replace {destination} when appending")
-                os.rename(os.path.join(self.staging, f), destination)
-            self.discard()
-        elif self.mode == "ignore" and _has_data(self.target):
-            self.discard()
-        else:
-            if os.path.lexists(self.target):
-                os.rename(self.target, self.previous)
-            try:
-                os.rename(self.staging, self.target)
-            except BaseException:
-                if os.path.lexists(self.previous):
-                    os.rename(self.previous, self.target)
-                raise
-
-    def forget_previous(self):
-        _remove(self.previous)
-
-    def discard(self):
-        _remove(self.staging)
-
-
-def _writer(path, fmt, schema):
-    if fmt == "csv":
-        import pyarrow.csv as csv
-
-        return csv.CSVWriter(path, schema)
-    import pyarrow.parquet as pq
-
-    return pq.ParquetWriter(path, schema)
-
-
-def _has_data(path):
-    """Whether a location holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata (``_``)."""
-    if os.path.isfile(path):
-        return True
-    return os.path.isdir(path) and any(not f.startswith((".", "_")) for f in os.listdir(path))
-
-
-def _remove(path):
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path, ignore_errors=True)
-    elif os.path.lexists(path):
-        os.remove(path)
+    return _files.output(location, fmt, mode, run_id)
 
 
 def _with_location(request, location):

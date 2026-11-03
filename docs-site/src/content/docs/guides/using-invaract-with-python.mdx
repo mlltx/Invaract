@@ -18,8 +18,9 @@ columns and types (including that a required column holds no empty value). It ca
 does between a read and a write, so the transformation-shape rules (`required_filter_columns`, `required_join_columns`,
 `required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
 with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **Parquet and CSV files** on local and
-mounted file systems and **Delta Lake and Iceberg tables**, local or on S3, and reads Parquet and CSV files from S3 too
-(see [Tables and object storage](#tables-and-object-storage); Google Cloud Storage and Azure are not tested yet). The full
+mounted file systems, HDFS and object storage, and **Delta Lake and Iceberg tables** (see
+[Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
+are not tested yet). The full
 list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
@@ -299,12 +300,38 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 - **Save modes**: `overwrite` replaces what is at the location, `append` adds to what is there, `error` refuses the write
   if the location already holds data, and `ignore` publishes nothing if it does. A write uses the save mode the contract
   declares, or `overwrite`.
-- **Locations** of Parquet and CSV outputs are files or folders on a local or mounted file system. A run stages each such
-  output in a hidden folder beside its location and moves it into place when the job returns.
+- **Locations** of Parquet and CSV outputs are folders on a local or mounted file system, on HDFS (`hdfs://`) or on object
+  storage (`s3://`, `gs://`, `abfss://`). How they are published depends on which; see below.
 - **Required columns**: a column the contract marks `required: true` must hold no empty value; the file or table written
   then states the column as not null.
 
-## Tables and object storage
+## Files, tables and object storage
+
+How an output is published when the job returns depends on where it lives:
+
+| Output | Staged during the run | Published when the job returns |
+|---|---|---|
+| Parquet or CSV, local or mounted file system | in a hidden folder beside the location | renamed into place: all at once |
+| Parquet or CSV, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
+| Parquet or CSV, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
+| Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
+
+In every case nothing is published unless the whole run passed, and a refused or failed run leaves the output as it was.
+
+**Plain files on object storage** are published the way Spark and Hadoop publish them, because object storage has no
+rename: first the old `_SUCCESS` marker is removed, then the run's files are uploaded, then (for `overwrite`) the old
+files are deleted, and `_SUCCESS` is written last. A reader that waits for `_SUCCESS`, as Spark and most schedulers can,
+sees a complete output. A reader that does not can see old and new files together for as long as the publish takes, and
+a job that crashes part way through publishing leaves them so, without `_SUCCESS`. When readers must never see that, write
+a Delta or Iceberg table instead. Deleting files on object storage leaves empty "folder" markers (`report/`), as
+Hadoop's own S3 client does; readers ignore them.
+
+**HDFS** goes through pyarrow's Hadoop file system, so the job needs Hadoop's client libraries (`libhdfs`, with
+`HADOOP_HOME` and `CLASSPATH` set) where it runs, as any pyarrow access to HDFS does.
+
+A location on any other kind of file system (`ftp://`, ...) is refused before anything is written (`CheckNotRun`).
+
+### Tables
 
 A Delta Lake or Iceberg output is written in **one commit, when the job returns**, and only if the whole run passed. Until
 then no reader of the table sees anything of the run, and a refused or failed run leaves the table exactly as it was. If
@@ -336,15 +363,12 @@ outputs:
   `PYICEBERG_CATALOG__LAKE__TYPE=glue`, or a `.pyiceberg.yaml` file. A catalog type needs its own pyiceberg extra
   (`pip install "pyiceberg[glue]"`). The run creates a missing namespace, then the table. An Iceberg output is held in
   memory until the job returns, since pyiceberg writes a table's data in one piece.
-- **Object storage**: reads of Parquet and CSV files, and Delta and Iceberg tables, can be on S3 (`s3://`). Credentials and
-  endpoints come from the usual sources (`AWS_*` environment variables, `~/.aws`, an instance role); Invaract has no
-  settings of its own for them. A Delta output on object storage is staged on the job's local disk and uploaded when the
-  job returns, just before its commit, so a refused run never writes to the bucket.
-- **Plain files are never written to object storage.** Object storage has no rename, so a run's Parquet or CSV files there
-  could not be published all at once. A contract that declares one is refused before anything is written (`CheckNotRun`):
-  declare the output as a `delta` or `iceberg` table instead.
-- `gs://` and `abfss://` locations go through the same libraries (pyarrow, delta-rs, pyiceberg), but Invaract does not test
-  them yet.
+- **Object storage**: credentials and endpoints come from the usual sources (`AWS_*` environment variables, `~/.aws`, an
+  instance role; `GOOGLE_APPLICATION_CREDENTIALS`; `AZURE_STORAGE_*`); Invaract has no settings of its own for them. A
+  Delta output on object storage is staged on the job's local disk and uploaded when the job returns, just before its
+  commit, so a refused run never writes to the bucket.
+- Invaract tests object storage on S3. `gs://` and `abfss://` locations, and HDFS, go through the same libraries
+  (pyarrow, delta-rs, pyiceberg) and the same code, but are not tested against a real service yet.
 
 ## Related
 

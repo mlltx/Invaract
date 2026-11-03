@@ -235,10 +235,13 @@ build. Organisational policy, the registry and plug-ins would then be unavailabl
   rename is atomic per output. Across several outputs, publishing is ordered, not atomic: a crash between two renames
   leaves the first published. The run's event records exactly what was published.
 - **Object storage** (S3, GCS) has no rename. Publishing would be a copy, then a delete, which readers can see half done.
-  Milestone 6 settled it (decided 2026-11-03): a Parquet or CSV *output* on object storage is refused before anything is
-  written, and an output there is a Delta or Iceberg table, whose commit is atomic. Reads of plain files from object
-  storage are allowed. A Delta or Iceberg output that does not exist yet is created by the run that passes, in the same
-  commit as its data.
+  Milestone 6 settled it (decided 2026-11-03). A Parquet or CSV output on object storage is published as Spark and Hadoop
+  publish one: staged on local disk, and only when the run passed, the old `_SUCCESS` removed, the files uploaded, the
+  old ones deleted (overwrite) and `_SUCCESS` written last. A reader that waits for `_SUCCESS` sees a complete output;
+  others can see the publish half done. (The first decision refused such outputs; it was reversed the same day, since
+  writing Parquet to GCS or S3 is what teams expect.) A Delta or Iceberg table is the choice when no reader may see a
+  publish half done. HDFS has an atomic rename, so a plain output there is staged and renamed as on a local disk. A
+  Delta or Iceberg output that does not exist yet is created by the run that passes, in the same commit as its data.
 
 ## 6. Configuration and external attachability
 
@@ -451,8 +454,9 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    - it is not displaced by other Python I/O work;
    - each release note until it lands states what is still missing.
 
-   **Result (2026-11-03): Delta, Iceberg and S3 done; GCS and Azure not yet tested.** Two decisions, taken with probes in
-   hand (section 5): plain-file outputs on object storage are refused, and a missing table is created. A Delta output's
+   **Result (2026-11-03): Delta, Iceberg, HDFS and object storage done; tested on S3, not yet on GCS, Azure or a real HDFS
+   cluster.** Two decisions, taken with probes in hand (section 5): plain-file outputs on object storage are published
+   Spark-style, with `_SUCCESS` last, and a missing table is created. Plain-file outputs on HDFS are staged and renamed. A Delta output's
    files are staged uncommitted (in the table's folder, or on local disk for object storage) and committed in one
    transaction at publish; an Iceberg output is held until publish and written in one transaction, creating its namespace
    and table if needed. Reads of Parquet and CSV files from object storage, and of Delta and Iceberg tables. Tested

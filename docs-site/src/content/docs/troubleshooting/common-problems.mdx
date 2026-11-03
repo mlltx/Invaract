@@ -233,7 +233,7 @@ The message says why:
 | `Invaract could not start its checker (...)` | `INVARACT_CHECKER` names a program that cannot be started. |
 | `Invaract could not check 'open': ContractParseException: Contract file not found: ...` | The contract `@invaract.job` or `INVARACT_CONTRACT` names is not there, relative to the folder the job runs in. |
 | `Invaract cannot yet write '...' as ...` | The output's format or save mode is one the package does not write: it writes Parquet, CSV, Delta and Iceberg, with `overwrite`, `append`, `error` or `ignore`. |
-| `Invaract will not write '...' as parquet files to s3://...` | Plain files cannot be published all at once on object storage. Declare the output as a `delta` or `iceberg` table ([Tables and object storage](/guides/using-invaract-with-python/#tables-and-object-storage)). |
+| `Invaract cannot write files to ...` | The location is on a file system Invaract does not write to. It writes to local and mounted file systems, HDFS and object storage ([Files, tables and object storage](/guides/using-invaract-with-python/#files-tables-and-object-storage)). |
 | `Invaract needs the deltalake package` / `the pyiceberg package` | Install the extra the message names: `pip install "invaract[delta]"` or `"invaract[iceberg]"`. |
 | `an Iceberg location is <catalog>.<namespace>.<table>` | Name an Iceberg dataset's location by its catalog, namespace and table, for example `lake.sales.report`. |
 | `Invaract has nowhere to read '...' from` / `Invaract has nowhere to write '...'` | In a dry run, every read and write needs its `location=` ([Start from a job with no contract](/guides/using-invaract-with-python/#start-from-a-job-with-no-contract)). |

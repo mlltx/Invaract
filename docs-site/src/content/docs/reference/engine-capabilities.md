@@ -26,7 +26,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 |---|---|---|
 | `beam` | Apache Beam (Java SDK) | Gates before the job is submitted — A wrapper runner, named by --runner, receives the constructed pipeline in run(), reads its graph (before any step executes), verifies it against the contract, and either throws (the pipeline is never submitted) or hands it to the real runner. Nothing inside a running pipeline is intercepted. |
 | `beam-python` | Apache Beam (Python SDK) | Gates before the job is submitted — A wrapper runner, named by --runner=invaract_beam.InvaractRunner, receives the constructed pipeline in run_pipeline(), writes its portable form (the language-neutral description every Beam SDK produces) to a file, and runs the Java checker on it before any step executes; the pipeline is handed to the real runner only if the checker lets it through. Nothing inside a running pipeline is intercepted. |
-| `pythonio` | Python (invaract package) | Checks each write before it is staged; publishes the run's outputs only if the whole run passed — The job reads and writes through the invaract package, which stages each output (Parquet or CSV files beside their location, published by a rename; a Delta or Iceberg table's data uncommitted, published by one commit); a refusal raises ContractViolation in the job. |
+| `pythonio` | Python (invaract package) | Checks each write before it is staged; publishes the run's outputs only if the whole run passed — The job reads and writes through the invaract package, which stages each output and publishes it only if the whole run passed: Parquet or CSV files by a rename (local, HDFS) or a copy with _SUCCESS written last (object storage), a Delta or Iceberg table by one commit; a refusal raises ContractViolation in the job. |
 | `spark` | Apache Spark 3.5 | Blocks inside the engine, before the operation executes — A SparkSessionExtensions check rule runs on the analyzed plan and aborts the write before it executes (ContractEnforcementRule); a QueryExecutionListener additionally reports completed writes. |
 
 ## Capability matrix
@@ -193,7 +193,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 
 ### pythonio
 
-- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV files, local or on object storage, and Delta and Iceberg tables.
+- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV files (local, HDFS, object storage) and Delta and Iceberg tables.
 - `read.streaming` — unsupported: The package reads whole datasets (files and tables); there is no streaming read in it.
 - `write.batch` — supported: Writes go through invaract.write by the output's declared name; the table's columns are read from the data frame (Arrow).
 - `write.streaming` — unsupported: The package writes whole datasets; there is no streaming write in it.
