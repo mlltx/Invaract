@@ -82,7 +82,9 @@ case class Schema(fields: List[Field]) {
   * On an *input* field, a `constraints` entry is an axiom — trusted as
   * given, seeding the analysis, never independently re-verified against
   * real input data by this module. On an *output* field, it's an
-  * obligation the analysis attempts to prove. Same shape, same `Field`,
+  * obligation the analysis attempts to prove - and, with
+  * `runtimeDataQuality`, one an adapter that sees the written rows checks
+  * them against (`verification-core`'s `RuntimeDataQuality`). Same shape, same `Field`,
   * different role purely by which side of the contract it sits on — the
   * same convention `required`/`nullable` already follow.
   */

@@ -155,7 +155,7 @@ Each field has:
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested `Field` list, for struct/record types. |
 | `sensitivityTags` | no | Open-vocabulary governance labels (e.g. `pii`, `financial`) — see `spark-adapter`'s "Sensitivity lineage" section in docs/SPARK_ADAPTER.md. Reporting only; never checked here. |
-| `constraints` | no | List of `{type, ...properties}` — statically-verifiable value-domain requirements (`equals`/`oneOf`/`range`) `spark-adapter`'s `StaticDataQualityVerifier` attempts to *prove* the transformation satisfies, rather than merely predict — see "Static data-quality constraints" below. |
+| `constraints` | no | List of `{type, ...properties}` — statically-verifiable value-domain requirements (`equals`/`oneOf`/`range`) `spark-adapter`'s `StaticDataQualityVerifier` attempts to *prove* the transformation satisfies, rather than merely predict — see "Static data-quality constraints" below. With `runtimeDataQuality`, an output's are also checked on the rows each write puts there, by an adapter that sees them (`RuntimeDataQuality`). |
 
 Known types (validator warns, does not error, on anything else):
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`,
@@ -211,7 +211,12 @@ no entry here at all — `nullable: false` already states it, and
 existing declaration directly, the same as any other constraint. Each
 constraint is `{type, ...type-specific properties}`, decoded by
 `FieldConstraint.interpret` into one of three closed shapes
-(`FieldConstraintType`/`InterpretedFieldConstraint`):
+(`FieldConstraintType`/`InterpretedFieldConstraint`). An output field's
+constraints can be held to account two ways, each opt-in: proved from the
+transformation (`staticDataQuality`, below), or checked on the rows each write
+actually puts there (`runtimeDataQuality`, `verification-core`'s
+`RuntimeDataQuality`, on an adapter that sees the data before it is published -
+docs/STATIC_DATA_QUALITY_VERIFICATION.md §12):
 
 | `type` | Properties | Meaning |
 |---|---|---|
