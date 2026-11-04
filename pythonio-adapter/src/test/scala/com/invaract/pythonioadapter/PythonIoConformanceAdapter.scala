@@ -62,6 +62,10 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
 
 object PythonIoConformanceAdapter {
 
+  /** The Iceberg catalog and namespace a scenario's registered output is a table in. */
+  val IcebergCatalog = "conformance"
+  val IcebergNamespace = "scenarios"
+
   /** The name the package would send for a dataset at `location`: the declared one's, or, for a location the contract does not
     * declare, the location itself, which the checker treats as an undeclared dataset. */
   private def nameOf(datasets: List[Dataset], location: String): String = datasets.find(_.location == location).fold(location)(_.name)
@@ -78,11 +82,14 @@ object PythonIoConformanceAdapter {
   def readRequest(contract: Contract, input: ScenarioInput): String =
     json("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "schema" -> input.schema.fields.map(column(_, withNulls = true)))
 
-  /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. */
+  /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. An output the scenario
+    * registers in a catalog is an Iceberg table, as the package writes one (`PythonIoPackageConformanceAdapter.icebergTable`). */
   def writeRequests(contract: Contract, output: ScenarioOutput, schema: LogicalSchema): List[String] = {
     val name = nameOf(contract.outputs, output.location)
+    val registered = output.registeredAs.toList.flatMap(table =>
+      List("format" -> "iceberg", "catalog" -> Map("technology" -> "iceberg", "catalogName" -> IcebergCatalog, "namespace" -> List(IcebergNamespace), "table" -> table)))
     List(
-      json("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))),
+      json((List("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))) ++ registered): _*),
       json("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap)
     )
   }

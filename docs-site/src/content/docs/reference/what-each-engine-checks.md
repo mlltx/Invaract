@@ -52,7 +52,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
-| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 
 ### Rules a contract can declare
 
@@ -188,13 +188,13 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
+- [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
 - [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
 
 **Not checked**
 
 - [Streaming reads](#streaming-reads): Python jobs read whole datasets; reading a stream is not checked. A streaming read it cannot place is reported as unverifiable rather than checked.
 - [Streaming writes](#streaming-writes): Python jobs write whole datasets; writing a stream is not checked. A streaming write it does not recognize is refused, not passed unchecked.
-- [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Python jobs write files; registering an output in a catalog is not checked yet. Refused if your contract relies on it.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): What a Python job does between its reads and writes is its own code, which is not checked. Refused if your contract relies on it.
 - [Your own rule types](#your-own-rule-types): Custom rules judge a job's plan, and a Python job's plan is its own code, which is not checked. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Data quality rules need the transformation, which for a Python job is its own code. Refused if you turn on `staticDataQuality`.

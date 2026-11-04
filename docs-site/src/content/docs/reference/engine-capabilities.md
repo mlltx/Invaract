@@ -53,7 +53,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ | ✅ | ✅ | ✅ |
 | `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
-| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✖ | ✅ |
+| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ◐ | ✅ |
 
 ### Rules
 
@@ -205,7 +205,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.schema` — supported: The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the staged data holds (decision 3), not against the frame library's nullable flag.
 - `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
 - `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
-- `check.catalogRegistration` — unsupported: The first version writes files on local or mounted storage only; catalogs come with Delta and Iceberg (milestone 6).
+- `check.catalogRegistration` — partial: An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials). Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
 - `rules.dml` — not-applicable: No row-level MERGE, UPDATE or DELETE exists to judge.
 - `rules.planShape` — unsupported: The transformation is the team's own pandas, Polars or DuckDB code; the checker sees only reads and writes.
 - `rules.custom` — unsupported: Custom rules judge the translated plan or row-level changes, and neither exists for a Python job.
