@@ -44,7 +44,9 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
       if (checksOutputsWritten)
         VerificationPipeline.requireOutputsWritten(contract, job.writtenLocations, ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
       val checked = checkedWrite(job)
-      VerificationPipeline.verifyWrite(contract, checked.copy(dataChecks = dataChecks(contract, job, options)), options, Some(sink), None, Some(capabilities), Some(jobInfo))
+      VerificationPipeline.verifyWrite(
+        contract, checked.copy(dataChecks = dataChecks(contract, job, options)), options, Some(sink), None, Some(capabilities), Some(jobInfo)
+      )
       // the job's further writes, in order, each checked as a write of its own
       if (checksExtraWrites)
         job.extraWrites.foreach(w => VerificationPipeline.verifyWrite(contract, ReferenceAdapter.copyWrite(w), options, Some(sink), None, Some(capabilities), Some(jobInfo)))
@@ -83,7 +85,8 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
       outputSchema = ReferenceAdapter.outputSchema(job),
       caseSensitive = false,
       rowMutation = job.rowChange.map(ReferenceAdapter.mutationOf),
-      lineageBoundaryTypes = Set.empty
+      lineageBoundaryTypes = Set.empty,
+      partitioning = Some(ReferenceAdapter.partitioningOf(job.output))
     )
 
   /** The reference engine has no checkpoint or cache, so a job run through a boundary translates to the same
@@ -111,6 +114,10 @@ object ReferenceAdapter {
     }
     MutationClassification.Extracted(MutationKind.Delete, RowMutation(delete = scope))
   }
+
+  /** How the reference engine lays out an output: as the scenario says. */
+  def partitioningOf(output: ScenarioOutput): com.invaract.verification.WritePartitioning =
+    com.invaract.verification.WritePartitioning(output.partitionBy, output.partitionOverwriteMode)
 
   private def catalogOf(output: ScenarioOutput): Option[CatalogIdentity] =
     output.registeredAs.map(table => CatalogIdentity(table = Some(table)))
@@ -162,7 +169,8 @@ object ReferenceAdapter {
       outputSchema = write.input.schema,
       caseSensitive = false,
       rowMutation = None,
-      lineageBoundaryTypes = Set.empty
+      lineageBoundaryTypes = Set.empty,
+      partitioning = Some(partitioningOf(write.output))
     )
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {

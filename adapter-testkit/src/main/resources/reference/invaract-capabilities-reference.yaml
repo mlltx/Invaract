@@ -40,6 +40,9 @@ capabilities:
     status: supported
   check.saveMode:
     status: supported
+  check.partitioning:
+    status: supported
+    note: A scenario's write states the columns it partitions by and its overwrite mode.
   check.catalogRegistration:
     status: supported
     note: A write can carry a catalog identity (a table name), which is all the registration check needs.

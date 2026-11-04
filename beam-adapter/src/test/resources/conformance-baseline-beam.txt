@@ -21,6 +21,9 @@ output-format-mismatch
 output-nullability-mismatch
 output-save-mode-matches
 output-save-mode-mismatch
+partitioned-output-matches
+partitioned-output-written-unpartitioned
+partition-overwrite-mode-mismatch
 output-type-mismatch
 required-filter-column-missing
 required-filter-column-present

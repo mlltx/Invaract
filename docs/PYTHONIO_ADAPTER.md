@@ -54,7 +54,7 @@ holds, where the data has been seen.
 |---|---|---|
 | `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties) | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
 | `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read for every later write | `{"ok": true}` |
-| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
+| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...], "partitionBy": ["region"], "partitionOverwriteMode": "static"}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses; the layout (`partitionBy`, empty for none; `partitionOverwriteMode`, `static` when absent) against the output's partition keys (`OUTPUT_PARTITIONING_MISMATCH`) | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
 | `{"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [...]}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event; with `runtimeDataQuality` on, `checks` holds what the package found for each of the output's data checks, in the order `open` sent them (`{"failed": 2, "examples": ["-3"]}`), and a check with failing rows is refused (`RUNTIME_DATA_QUALITY_VIOLATION`); a package that reports a different number of checks is not checked | `{"ok": true}` |
 | `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
@@ -171,6 +171,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `check.nestedTypes` | supported | `nested-type-matches`, `nested-type-mismatch`; the `nested-type-refused` case |
 | `check.format` | supported | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | supported | `output-save-mode-matches`, `output-save-mode-mismatch` |
+| `check.partitioning` | partial | Hive-style folders for Parquet and CSV (local, HDFS, object storage), Delta partition columns, Iceberg identity partitions; static and dynamic overwrites (`tests/test_partitions.py`, `tests/test_tables.py`); the partitioning scenarios through both conformance adapters; the `partition*` protocol cases. Partial: a dynamic overwrite of an existing Delta table needs a deltalake with `RemoveAction`, and a table already partitioned otherwise is not written |
 | `check.catalogRegistration` | partial | Iceberg tables only: the catalog scenarios run through both conformance adapters (the registered output written as an Iceberg table, the unregistered one as files), and the `catalog-*` protocol cases |
 | `check.runtimeDataQuality` | partial | top-level fields only: the package evaluates every check on the batches it stages (`invaract/_checks.py`, `tests/test_checks.py`, on the oldest and newest pyarrow); the runtime data-quality scenarios run through both conformance adapters (the package one with the scenario's own rows), and the `runtime-data-quality-*` protocol cases |
 | `rules.dml` | not-applicable | the note: no row-level changes |
@@ -375,6 +376,20 @@ that passes, in the same commit; and a Parquet or CSV *output* on object storage
 copy-then-delete half done), then, the same day, allowed Spark-style, since writing Parquet to GCS or S3 is what teams
 expect: staged on local disk, and at publish the old `_SUCCESS` removed, the files uploaded, the old ones deleted
 (overwrite), `_SUCCESS` written last. HDFS, which has an atomic rename, stages and renames as a local disk does.
+
+**Partitioned outputs (2026-11-04).** Three decisions, the user's: a contract declares partition keys with the Open Data
+Contract Standard's own `partitioned`/`partitionKeyPosition` field keys (which Invaract had parsed past until then), and a job
+may also say them (`invaract.write(..., partition_by=, partition_overwrite=)`), the checker holding the write's layout to the
+contract's; what an `overwrite` replaces is the contract's choice, per output (`partitionOverwriteMode`, `static` by default, as
+Spark's). The layout travels to the check as `CheckedWrite.partitioning`, not on `ir.Write`: it changes how the data is laid
+out, not what the job computes, so the plan, its lineage and its fingerprint stay as they were. A new engine-neutral capability,
+`check.partitioning`, says who checks it; Spark and Beam declare it unsupported for now (their writes do carry partition
+columns, which the adapters do not hand over yet). Publishing a `dynamic` overwrite: plain files rename each written partition
+folder into place (atomic per partition, not per output; a failure puts back the folders already replaced), object storage
+deletes only the written partitions' old files, Delta commits the new files and `RemoveAction`s for the replaced partitions'
+old ones in one commit (deltalake releases without `RemoveAction`, 1.0 to 1.6.0 among them, refuse it), Iceberg uses
+`dynamic_partition_overwrite` (pyiceberg 0.9 has it). A Delta or Iceberg table that exists partitioned otherwise than the write
+is not written.
 
 What was built:
 

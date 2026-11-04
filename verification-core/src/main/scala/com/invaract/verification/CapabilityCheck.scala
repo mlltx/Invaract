@@ -36,6 +36,7 @@ object CapabilityCheck {
     val firstNested = fields.find(f => f.isStruct || f.fieldType.contains("<"))
     val firstSensitive = fields.find(_.sensitivityTags.nonEmpty)
     val firstConstrained = contract.outputs.flatMap(_.schema.fields).find(_.constraints.nonEmpty)
+    val firstPartitioned = contract.outputs.find(_.partitionKeys.nonEmpty)
 
     List(
       when(contract.inputs.nonEmpty, Capability.CheckInputExistence, s"it declares ${contract.inputs.size} input(s)"),
@@ -45,6 +46,7 @@ object CapabilityCheck {
       when(firstNested.isDefined, Capability.CheckNestedTypes, firstNested.map(f => s"field '${f.name}' has a nested type").getOrElse("")),
       when(datasets.exists(_.format.isDefined), Capability.CheckFormat, "a dataset declares a format"),
       when(contract.outputs.exists(_.saveMode.isDefined), Capability.CheckSaveMode, "an output declares a save mode"),
+      when(firstPartitioned.isDefined, Capability.CheckPartitioning, firstPartitioned.map(o => s"output '${o.name}' declares partition keys").getOrElse("")),
       when(datasets.exists(_.catalog.isDefined), Capability.CheckCatalogRegistration, "a dataset declares a catalog requirement"),
       when(options.runtimeDataQuality && firstConstrained.isDefined, Capability.CheckRuntimeDataQuality,
         firstConstrained.map(f => s"runtimeDataQuality is enabled and output field '${f.name}' declares constraints").getOrElse("")),

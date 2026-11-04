@@ -29,7 +29,13 @@ import com.invaract.ir.{Lineage, Plan}
   * from — the engine-neutral slice of an adapter's own write description
   * (for Spark, `WriteCommandInfo`).
   */
-private[invaract] case class InferredWrite(location: String, format: Option[String], saveMode: Option[String], outputSchema: LogicalSchema)
+private[invaract] case class InferredWrite(
+    location: String,
+    format: Option[String],
+    saveMode: Option[String],
+    outputSchema: LogicalSchema,
+    partitioning: Option[WritePartitioning] = None
+)
 
 private[invaract] object ContractInference {
 
@@ -73,12 +79,20 @@ private[invaract] object ContractInference {
         description = observedUsageDescription(normalizedLocation, outputContributingQualifiers, conditionReferencedQualifiers)
       )
     }
+    // the partition keys the write used, in its order; a dynamic overwrite is said, a static one is the default
+    val keys = write.partitioning.map(_.columns).getOrElse(Nil)
+    val schema = schemaOf(write.outputSchema)
     val output = Dataset(
       name = "output",
       location = normalizeLocation(write.location),
       format = write.format,
-      schema = schemaOf(write.outputSchema),
+      schema = schema.copy(fields = schema.fields.map { f =>
+        val position = keys.indexOf(f.name)
+        if (position < 0) f else f.copy(partitioned = true, partitionKeyPosition = Some(position + 1))
+      }),
       saveMode = write.saveMode,
+      partitionOverwriteMode = write.partitioning.filter(p => keys.nonEmpty && p.overwriteMode.equalsIgnoreCase(com.invaract.contract.PartitionOverwriteModes.Dynamic))
+        .map(_ => com.invaract.contract.PartitionOverwriteModes.Dynamic),
       // Every input this write was observed reading - stated explicitly, so
       // that when this draft is merged into a multi-output contract each
       // output keeps naming only the inputs that feed it (see

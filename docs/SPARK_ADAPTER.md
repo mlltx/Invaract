@@ -409,6 +409,14 @@ NotStaticallyVerifiable}`. Only `Violated` becomes a real `Violation`
 on their own; the load-bearing principle is that an *absence* of proof
 must never look like a failure to a caller only checking `passed`.
 
+**Partitioning is not checked yet.** `check.partitioning` (an output's declared
+partition keys and `partitionOverwriteMode`, `OUTPUT_PARTITIONING_MISMATCH`) is
+declared unsupported here, so a contract that declares partition keys is refused
+(`UNSUPPORTED_CONTRACT_FEATURE`). Spark's write commands carry what it needs
+(`InsertIntoHadoopFsRelationCommand.partitionColumns`, Delta's and Iceberg's
+partitioning, `spark.sql.sources.partitionOverwriteMode`); handing it to the
+pipeline as `CheckedWrite.partitioning` is the follow-up ROADMAP lists.
+
 **Not the runtime check.** `VerificationOptions.runtimeDataQuality`
 (`spark.invaract.runtimeDataQuality`, capability `check.runtimeDataQuality`)
 holds the *rows* a write puts in an output to the same constraints, which

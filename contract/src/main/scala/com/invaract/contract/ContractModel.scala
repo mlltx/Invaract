@@ -54,6 +54,15 @@ object ContractVersion {
   *   carries to every output column that transitively derives from it (see
   *   `spark-adapter`'s `SensitivityLineage`). Empty for a field with no
   *   declared sensitivity, which is most fields.
+  * @param partitioned whether the dataset is partitioned by this field: its
+  *   data is laid out in one folder (or table partition) per value of it,
+  *   Hive-style (`region=north/`). The Open Data Contract Standard's own
+  *   `partitioned` key. Only a top-level scalar field can be one
+  *   (`ContractValidator`). See `Dataset.partitionKeys`.
+  * @param partitionKeyPosition where this field comes among the dataset's
+  *   partition keys, 1 first (ODCS's `partitionKeyPosition`, which uses -1
+  *   for a field that is not one). Keys with no position come after those
+  *   with one, in declaration order.
   */
 case class Field(
   name: String,
@@ -62,7 +71,9 @@ case class Field(
   nullable: Boolean = true,
   properties: List[Field] = Nil,
   sensitivityTags: Set[String] = Set.empty,
-  constraints: List[FieldConstraint] = Nil
+  constraints: List[FieldConstraint] = Nil,
+  partitioned: Boolean = false,
+  partitionKeyPosition: Option[Int] = None
 ) {
   def isStruct: Boolean = properties.nonEmpty
 }
@@ -390,6 +401,10 @@ object DatasetType {
   *   appear in several outputs' lists, and one output may list several
   *   inputs. Appended last for the same binary-compatibility reason
   *   `datasetType` above was.
+  * @param partitionOverwriteMode what an `overwrite` of a partitioned output
+  *   replaces: `static` (every existing partition, Spark's default, and what
+  *   an absent key means) or `dynamic` (only the partitions the write puts
+  *   data in; the others are left as they are). `PartitionOverwriteModes`.
   */
 case class Dataset(
   name: String,
@@ -400,8 +415,28 @@ case class Dataset(
   catalog: Option[CatalogRequirement] = None,
   description: Option[String] = None,
   datasetType: Option[DatasetType] = None,
-  derivedFrom: Option[List[String]] = None
-)
+  derivedFrom: Option[List[String]] = None,
+  partitionOverwriteMode: Option[String] = None
+) {
+
+  /** The fields the dataset is partitioned by (`Field.partitioned`), in order: by `partitionKeyPosition`, then the ones with
+    * none in declaration order. Empty for a dataset that is not partitioned. */
+  def partitionKeys: List[String] = {
+    val keys = schema.fields.zipWithIndex.filter(_._1.partitioned)
+    keys.sortBy { case (f, i) => (f.partitionKeyPosition.getOrElse(Int.MaxValue), i) }.map(_._1.name)
+  }
+
+  /** The overwrite mode that applies to this dataset: the declared one, or `static`. */
+  def effectivePartitionOverwriteMode: String = partitionOverwriteMode.map(_.trim.toLowerCase).getOrElse(PartitionOverwriteModes.Static)
+}
+
+/** What an `overwrite` of a partitioned dataset replaces (`Dataset.partitionOverwriteMode`): Spark's two modes, under its own
+  * names (`spark.sql.sources.partitionOverwriteMode`). */
+object PartitionOverwriteModes {
+  val Static = "static"
+  val Dynamic = "dynamic"
+  val All: Set[String] = Set(Static, Dynamic)
+}
 
 /** Rule types Invaract itself knows how to interpret during verification
   * (see `InterpretedRule`, and `RuleVerifier` in `spark-adapter`) —

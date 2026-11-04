@@ -39,6 +39,7 @@ import com.invaract.verification.SchemaChecker.Side
   * OUTPUT_LOCATION_MISMATCH               write     -       declared locations / write     -
   * OUTPUT_FORMAT_MISMATCH                 write     -       format / format                -
   * OUTPUT_SAVE_MODE_MISMATCH              write     -       save mode / save mode          -
+  * OUTPUT_PARTITIONING_MISMATCH           write     -       keys or mode / keys or mode    -
   * *_CATALOG_REGISTRATION / *_MISMATCH    dataset   -       (mismatch only) catalog / catalog  -
   * MISSING_*_FIELD                        dataset   path    declared type / -              -
   * *_UNDECLARED_COLUMN                    dataset   path    - / actual type                -
@@ -153,6 +154,31 @@ private[invaract] object Violations {
       location = Some(writeLocation),
       expected = Some(expected),
       actual = Some(actual)
+    )
+
+  /** The declared partition keys against the columns the write partitions by (`none` when it does not). */
+  def outputPartitioningMismatch(expected: String, actual: String, writeLocation: String): Violation =
+    Violation(
+      ViolationType.OutputPartitioningMismatch,
+      s"contract declares the output partitioned by $expected but the write partitions by $actual",
+      remediation =
+        s"Partition the write by $expected, in that order, or update the contract's partition keys (the fields marked 'partitioned') if this layout change is intentional.",
+      location = Some(writeLocation),
+      expected = Some(expected),
+      actual = Some(actual)
+    )
+
+  /** The same violation type for an overwrite that replaces partitions another way than the contract's
+    * `partitionOverwriteMode`; `expected`/`actual` name the modes (`static overwrite`, `dynamic overwrite`). */
+  def outputPartitionOverwriteMismatch(expected: String, actual: String, writeLocation: String): Violation =
+    Violation(
+      ViolationType.OutputPartitioningMismatch,
+      s"contract declares partitionOverwriteMode '$expected' but the write overwrites with '$actual'",
+      remediation =
+        s"Overwrite with partitionOverwriteMode '$expected' (static replaces every partition, dynamic only those the write puts data in), or update the contract's partitionOverwriteMode if this change is intentional.",
+      location = Some(writeLocation),
+      expected = Some(s"$expected overwrite"),
+      actual = Some(s"$actual overwrite")
     )
 
   // ---- catalog registration (inputs and outputs) -------------------------------------------------

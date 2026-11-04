@@ -64,6 +64,7 @@ object Capability {
   val CheckNestedTypes = Capability("check.nestedTypes", StructuralChecks, "Nested types (array, map, struct) are compared structurally, not just by keyword.", enforcesContract = true)
   val CheckFormat = Capability("check.format", StructuralChecks, "A declared output format is checked (OUTPUT_FORMAT_MISMATCH).", enforcesContract = true)
   val CheckSaveMode = Capability("check.saveMode", StructuralChecks, "A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH).", enforcesContract = true)
+  val CheckPartitioning = Capability("check.partitioning", StructuralChecks, "An output's declared partitioning is checked: its partition keys, in order, and, for an overwrite, its partitionOverwriteMode (OUTPUT_PARTITIONING_MISMATCH).", enforcesContract = true)
   val CheckCatalogRegistration = Capability("check.catalogRegistration", StructuralChecks, "A declared catalog requirement is checked for inputs and outputs.", enforcesContract = true)
   val CheckRuntimeDataQuality = Capability("check.runtimeDataQuality", StructuralChecks, "With runtimeDataQuality on, the values a write puts in each output field are checked against the field's declared constraints (equals, oneOf, range, length, fieldRange) before the write is published (RUNTIME_DATA_QUALITY_VIOLATION).", enforcesContract = true)
 
@@ -99,7 +100,7 @@ object Capability {
   /** Every capability, in the order the matrix shows them (category order, then declaration order). */
   val all: List[Capability] = List(
     ReadBatch, ReadStreaming, WriteBatch, WriteStreaming, WriteRowLevelDml, WriteStateChange,
-    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration, CheckRuntimeDataQuality,
+    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckPartitioning, CheckCatalogRegistration, CheckRuntimeDataQuality,
     RulesDml, RulesPlanShape, RulesCustom,
     AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,

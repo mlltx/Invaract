@@ -4033,7 +4033,12 @@ Extend verification engine to support multiple execution engines.
         `runtimeDataQuality`): every row a job writes is held to its outputs' declared constraints before anything is
         published, evaluated by the package with Arrow compute. Partial: top-level fields. Spark and Beam declare it
         unsupported (they check before rows exist) and refuse constrained outputs when it is on
-  - [ ] Partitioned outputs; database outputs (Postgres first)
+  - [x] Partitioned outputs (`check.partitioning`, a new engine-neutral capability; the contract's keys are ODCS's
+        `partitioned`/`partitionKeyPosition`, with `partitionOverwriteMode` static or dynamic): written Hive-style for Parquet
+        and CSV (local, HDFS, object storage), as partition columns for Delta and identity partitions for Iceberg, static and
+        dynamic overwrites; partitioned inputs read with their keys typed as declared. Spark and Beam declare it unsupported
+  - [ ] Spark: hand a write's partition columns and overwrite mode to `check.partitioning`
+  - [ ] Database outputs (Postgres first, through ADBC: staged and moved into place at publish)
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

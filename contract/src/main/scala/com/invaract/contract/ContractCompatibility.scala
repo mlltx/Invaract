@@ -145,6 +145,8 @@ object ContractCompatibility {
           diffOptionalConstraint(s"$kind.$n.format", "format", prevDs.format, nextDs.format) ++
           diffOptionalConstraint(s"$kind.$n.saveMode", "saveMode", prevDs.saveMode, nextDs.saveMode) ++
           diffCatalog(s"$kind.$n.catalog", prevDs.catalog, nextDs.catalog) ++
+          diffPartitionKeys(s"$kind.$n.schema", prevDs.partitionKeys, nextDs.partitionKeys) ++
+          diffOptionalConstraint(s"$kind.$n.partitionOverwriteMode", "partitionOverwriteMode", prevDs.partitionOverwriteMode, nextDs.partitionOverwriteMode) ++
           diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
       }
     )
@@ -202,6 +204,14 @@ object ContractCompatibility {
         List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"'$fieldName' changed from '$p' to '$n'"))
       case _ => Nil
     }
+
+  /** The partition keys, in order, follow `diffOptionalConstraint`'s philosophy: a write is checked against them only when
+    * some are declared, so declaring them, or changing them or their order, can turn a valid write invalid (BREAKING);
+    * declaring none any more only loosens what is checked. */
+  private def diffPartitionKeys(path: String, previous: List[String], next: List[String]): List[CompatibilityChange] =
+    if (next.isEmpty || previous == next) Nil
+    else if (previous.isEmpty) List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"the dataset is now required to be partitioned by ${next.mkString(", ")}"))
+    else List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"the partition keys changed from ${previous.mkString(", ")} to ${next.mkString(", ")}"))
 
   /** Same tightening-only philosophy as `diffOptionalConstraint`, applied
     * to the whole `catalog` block rather than a single scalar - see

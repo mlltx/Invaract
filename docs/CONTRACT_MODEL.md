@@ -108,6 +108,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`. Matched case-insensitively; any other value is a `ContractParser` hard failure (a closed three-value set, unlike `format`'s open vocabulary). Absent by default — see "Input and Output Types" below for the full model, including how an organizational policy can make it mandatory. |
 | `derivedFrom` | no | Outputs only: the `name`s of the contract's declared `inputs` this output is built from — see "Output-to-input lineage" below. Absent (the default) means every declared input; `[]` means none. |
+| `partitionOverwriteMode` | no | With partition keys: what an `overwrite` replaces, `static` (every partition; the default, `Dataset.effectivePartitionOverwriteMode`) or `dynamic` (only those written). `PartitionOverwriteModes`; any other value is a validation error. Checked (`check.partitioning`, `OUTPUT_PARTITIONING_MISMATCH`) for an overwrite of an output. |
 | `schema.fields` | no | List of fields. A dataset with no `schema` (or no fields) declares no columns: its content is not governed, schema checks skip it (`SchemaChecker.check`), and `ContractValidator` warns. |
 
 A dataset's `catalog` block, when present:
@@ -154,6 +155,8 @@ Each field has:
 | `required` | no | Defaults to `false`. Whether the field must be present. |
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested `Field` list, for struct/record types. |
+| `partitioned` | no | ODCS's key: the dataset is partitioned by this field (`Dataset.partitionKeys`, ordered by `partitionKeyPosition`, then declaration order). Top-level scalar fields only. On an output it is checked against the write's partitioning (`check.partitioning`); on an input it says how the data is laid out, for the reader. |
+| `partitionKeyPosition` | no | ODCS's key: the key's position, 1 first; `-1` (ODCS's "not a key") reads as absent. |
 | `sensitivityTags` | no | Open-vocabulary governance labels (e.g. `pii`, `financial`) — see `spark-adapter`'s "Sensitivity lineage" section in docs/SPARK_ADAPTER.md. Reporting only; never checked here. |
 | `constraints` | no | List of `{type, ...properties}` — statically-verifiable value-domain requirements (`equals`/`oneOf`/`range`) `spark-adapter`'s `StaticDataQualityVerifier` attempts to *prove* the transformation satisfies, rather than merely predict — see "Static data-quality constraints" below. With `runtimeDataQuality`, an output's are also checked on the rows each write puts there, by an adapter that sees them (`RuntimeDataQuality`). |
 
@@ -359,6 +362,8 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | Field constraint (`equals`/`oneOf`/`range`) with malformed/missing properties for its shape | Error |
 | Field constraint's value type disagrees with the field's own declared `type` (e.g. an `equals` string value on a numeric field) | Warning |
 | `derivedFrom` on an output naming an input the contract doesn't declare | Error |
+| A nested or non-scalar partition key; a key position below 1 or used twice; every field a key; an unknown `partitionOverwriteMode` | Error |
+| A `partitionKeyPosition` without `partitioned: true`; a `partitionOverwriteMode` with no keys | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on

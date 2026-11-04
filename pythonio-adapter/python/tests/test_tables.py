@@ -600,3 +600,136 @@ def test_an_iceberg_input_in_another_namespace_than_the_contract_requires_is_ref
             invaract.read("orders")
     assert refused.value.violations == ["INPUT_CATALOG_MISMATCH"]
     assert "namespace (expected 'staging', actual 'sales')" in str(refused.value)
+
+
+# ---- partitioned outputs on object storage, HDFS, Delta and Iceberg ----------------------------------------------------
+
+NORTH = pd.DataFrame({"region": ["north"], "total": [70]})
+
+
+def partitioned(location, fmt="parquet", mode=None, save_mode="overwrite"):
+    overwrite = f"    partitionOverwriteMode: {mode}\n" if mode else ""
+    write_contract(outputs=f"  - name: report\n    location: {location}\n    format: {fmt}\n    saveMode: {save_mode}\n{overwrite}"
+                           "    schema:\n      fields:\n        - { name: region, type: string, required: true, partitioned: true }\n"
+                           "        - { name: total, type: long, required: true }\n")
+
+
+def write_report(frame):
+    with invaract.run("contract.yaml") as run:
+        invaract.write(frame, "report")
+    return run.run_id
+
+
+@pytest.mark.parametrize("mode, kept", [("dynamic", True), ("static", False)])
+def test_a_partitioned_object_storage_overwrite_replaces_the_written_partitions_or_all(s3, mode, kept):
+    put(s3, "out/report/region=north/old.parquet")
+    put(s3, "out/report/region=south/old.parquet")
+    partitioned(f"s3://{s3}/out/report", mode=mode)
+    run_id = write_report(NORTH)
+    expected = [f"out/report/region=north/part-{run_id}-00001-00001-0.parquet", "out/report/_SUCCESS"]
+    if kept:
+        expected.append("out/report/region=south/old.parquet")
+    assert keys(s3) == sorted(expected)
+
+
+def test_a_partitioned_object_storage_append_adds_to_the_folders(s3):
+    put(s3, "out/report/region=north/old.parquet")
+    partitioned(f"s3://{s3}/out/report", save_mode="append")
+    run_id = write_report(REPORT)
+    assert keys(s3) == sorted(["out/report/_SUCCESS", "out/report/region=north/old.parquet",
+                               f"out/report/region=north/part-{run_id}-00001-00001-0.parquet",
+                               f"out/report/region=south/part-{run_id}-00001-00001-0.parquet"])
+
+
+def test_a_partitioned_hdfs_dynamic_overwrite_renames_only_the_written_partitions_into_place(hdfs):
+    for region in ("north", "south"):
+        os.makedirs(hdfs / "warehouse" / "report" / f"region={region}")
+        pq.write_table(pa.table({"total": [1]}), hdfs / "warehouse" / "report" / f"region={region}" / "old.parquet")
+    partitioned("hdfs://namenode/warehouse/report", mode="dynamic")
+    run_id = write_report(NORTH)
+    assert hdfs_files(hdfs, "warehouse") == [f"warehouse/report/region=north/part-{run_id}-00001-00001-0.parquet",
+                                             "warehouse/report/region=south/old.parquet"]
+
+
+def test_a_partitioned_hdfs_append_and_static_overwrite(hdfs):
+    partitioned("hdfs://namenode/warehouse/report", save_mode="append")
+    first = write_report(REPORT)
+    second = write_report(NORTH)
+    assert hdfs_files(hdfs, "warehouse") == sorted([f"warehouse/report/region=north/part-{first}-00001-00001-0.parquet",
+                                                    f"warehouse/report/region=north/part-{second}-00001-00001-0.parquet",
+                                                    f"warehouse/report/region=south/part-{first}-00001-00001-0.parquet"])
+    partitioned("hdfs://namenode/warehouse/report")
+    third = write_report(NORTH)
+    assert hdfs_files(hdfs, "warehouse") == [f"warehouse/report/region=north/part-{third}-00001-00001-0.parquet"]
+
+
+def delta_partitions(location="data/out/report"):
+    return sorted((r["region"], r["total"]) for r in delta_rows(location)[0])
+
+
+def test_a_new_delta_table_is_created_partitioned_with_the_keys_out_of_its_files():
+    partitioned("data/out/report", fmt="delta")
+    write_report(REPORT)
+    table = deltalake.DeltaTable("data/out/report")
+    assert table.metadata().partition_columns == ["region"]
+    assert delta_partitions() == [("north", 10), ("south", 20)]
+    folders = sorted(f for f in os.listdir("data/out/report") if f.startswith("region="))
+    assert folders == ["region=north", "region=south"]
+    data_file = next(f for f in os.listdir("data/out/report/region=north") if f.endswith(".parquet"))
+    assert pq.ParquetFile(f"data/out/report/region=north/{data_file}").schema_arrow.names == ["total"]
+
+
+def test_a_partitioned_delta_static_overwrite_replaces_every_partition():
+    partitioned("data/out/report", fmt="delta")
+    write_report(REPORT)
+    write_report(NORTH)
+    assert delta_partitions() == [("north", 70)]
+
+
+def test_a_partitioned_delta_dynamic_overwrite_replaces_only_the_partitions_written_in_one_commit():
+    partitioned("data/out/report", fmt="delta", mode="dynamic")
+    write_report(REPORT)
+    version = deltalake.DeltaTable("data/out/report").version()
+    from deltalake import transaction
+
+    if not hasattr(transaction, "RemoveAction"):
+        with pytest.raises(invaract.CheckNotRun, match="RemoveAction"):
+            write_report(NORTH)
+        assert delta_partitions() == [("north", 10), ("south", 20)]
+        return
+    write_report(NORTH)
+    assert delta_partitions() == [("north", 70), ("south", 20)]
+    assert deltalake.DeltaTable("data/out/report").version() == version + 1
+
+
+def test_a_delta_table_partitioned_otherwise_than_the_write_is_not_checked_and_left_as_it_was():
+    existing_delta()
+    partitioned("data/out/report", fmt="delta")
+    with pytest.raises(invaract.CheckNotRun, match="is not partitioned, but the write is partitioned by region"):
+        write_report(NORTH)
+    assert delta_partitions() == [("west", 5)]
+
+
+def test_a_new_iceberg_table_is_partitioned_by_identity_on_the_keys(catalog):
+    partitioned(ICEBERG, fmt="iceberg")
+    write_report(REPORT)
+    table = catalog.load_table("sales.report")
+    assert [(table.schema().find_column_name(f.source_id), str(f.transform)) for f in table.spec().fields] == [("region", "identity")]
+    assert iceberg_rows(catalog)[0] == ["north", "south"]
+
+
+@pytest.mark.parametrize("mode, expected", [("dynamic", [("north", 70), ("south", 20)]), ("static", [("north", 70)])])
+def test_a_partitioned_iceberg_overwrite_replaces_the_written_partitions_or_all(catalog, mode, expected):
+    partitioned(ICEBERG, fmt="iceberg", mode=mode)
+    write_report(REPORT)
+    write_report(NORTH)
+    table = catalog.load_table("sales.report")
+    assert sorted((r["region"], r["total"]) for r in table.scan().to_arrow().to_pylist()) == expected
+
+
+def test_an_iceberg_table_partitioned_otherwise_than_the_write_is_not_checked(catalog):
+    existing_iceberg(catalog)
+    partitioned(ICEBERG, fmt="iceberg")
+    with pytest.raises(invaract.CheckNotRun, match="is not partitioned, but the write is partitioned by region"):
+        write_report(NORTH)
+    assert iceberg_rows(catalog)[0] == ["west"]

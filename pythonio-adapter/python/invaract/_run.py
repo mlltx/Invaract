@@ -108,12 +108,12 @@ class Run:
             self._ask({**request, "schema": []})
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
         fmt = declared.get("format") or fmt or _format_of(where)
-        table = _frames.read_table(where, fmt, declared.get("fields", []))
+        table = _frames.read_table(where, fmt, declared.get("fields", []), declared.get("partitionBy", []))
         nulls = {n: table.column(n).null_count for n in table.column_names}
         self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
         return _frames.as_frame(table, as_)
 
-    def write(self, frame, name, location, fmt, save_mode):
+    def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None):
         declared = self._declared("outputs", name)
         request = _with_location({"op": "write", "name": name}, location)
         described = _frames.stream(frame)
@@ -125,14 +125,21 @@ class Run:
         fmt = fmt or declared.get("format") or DEFAULT_FORMAT
         mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         where = location if self.dry_run else declared.get("location")
-        self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema)})
+        # the job's partitioning if it says one, else the contract's; what is reported is what is written
+        layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
+                               (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
+        self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
+                   "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite})
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()
         if fmt not in FORMATS or mode not in SAVE_MODES:
             raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
-        out = self._outputs.get(name) or self._outputs.setdefault(name, _output(where, fmt, mode, self.run_id))
+        out = self._outputs.get(name) or self._outputs.setdefault(name, _output(where, fmt, mode, self.run_id, layout))
+        if out.layout != layout:
+            raise CheckNotRun(f"invaract.write('{name}') is {layout.describe()}, but an earlier write of it in this run is "
+                              f"{out.layout.describe()}: one output has one layout")
         if out.mode == "error" and out.has_data():
             raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
         required = {f["name"] for f in declared.get("fields", []) if f.get("required")}
@@ -179,12 +186,12 @@ class Run:
             out.forget_previous()
 
 
-def _output(location, fmt, mode, run_id):
+def _output(location, fmt, mode, run_id, layout=_files.FLAT):
     if fmt == "delta":
-        return _tables.DeltaOutput(location, mode, run_id)
+        return _tables.DeltaOutput(location, mode, run_id, layout)
     if fmt == "iceberg":
-        return _tables.IcebergOutput(location, mode, run_id)
-    return _files.output(location, fmt, mode, run_id)
+        return _tables.IcebergOutput(location, mode, run_id, layout)
+    return _files.output(location, fmt, mode, run_id, layout)
 
 
 def _registered(location, fmt):

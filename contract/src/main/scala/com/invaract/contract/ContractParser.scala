@@ -133,6 +133,7 @@ object ContractParser {
     // input"), unlike an absent key ("derived from all of them"), so this
     // is written whenever it's defined, not only when non-empty.
     dataset.derivedFrom.foreach(names => m.put("derivedFrom", names.asJava))
+    dataset.partitionOverwriteMode.foreach(m.put("partitionOverwriteMode", _))
     m
   }
 
@@ -167,6 +168,8 @@ object ContractParser {
     if (field.sensitivityTags.nonEmpty) m.put("sensitivityTags", field.sensitivityTags.toList.sorted.asJava)
     if (field.properties.nonEmpty) m.put("properties", field.properties.map(fieldToJava).asJava)
     if (field.constraints.nonEmpty) m.put("constraints", field.constraints.map(fieldConstraintToJava).asJava)
+    if (field.partitioned) m.put("partitioned", Boolean.box(true))
+    field.partitionKeyPosition.foreach(p => m.put("partitionKeyPosition", Int.box(p)))
     m
   }
 
@@ -185,10 +188,10 @@ object ContractParser {
   }
 
   private val ContractKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions", "customRuleTypes")
-  private val DatasetKeys = Set("name", "location", "format", "saveMode", "catalog", "description", "type", "derivedFrom", "schema")
+  private val DatasetKeys = Set("name", "location", "format", "saveMode", "catalog", "description", "type", "derivedFrom", "schema", "partitionOverwriteMode")
   private val CatalogKeys = Set("required", "technology", "catalogName", "location", "namespace", "table")
   private val SchemaKeys = Set("fields")
-  private val FieldKeys = Set("name", "type", "required", "nullable", "sensitivityTags", "properties", "constraints")
+  private val FieldKeys = Set("name", "type", "required", "nullable", "sensitivityTags", "properties", "constraints", "partitioned", "partitionKeyPosition")
 
   /** Keys the Open Data Contract Standard defines that Invaract does not read. They are never reported as a typo of one
     * it does (ODCS's `roles` is not a misspelt `rules`). */
@@ -196,7 +199,7 @@ object ContractParser {
     "apiVersion", "kind", "tenant", "domain", "dataProduct", "servers", "team", "roles", "support", "price",
     "slaProperties", "slaDefaultElement", "tags", "customProperties", "contractCreatedTs", "authoritativeDefinitions",
     "quality", "physicalName", "physicalType", "logicalType", "logicalTypeOptions", "businessName", "title", "unique",
-    "primaryKey", "primaryKeyPosition", "partitioned", "partitionKeyPosition", "classification", "examples",
+    "primaryKey", "primaryKeyPosition", "classification", "examples",
     "criticalDataElement", "encryptedName", "transformSourceObjects", "transformLogic", "transformDescription",
     "dataGranularityDescription"
   )
@@ -295,7 +298,8 @@ object ContractParser {
     // No `schema` declares no columns: the dataset's content is not governed (a dead-letter folder of text lines, a log
     // export), and its columns are not checked. ContractValidator warns, so it is never mistaken for a schema left out.
     val schema = raw.get("schema").fold(Schema(Nil))(schemaRaw => parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema"))
-    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom)
+    val partitionOverwriteMode = optString(raw, "partitionOverwriteMode")
+    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom, partitionOverwriteMode)
   }
 
   /** Parses a dataset's optional `type:` key — a closed three-value enum
@@ -363,7 +367,14 @@ object ContractParser {
       case None        => Nil
     }
 
-    Field(name, fieldType, required, nullable, properties, sensitivityTags, constraints)
+    val partitioned = optBoolean(raw, "partitioned", context).getOrElse(false)
+    // ODCS writes -1 for a field that is not a partition key
+    val partitionKeyPosition = optValue(raw, "partitionKeyPosition").map {
+      case n: java.lang.Integer => n.intValue
+      case other                => throw new ContractParseException(s"Expected a whole number for '$context.partitionKeyPosition', got: $other")
+    }.filter(_ != -1)
+
+    Field(name, fieldType, required, nullable, properties, sensitivityTags, constraints, partitioned, partitionKeyPosition)
   }
 
   private def parseFieldConstraint(raw: Map[String, Any], context: String): FieldConstraint = {

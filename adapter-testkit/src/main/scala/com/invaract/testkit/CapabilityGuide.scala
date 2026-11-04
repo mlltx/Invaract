@@ -134,6 +134,11 @@ object CapabilityGuide {
         "Checks that a dataset the contract says must be catalog-registered is, in the catalog it names.",
         guide = "/guides/requiring-catalog-registration/"
       ),
+      CheckPartitioning -> e(
+        "Outputs are partitioned as declared",
+        "Checks that an output the contract says is partitioned (one folder or table partition per value of its partition keys) is written that way, by those keys in that order, and that an overwrite replaces partitions as the contract says: all of them, or only those written.",
+        guide = "/guides/partitioning-outputs/"
+      ),
       CheckRuntimeDataQuality -> e(
         "Written values meet their constraints",
         "Checks every row a job writes against the constraints its contract declares for the output's columns (a range, a set of allowed values, a length, a comparison with another column), before the output is published. Turned on with the `runtimeDataQuality` setting.",

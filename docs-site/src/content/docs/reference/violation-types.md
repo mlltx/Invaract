@@ -53,6 +53,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `ROLE_CONSISTENCY_VIOLATION` | the input | — | — | — |
 | `DATA_QUALITY_VIOLATION` | write | field | declared constraint / — | — |
 | `RUNTIME_DATA_QUALITY_VIOLATION` | write | field | declared constraint / failing rows, with example values | — |
+| `OUTPUT_PARTITIONING_MISMATCH` | write | — | declared partition keys or overwrite mode / the write's | — |
 | `RULE_*` | write | — | the rule's own columns / what the plan has | rule type |
 | `RULE_UNVERIFIABLE_DML` | write | — | — / operation kind | — |
 | `ORG_POLICY_VIOLATION` | dataset, when named | — | — | policy id |
@@ -81,6 +82,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match any of the contract's declared output locations. |
 | `OUTPUT_FORMAT_MISMATCH` | The write's actual format doesn't match the contract's declared format. Only checked when both are known. |
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |
+| `OUTPUT_PARTITIONING_MISMATCH` | The output declares partition keys (fields marked `partitioned`) and the write partitions by other columns, in another order, or not at all (`actual: none`); or an `overwrite` replaces partitions another way than the output's `partitionOverwriteMode` says (`expected: static overwrite`, `actual: dynamic overwrite`). Only checked when the engine reports how the write is partitioned. |
 | `MISSING_OUTPUT_FIELD` | A required output field is absent from the actual output schema. |
 | `UNDECLARED_OUTPUT_COLUMN` | The actual output schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
 | `OUTPUT_FIELD_TYPE_MISMATCH` | An output field's actual type doesn't match the contract's declared type — including the contents of an `array<...>`/`map<...>`/`struct<...>` type or a struct's `properties` (the violation's `column` is then a dotted path such as `address.zip`). |

@@ -1,0 +1,113 @@
+---
+title: Partition Outputs
+description: Declare how an output is partitioned, and what an overwrite of it replaces, so every write keeps the layout its readers rely on.
+sidebar:
+  order: 11.5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A partitioned dataset is laid out in one folder (or table partition) per value of its
+partition keys, Hive-style: `day=2026-11-04/region=north/part-....parquet`. Readers rely on
+that layout, both to read only the days they need and to find a day where they expect it.
+A contract can declare the layout, and Invaract then refuses a write that would break it:
+- a write by other keys, or by the same keys in another order;
+- a write with no partitions at all;
+- an overwrite that would replace more, or less, than the contract says.
+
+<Aside type="note" title="Python jobs">
+Python jobs that write through the `invaract` package are checked, and the package writes the layout itself.
+Spark and Beam don't check partitioning yet, so they refuse a contract that declares partition keys (`UNSUPPORTED_CONTRACT_FEATURE`)
+rather than let a write break the layout unseen. See [What Each Engine Checks](/reference/what-each-engine-checks/).
+</Aside>
+
+## Declare the partition keys
+
+Mark each key field `partitioned: true`, the Open Data Contract Standard's own key. When there
+is more than one key, `partitionKeyPosition` orders them, `1` first:
+
+```yaml
+outputs:
+  - name: revenue
+    location: data/out/revenue
+    format: parquet
+    partitionOverwriteMode: dynamic
+    schema:
+      fields:
+        - { name: day, type: date, required: true, partitioned: true, partitionKeyPosition: 1 }
+        - { name: region, type: string, required: true, partitioned: true, partitionKeyPosition: 2 }
+        - { name: total, type: long }
+```
+
+A key must be a top-level field of a scalar type, since its values name folders. Keys without a
+position come after those with one, in the order they are declared.
+
+## Choose what an overwrite replaces
+
+`partitionOverwriteMode` says what a write with save mode `overwrite` replaces. It takes
+Spark's two names:
+
+| Mode | An overwrite replaces | Use it when |
+|---|---|---|
+| `static` (the default) | every partition the output holds | each run writes the whole dataset |
+| `dynamic` | only the partitions the write puts data in; the rest stay as they are | each run writes one day, or one region, and re-running it must not touch the others |
+
+An `append` adds the run's files to their partitions whatever the mode.
+
+## Write it from a Python job
+
+The package writes the layout the contract declares. A job doesn't need to say it, but it can,
+with `partition_by` and `partition_overwrite`; the checker holds what it says to the contract:
+
+```python
+@invaract.job("contract.yaml")
+def main(day):
+    revenue = pd.DataFrame({"day": [day, day], "region": ["north", "south"], "total": [120, 40]})
+    invaract.write(revenue, "revenue")
+```
+
+Run for 2026-11-03, then 2026-11-04, then 2026-11-04 again (a re-run), the output holds both days.
+The re-run replaced only 2026-11-04's partitions:
+
+```
+data/out/revenue/day=2026-11-03/region=north/part-<run>-00001-00001-0.parquet
+data/out/revenue/day=2026-11-03/region=south/part-<run>-00001-00001-0.parquet
+data/out/revenue/day=2026-11-04/region=north/part-<run>-00001-00001-0.parquet
+data/out/revenue/day=2026-11-04/region=south/part-<run>-00001-00001-0.parquet
+```
+
+A write that partitions otherwise, here `invaract.write(revenue, "revenue", partition_by=["region"])`,
+is refused, and nothing is published:
+
+```
+invaract.errors.ContractViolation: Contract violation: 'daily_revenue@1.0.0' rejected this transformation. Write aborted.
+...
+  1. [OUTPUT_PARTITIONING_MISMATCH] contract declares the output partitioned by day, region but the write partitions by region
+```
+
+The keys stay in the folder names and out of the data files, as Spark writes them. An empty key
+value goes to the folder `__HIVE_DEFAULT_PARTITION__`. Reading a partitioned input with
+`invaract.read` gives its keys back as columns, typed as the contract declares them.
+
+### Where the output lives
+
+- **Files on a local or mounted disk, or HDFS.** A `dynamic` overwrite renames each partition
+  folder the run wrote into place. Each folder is replaced at once, but the output as a whole is
+  replaced folder by folder, not at once. A failure part way puts back the folders already replaced.
+- **Object storage** (S3, GCS, Azure). The run's files are copied in, then the old files of the
+  replaced partitions are deleted (all of them for `static`), and `_SUCCESS` is written last.
+- **Delta tables.** A new table is created partitioned by the keys. A `dynamic` overwrite adds the
+  new files and removes the replaced partitions' old ones in one commit. It needs a deltalake
+  release that has `deltalake.transaction.RemoveAction`; with an older one the write is not checked
+  and nothing is written.
+- **Iceberg tables.** A new table gets an identity partition on each key. A `dynamic` overwrite is
+  pyiceberg's `dynamic_partition_overwrite`, in one commit.
+
+A Delta or Iceberg table that already exists keeps its partitioning. A write laid out otherwise
+is not checked and nothing is written; partitioning by a column the table lacks is the same.
+
+## Related
+
+- [Contract format: dataset and field keys](/reference/contract-format/#dataset-fields-inputs--outputs)
+- [Violation types](/reference/violation-types/)
+- [Use Invaract with Python Jobs](/guides/using-invaract-with-python/)

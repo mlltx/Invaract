@@ -159,7 +159,8 @@ def main(job):
             # a table the package cannot describe: no Arrow stream
             invaract.write({"rows": tables[0].num_rows}, output["name"])
         else:
-            invaract.write(transform(job, tables), output["name"], format=output["format"], save_mode=output["saveMode"])
+            invaract.write(transform(job, tables), output["name"], format=output["format"], save_mode=output["saveMode"],
+                           partition_by=output.get("partitionBy", []), partition_overwrite=output.get("partitionOverwriteMode", "static"))
         read = {i["location"]: t for i, t in zip(job["inputs"], tables)}
         for extra in job["extraWrites"]:
             source = extra["input"]
