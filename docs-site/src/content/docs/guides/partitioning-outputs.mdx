@@ -106,6 +106,10 @@ value goes to the folder `__HIVE_DEFAULT_PARTITION__`. Reading a partitioned inp
 A Delta or Iceberg table that already exists keeps its partitioning. A write laid out otherwise
 is not checked and nothing is written; partitioning by a column the table lacks is the same.
 
+A PostgreSQL table is not written partitioned: a write with partition columns is not checked and
+nothing is written. Partitioning a PostgreSQL table is part of the table's own definition, which
+the run does not create.
+
 ## Related
 
 - [Contract format: dataset and field keys](/reference/contract-format/#dataset-fields-inputs--outputs)

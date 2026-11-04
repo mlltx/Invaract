@@ -12,7 +12,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _files, _frames, _tables
+from . import _checks, _files, _frames, _postgres, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -20,7 +20,8 @@ from .errors import CheckNotRun, ContractViolation
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
 #: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
 FILE_FORMATS = ("parquet", "csv")
-FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS
+#: Databases (``_postgres``): staged in a temporary table, moved into place in one transaction.
+FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS + (_postgres.FORMAT,)
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
 DEFAULT_FORMAT = "parquet"
@@ -122,9 +123,9 @@ class Run:
             self._ask({**request, "unverifiable": f"a {kind} offers no Arrow stream (__arrow_c_stream__)"})
             raise CheckNotRun(f"Invaract could not describe the table handed to invaract.write('{name}')")
         schema, batches = described
-        fmt = fmt or declared.get("format") or DEFAULT_FORMAT
-        mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         where = location if self.dry_run else declared.get("location")
+        fmt = fmt or declared.get("format") or (_postgres.FORMAT if _postgres.is_postgres(where) else DEFAULT_FORMAT)
+        mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
         layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
                                (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
@@ -187,6 +188,10 @@ class Run:
 
 
 def _output(location, fmt, mode, run_id, layout=_files.FLAT):
+    if fmt == _postgres.FORMAT:
+        if not _postgres.is_postgres(location):
+            raise CheckNotRun(f"Invaract writes jdbc only to PostgreSQL tables (postgresql://...), not {location}")
+        return _postgres.PostgresOutput(location, mode, run_id, layout)
     if fmt == "delta":
         return _tables.DeltaOutput(location, mode, run_id, layout)
     if fmt == "iceberg":
@@ -195,7 +200,9 @@ def _output(location, fmt, mode, run_id, layout=_files.FLAT):
 
 
 def _registered(location, fmt):
-    """The ``catalog`` a request carries for a catalog table (``_tables.catalog_of``), or nothing."""
+    """The ``catalog`` a request carries for a catalog table (``_tables.catalog_of``, ``_postgres.catalog_of``), or nothing."""
+    if (fmt or "").lower() == _postgres.FORMAT and _postgres.is_postgres(location):
+        return {"catalog": _postgres.catalog_of(location)}
     catalog = _tables.catalog_of(location, (fmt or "").lower())
     return {"catalog": catalog} if catalog else {}
 
@@ -205,6 +212,8 @@ def _with_location(request, location):
 
 
 def _format_of(location):
+    if _postgres.is_postgres(location):
+        return _postgres.FORMAT
     return "csv" if os.fspath(location).lower().endswith(".csv") else DEFAULT_FORMAT
 
 

@@ -1,0 +1,13 @@
+id: orders_report
+version: "1.0.0"
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: postgresql://db.internal:5432/sales/finance.report
+    format: jdbc
+    saveMode: overwrite
+    catalog: { required: true, technology: jdbc, catalogName: sales, namespace: [finance], table: report }
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total, type: long }

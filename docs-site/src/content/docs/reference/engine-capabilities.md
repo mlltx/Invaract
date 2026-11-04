@@ -199,7 +199,7 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 
 ### pythonio
 
-- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV files (local, HDFS, object storage) and Delta and Iceberg tables.
+- `read.batch` — supported: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV files (local, HDFS, object storage), Delta and Iceberg tables, and PostgreSQL tables (format jdbc).
 - `read.streaming` — unsupported: The package reads whole datasets (files and tables); there is no streaming read in it.
 - `write.batch` — supported: Writes go through invaract.write by the output's declared name; the table's columns are read from the data frame (Arrow).
 - `write.streaming` — unsupported: The package writes whole datasets; there is no streaming write in it.
@@ -209,10 +209,10 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 - `check.location` — supported: The package writes to the location the contract declares for the output it names, so the location is the contract's own.
 - `check.outputsWritten` — supported: The checker records each output written and, when the run finishes, refuses one that never wrote a declared output.
 - `check.schema` — supported: The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the staged data holds (decision 3), not against the frame library's nullable flag.
-- `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
+- `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta, Iceberg, or jdbc for a PostgreSQL table) and says which.
 - `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
 - `check.partitioning` — partial: The package writes Hive-style folders (Parquet, CSV) or the table's own partitioning (Delta, Iceberg) and reports the columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.
-- `check.catalogRegistration` — partial: An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials). Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
+- `check.catalogRegistration` — partial: An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials). A PostgreSQL table is in the jdbc catalog under its database, schema and table. Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
 - `check.runtimeDataQuality` — partial: The package evaluates each constraint (equals, oneOf, range, length, fieldRange) on the data it stages and reports how many rows broke it; a run with any is refused and publishes nothing. Only top-level fields are checked.
 - `rules.dml` — not-applicable: No row-level MERGE, UPDATE or DELETE exists to judge.
 - `rules.planShape` — unsupported: The transformation is the team's own pandas, Polars or DuckDB code; the checker sees only reads and writes.

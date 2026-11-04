@@ -17,6 +17,8 @@ polars = ["polars>=1.0"]
 # Delta Lake and Iceberg tables (milestone 6); an Iceberg catalog's own extra comes from pyiceberg (pyiceberg[glue], ...)
 delta = ["deltalake>=1.0"]
 iceberg = ["pyiceberg[pyarrow]>=0.9"]
+# PostgreSQL tables, through ADBC (bulk COPY in and Arrow out)
+postgres = ["adbc-driver-postgresql>=1.2", "adbc-driver-manager>=1.2"]
 
 [project.urls]
 Homepage = "https://github.com/mlltx/Invaract"

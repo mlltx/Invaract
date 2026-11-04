@@ -122,6 +122,10 @@ def read_table(location, fmt, fields, partition_by=()):
     from . import _storage, _tables
 
     declared = [f["name"] for f in fields]
+    if fmt == "jdbc":
+        from . import _postgres
+
+        return _postgres.read(location, fields)
     if fmt == "delta":
         return _tables.read_delta(location, declared)
     if fmt == "iceberg":
