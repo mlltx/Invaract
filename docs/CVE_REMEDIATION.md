@@ -2127,6 +2127,23 @@ exercised directly, not just a version-number check. `npm run build`:
 succeeds, same four-route output as before (`/`, `/_not-found`,
 `/api/report`).
 
+**Confirmed again after a merge conflict, against a real-world case of
+the exact failure mode this section tested and ruled out.** While this
+PR was open, an unrelated automated Dependabot PR (#196) bumped `web`'s
+`eslint` to `^10.14.0` on its own and merged — precisely the bump this
+section already tried and reverted, because it doesn't clear the alert
+by itself. Confirmed directly against the merged result: `main` after
+#196 still resolved `minimatch` to `10.2.6` at the top level *and* a
+second, still-`3.1.5` copy nested under `eslint-config-next` — the exact
+two-part failure described above, now actually live rather than just
+tested in isolation. Merging `main` into this branch and resolving the
+conflict (`eslint` stays at the now-merged `^10.14.0`; this branch's
+`overrides` entry carries over) and regenerating the lockfile from
+scratch produced a single `minimatch@11.0.4` with no duplicate `eslint`
+copy this time — re-verified with the same three checks (`npm audit`: 0
+vulnerabilities; `npm run lint`: exit 0; `npm run build`: same four
+routes).
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
