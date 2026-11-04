@@ -1,0 +1,18 @@
+id: lake_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: lake.sales.orders
+    format: iceberg
+    catalog: { required: true, technology: iceberg, catalogName: lake, namespace: [sales] }
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: lake.sales.report
+    format: iceberg
+    saveMode: append
+    catalog: { required: true, technology: iceberg, catalogName: lake, namespace: [sales], table: report }
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }

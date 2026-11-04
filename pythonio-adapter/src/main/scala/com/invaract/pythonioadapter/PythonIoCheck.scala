@@ -5,9 +5,9 @@ package com.invaract.pythonioadapter
 
 import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalSchema}
 import com.invaract.ir
-import com.invaract.ir.{DatasetRef, UnknownPlan}
+import com.invaract.ir.{CatalogIdentity, DatasetRef, UnknownPlan}
 import com.invaract.verification.{
-  AttachPlan, AttachSetup, CheckedWrite, ContractInference, ContractViolationException, DryRunReporting, DryRunSelfCheck, InferredWrite,
+  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, ContractInference, ContractViolationException, DryRunReporting, DryRunSelfCheck, InferredWrite,
   LocationMatching, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup, Violations
 }
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationJson, NotificationSink}
@@ -71,6 +71,8 @@ private[pythonioadapter] final class Run {
 
   private var state: State = NotOpen
   private var reads = Vector.empty[(String, LogicalSchema)]
+  /** The catalog each location read is registered in, where it is a catalog table. */
+  private var readCatalogs = Map.empty[String, CatalogIdentity]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
   private var drafts = Vector.empty[(String, Option[Contract])]
@@ -134,12 +136,15 @@ private[pythonioadapter] final class Run {
     run.contract.foreach { c =>
       val violations = c.inputs.find(_.name == r.name) match {
         case Some(input) if !LocationMatching.matches(input.location, location) => List(Violations.undeclaredInput(location))
-        case Some(input) => SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true)
-        case None        => List(Violations.undeclaredInput(r.name))
+        case Some(input) =>
+          SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true) ++
+            input.catalog.toList.flatMap(CatalogChecker.check(_, r.catalog, location, SchemaChecker.Side.Input))
+        case None => List(Violations.undeclaredInput(r.name))
       }
-      if (violations.nonEmpty) reject(c, VerificationResult.of(s"${c.id}@${c.version}", violations), ir.Read(DatasetRef(location)), run)
+      if (violations.nonEmpty) reject(c, VerificationResult.of(s"${c.id}@${c.version}", violations), ir.Read(DatasetRef(location), catalog = r.catalog), run)
     }
     reads = reads.filterNot(_._1 == location) :+ (location -> schema)
+    readCatalogs = r.catalog.fold(readCatalogs - location)(registered => readCatalogs + (location -> registered))
     Map("ok" -> true)
   }
 
@@ -214,7 +219,13 @@ private[pythonioadapter] final class Run {
 
   /** The write as the checker sees it: what the run has read, then the team's own code, then the write. */
   private def writePlan(location: String, w: Request.Write): ir.Write =
-    ir.Write(DatasetRef(location), UnknownPlan(PythonIoCheck.JobCode, "Python", reads.toList.map(r => ir.Read(DatasetRef(r._1)))), w.format, w.saveMode)
+    ir.Write(
+      DatasetRef(location),
+      UnknownPlan(PythonIoCheck.JobCode, "Python", reads.toList.map(r => ir.Read(DatasetRef(r._1), catalog = readCatalogs.get(r._1)))),
+      w.format,
+      w.saveMode,
+      w.catalog
+    )
 
   private def checkedWrite(plan: ir.Write, schema: LogicalSchema): CheckedWrite =
     CheckedWrite(plan, reads.toList, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty)

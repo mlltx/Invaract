@@ -4,6 +4,7 @@
 package com.invaract.pythonioadapter
 
 import com.invaract.contract.{LogicalField, LogicalType}
+import com.invaract.ir.CatalogIdentity
 import com.invaract.verification.{ArrowSchemas, ConfigSource, InvaractConf}
 import org.yaml.snakeyaml.{LoaderOptions, Yaml}
 import org.yaml.snakeyaml.constructor.SafeConstructor
@@ -23,19 +24,22 @@ private[pythonioadapter] object Request {
   final case class Open(settings: Map[String, String], job: JobDetails) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
-    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. */
-  final case class Read(name: String, location: Option[String], schema: List[Column]) extends Request
+    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `catalog` is the
+    * catalog the dataset is registered in, when it is a catalog table (an Iceberg table names its catalog and namespace). */
+  final case class Read(name: String, location: Option[String], schema: List[Column], catalog: Option[CatalogIdentity] = None) extends Request
 
   /** A table the job hands to `invaract.write`, described before any of it is staged: the output's name, the format and save
     * mode the package writes, and the table's columns. `unverifiable` says why the package could not describe the table (it
-    * offers no Arrow stream), and replaces the rest. `location` is the job's own only in dry-run mode. */
+    * offers no Arrow stream), and replaces the rest. `location` is the job's own only in dry-run mode. `catalog` is the catalog
+    * the output is registered in, as for `Read`. */
   final case class Write(
       name: String,
       location: Option[String],
       format: Option[String],
       saveMode: Option[String],
       schema: List[Column],
-      unverifiable: Option[String]
+      unverifiable: Option[String],
+      catalog: Option[CatalogIdentity] = None
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
@@ -95,13 +99,32 @@ private[pythonioadapter] object Requests {
     for {
       name <- text(m, "name").toRight("a read must name the input it reads")
       schema <- columns(m.get("schema"), s"the read of '$name'")
-    } yield Request.Read(name, text(m, "location"), schema)
+      registered <- catalog(m.get("catalog"), s"the read of '$name'")
+    } yield Request.Read(name, text(m, "location"), schema, registered)
 
   private def write(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a write must name the output it writes")
       schema <- columns(m.get("schema"), s"the write of '$name'")
-    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"))
+      registered <- catalog(m.get("catalog"), s"the write of '$name'")
+    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered)
+
+  /** A catalog registration as `{"technology": ..., "catalogName": ..., "namespace": [...], "table": ...}`, each part optional. */
+  private def catalog(value: Option[AnyRef], what: String): Either[String, Option[CatalogIdentity]] =
+    value match {
+      case None => Right(None)
+      case Some(c: JMap[_, _]) =>
+        val m = asMap(c)
+        val parts = m.get("namespace") match {
+          case None | Some(_: JList[_]) => Right(list(m.get("namespace")))
+          case Some(other)              => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
+        }
+        parts.flatMap(traverse(_) {
+          case part: String => Right(part)
+          case other        => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
+        }).map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
+      case Some(other) => Left(s"the catalog of $what must be a JSON object, not '$other'")
+    }
 
   private def written(m: Map[String, AnyRef]): Either[String, Request] =
     for {

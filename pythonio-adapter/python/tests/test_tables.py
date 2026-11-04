@@ -542,3 +542,61 @@ def test_a_refused_run_leaves_hdfs_as_it_was(hdfs):
             invaract.write(REPORT, "report")
             invaract.write(pd.DataFrame({"region": [None], "total": [1]}), "report")
     assert os.listdir(hdfs / "warehouse") == []
+
+
+# ---- catalog registration: an Iceberg table names its catalog, namespace and table -------------------------------------
+
+def registered(text, catalog):
+    """A contract dataset (``output()``'s text, or an input's) with a ``catalog:`` requirement."""
+    return text + f"    catalog: {catalog}\n"
+
+
+@pytest.mark.parametrize("location,fmt,expected", [
+    ("lake.sales.report", "iceberg", {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}),
+    ("lake.a.b.report", "iceberg", {"technology": "iceberg", "catalogName": "lake", "namespace": ["a", "b"], "table": "report"}),
+    ("lake.report", "iceberg", None), ("lake.sales.report", "parquet", None), ("data/out/report", "delta", None),
+    (None, "iceberg", None),
+])
+def test_the_catalog_a_dataset_is_registered_in(location, fmt, expected):
+    from invaract import _tables
+
+    assert _tables.catalog_of(location, fmt) == expected
+
+
+def test_an_iceberg_output_in_the_catalog_the_contract_requires_is_published(catalog):
+    write_contract(outputs=registered(output(location=ICEBERG, fmt="iceberg"),
+                                      "{ required: true, technology: iceberg, catalogName: lake, namespace: [sales], table: report }"))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    assert iceberg_rows(catalog)[0] == ["north", "south"]
+
+
+def test_an_iceberg_output_in_another_catalog_than_the_contract_requires_is_refused(catalog):
+    write_contract(outputs=registered(output(location=ICEBERG, fmt="iceberg"), "{ required: true, catalogName: warehouse }"))
+    with pytest.raises(invaract.ContractViolation) as refused:
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert refused.value.violations == ["OUTPUT_CATALOG_MISMATCH"]
+    assert "catalogName (expected 'warehouse', actual 'lake')" in str(refused.value)
+    assert not catalog.table_exists("sales.report")
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "delta"])
+def test_an_output_named_by_its_path_is_not_registered_in_any_catalog(fmt):
+    write_contract(outputs=registered(output(fmt=fmt), "{ required: true }"))
+    with pytest.raises(invaract.ContractViolation) as refused:
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert refused.value.violations == ["MISSING_OUTPUT_CATALOG_REGISTRATION"]
+    assert not os.path.exists("data/out/report") or os.listdir("data/out/report") == []
+
+
+def test_an_iceberg_input_in_another_namespace_than_the_contract_requires_is_refused_at_its_read(catalog):
+    existing_iceberg(catalog)
+    write_contract(inputs=registered(f"  - name: orders\n    location: {ICEBERG}\n    format: iceberg\n", "{ required: true, namespace: [staging] }"),
+                   outputs=output())
+    with pytest.raises(invaract.ContractViolation) as refused:
+        with invaract.run("contract.yaml"):
+            invaract.read("orders")
+    assert refused.value.violations == ["INPUT_CATALOG_MISMATCH"]
+    assert "namespace (expected 'staging', actual 'sales')" in str(refused.value)

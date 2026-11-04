@@ -107,9 +107,10 @@ class Run:
             # a name the contract does not declare, or a dry run with nowhere to read: the checker refuses it
             self._ask({**request, "schema": []})
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
-        table = _frames.read_table(where, declared.get("format") or fmt or _format_of(where), declared.get("fields", []))
+        fmt = declared.get("format") or fmt or _format_of(where)
+        table = _frames.read_table(where, fmt, declared.get("fields", []))
         nulls = {n: table.column(n).null_count for n in table.column_names}
-        self._ask({**request, "schema": _frames.describe(table.schema, nulls)})
+        self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
         return _frames.as_frame(table, as_)
 
     def write(self, frame, name, location, fmt, save_mode):
@@ -123,8 +124,8 @@ class Run:
         schema, batches = described
         fmt = fmt or declared.get("format") or DEFAULT_FORMAT
         mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
-        self._ask({**request, "format": fmt, "saveMode": mode, "schema": _frames.describe(schema)})
         where = location if self.dry_run else declared.get("location")
+        self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema)})
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()
@@ -182,6 +183,12 @@ def _output(location, fmt, mode, run_id):
     if fmt == "iceberg":
         return _tables.IcebergOutput(location, mode, run_id)
     return _files.output(location, fmt, mode, run_id)
+
+
+def _registered(location, fmt):
+    """The ``catalog`` a request carries for a catalog table (``_tables.catalog_of``), or nothing."""
+    catalog = _tables.catalog_of(location, (fmt or "").lower())
+    return {"catalog": catalog} if catalog else {}
 
 
 def _with_location(request, location):

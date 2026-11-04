@@ -73,9 +73,12 @@ capabilities:
     status: supported
     note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
   check.catalogRegistration:
-    status: unsupported
-    summary: Python jobs write files; registering an output in a catalog is not checked yet.
-    note: The first version writes files on local or mounted storage only; catalogs come with Delta and Iceberg (milestone 6).
+    status: partial
+    summary: "Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met."
+    note: >-
+      An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and
+      write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials).
+      Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
   rules.dml:
     status: not-applicable
     summary: The invaract package has no row-level changes, so there are no row-level rules to apply.

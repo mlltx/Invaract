@@ -53,8 +53,8 @@ holds, where the data has been seen.
 | Request | The checker | Reply |
 |---|---|---|
 | `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
-| `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and records the read for every later write | `{"ok": true}` |
-| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
+| `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read for every later write | `{"ok": true}` |
+| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
 | `{"op": "written", "name": "report", "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
 | `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
@@ -69,6 +69,13 @@ is refused before the job spends time staging it. Whether a required column hold
 has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so Arrow's flag
 cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a refusal; the
 `written` check is the verdict on the whole write.
+
+**`catalog`.** A read or write of a catalog table also carries the catalog it is registered in:
+`"catalog": {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}`, which the package
+sends for an Iceberg dataset (its location, `<catalog>.<namespace>.<table>`, names them). The checker puts it on the plan's
+read or write, where the contract's `catalog:` requirement is checked as on every engine (`catalog-*` cases). Files and Delta
+tables, named by their path, carry none, so a requirement on them is never met. The catalog service's own address is not sent,
+since a catalog URI can hold credentials.
 
 **`location` with a contract in force.** A job migrated from a dry run may still say where it reads and writes
 (`location=`). The checker then checks that location like any other, so an argument left behind cannot point a read or a write
@@ -133,7 +140,7 @@ rather than by investigating someone else's code.
 | 2 | What is knowable at that point: reads, writes, schema, plan, parameters? | Every read and write by its declared name, each write's format, save mode and Arrow schema (with null counts), the read inputs' schemas. Not the transformation: the job's own code is opaque (`UnknownPlan`) | design section 4; sink records survey, probes 12 to 14 |
 | 3 | How could a platform attach this to a job it does not own (the engine's own configuration surface)? | Settings are `INVARACT_*` environment variables, forwarded to `open` by their neutral names; adopting the package is a one-time code change by design (`config.zeroCodeInstall` unsupported) | `PythonIoConfigSource`; the `location-refs`, `org-policy-*` and `notifications*` cases |
 | 4 | How are datasets named, and how do they convert to the canonical `/`-separated location? | By the contract's own names; the location is the contract's, resolved through `INVARACT_LOCATION_MAP` for `ref://`. A name the contract does not declare stands for itself and lands on no declared output | `PythonIoCheck.write`; the `undeclared-output-refused` case |
-| 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet` and `csv`, written by the package itself; no catalog in the first version | design decision 4 |
+| 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet`, `csv`, `delta` and `iceberg`, written by the package itself; the `iceberg` catalog technology for Iceberg tables (milestone 6 and after) | design decision 4 |
 | 6 | What are its write dispositions, and their defaults per operation? | All four of `SaveModes`, from the contract: `overwrite` (the folder replaced at publish), `append` (files named after the run added), `error` (refused if the output holds data), `ignore` (nothing published if it does). With none declared, `overwrite`, as the pandas and Polars calls it replaces do | `invaract/_run.py`; `test_run.py`'s save-mode tests |
 | 7 | How do its types map to `LogicalType` (including the ones with no equivalent)? | The package sends each column's Arrow type as pyarrow names it; the checker maps it with the shared `ArrowSchemas` (verification-core), keeps a type with no equivalent as itself, and refuses a request whose type is not an Arrow type name ("Type mapping" below) | `Requests.columns`; `ArrowSchemasSpec`; the `arrow-type-*` and `protocol-misuse` cases |
 | 8 | What does nullability mean, per field and per table kind? | A column is not nullable when the written data has no empty value (counted batch by batch and sent with `written`), and the file is written `not null` (design decision 3); with no count, Arrow's flag stands | design decision 3; the `required-column-*` cases |
@@ -164,7 +171,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `check.nestedTypes` | supported | `nested-type-matches`, `nested-type-mismatch`; the `nested-type-refused` case |
 | `check.format` | supported | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | supported | `output-save-mode-matches`, `output-save-mode-mismatch` |
-| `check.catalogRegistration` | unsupported | the catalog scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE` |
+| `check.catalogRegistration` | partial | Iceberg tables only: the catalog scenarios run through both conformance adapters (the registered output written as an Iceberg table, the unregistered one as files), and the `catalog-*` protocol cases |
 | `rules.dml` | not-applicable | the note: no row-level changes |
 | `rules.planShape` | unsupported | the plan-shape scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE` |
 | `rules.custom` | unsupported | the note: custom rules judge a plan the checker does not have |
@@ -216,6 +223,7 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A Parquet or CSV output on HDFS, each save mode; a refused run | ✅ covered through pyarrow's file-system interface (a local file system stands in for HDFS) | `test_an_hdfs_*`, `test_a_refused_run_leaves_hdfs_as_it_was` |
 | A Parquet or CSV output on a file system Invaract does not know (`ftp://`, ...) | 🚫 fails closed: `CheckNotRun`, nothing written anywhere | `test_a_location_on_a_file_system_invaract_does_not_know_is_refused_not_written_locally` |
 | A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
+| An input or output whose contract declares a `catalog:` requirement | ✅ covered for Iceberg (catalog, namespace and table checked); 🚫 fails closed for files and Delta tables (`MISSING_*_CATALOG_REGISTRATION`) | the `catalog-*` and `input-catalog-mismatch-refused` cases; `test_tables.py`'s catalog tests |
 | Google Cloud Storage, Azure and a real HDFS cluster | ❓ not investigated: the same libraries' code paths, with no emulator or cluster in CI yet | none |
 | A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
