@@ -7,8 +7,9 @@ import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalSchema}
 import com.invaract.ir
 import com.invaract.ir.{CatalogIdentity, DatasetRef, UnknownPlan}
 import com.invaract.verification.{
-  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, ContractInference, ContractViolationException, DryRunReporting, DryRunSelfCheck, InferredWrite,
-  LocationMatching, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup, Violations
+  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, ContractInference, ContractViolationException, DataCheckResult, DryRunReporting, DryRunSelfCheck,
+  InferredWrite, LocationMatching, RuntimeDataQuality, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult,
+  VerificationSetup, Violations
 }
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationJson, NotificationSink}
 import org.slf4j.LoggerFactory
@@ -24,7 +25,7 @@ import scala.util.control.NonFatal
   * {"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}}
   * {"op": "read", "name": "orders", "schema": [{"name": "id", "type": "int64", "nullable": true, "nulls": 0}]}
   * {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "total", "type": "int64"}]}
-  * {"op": "written", "name": "report", "nulls": {"total": 0}}
+  * {"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [{"failed": 0, "examples": []}]}
   * {"op": "finish", "completed": true}
   * }}}
   *
@@ -124,7 +125,7 @@ private[pythonioadapter] final class Run {
     // a contract that asks for something this adapter cannot check is refused before the job's code runs
     PythonIoCapabilities.declared.foreach(VerificationPipeline.requireSupported(contract, options, _, JobPlan, sink, job.runId, Some(job)))
     state = Opened(Some(contract), options, sink, job)
-    Map("ok" -> true, "mode" -> EnforceMode, "contract" -> describe(contract))
+    Map("ok" -> true, "mode" -> EnforceMode, "contract" -> describe(contract, options))
   }
 
   /** A read: in enforcement, of a declared input (the package has no location for any other name, so any other is refused
@@ -180,7 +181,8 @@ private[pythonioadapter] final class Run {
     val plan = writePlan(location, w)
     run.contract match {
       case Some(c) =>
-        VerificationPipeline.verifyWrite(c, checkedWrite(plan, schema), run.options, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
+        val found = dataChecks(c, w.name, s, run.options)
+        VerificationPipeline.verifyWrite(c, checkedWrite(plan, schema).copy(dataChecks = found), run.options, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
       case None => infer(location, w, plan, schema, run)
     }
     written :+= location
@@ -215,6 +217,18 @@ private[pythonioadapter] final class Run {
     run.contract match {
       case None    => location.getOrElse(throw new IllegalArgumentException(s"a dry-run $verb of '$name' must say where it ${verb}s (location)"))
       case Some(c) => location.getOrElse(declared(c).find(_.name == name).fold(name)(_.location))
+    }
+
+  /** What the package found in the staged data, matched to the checks `open` sent it for the output named `name`: none unless
+    * `runtimeDataQuality` is on. A package that reports a different number of checks than it was sent has not checked what
+    * the contract asks, so the write is not checked (and so not published). */
+  private def dataChecks(c: Contract, name: String, s: Request.Written, options: VerificationOptions): List[DataCheckResult] =
+    if (!options.runtimeDataQuality) Nil
+    else {
+      val checks = c.outputs.find(_.name == name).toList.flatMap(RuntimeDataQuality.checks)
+      if (s.checks.size != checks.size)
+        throw new IllegalArgumentException(s"the package reported ${s.checks.size} data check(s) for '$name', but its contract declares ${checks.size}")
+      checks.zip(s.checks).map { case (check, f) => DataCheckResult(check, f.failed, f.examples.take(RuntimeDataQuality.MaxExamples)) }
     }
 
   /** The write as the checker sees it: what the run has read, then the team's own code, then the write. */
@@ -285,13 +299,15 @@ private[pythonioadapter] object Run {
       "Hand invaract.write a table that offers an Arrow stream (a pandas, Polars or DuckDB frame, or a pyarrow table)."
     )
 
-  /** What the package needs from the contract: where each dataset is, and what each output must look like. */
-  def describe(c: Contract): Map[String, Any] =
+  /** What the package needs from the contract: where each dataset is, and what each output must look like; with
+    * `runtimeDataQuality` on, also each output's data checks (`RuntimeDataQuality.checks`), which the package evaluates on the
+    * data it stages and reports, in the same order, with `written`. */
+  def describe(c: Contract, options: VerificationOptions = VerificationOptions()): Map[String, Any] =
     Map(
       "id" -> c.id,
       "version" -> c.version,
       "inputs" -> c.inputs.map(dataset),
-      "outputs" -> c.outputs.map(dataset)
+      "outputs" -> c.outputs.map(o => dataset(o) ++ (if (options.runtimeDataQuality) Map("checks" -> RuntimeDataQuality.checks(o).map(_.toMap)) else Map.empty))
     )
 
   /** A dataset's name, location, format and save mode, and its declared columns: an input's are the ones the package reads, with

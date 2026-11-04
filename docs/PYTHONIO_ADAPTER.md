@@ -52,11 +52,11 @@ holds, where the data has been seen.
 
 | Request | The checker | Reply |
 |---|---|---|
-| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
+| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties) | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
 | `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read for every later write | `{"ok": true}` |
 | `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...]}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
-| `{"op": "written", "name": "report", "nulls": {"total": 0}}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event | `{"ok": true}` |
+| `{"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [...]}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event; with `runtimeDataQuality` on, `checks` holds what the package found for each of the output's data checks, in the order `open` sent them (`{"failed": 2, "examples": ["-3"]}`), and a check with failing rows is refused (`RUNTIME_DATA_QUALITY_VIOLATION`); a package that reports a different number of checks is not checked | `{"ok": true}` |
 | `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
 
 A refusal is `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`. A request the checker cannot check
@@ -172,6 +172,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `check.format` | supported | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | supported | `output-save-mode-matches`, `output-save-mode-mismatch` |
 | `check.catalogRegistration` | partial | Iceberg tables only: the catalog scenarios run through both conformance adapters (the registered output written as an Iceberg table, the unregistered one as files), and the `catalog-*` protocol cases |
+| `check.runtimeDataQuality` | partial | top-level fields only: the package evaluates every check on the batches it stages (`invaract/_checks.py`, `tests/test_checks.py`, on the oldest and newest pyarrow); the runtime data-quality scenarios run through both conformance adapters (the package one with the scenario's own rows), and the `runtime-data-quality-*` protocol cases |
 | `rules.dml` | not-applicable | the note: no row-level changes |
 | `rules.planShape` | unsupported | the plan-shape scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE` |
 | `rules.custom` | unsupported | the note: custom rules judge a plan the checker does not have |

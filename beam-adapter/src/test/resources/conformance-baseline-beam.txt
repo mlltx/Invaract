@@ -33,6 +33,8 @@ role-source-contributing-conforms
 static-data-quality-cannot-prove-a-passthrough
 static-data-quality-proves-a-constant
 static-data-quality-violation-blocks
+runtime-data-quality-passes
+runtime-data-quality-violation-blocks
 streaming-write-is-checked-like-a-batch-write
 streaming-write-to-the-wrong-location
 undeclared-input-rejected

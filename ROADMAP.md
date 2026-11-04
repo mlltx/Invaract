@@ -4029,8 +4029,11 @@ Extend verification engine to support multiple execution engines.
   - [x] Catalog registration (`check.catalogRegistration`, partial): an Iceberg table reports the catalog, namespace and
         table it is registered in, checked against a contract's `catalog:` requirement on reads and writes; files and
         Delta tables, named by their path, are unregistered. The catalog URI is not sent (it can hold credentials)
-  - [ ] Runtime data constraints, a new engine-neutral capability every adapter declares; partitioned outputs; database
-        outputs (Postgres first)
+  - [x] Runtime data quality (`check.runtimeDataQuality`, a new engine-neutral capability every adapter declares; opt-in
+        `runtimeDataQuality`): every row a job writes is held to its outputs' declared constraints before anything is
+        published, evaluated by the package with Arrow compute. Partial: top-level fields. Spark and Beam declare it
+        unsupported (they check before rows exist) and refuse constrained outputs when it is on
+  - [ ] Partitioned outputs; database outputs (Postgres first)
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

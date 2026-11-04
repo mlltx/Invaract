@@ -409,6 +409,17 @@ NotStaticallyVerifiable}`. Only `Violated` becomes a real `Violation`
 on their own; the load-bearing principle is that an *absence* of proof
 must never look like a failure to a caller only checking `passed`.
 
+**Not the runtime check.** `VerificationOptions.runtimeDataQuality`
+(`spark.invaract.runtimeDataQuality`, capability `check.runtimeDataQuality`)
+holds the *rows* a write puts in an output to the same constraints, which
+needs an adapter that sees the data before it is published. This one judges
+a write's plan before any row exists, so it declares that capability
+unsupported: with the flag on, a contract whose outputs declare constraints
+is refused (`UNSUPPORTED_CONTRACT_FEATURE`) rather than passed unchecked.
+A check inside the write itself (an assertion projected into the plan, the
+way Delta's CHECK constraints are enforced) would be the route to supporting
+it; it is not built.
+
 **Opt-in, off by default**: `VerificationOptions.staticDataQuality`
 (fourth flag alongside `rejectUndeclaredInputs`/`rejectUndeclaredFields`/
 `computeFingerprint`), attachable purely via `spark-submit --conf

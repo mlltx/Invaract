@@ -12,7 +12,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _files, _frames, _tables
+from . import _checks, _files, _frames, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -136,8 +136,10 @@ class Run:
         if out.mode == "error" and out.has_data():
             raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
         required = {f["name"] for f in declared.get("fields", []) if f.get("required")}
-        nulls = out.stage(schema, batches, required)
-        self._ask({"op": "written", "name": name, "nulls": nulls})
+        # with runtimeDataQuality on, the checker sent this output's data checks: each batch is evaluated as it is staged
+        checks = _checks.Evaluation(declared["checks"]) if "checks" in declared else None
+        nulls = out.stage(schema, checks.observe(batches) if checks else batches, required)
+        self._ask({"op": "written", "name": name, "nulls": nulls, **({"checks": checks.results()} if checks else {})})
 
     # talking to the checker
 

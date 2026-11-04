@@ -44,6 +44,8 @@ fingerprint-flags-a-generated-id
 static-data-quality-proves-a-constant
 static-data-quality-cannot-prove-a-passthrough
 static-data-quality-violation-blocks
+runtime-data-quality-passes
+runtime-data-quality-violation-blocks
 role-source-contributing-conforms
 role-control-contributing-contradicts
 lineage-passthrough-cast-and-constant

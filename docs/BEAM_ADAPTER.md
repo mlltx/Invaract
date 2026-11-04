@@ -76,6 +76,7 @@ backing is not allowed.
 | `check.format` | partial | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | partial | `output-save-mode-matches`, `output-save-mode-mismatch` (written as BigQuery writes to Beam's in-memory BigQuery); BeamCheckSpec for the refusal of a declared save mode on a write that states none |
 | `check.catalogRegistration` | partial | `catalog-required-output-unregistered` (a file write), `catalog-required-output-registered` (a BigQuery table); BeamIOSpec for a BigQuery read's catalog identity |
+| `check.runtimeDataQuality` | unsupported | `runtime-data-quality-passes`, `runtime-data-quality-violation-blocks` conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: the pipeline is checked before it runs, when no element exists |
 | `rules.dml` | not-applicable | not applicable: no row-level DML |
 | `rules.planShape` | partial | `required-filter-column-present`, `required-filter-column-missing`, `forbid-cross-join-allows-a-keyed-join`, `forbid-cross-join-blocks-a-cartesian-product`, `required-join-columns-present`, `required-join-columns-missing`, `required-group-by-present`, `required-group-by-wrong-keys` (the kit's jobs use Beam's schema `Filter`, `Join`, `CoGroup` and `Group`); BeamShapesSpec for every schema transform read, the code-written forms and both refusals (D19) |
 | `rules.custom` | unsupported | declared unsupported: a custom rule judges a row-level change, and Beam has none |

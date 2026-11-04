@@ -35,9 +35,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (48) | ✅ | ✅ | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (50) | ✅ | ✅ | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✖ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (49) | ✅ | ✅ | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (51) | ✅ | ✅ | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ✖ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | — | ✅ |
@@ -54,6 +54,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ◐ | ✅ |
+| `check.runtimeDataQuality` | With runtimeDataQuality on, the values a write puts in each output field are checked against the field's declared constraints (equals, oneOf, range, length, fieldRange) before the write is published (RUNTIME_DATA_QUALITY_VIOLATION). *(blocks if unsupported)* | verified (2) | ✖ | ✖ | ◐ | ✖ |
 
 ### Rules
 
@@ -122,14 +123,14 @@ Attested:
 
 ## Conformance results
 
-The suite has 55 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 57 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 44 | 55 |
-| `beam-python` | 44 | 55 |
-| `pythonio` | 42 | 55 |
-| `spark` | 55 | 55 |
+| `beam` | 46 | 57 |
+| `beam-python` | 46 | 57 |
+| `pythonio` | 44 | 57 |
+| `spark` | 57 | 57 |
 
 ## Notes
 
@@ -148,6 +149,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
 - `check.saveMode` — partial: BigQueryIO writes state one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File, Kafka, JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.catalogRegistration` — partial: A BigQueryIO table is registered in the bigquery catalog under its project, dataset and table, and is checked as such (on the read side too). File, Kafka and JDBC datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
+- `check.runtimeDataQuality` — unsupported: The check runs on the pipeline graph before submission, when no element has been computed yet.
 - `rules.dml` — not-applicable: There is no row-level DML in Beam.
 - `rules.planShape` — partial: Read from Beam's schema transforms - Filter.create().whereFieldName(s), Group.byFieldNames/byFieldIds (with or without aggregation) and Group.globally(), Join (inner, outer, broadcast) and CoGroup - whose fields are read by reflection from members the version matrix checks on every Beam release; a Beam SQL query's GROUP BY and JOIN are built from these and are seen too. A filter, grouping or join written as code (Filter.by, a DoFn, GroupByKey, CoGroupByKey), or a SQL WHERE (compiled into code), is opaque: a required_* rule is not met by it, and under forbid_cross_join a step that combines several collections in code refuses the write as unverifiable, as does a schema transform whose fields cannot be read under any of these rules.
 - `rules.custom` — unsupported: Custom rule verifiers are given a row-level change to judge, and Beam has none.
@@ -177,6 +179,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — partial: The format is the sink the write uses (parquet, avro, tfrecord, text). A text write cannot tell csv from json from plain text.
 - `check.saveMode` — partial: A BigQuery write states one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.catalogRegistration` — partial: A BigQuery table is registered in the bigquery catalog under its project, dataset and table (on the read side too). File and Pub/Sub datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
+- `check.runtimeDataQuality` — unsupported: The check runs on the pipeline graph before submission, when no element has been computed yet.
 - `rules.dml` — not-applicable: There is no row-level DML in Beam.
 - `rules.planShape` — unsupported: Python's filters and joins are code (beam.Filter takes a function, a join is CoGroupByKey) and a beam.GroupBy's keys are held only in pickled Python, so the portable form states no filter, join or grouping column. A contract with a transformation-shape rule is refused with UNSUPPORTED_CONTRACT_FEATURE before the job starts.
 - `rules.custom` — unsupported: Custom rule verifiers are given a row-level change to judge, and Beam has none.
@@ -206,6 +209,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
 - `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
 - `check.catalogRegistration` — partial: An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials). Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
+- `check.runtimeDataQuality` — partial: The package evaluates each constraint (equals, oneOf, range, length, fieldRange) on the data it stages and reports how many rows broke it; a run with any is refused and publishes nothing. Only top-level fields are checked.
 - `rules.dml` — not-applicable: No row-level MERGE, UPDATE or DELETE exists to judge.
 - `rules.planShape` — unsupported: The transformation is the team's own pandas, Polars or DuckDB code; the checker sees only reads and writes.
 - `rules.custom` — unsupported: Custom rules judge the translated plan or row-level changes, and neither exists for a Python job.
@@ -238,6 +242,7 @@ The suite has 55 scenarios. For each adapter, the scenarios it is held to confor
 - `check.schema` — supported: Column names follow spark.sql.caseSensitive.
 - `check.nestedTypes` — supported: array, map and struct are compared structurally, ignoring nullability inside a container.
 - `check.catalogRegistration` — supported: Hive, Delta and Iceberg catalog registrations are recognized. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
+- `check.runtimeDataQuality` — unsupported: The check rule judges the write's plan before any row is computed; checking values would mean a check inside the write itself. Use staticDataQuality, which proves constraints from the plan, instead. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `rules.dml` — partial: Fully verified for Delta and for Iceberg copy-on-write. Iceberg merge-on-read UPDATE cannot have its changed columns extracted, so allowed_update_columns on it fails closed (RULE_UNVERIFIABLE_DML) rather than passing. ([details](https://github.com/mlltx/Invaract/blob/main/docs/connectors/iceberg.md))
 - `analysis.staticDataQuality` — supported: Opt-in. Only a proven violation blocks; everything else is reported. ([details](https://github.com/mlltx/Invaract/blob/main/docs/STATIC_DATA_QUALITY_VERIFICATION.md))
 - `analysis.roleConsistency` — supported: Opt-in. Only a high-confidence contradiction blocks.

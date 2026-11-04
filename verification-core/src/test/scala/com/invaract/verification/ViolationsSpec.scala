@@ -61,6 +61,7 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = true) -> "E",
     Violations.requiredFilterColumnsRule(List("k"), List("k"), Set.empty) -> "EA",
     Violations.dataQuality("amount", "range", Some("gold/out")) -> "LCE",
+    Violations.runtimeDataQuality("amount", "range gte 0", 2, List("-1"), Some("gold/out")) -> "LCEA",
     Violations.roleConsistency("cal", "raw.cal", DatasetType.Control, "detail") -> "L",
     Violations.invalidContract("c@1.0.0", "outputs", "empty") -> "",
     Violations.unresolvableCustomRuleType("c@1.0.0", "t", "x.Y", "boom") -> "",

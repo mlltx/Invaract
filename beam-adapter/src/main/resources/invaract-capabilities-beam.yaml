@@ -85,6 +85,10 @@ capabilities:
       A BigQueryIO table is registered in the bigquery catalog under its project, dataset and table, and is checked as
       such (on the read side too). File, Kafka and JDBC datasets have no catalog in Beam, so a contract requiring one
       sees them as unregistered.
+  check.runtimeDataQuality:
+    status: unsupported
+    summary: A pipeline is checked before it is submitted, so the values it writes are never seen.
+    note: The check runs on the pipeline graph before submission, when no element has been computed yet.
   rules.dml:
     status: not-applicable
     summary: "Beam has no MERGE, UPDATE or DELETE to make rules about."

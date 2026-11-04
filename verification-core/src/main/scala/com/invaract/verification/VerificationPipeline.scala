@@ -29,6 +29,10 @@ import org.slf4j.LoggerFactory
   * @param resolutionNotes the adapter's caveats about lineage it had to assume
   *   when resolving boundaries (Spark: the `CheckpointResolution` diagnostics);
   *   disclosed with the fingerprint, since the hash cannot reflect them.
+  * @param dataChecks what the adapter found evaluating the written output's
+  *   `RuntimeDataQuality.checks` on this write's data, for an adapter that
+  *   sees it before it is published; used only with
+  *   `VerificationOptions.runtimeDataQuality` on.
   */
 final case class CheckedWrite(
     plan: ir.Plan,
@@ -37,7 +41,8 @@ final case class CheckedWrite(
     caseSensitive: Boolean,
     rowMutation: Option[MutationClassification],
     lineageBoundaryTypes: Set[String],
-    resolutionNotes: List[String] = Nil
+    resolutionNotes: List[String] = Nil,
+    dataChecks: List[DataCheckResult] = Nil
 )
 
 /** The engine-neutral half of enforcement: given a contract and what an adapter
@@ -192,10 +197,13 @@ object VerificationPipeline {
     // Contradicts entries become Violations; the rest are report-only.
     val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, planFacts) else Nil
     val roleConsistencyViolations = RoleConsistencyVerifier.violations(contract, roleConformanceResults)
+    // See VerificationOptions.runtimeDataQuality: what the adapter found in this write's data.
+    val runtimeDataQualityViolations = if (options.runtimeDataQuality) RuntimeDataQuality.violations(checked.dataChecks, writeLocation) else Nil
 
     VerificationResult.of(
       structuralResult.contract,
-      capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
+      capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations ++
+        runtimeDataQualityViolations,
       fingerprints,
       dataQualityResults,
       roleConformanceResults,
