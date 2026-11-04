@@ -1,0 +1,699 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Python I/O adapter: design | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-208/design/python-io-adapter-design/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-208/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-208/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.4"/><meta name="generator" content="Starlight v0.42.8"/><meta property="og:title" content="Python I/O adapter: design"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-208/design/python-io-adapter-design/"/><meta property="og:locale" content="en"/><meta property="og:description" content="> Status: design, decisions settled 2026-11-01 (section 13). No code exists. This is the design for checking Python data jobs against a data contract by..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="> Status: design, decisions settled 2026-11-01 (section 13). No code exists. This is the design for checking Python data jobs against a data contract by..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-208/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-208/_astro/common.BZoYT9LC.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-208/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-208/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-208/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-208/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-208/_astro/Search.astro_astro_type_script_index_0_lang.D6QczhLr.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="02b6h5i" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-208/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#summary" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Summary</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-goals-and-non-goals" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Goals and non-goals</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-how-a-team-uses-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. How a team uses it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-what-happens-in-a-run" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. What happens in a run</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-architecture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Architecture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-data-handling" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Data handling</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-configuration-and-external-attachability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Configuration and external attachability</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-guarding-against-reads-and-writes-outside-the-package" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. Guarding against reads and writes outside the package</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-capability-declaration-and-conformance-forecast" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Capability declaration and conformance forecast</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-errors-and-reporting" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Errors and reporting</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-repository-layout-build-ci-and-release" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Repository layout, build, CI and release</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#11-versions-and-compatibility" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">11. Versions and compatibility</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#12-milestones" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">12. Milestones</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#13-decisions-settled-2026-11-01" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">13. Decisions (settled 2026-11-01)</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#14-open-questions-and-unverified-points" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">14. Open questions and unverified points</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#evidence" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Evidence</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-208/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#summary" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Summary</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-goals-and-non-goals" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Goals and non-goals</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-how-a-team-uses-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. How a team uses it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-what-happens-in-a-run" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. What happens in a run</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-architecture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Architecture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-data-handling" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Data handling</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-configuration-and-external-attachability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Configuration and external attachability</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-guarding-against-reads-and-writes-outside-the-package" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. Guarding against reads and writes outside the package</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-capability-declaration-and-conformance-forecast" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Capability declaration and conformance forecast</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-errors-and-reporting" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Errors and reporting</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-repository-layout-build-ci-and-release" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Repository layout, build, CI and release</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#11-versions-and-compatibility" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">11. Versions and compatibility</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#12-milestones" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">12. Milestones</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#13-decisions-settled-2026-11-01" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">13. Decisions (settled 2026-11-01)</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#14-open-questions-and-unverified-points" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">14. Open questions and unverified points</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#evidence" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Evidence</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-208/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Python I/O adapter: design</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/PYTHON_IO_ADAPTER_DESIGN.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<blockquote>
+<p><strong>Status: design, decisions settled 2026-11-01 (section 13). No code exists.</strong> This is the design for checking Python data jobs against a data contract by having
+Invaract do the job’s reading and writing. It follows two surveys:</p>
+<ul>
+<li>docs/PYTHON_ADAPTER_SURVEY.md, which found that watching an unchanged Python job from inside is possible but costly
+to maintain;</li>
+<li>docs/SINK_RECORDS_SURVEY.md, whose section 6 proposed this design and tested it as a toy (probes 13 and 14).</li>
+</ul>
+<p>It needs a go-ahead before <code dir="auto">dev/new-adapter</code> is run. Once it is, the write-up that generator creates becomes the adapter’s
+design record and takes over from this document. Written: 2026-11-01.</p>
+</blockquote>
+<div class="sl-heading-wrapper level-h2"><h2 id="summary">Summary</h2><a class="sl-anchor-link" href="#summary"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Summary”</span></a></div>
+<p><strong>What it is.</strong> A Python package, <code dir="auto">invaract</code>. A team makes a small, one-time change to its job:</p>
+<ul>
+<li>it puts <code dir="auto">@invaract.job</code> on the entry point;</li>
+<li>it reads and writes its datasets <em>by name</em>, with <code dir="auto">invaract.read("orders")</code> and <code dir="auto">invaract.write(df, "report")</code>.</li>
+</ul>
+<p>Invaract then does the reading and the writing:</p>
+<ul>
+<li>it takes the locations from the contract, so no paths remain in the job;</li>
+<li>it checks each output against the contract when it is written, and holds it in staging;</li>
+<li>when the run ends, it publishes all the outputs together, and only if every check passed.</li>
+</ul>
+<p><strong>Why this design.</strong> Earlier approaches watched an unchanged job from inside it: hooks, wrappers, tracers, the syntax tree,
+operating-system watches. Each depends on things that keep changing: library internals, coding styles, privileges. This
+design depends only on stable, public interfaces:</p>
+<ul>
+<li>the Arrow stream protocol, which pandas, Polars, DuckDB and pyarrow all implement (probe 15);</li>
+<li>pyarrow’s Parquet and CSV reading and writing;</li>
+<li>Invaract’s existing checking code.</li>
+</ul>
+<p><strong>What it guarantees.</strong> For everything a job reads and writes through the package:</p>
+<ul>
+<li>it reads only declared inputs and writes only declared outputs, at the contract’s locations;</li>
+<li>every declared output is written, with the declared columns, types and required columns, in the declared format and
+save mode;</li>
+<li>a run that breaks any of this publishes nothing.</li>
+</ul>
+<p>What it does not see is reading or writing done <em>outside</em> the package. A lint guards against that (section 7).</p>
+<p><strong>Decisions</strong> (settled 2026-11-01; section 13):</p>
+<ol>
+<li>Adopting Invaract for Python is a one-time code change per job. <code dir="auto">config.zeroCodeInstall</code> is declared unsupported: a
+deliberate exception to the install half of the External Attachability Requirement in CLAUDE.md. Every setting stays
+configurable from outside the job.</li>
+<li><strong>No Java where jobs run.</strong> The existing checker is compiled ahead of time into a native program (GraalVM native image)
+and shipped inside the Python package. A Python re-implementation is the fallback only if that fails (section 4).</li>
+<li>“Required” means no empty values in what was written, checked exactly on the data.</li>
+<li>The first version covers Parquet and CSV files on local and mounted file systems. Object storage, Delta Lake and Iceberg
+follow <strong>immediately after, as committed work tracked until delivered</strong> (section 12; ROADMAP.md).</li>
+<li>The lint is the main guard against reads and writes outside the package; the run-time strict mode is optional and off
+by default.</li>
+<li>The package is <code dir="auto">invaract</code> on PyPI, with <code dir="auto">invaract-lint</code> beside it. Both names were free on 2026-11-01 and should be
+registered early.</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="1-goals-and-non-goals">1. Goals and non-goals</h2><a class="sl-anchor-link" href="#1-goals-and-non-goals"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “1. Goals and non-goals”</span></a></div>
+<p><strong>Goals:</strong></p>
+<ul>
+<li>Confirm a job wrote where its contract says, and nowhere else, for everything it writes through the package.</li>
+<li>Confirm each output is what the contract declares: its columns, types, required columns, format and save mode.</li>
+<li>Confirm a job read its declared inputs, and nothing undeclared, through the package.</li>
+<li>Make a failing run publish nothing.</li>
+<li>Keep adoption to a small, mechanical change.</li>
+<li>Keep maintenance low: no dependence on library internals, no operating-system privileges.</li>
+<li>Make every setting configurable without touching the job (contract, location map, registry, organisational policy,
+notifications, dry run).</li>
+</ul>
+<p><strong>Non-goals for the first version:</strong></p>
+<ul>
+<li>Readiness signals. Decided 2026-11-01: every output is a data asset.</li>
+<li>Transformation-shape rules, lineage and the analyses. They are refused safely; a later version could take them from a
+Polars lazy plan.</li>
+<li>Row-level changes (update, delete, merge) and streaming.</li>
+<li>Seeing reads and writes made outside the package. The lint and the destination’s own records are the guard.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="2-how-a-team-uses-it">2. How a team uses it</h2><a class="sl-anchor-link" href="#2-how-a-team-uses-it"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. How a team uses it”</span></a></div>
+<p><strong>The contract</strong> holds the locations; the job holds names:</p>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-208/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-208/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="yaml"><code><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">id</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">orders_report</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">version</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">inputs</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">orders</span><span style="--0:#D6DEEB;--1:#403F53">,    </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data/in/orders</span><span style="--0:#D6DEEB;--1:#403F53">,        </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">parquet</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">customers</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data/in/customers.csv</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">csv</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">outputs</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">report</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">DATA_ASSET</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data/out/report</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">parquet</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">saveMode</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">overwrite</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">schema</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent">      </span><span style="--0:#7FDBCA;--1:#111111">fields</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">region</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">string</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">required</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">true</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">total</span><span style="--0:#D6DEEB;--1:#403F53">,  </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">long</span><span style="--0:#D6DEEB;--1:#403F53">,   </span><span style="--0:#7FDBCA;--1:#111111">required</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">true</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="id: orders_reportversion: &#x22;1.0.0&#x22;inputs:  - { name: orders,    location: data/in/orders,        format: parquet }  - { name: customers, location: data/in/customers.csv, format: csv }outputs:  - name: report    type: DATA_ASSET    location: data/out/report    format: parquet    saveMode: overwrite    schema:      fields:        - { name: region, type: string, required: true }        - { name: total,  type: long,   required: true }"><div></div></button></div></figure></div>
+<p><strong>The API</strong> has three pieces. There are optional decorator forms of the last two.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Piece</th><th>Where</th><th>What it does</th></tr></thead><tbody><tr><td><code dir="auto">@invaract.job()</code> or <code dir="auto">@invaract.job("contract.yaml")</code></td><td>once, on the entry point. Or <code dir="auto">with invaract.run():</code> in a script without one</td><td>starts a run, and at its end checks and publishes, or publishes nothing</td></tr><tr><td><code dir="auto">invaract.read("orders", as_="pandas")</code></td><td>wherever the job reads</td><td>reads a declared input as pandas (the default), <code dir="auto">"polars"</code>, <code dir="auto">"polars-lazy"</code> or <code dir="auto">"arrow"</code></td></tr><tr><td><code dir="auto">invaract.write(frame, "report")</code></td><td>wherever the job writes</td><td>checks the table now and stages it; publishes at the run’s end</td></tr><tr><td><code dir="auto">@invaract.reads("customers")</code></td><td>on a function</td><td>the input is passed in as a parameter</td></tr><tr><td><code dir="auto">@invaract.writes("report")</code></td><td>on a function</td><td>what the function returns is written</td></tr></tbody></table>
+<p><code dir="auto">write</code> accepts any object that offers an Arrow stream: a pandas or Polars DataFrame, a DuckDB result, a pyarrow Table or
+RecordBatchReader. A Polars LazyFrame is written by streaming it into staging.</p>
+<p><strong>A job over three files.</strong> Before, it read and wrote with pandas, with the paths in the code:</p>
+<div class="expressive-code"><figure class="frame has-title not-content"><figcaption class="header"><span class="title">load.py</span></figcaption><pre data-language="python"><code><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">paid_orders</span><span style="--0:#D9F5DD;--1:#111111">()</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">orders </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> invaract.</span><span style="--0:#B2CCD6;--1:#096E72">read</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">orders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)                  </span><span style="--0:#919F9F;--1:#5F636F"># was pd.read_parquet("data/in/orders")</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#C792EA;--1:#8844AE">return</span><span style="--0:#D6DEEB;--1:#403F53"> orders[orders[</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">status</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">] </span><span style="--0:#C792EA;--1:#8844AE">==</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">paid</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">]</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">@invaract.reads</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">customers</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)                          </span><span style="--0:#919F9F;--1:#5F636F"># was pd.read_csv("data/in/customers.csv")</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">customers</span><span style="--0:#D9F5DD;--1:#111111">(</span><span style="--0:#7FDBCA;--1:#096E72">customers</span><span style="--0:#D9F5DD;--1:#111111">)</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#C792EA;--1:#8844AE">return</span><span style="--0:#D6DEEB;--1:#403F53"> customers</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#919F9F;--1:#5F636F"># build.py: the transformation is unchanged</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">report</span><span style="--0:#D9F5DD;--1:#111111">(</span><span style="--0:#7FDBCA;--1:#096E72">paid</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">customers</span><span style="--0:#D9F5DD;--1:#111111">)</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#C792EA;--1:#8844AE">return</span><span style="--0:#D6DEEB;--1:#403F53"> paid.</span><span style="--0:#B2CCD6;--1:#096E72">merge</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#82AAFF;--1:#3B61B0">customers</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D7DBE0;--1:#403F53">on</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">customer_id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">).</span><span style="--0:#B2CCD6;--1:#096E72">groupby</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">region</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D7DBE0;--1:#403F53">as_index</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#FF6A83;--1:#A24848">False</span><span style="--0:#D6DEEB;--1:#403F53">).</span><span style="--0:#B2CCD6;--1:#096E72">agg</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">total</span></span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#82AAFF;--1:#3B61B0">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">amount</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#82AAFF;--1:#3B61B0">, </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">sum</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#82AAFF;--1:#3B61B0">)</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#919F9F;--1:#5F636F"># main.py</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">@invaract.job</span><span style="--0:#D6DEEB;--1:#403F53">()</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">main</span><span style="--0:#D9F5DD;--1:#111111">()</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">paid </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> load.</span><span style="--0:#B2CCD6;--1:#096E72">paid_orders</span><span style="--0:#D6DEEB;--1:#403F53">()</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">invaract.</span><span style="--0:#B2CCD6;--1:#096E72">write</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#82AAFF;--1:#3B61B0">build.</span><span style="--0:#B2CCD6;--1:#096E72">report</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#82AAFF;--1:#3B61B0">paid</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> load.</span><span style="--0:#B2CCD6;--1:#096E72">customers</span><span style="--0:#D6DEEB;--1:#403F53">())</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">report</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)    </span><span style="--0:#919F9F;--1:#5F636F"># was report.to_parquet("data/out/report/...")</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="def paid_orders():    orders = invaract.read(&#x22;orders&#x22;)                  # was pd.read_parquet(&#x22;data/in/orders&#x22;)    return orders[orders[&#x22;status&#x22;] == &#x22;paid&#x22;]@invaract.reads(&#x22;customers&#x22;)                          # was pd.read_csv(&#x22;data/in/customers.csv&#x22;)def customers(customers):    return customers# build.py: the transformation is unchangeddef report(paid, customers):    return paid.merge(customers, on=&#x22;customer_id&#x22;).groupby(&#x22;region&#x22;, as_index=False).agg(total=(&#x22;amount&#x22;, &#x22;sum&#x22;))# main.py@invaract.job()def main():    paid = load.paid_orders()    invaract.write(build.report(paid, load.customers()), &#x22;report&#x22;)    # was report.to_parquet(&#x22;data/out/report/...&#x22;)"><div></div></button></div></figure></div>
+<p><strong>Migrating in two steps, with no contract to begin with.</strong></p>
+<ol>
+<li><strong>Replace the reads and writes, keeping the paths.</strong>
+<ul>
+<li>The calls take a <code dir="auto">location=</code> while no contract exists: <code dir="auto">invaract.read("orders", location="data/in/orders")</code>.</li>
+<li>Run the job with <code dir="auto">INVARACT_DRY_RUN=true</code>. Invaract reads and writes as before, and publishes a draft contract built
+from the names, locations, formats and schemas it saw.</li>
+</ul>
+</li>
+<li><strong>Review the draft, commit it, and remove the <code dir="auto">location=</code> arguments.</strong>
+<ul>
+<li>With a contract in force, a <code dir="auto">location=</code> that disagrees with the contract is refused.</li>
+<li>So a forgotten argument cannot point a write elsewhere.</li>
+</ul>
+</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="3-what-happens-in-a-run">3. What happens in a run</h2><a class="sl-anchor-link" href="#3-what-happens-in-a-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “3. What happens in a run”</span></a></div>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">@invaract.job starts ─► the checker helper starts; it resolves the contract (file or registry://), the location map and the</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">organisational policy, and refuses a contract it cannot check (UNSUPPORTED_CONTRACT_FEATURE) before</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">the job's code runs</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">invaract.read(name)   ─► undeclared name: refused at once. Otherwise read from the contract's location (only the declared</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">columns, if the contract lists them), and the input's schema checked</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">invaract.write(f, n)  ─► undeclared name: refused at once. Otherwise the Arrow stream's schema and null counts checked by the</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">checker; on a pass, written to staging with the contract's types and required-ness</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">the job returns       ─► the checker checks every declared output was written and every declared input read</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">pass: publish every staged output (overwrite, append or error, per the contract's save mode)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">fail: discard staging; nothing published</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                        </span></span><span style="--0:#d6deeb;--1:#403f53">either way: one validation event, through the configured notification sink</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">the job raises        ─► discard staging; nothing published; a FAILED event saying the job itself failed</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="@invaract.job starts ─► the checker helper starts; it resolves the contract (file or registry://), the location map and the                        organisational policy, and refuses a contract it cannot check (UNSUPPORTED_CONTRACT_FEATURE) before                        the job&#x27;s code runsinvaract.read(name)   ─► undeclared name: refused at once. Otherwise read from the contract&#x27;s location (only the declared                        columns, if the contract lists them), and the input&#x27;s schema checkedinvaract.write(f, n)  ─► undeclared name: refused at once. Otherwise the Arrow stream&#x27;s schema and null counts checked by the                        checker; on a pass, written to staging with the contract&#x27;s types and required-nessthe job returns       ─► the checker checks every declared output was written and every declared input read                        pass: publish every staged output (overwrite, append or error, per the contract&#x27;s save mode)                        fail: discard staging; nothing published                        either way: one validation event, through the configured notification sinkthe job raises        ─► discard staging; nothing published; a FAILED event saying the job itself failed"><div></div></button></div></figure></div>
+<p>The run ends with exit status 0 (published), 1 (refused) or 2 (the check could not run, for example no Java). A refusal
+raises <code dir="auto">invaract.ContractViolation</code>, a subclass of <code dir="auto">PermissionError</code>, with Invaract’s standard explanation.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="4-architecture">4. Architecture</h2><a class="sl-anchor-link" href="#4-architecture"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Architecture”</span></a></div>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">team's job (Python) ──► invaract package (Python, thin)                   ──► invaract checker (Scala, verification-core)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                         </span></span><span style="--0:#d6deeb;--1:#403f53">reads and writes data with pyarrow                     resolves and validates the contract</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                         </span></span><span style="--0:#d6deeb;--1:#403f53">turns frames into Arrow streams                        checks each write's schema, format, save mode</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                         </span></span><span style="--0:#d6deeb;--1:#403f53">stages and publishes files                             checks outputs written and inputs read</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                         </span></span><span style="--0:#d6deeb;--1:#403f53">sends descriptions (no data) over a pipe               publishes events; drafts contracts (dry run)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="team&#x27;s job (Python) ──► invaract package (Python, thin)                   ──► invaract checker (Scala, verification-core)                         reads and writes data with pyarrow                     resolves and validates the contract                         turns frames into Arrow streams                        checks each write&#x27;s schema, format, save mode                         stages and publishes files                             checks outputs written and inputs read                         sends descriptions (no data) over a pipe               publishes events; drafts contracts (dry run)"><div></div></button></div></figure></div>
+<p><strong>The package does no checking.</strong> It sends the checker a description of each read and write: its name, its format, the
+Arrow schema with each column’s null count, and the number of rows. The verdict comes back. Data never crosses to the
+checker.</p>
+<p><strong>One helper process per run.</strong> It is started by <code dir="auto">@invaract.job</code> and talks over JSON lines on standard input and output:</p>
+<ul>
+<li><code dir="auto">open</code>: the settings and the job’s details; returns the resolved contract (names, locations, formats, schemas, save
+modes), or the refusal;</li>
+<li><code dir="auto">read</code> and <code dir="auto">write</code>: one description each; returns the verdict. A write is described twice: by <code dir="auto">write</code> before any of it
+is staged (columns and types, so a write that cannot pass is refused early), and by <code dir="auto">written</code> once it is (the empty values
+each column holds, for decision 3);</li>
+<li><code dir="auto">finish</code>: what was read and written, and whether the job completed; returns the final verdict and publishes the event.</li>
+</ul>
+<p><strong>Why the existing checker, not Python.</strong> Contract parsing, validation, organisational policy, location maps, the registry,
+notification sinks, dry-run inference and the checks themselves already exist, held to the repository’s coverage,
+mutation and API-compatibility gates. A Python copy would drift from them.</p>
+<p><strong>No Java where jobs run (decision 2).</strong> Most users’ Python workers have no Java. So the checker is compiled ahead of time
+with GraalVM <code dir="auto">native-image</code> into a standalone program, one per platform, shipped inside the Python package’s wheels. The
+package starts it exactly as it would start Java: same protocol, same process model. Milestone 0 measured it: a whole run
+of a recorded case, start-up included, takes 6 to 15 ms natively, against about 0.45 s on the JVM.</p>
+<p>What compiling ahead of time costs:</p>
+<ul>
+<li><strong>Plug-ins loaded by class name.</strong>
+<ul>
+<li>Invaract loads several things by the class named in configuration: notification sinks (even the built-in ones,
+<code dir="auto">NotificationSinkFactory</code>), custom rule verifiers, custom policy evaluators, type-guarantee checks, and registry
+clients (<code dir="auto">ReflectivePluginResolver</code>, <code dir="auto">ContractReference</code>).</li>
+<li>A native program can load only classes listed when it is built. The built-in ones are listed in its reflection
+configuration.</li>
+<li>A team’s <em>own</em> plug-in classes cannot be loaded. Those teams need a build that includes them, or the Java build. The
+declaration and the user guide must say so.</li>
+</ul>
+</li>
+<li><strong>Libraries that use reflection.</strong> Very little was needed. GraalVM’s tracing agent, run over the recorded protocol cases,
+found only the file sink’s constructor, two <code dir="auto">java.sql</code> classes SnakeYAML looks up, and the capability declaration as a
+resource. The configuration committed in the jar (<code dir="auto">META-INF/native-image/</code>) lists those and the other built-in sinks.</li>
+<li><strong>A build per platform:</strong> Linux x86_64 and aarch64, macOS arm64 and x86_64, and Windows if users need it. Each is built in
+CI with GraalVM’s GitHub Action; Linux x86_64 is built today (CI’s <code dir="auto">pythonio-native-checker</code> job).</li>
+<li><strong>Wheel size.</strong> 41 MB for Linux x86_64, 14 MB compressed, which is roughly what a wheel carries.</li>
+</ul>
+<p><strong>The fallback, only if the native image fails the first milestone’s criteria.</strong> Re-implement in Python the narrow set of
+checks this adapter needs: contract parsing, schema, location, format, save mode, outputs written and inputs read. Hold
+it to the Scala implementation with a shared set of recorded cases, run against both in CI, so a difference fails the
+build. Organisational policy, the registry and plug-ins would then be unavailable to Python jobs until ported.</p>
+<p><strong>Type mapping.</strong> Arrow types map to the contract’s types through one mapping shared with the Beam Python adapter:
+<code dir="auto">ArrowSchemas</code> in <code dir="auto">verification-core</code> (moved there from the Beam adapter’s <code dir="auto">PyArrowSchemas</code> in milestone 1). It covers
+<code dir="auto">large_string</code>, <code dir="auto">string_view</code>, dictionaries, lists, structs and maps; the package sends each column’s <code dir="auto">str(field.type)</code>, which
+<code dir="auto">ArrowSchemas.dataType</code> reads.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="5-data-handling">5. Data handling</h2><a class="sl-anchor-link" href="#5-data-handling"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Data handling”</span></a></div>
+<ul>
+<li><strong>Accepting tables.</strong> Anything with <code dir="auto">__arrow_c_stream__</code> is accepted; probe 15 showed pandas 2.3.3, Polars 2.1.0, DuckDB
+2.0.0 and pyarrow 25.0.1 all offer it. A Polars LazyFrame’s schema is known before it runs (<code dir="auto">collect_schema()</code>) and it
+streams into staging. Anything else is refused as <code dir="auto">UNVERIFIABLE_WRITE</code>.</li>
+<li><strong>Large data.</strong> Writes stream batch by batch. The schema is checked from the stream’s schema before any batch is written.
+Null counts are summed per batch, and a required column’s first empty value fails the write.</li>
+<li><strong>Required columns (decision 3).</strong> “Required” means no empty values in what was written. pandas never marks a column as
+“cannot be empty” (the native Python survey, probe 8), so checking the schema’s flag would refuse every pandas job. The
+written file then carries <code dir="auto">not null</code> for each required column, so consumers see the contract’s schema exactly.</li>
+<li><strong>Formats.</strong> Parquet and CSV in the first version.
+<ul>
+<li>CSV inputs are read with a comma, not detected, since detection failed in the sink records survey’s probe 6. (A
+contract has no delimiter field; milestone 2 found this.)</li>
+<li>Types are given to the reader from the contract’s input schema where it lists them.</li>
+</ul>
+</li>
+<li><strong>Save modes</strong>, from the contract, not chosen by the job:
+<ul>
+<li><code dir="auto">overwrite</code> replaces the output’s folder at publish;</li>
+<li><code dir="auto">append</code> adds files named after the run, never replacing;</li>
+<li><code dir="auto">error</code> refuses if the output already has data.</li>
+</ul>
+</li>
+<li><strong>Staging and publishing.</strong> Each output is written to a staging folder beside its location. At publish, the previous
+version is moved aside for rollback, then the staging folder is renamed into place. On a local or mounted file system a
+rename is atomic per output. Across several outputs, publishing is ordered, not atomic: a crash between two renames
+leaves the first published. The run’s event records exactly what was published.</li>
+<li><strong>Object storage</strong> (S3, GCS) has no rename. Publishing would be a copy, then a delete, which readers can see half done.
+Milestone 6 settled it (decided 2026-11-03). A Parquet or CSV output on object storage is published as Spark and Hadoop
+publish one: staged on local disk, and only when the run passed, the old <code dir="auto">_SUCCESS</code> removed, the files uploaded, the
+old ones deleted (overwrite) and <code dir="auto">_SUCCESS</code> written last. A reader that waits for <code dir="auto">_SUCCESS</code> sees a complete output;
+others can see the publish half done. (The first decision refused such outputs; it was reversed the same day, since
+writing Parquet to GCS or S3 is what teams expect.) A Delta or Iceberg table is the choice when no reader may see a
+publish half done. HDFS has an atomic rename, so a plain output there is staged and renamed as on a local disk. A
+Delta or Iceberg output that does not exist yet is created by the run that passes, in the same commit as its data.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="6-configuration-and-external-attachability">6. Configuration and external attachability</h2><a class="sl-anchor-link" href="#6-configuration-and-external-attachability"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. Configuration and external attachability”</span></a></div>
+<p>Every setting can be given without touching the job, as environment variables spelled <code dir="auto">INVARACT_&#x3C;NAME></code>. The decorator’s
+argument is only a default, and <code dir="auto">INVARACT_CONTRACT</code> overrides it.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Setting</th><th>Variable</th></tr></thead><tbody><tr><td><code dir="auto">contract</code> (a file or <code dir="auto">registry://id@version</code>)</td><td><code dir="auto">INVARACT_CONTRACT</code></td></tr><tr><td><code dir="auto">dryRun</code></td><td><code dir="auto">INVARACT_DRY_RUN</code></td></tr><tr><td><code dir="auto">notifyConfig</code></td><td><code dir="auto">INVARACT_NOTIFY_CONFIG</code></td></tr><tr><td><code dir="auto">registryUrl</code>, <code dir="auto">registryClientClass</code></td><td><code dir="auto">INVARACT_REGISTRY_URL</code>, <code dir="auto">INVARACT_REGISTRY_CLIENT_CLASS</code></td></tr><tr><td><code dir="auto">locationMap</code></td><td><code dir="auto">INVARACT_LOCATION_MAP</code></td></tr><tr><td><code dir="auto">orgPolicy</code>, <code dir="auto">orgPolicyOverlays</code></td><td><code dir="auto">INVARACT_ORG_POLICY</code>, <code dir="auto">INVARACT_ORG_POLICY_OVERLAYS</code></td></tr><tr><td><code dir="auto">rejectUndeclaredInputs</code>, <code dir="auto">rejectUndeclaredFields</code></td><td><code dir="auto">INVARACT_REJECT_UNDECLARED_INPUTS</code>, <code dir="auto">INVARACT_REJECT_UNDECLARED_FIELDS</code></td></tr><tr><td><code dir="auto">computeFingerprint</code>, <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code></td><td>the same spelling; each declared unsupported, so a run with one is refused</td></tr><tr><td><code dir="auto">failOnMissingOutput</code>, <code dir="auto">trustedSteps</code></td><td>not applicable: a missing output always fails the run, and there are no steps to trust</td></tr></tbody></table>
+<p>The package checks its list against <code dir="auto">InvaractConf.All</code> in its tests, as the Beam Python adapter does, so a new neutral
+setting cannot be missed.</p>
+<p><strong>The exception (decision 1).</strong> Adopting the package is a one-time change to the job, so this adapter declares
+<code dir="auto">config.zeroCodeInstall</code> unsupported, with that reason. CLAUDE.md’s External Attachability Requirement asks that the
+baseline installation work without the job’s code. This design trades that away, after the two surveys found the zero-change
+routes too costly to maintain. The maintainers should accept the exception explicitly.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="7-guarding-against-reads-and-writes-outside-the-package">7. Guarding against reads and writes outside the package</h2><a class="sl-anchor-link" href="#7-guarding-against-reads-and-writes-outside-the-package"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7. Guarding against reads and writes outside the package”</span></a></div>
+<p>The package sees only what goes through it. Three guards, in order of cost:</p>
+<ol>
+<li>
+<p><strong><code dir="auto">invaract-lint</code>.</strong> A check of the job’s code, run in the team’s CI or as a pre-commit hook. It flags calls that read or
+write data outside the package, such as:</p>
+<ul>
+<li><code dir="auto">pd.read_*</code>, <code dir="auto">DataFrame.to_*</code>;</li>
+<li><code dir="auto">pq.read_table</code>, <code dir="auto">pq.write_table</code>;</li>
+<li>Polars’ <code dir="auto">read_*</code>, <code dir="auto">scan_*</code>, <code dir="auto">write_*</code>, <code dir="auto">sink_*</code>;</li>
+<li><code dir="auto">open(..., "w")</code>, <code dir="auto">duckdb</code> <code dir="auto">COPY</code>, database connections.</li>
+</ul>
+<p>It checks only that such calls are <em>present</em>, which a syntax tree answers reliably. It does not try to work out what
+they do (the sink records survey, probe 9, showed that is where the syntax tree fails). A deliberate exception is
+marked in the code (<code dir="auto"># invaract: allow</code>) and shows up in review. Upkeep: a short list of function names.</p>
+</li>
+<li>
+<p><strong>The destination’s own records</strong>, for databases, once they are supported (the sink records survey, section 3).</p>
+</li>
+<li>
+<p><strong>An optional strict mode at run time.</strong> Python’s audit hook refuses file writes outside staging (the native Python
+survey, probe 3). It is off by default, because it is the kind of mechanism this design exists to avoid relying on.</p>
+</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="8-capability-declaration-and-conformance-forecast">8. Capability declaration and conformance forecast</h2><a class="sl-anchor-link" href="#8-capability-declaration-and-conformance-forecast"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “8. Capability declaration and conformance forecast”</span></a></div>
+<p>The draft declaration:</p>
+<ul>
+<li><strong>supported:</strong>
+<ul>
+<li><code dir="auto">read.batch</code>, <code dir="auto">write.batch</code>;</li>
+<li><code dir="auto">check.location</code>, <code dir="auto">check.outputsWritten</code>, <code dir="auto">check.schema</code>, <code dir="auto">check.nestedTypes</code>, <code dir="auto">check.format</code>, <code dir="auto">check.saveMode</code>;</li>
+<li><code dir="auto">policy.organizational</code>;</li>
+<li><code dir="auto">config.locationRefs</code>, <code dir="auto">config.contractRegistry</code>;</li>
+<li><code dir="auto">reporting.notifications</code>, <code dir="auto">reporting.dryRunInference</code>.</li>
+</ul>
+</li>
+<li><strong>partial:</strong>
+<ul>
+<li><code dir="auto">check.inputExistence</code>: reads are exact, but which reads fed which write is not known;</li>
+<li><code dir="auto">failClosed.unverifiableWrites</code>: writes outside the package are not seen.</li>
+</ul>
+</li>
+<li><strong>unsupported:</strong>
+<ul>
+<li>streaming reads and writes;</li>
+<li><code dir="auto">check.catalogRegistration</code>, since the first version writes files only;</li>
+<li><code dir="auto">rules.planShape</code>, <code dir="auto">rules.custom</code>;</li>
+<li>every analysis and column lineage;</li>
+<li><code dir="auto">config.zeroCodeInstall</code>.</li>
+</ul>
+</li>
+<li><strong>not applicable:</strong> row-level changes and their rules, schema-only changes, boundary resolution.</li>
+</ul>
+<p>As built (<code dir="auto">invaract-capabilities-pythonio.yaml</code>, milestone 1), the declaration matches this draft, except that the engine is
+labelled “in development” on the user pages until the first release (milestone 5 removed the label). <code dir="auto">failClosed.unverifiableWrites</code> is partial because a
+table the package cannot describe is refused (<code dir="auto">UNVERIFIABLE_WRITE</code>), which is what the kit’s scenario for it checks. A write
+made around the package is never refused, because it is not seen; the lint is the guard.</p>
+<p><code dir="auto">./dev/adapter-survey</code> with that declaration says the kit would expect, of its 55 scenarios:</p>
+<ul>
+<li><strong>27 to be checked:</strong>
+<ul>
+<li>locations, inputs and outputs;</li>
+<li>columns, types, nesting and required columns;</li>
+<li>formats and save modes;</li>
+<li>an invalid contract, an untranslatable write.</li>
+</ul>
+</li>
+<li><strong>15 to be refused safely:</strong>
+<ul>
+<li>catalog requirements;</li>
+<li>the transformation-shape rules;</li>
+<li>static data quality;</li>
+<li>role consistency.</li>
+</ul>
+</li>
+<li><strong>13 skipped:</strong>
+<ul>
+<li>row-level changes;</li>
+<li>fingerprints and lineage;</li>
+<li>boundaries;</li>
+<li>streaming.</li>
+</ul>
+</li>
+</ul>
+<p>Three of the 27 carry known risks:</p>
+<ul>
+<li><strong>Scenario 12</strong> (a required column the job can leave empty). The kit’s job must actually produce an empty value, or a
+check on the written values passes. The conformance adapter generates the input data, so it should include one.
+Decision 3 is the underlying choice.</li>
+<li><strong>Scenario 18</strong> (a write that skips its own input). It conforms only because of how the kit’s job is laid out.</li>
+<li><strong>Scenario 20</strong> (an undeclared second write). The stray write is refused, but the kit also expects <code dir="auto">MISSING_INPUT</code>, and
+the package cannot know which reads fed that write. This is the open kit decision from the native Python survey (D4).</li>
+</ul>
+<p><strong>How CI proves it.</strong> A conformance adapter writes each scenario as a small Python job that uses the package, and runs it
+with the real interpreter, package and checker, as <code dir="auto">BeamPythonConformanceAdapter</code> does. No credentials are needed:
+everything is local files.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="9-errors-and-reporting">9. Errors and reporting</h2><a class="sl-anchor-link" href="#9-errors-and-reporting"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “9. Errors and reporting”</span></a></div>
+<ul>
+<li>
+<p><code dir="auto">ContractViolation(PermissionError)</code> carries the violations and Invaract’s standard four-part explanation.</p>
+</li>
+<li>
+<p><code dir="auto">CheckNotRun</code> (exit status 2) means the checker could not start or answer, for example no build for this platform. The
+job’s data is never published unchecked.</p>
+</li>
+<li>
+<p>The validation event carries:</p>
+<ul>
+<li>the engine <code dir="auto">pythonio</code>;</li>
+<li>the Python version;</li>
+<li>the versions of pyarrow and of each frame library used;</li>
+<li>the job’s entry point;</li>
+<li>the run id.</li>
+</ul>
+<p>It does not carry the command line, which can hold secrets.</p>
+</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="10-repository-layout-build-ci-and-release">10. Repository layout, build, CI and release</h2><a class="sl-anchor-link" href="#10-repository-layout-build-ci-and-release"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “10. Repository layout, build, CI and release”</span></a></div>
+<ul>
+<li><strong>The module.</strong> The sbt module <code dir="auto">pythonio-adapter</code>, generated by <code dir="auto">dev/new-adapter pythonio</code> (an adapter’s name has no
+hyphen). It holds:
+<ul>
+<li>the Scala checker (<code dir="auto">PythonIoCheck</code>, the helper’s entry point), its declaration, and its conformance and attestation
+tests;</li>
+<li>the Python package, in <code dir="auto">pythonio-adapter/python/invaract/</code>, with pytest tests;</li>
+<li>the lint, in <code dir="auto">pythonio-adapter/lint/invaract_lint/</code> (its own package root; milestone 4).</li>
+</ul>
+</li>
+<li><strong>Repository registration.</strong> <code dir="auto">modules.json</code> gets the module, and <code dir="auto">check_modules.py</code> names every file that must list it.
+The user documentation gets a guide, “Using Invaract with Python jobs”.</li>
+<li><strong>Gates.</strong>
+<ul>
+<li>The Scala side gets the usual ones: coverage, mutation testing, and API compatibility after the first release.</li>
+<li>The Python side gets pytest, a lint, and mutation testing with <code dir="auto">mutmut</code>, since the repository’s mutation testing is
+Scala-only.</li>
+<li>A CI job runs the conformance suite with real Python, over a version matrix.</li>
+</ul>
+</li>
+<li><strong>Release.</strong> The package on PyPI as one wheel per platform, each carrying the native checker, plus a pure-Python wheel
+that starts a Java checker for platforms without a native build. <code dir="auto">invaract-lint</code> is a separate pure-Python package. The
+checker jar is also published, for the Java route and for teams with their own plug-ins.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="11-versions-and-compatibility">11. Versions and compatibility</h2><a class="sl-anchor-link" href="#11-versions-and-compatibility"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “11. Versions and compatibility”</span></a></div>
+<ul>
+<li>Platforms with a native checker: Linux x86_64 and aarch64, macOS arm64 and x86_64. Windows only if users need it.</li>
+<li>Python 3.10 to 3.13. (3.9 reached its end of life in October 2025, and CI’s runners no longer offer it; milestone 2.)</li>
+<li>pyarrow 15, the first with <code dir="auto">RecordBatchReader.from_stream</code> (14 lacks it; milestone 2).</li>
+<li>pandas 2.2, which added <code dir="auto">__arrow_c_stream__</code>; the package converts pandas with <code dir="auto">pa.Table.from_pandas</code> in any case, to leave
+out the row index (milestone 2).</li>
+<li>Polars 1.0 and DuckDB 1.0: neither has the stream yet, so the package uses their own conversion; the tests pass on both
+(milestone 2).</li>
+</ul>
+<p>An older frame library falls back to its own conversion to Arrow (<code dir="auto">pa.Table.from_pandas</code>, Polars’ <code dir="auto">to_arrow</code>), which are
+long-standing public functions. The CI matrix tests the oldest and newest supported release of each.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="12-milestones">12. Milestones</h2><a class="sl-anchor-link" href="#12-milestones"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “12. Milestones”</span></a></div>
+<ol start="0">
+<li>
+<p><strong>The native checker, first and gating</strong> (medium). Build <code dir="auto">PythonIoCheck</code> with GraalVM <code dir="auto">native-image</code> in CI, for Linux
+x86_64 first. It passes if:</p>
+<ul>
+<li>it answers the protocol with the same verdicts as on the JVM, over the recorded cases;</li>
+<li>it parses contracts, applies organisational policy and publishes to the built-in sinks;</li>
+<li>it starts in well under a second;</li>
+<li>its size suits a wheel.</li>
+</ul>
+<p>If it fails, the Python fallback of section 4 replaces it, and this design is revised.</p>
+<p><strong>Result (2026-11-01): passed.</strong> GraalVM CE 21.0.2 builds it in about 75 s. It gives the same replies as the JVM on 23
+recorded protocol cases (<code dir="auto">pythonio-adapter/src/test/resources/protocol</code>). The cases cover a pass, each kind of refusal,
+organisational policy, <code dir="auto">ref://</code> locations, the file, HTTP, logging and fan-out sinks, a bad contract and protocol
+misuse. Each whole run takes 6 to 15 ms. The program is 41 MB, 14 MB compressed. One case is JVM-only: a registry
+client is named by class, and a native program loads only the classes built into it (section 4’s plug-in limit).
+The fallback is not needed. Details are in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>The checker protocol</strong> (small to medium). <code dir="auto">PythonIoCheck</code>, with <code dir="auto">open</code>, <code dir="auto">write</code>, <code dir="auto">read</code> and <code dir="auto">finish</code>, over the shared
+Arrow mapping. Tested with recorded descriptions; no Python needed.</p>
+<p><strong>Result (2026-11-02): done.</strong> <code dir="auto">read</code>, the two-step write (<code dir="auto">write</code>, then <code dir="auto">written</code> with null counts), Arrow’s type names
+through <code dir="auto">ArrowSchemas</code> (now in <code dir="auto">verification-core</code>), unverifiable writes, and dry-run mode with drafts merged at the end.
+40 recorded cases; the native program gives the JVM’s replies on the 39 it can run. 42 of the kit’s scenarios conform.
+The protocol is listed in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>The package</strong> (medium). The three pieces, the decorator forms, staging and publishing, the configuration, and the
+dry-run path with <code dir="auto">location=</code>. pytest tests, and the end-to-end example of the sink records survey’s probe 14 made
+permanent.</p>
+<p><strong>Result (2026-11-02): done.</strong> <code dir="auto">pythonio-adapter/python/invaract</code>, with 91 pytest tests against the real checker (the jar
+and the native program), and probe 14’s job in <code dir="auto">examples/orders_job</code> with a test for each of its bugs. The checker gained
+the inputs’ declared columns in <code dir="auto">open</code>’s reply and a check of <code dir="auto">location=</code> with a contract in force. Details, and what the
+build found, are in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>Conformance</strong> (medium). The conformance adapter, the declaration, the baseline file, the capability matrix row.
+Started with milestone 0: the kit’s scenarios already run through the checker, as the package will drive it, and 41
+conform. What remains is running them as real Python jobs, and a <code dir="auto">staged-publish</code> enforcement point in
+<code dir="auto">verification-core</code>. The user pages’ wording for <code dir="auto">in-engine-blocking</code> says a job’s earlier writes “have already
+happened”, which staging makes untrue.</p>
+<p><strong>Result (2026-11-02): done.</strong> All 42 conforming scenarios run as real Python jobs through the package
+(<code dir="auto">PythonIoPackageConformanceSpec</code>, strict in CI), alongside the in-process run, against the one baseline. The declaration’s
+enforcement point is the new <code dir="auto">staged-publish</code>. The conformance run uses one Python release (3.13, current pyarrow); the
+version matrix of section 10 runs the package’s own tests (<code dir="auto">pythonio-python</code>). Details are in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>The lint</strong> (small).</p>
+<p><strong>Result (2026-11-02): done.</strong> <code dir="auto">invaract-lint</code> in <code dir="auto">pythonio-adapter/lint</code>: section 7’s checks, with <code dir="auto"># invaract: allow</code>
+exceptions, a command line for CI and pre-commit, and 71 tests. Run over the example job before it adopted the package, it
+finds its four reads and writes, and none after. Mutation testing with <code dir="auto">mutmut</code>: 87.9%. Details are in
+docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>The user guide, and the first release</strong> (small).</p>
+<p><strong>Result (2026-11-03): built; the release itself waits on PyPI’s one-time setup.</strong> The docs-site guide “Use Invaract
+with Python Jobs”, from real runs of the example job. <code dir="auto">release-python.yml</code> builds the native checker and a wheel on
+each platform of section 11, tagged from the program itself (its glibc version, or its minimum macOS version), and a
+pure-Python wheel carrying the checker jar, which the package runs with Java (11 or later) where no native wheel
+matches; each wheel is installed and runs the example job before anything is published. <code dir="auto">invaract-lint</code> is
+released with them, under one version. Publishing is PyPI’s trusted publishing on a <code dir="auto">python-v&#x3C;version></code> tag; the
+names, the trusted publishers and the <code dir="auto">pypi</code> environment are a maintainer’s one-time setup (docs/RELEASING.md).
+Details are in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>Immediately after the first release, committed and tracked until delivered (decision 4):</strong></p>
+<ul>
+<li><strong>Object storage</strong> (S3, GCS, Azure), for reading and for writing.</li>
+<li><strong>Delta Lake and Iceberg outputs.</strong> Their commits are atomic, which is what makes publishing safe on object storage.
+The sink records survey, probe 3, showed both record operation, mode, rows and schema per commit, through delta-rs and
+pyiceberg.</li>
+</ul>
+<p>The rule for this work:</p>
+<ul>
+<li>it is listed in ROADMAP.md as open items;</li>
+<li>it is not displaced by other Python I/O work;</li>
+<li>each release note until it lands states what is still missing.</li>
+</ul>
+<p><strong>Result (2026-11-03): Delta, Iceberg, HDFS and object storage done; tested on S3, not yet on GCS, Azure or a real HDFS
+cluster.</strong> Two decisions, taken with probes in hand (section 5): plain-file outputs on object storage are published
+Spark-style, with <code dir="auto">_SUCCESS</code> last, and a missing table is created. Plain-file outputs on HDFS are staged and renamed. A Delta output’s
+files are staged uncommitted (in the table’s folder, or on local disk for object storage) and committed in one
+transaction at publish; an Iceberg output is held until publish and written in one transaction, creating its namespace
+and table if needed. Reads of Parquet and CSV files from object storage, and of Delta and Iceberg tables. Tested
+locally and on S3 (moto), on the oldest releases the extras allow (deltalake 1.0, pyiceberg 0.9 with pyarrow 17) and
+the newest. <code dir="auto">gs://</code> and <code dir="auto">abfss://</code> go through the same libraries but have no emulator in CI yet, which stays open in
+ROADMAP.md. Details are in docs/PYTHONIO_ADAPTER.md.</p>
+</li>
+<li>
+<p><strong>Later, each on its own:</strong> partitioned outputs, Polars lazy plans for the transformation-shape rules, databases.</p>
+</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="13-decisions-settled-2026-11-01">13. Decisions (settled 2026-11-01)</h2><a class="sl-anchor-link" href="#13-decisions-settled-2026-11-01"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “13. Decisions (settled 2026-11-01)”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Decision</th><th>Answer</th></tr></thead><tbody><tr><td>1</td><td>Adoption is a one-time code change per job; <code dir="auto">config.zeroCodeInstall</code> unsupported; every setting configurable from outside</td><td><strong>Yes</strong></td></tr><tr><td>2</td><td>Where the checks run</td><td><strong>No Java where jobs run.</strong> The existing checker compiled to a native program, shipped in the package; a Python re-implementation only if milestone 0 fails</td></tr><tr><td>3</td><td>“Required” means no empty values in what was written; the file then states <code dir="auto">not null</code></td><td><strong>Yes</strong></td></tr><tr><td>4</td><td>First version: Parquet and CSV on local and mounted file systems</td><td><strong>Yes, then object storage, Delta Lake and Iceberg immediately after, committed and tracked until delivered</strong></td></tr><tr><td>5</td><td>The lint is the main guard; the run-time strict mode optional and off</td><td><strong>Yes</strong></td></tr><tr><td>6</td><td><code dir="auto">invaract</code> on PyPI (and <code dir="auto">invaract-lint</code>)</td><td><strong>Yes</strong>; both free on 2026-11-01, to be registered early</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="14-open-questions-and-unverified-points">14. Open questions and unverified points</h2><a class="sl-anchor-link" href="#14-open-questions-and-unverified-points"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “14. Open questions and unverified points”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Question</th><th>How to settle it</th></tr></thead><tbody><tr><td><del>The oldest pandas, Polars, DuckDB and pyarrow releases with the Arrow C stream protocol</del></td><td>settled by milestone 2 (section 11): pyarrow 15, pandas 2.2, Polars 1.0 and DuckDB 1.0, held by CI’s <code dir="auto">pythonio-python</code> job</td></tr><tr><td><del>Whether the checker builds as a native image, with which reflection configuration, at what size and start-up</del></td><td>settled by milestone 0 (section 12): it does, with a few lines of configuration, at 41 MB and 6 to 15 ms a run</td></tr><tr><td>How many teams use their own plug-in classes (sinks, rules, policies, registry clients), which a native checker cannot load</td><td>ask the teams; check the deployed notification and policy configurations</td></tr><tr><td>How small the change is on real jobs</td><td>convert a sample of real jobs</td></tr><tr><td>How often real jobs read or write outside the package</td><td>run the lint over the same sample</td></tr><tr><td><del>The kit decision on per-write read attribution (scenario 20)</del></td><td>settled as D4 recommends: the kit’s <code dir="auto">Scenarios.partialExcuses</code> holds an adapter that declares <code dir="auto">check.inputExistence</code> <code dir="auto">partial</code> to scenario 20’s other violation only</td></tr><tr><td>Whether the PyPI names stay free until registered</td><td>register placeholder releases of <code dir="auto">invaract</code> and <code dir="auto">invaract-lint</code></td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="evidence">Evidence</h2><a class="sl-anchor-link" href="#evidence"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Evidence”</span></a></div>
+<ul>
+<li><strong>Probe 15 (2026-11-01).</strong>
+<ul>
+<li><code dir="auto">pa.RecordBatchReader.from_stream</code> read an Arrow stream from a pandas 2.3.3 DataFrame, a Polars 2.1.0 DataFrame, a
+DuckDB 2.0.0 result and a pyarrow 25.0.1 Table. All four offer <code dir="auto">__arrow_c_stream__</code>; Polars gave <code dir="auto">string_view</code> for text.</li>
+<li><code dir="auto">LazyFrame.collect_schema()</code> returned a lazy query’s output schema before it ran.</li>
+</ul>
+</li>
+<li><strong>The toys this design is built from:</strong> docs/SINK_RECORDS_SURVEY.md, section 6, probes 13 (a decorator over one function,
+including a Polars lazy job) and 14 (the three pieces over a three-file job, correct and with four mistakes).</li>
+<li><strong>The conformance counts:</strong> <code dir="auto">./dev/adapter-survey</code> with the draft declaration of section 8, run 2026-11-01.</li>
+</ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/PYTHON_IO_ADAPTER_DESIGN.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
