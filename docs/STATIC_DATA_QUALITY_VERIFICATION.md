@@ -1113,3 +1113,18 @@ property kind, each covering its own `GUARANTEED`/`NOT_GUARANTEED`/`VIOLATED`/
    `VerificationResult(a,b,c,d)` positional call site (if any exist in this codebase
    or, worse, in a third party's compiled code) would need checking — flagged for the
    implementation pass, not resolved here.
+
+## 12. The runtime counterpart
+
+The same `constraints` can be checked on the rows a job actually writes, instead of proved
+from its logic: `VerificationOptions.runtimeDataQuality`, capability
+`check.runtimeDataQuality`, `verification-core`'s `RuntimeDataQuality`. It turns an
+output's interpretable constraints into `DataCheck`s, an adapter that sees the data before
+it is published evaluates them (the Python I/O adapter's package does, with Arrow compute,
+`pythonio-adapter/python/invaract/_checks.py`) and hands the outcome over as
+`CheckedWrite.dataChecks`, and the pipeline turns a check with failing rows into
+`RUNTIME_DATA_QUALITY_VIOLATION`. It shares this document's constraint vocabulary but none
+of its reasoning: it is evidence about one run, not a proof about every run, so it can run
+where the transformation is opaque. Its row semantics (nulls pass, numbers compare by value,
+a non-number breaks a range, `length` counts characters, a null `fieldRange` bound is no
+bound) are `DataCheck.fails`, and only top-level output fields are checked.

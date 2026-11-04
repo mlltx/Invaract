@@ -65,7 +65,7 @@ object VerificationSetup {
     ContractLocationResolution.resolve(contract, resolver)
   }
 
-  /** Overlays the five option flags onto `options` - `||`, not a replacement: a
+  /** Overlays the six option flags onto `options` - `||`, not a replacement: a
     * flag ends up `true` if *either* the caller's own `VerificationOptions`
     * already set it, or the matching configuration value is `"true"`, so a
     * platform attaching a stricter check can never be silently weakened by code
@@ -79,7 +79,8 @@ object VerificationSetup {
       rejectUndeclaredFields = options.rejectUndeclaredFields || flag(InvaractConf.RejectUndeclaredFields),
       computeFingerprint = options.computeFingerprint || flag(InvaractConf.ComputeFingerprint),
       staticDataQuality = options.staticDataQuality || flag(InvaractConf.StaticDataQuality),
-      roleConsistency = options.roleConsistency || flag(InvaractConf.RoleConsistency)
+      roleConsistency = options.roleConsistency || flag(InvaractConf.RoleConsistency),
+      runtimeDataQuality = options.runtimeDataQuality || flag(InvaractConf.RuntimeDataQuality)
     )
   }
 
@@ -169,7 +170,7 @@ object VerificationSetup {
     }
 
   private val KnownMinVerificationOptionKeys =
-    Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality", "roleConsistency")
+    Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality", "roleConsistency", "runtimeDataQuality")
 
   /** A policy's `inject.minVerificationOptions` naming an option this engine
     * doesn't know would otherwise be silently ignored - a typo'd floor that
@@ -197,7 +198,8 @@ object VerificationSetup {
       rejectUndeclaredFields = floor("rejectUndeclaredFields", options.rejectUndeclaredFields),
       computeFingerprint = floor("computeFingerprint", options.computeFingerprint),
       staticDataQuality = floor("staticDataQuality", options.staticDataQuality),
-      roleConsistency = floor("roleConsistency", options.roleConsistency)
+      roleConsistency = floor("roleConsistency", options.roleConsistency),
+      runtimeDataQuality = floor("runtimeDataQuality", options.runtimeDataQuality)
     )
   }
 

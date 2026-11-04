@@ -26,6 +26,7 @@ SETTINGS = {
     "computeFingerprint": "true: compute a semantic fingerprint (not computed for Python jobs: a warning is logged, the run goes on).",
     "staticDataQuality": "true: prove the contract's value constraints (unsupported for Python jobs, so a run with it is refused).",
     "roleConsistency": "true: check each input's declared role (unsupported for Python jobs, so a run with it is refused).",
+    "runtimeDataQuality": "true: check every row a job writes against its outputs' declared constraints before publishing.",
 }
 
 #: The command that runs the checker, split as a shell would: the native program, or ``java -jar <checker jar>``. The

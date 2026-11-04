@@ -67,6 +67,10 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractRoleConsistency: String
   def setInvaractRoleConsistency(value: String): Unit
 
+  @Description("true: check the values each write puts in an output against its declared constraints (declared unsupported on Beam, which checks a pipeline before it runs, so a run with it and constrained outputs is refused).")
+  def getInvaractRuntimeDataQuality: String
+  def setInvaractRuntimeDataQuality(value: String): Unit
+
   @Description("Comma-separated names of steps the platform trusts not to move governed data (a metrics or a notification step), * for any run of characters: a step that ends the pipeline without a recognised write is not refused when named here.")
   def getInvaractTrustedSteps: String
   def setInvaractTrustedSteps(value: String): Unit
@@ -120,6 +124,7 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.ComputeFingerprint     => options.getInvaractComputeFingerprint
       case InvaractConf.StaticDataQuality      => options.getInvaractStaticDataQuality
       case InvaractConf.RoleConsistency        => options.getInvaractRoleConsistency
+      case InvaractConf.RuntimeDataQuality     => options.getInvaractRuntimeDataQuality
       case InvaractConf.TrustedSteps           => options.getInvaractTrustedSteps
       case _                                   => null
     }).filter(_.trim.nonEmpty)

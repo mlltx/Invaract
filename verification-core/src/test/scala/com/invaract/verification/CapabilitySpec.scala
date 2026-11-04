@@ -34,7 +34,7 @@ class CapabilitySpec extends AnyFunSuite {
     assert(
       blocking == Set(
         "check.inputExistence", "check.location", "check.schema", "check.nestedTypes", "check.format", "check.saveMode",
-        "check.catalogRegistration", "rules.dml", "rules.planShape", "rules.custom", "analysis.staticDataQuality", "analysis.roleConsistency"
+        "check.catalogRegistration", "check.runtimeDataQuality", "rules.dml", "rules.planShape", "rules.custom", "analysis.staticDataQuality", "analysis.roleConsistency"
       )
     )
   }

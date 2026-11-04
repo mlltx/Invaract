@@ -105,6 +105,18 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(validationEvents(sink).head.violations == failed.violations)
   }
 
+  test("evaluateWrite: with runtimeDataQuality on, each data check with a failing row is a violation at the write's location") {
+    val check = DataCheck("total", com.invaract.contract.InterpretedFieldConstraint.Range(Some(BigDecimal(0)), None, None, None))
+    val found = List(DataCheckResult(check, 2, List("-1", "-5")), DataCheckResult(check.copy(field = "id"), 0))
+    val on = VerificationOptions(runtimeDataQuality = true)
+    val result = VerificationPipeline.evaluateWrite(contract, checked().copy(dataChecks = found), on, None)
+    assert(!result.passed)
+    assert(result.violations.map(v => (v.violationType, v.column, v.location)) == List((ViolationType.RuntimeDataQualityViolation, Some("total"), Some("out/report"))))
+    // off, what the adapter found is not judged; on with nothing failing, the write passes
+    assert(VerificationPipeline.evaluateWrite(contract, checked().copy(dataChecks = found), VerificationOptions(), None).passed)
+    assert(VerificationPipeline.evaluateWrite(contract, checked().copy(dataChecks = found.drop(1)), on, None).passed)
+  }
+
   test("evaluateWrite: a capability the adapter declares unsupported is part of the verdict") {
     val noSchemas = CapabilityFixtures.parsed(Map("check.schema" -> (("unsupported", Some("no schemas")))))
     val result = VerificationPipeline.evaluateWrite(contract, checked(), VerificationOptions(), Some(noSchemas))

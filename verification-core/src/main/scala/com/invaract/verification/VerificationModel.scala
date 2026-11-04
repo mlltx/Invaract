@@ -204,6 +204,15 @@ object ViolationType {
     * static data-quality checks.
     */
   val RoleConsistencyViolation = "ROLE_CONSISTENCY_VIOLATION"
+
+  /** Produced by `RuntimeDataQuality` - with `runtimeDataQuality` on, rows a
+    * write put in an output hold a value its field's declared constraint
+    * rules out (`total` below a `range`'s `gte`, a value outside a `oneOf`).
+    * Unlike `DataQualityViolation`, which is a proof about every run, this is
+    * what the data of this run held: `actual` says how many rows broke it,
+    * with a few of their values.
+    */
+  val RuntimeDataQualityViolation = "RUNTIME_DATA_QUALITY_VIOLATION"
 }
 
 /** An operation an adapter cannot check against a contract, as
@@ -416,13 +425,24 @@ case class UnverifiableInput(inputName: String, inputLocation: String, unknownNo
   * `spark.invaract.roleConsistency` per the External Attachability
   * Requirement, exactly like `staticDataQuality`'s own
   * `spark.invaract.staticDataQuality`.
+  *
+  * `runtimeDataQuality` is a sixth: when true, the values each write puts in
+  * an output are checked against its fields' declared `constraints`
+  * (`RuntimeDataQuality`) - by an adapter that sees the data before it is
+  * published, which hands the outcome over as `CheckedWrite.dataChecks`.
+  * Where `staticDataQuality` proves a constraint from the transformation and
+  * so holds for every run, this checks the rows of this run only, so it can
+  * be on where the transformation is opaque. An adapter that cannot see the
+  * data declares `check.runtimeDataQuality` unsupported, and a contract with
+  * output constraints is then refused rather than passed unchecked.
   */
 case class VerificationOptions(
   rejectUndeclaredInputs: Boolean = false,
   rejectUndeclaredFields: Boolean = false,
   computeFingerprint: Boolean = false,
   staticDataQuality: Boolean = false,
-  roleConsistency: Boolean = false
+  roleConsistency: Boolean = false,
+  runtimeDataQuality: Boolean = false
 )
 
 /** `fingerprints` is `None` unless the check that produced this result ran

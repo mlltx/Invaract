@@ -6,11 +6,15 @@ package com.invaract.testkit
 import com.invaract.contract.{Contract, LogicalSchema, LogicalType}
 import com.invaract.verification.{Capability, VerificationOptions}
 
-/** A dataset a scenario's job reads. Only its location and schema matter - an adapter materializes
-  * it as an empty dataset of that schema, because every check the engine makes is about shapes
-  * (locations, columns, types, which plan nodes exist), never about values.
+/** A dataset a scenario's job reads. Almost always only its location and schema matter - an adapter
+  * materializes it as an empty dataset of that schema, because almost every check the engine makes is
+  * about shapes (locations, columns, types, which plan nodes exist), never about values.
+  *
+  * The exception is a check of the values a job writes (`check.runtimeDataQuality`): its scenarios give
+  * the input `rows` (column name to value - a `Long`, a `String`, or null), which an adapter that
+  * supports the check materializes as the input's data. `ScenarioRows` gives the rows the job then writes.
   */
-final case class ScenarioInput(location: String, schema: LogicalSchema)
+final case class ScenarioInput(location: String, schema: LogicalSchema, rows: List[Map[String, Any]] = Nil)
 
 /** Where a scenario's job writes. `format` and `saveMode` use the engine-neutral spellings the
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).
@@ -155,12 +159,44 @@ final case class ScenarioJob(
   require(extraWrites.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !streaming), "only a plain batch job makes further writes")
   require(rejoins >= 0, "a job merges its branches again a number of times, or not at all")
   require(rejoins == 0 || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "branches that rejoin are part of a plain read-transform-write")
+  require(
+    inputs.forall(_.rows.isEmpty) || (inputs.size == 1 && groupBy.isEmpty && rowChange.isEmpty && !untranslatableWrite && !streaming),
+    "only a plain read-transform-write of one input reads rows (ScenarioRows)"
+  )
 
   /** Where the job's writes land, the main one first: every write it makes. */
   def writtenLocations: List[String] = output.location :: extraWrites.map(_.output.location)
 
   /** How many writes the job makes. */
   def writes: Int = 1 + extraWrites.size
+}
+
+/** The rows a scenario's job writes to its main output, for the scenarios whose check is about values (`ScenarioInput.rows`):
+  * the input's rows the job's filter keeps (`filterColumn > 0`), each projected through the job's columns, in order. A job whose
+  * input has no rows writes none; only a plain job of one input has rows (`ScenarioJob` requires it). What an adapter that runs
+  * the job on a real engine writes is the same, so an adapter with no engine of its own (the reference adapter, a protocol test)
+  * can evaluate the checks on these.
+  */
+object ScenarioRows {
+
+  def of(job: ScenarioJob): List[Map[String, Any]] =
+    job.inputs.head.rows
+      .filter(row => job.filterColumn.forall(c => positive(row.getOrElse(c, null))))
+      .map(row => job.columns.map(c => c.name -> value(c.source, row)).toMap)
+
+  private def positive(value: Any): Boolean = value match {
+    case n: java.lang.Number => n.longValue > 0
+    case _                   => false
+  }
+
+  private def value(source: ColumnSource, row: Map[String, Any]): Any = source match {
+    case ColumnSource.FromInput(_, column)    => row.getOrElse(column, null)
+    case ColumnSource.CastInput(_, column, _) => row.getOrElse(column, null)
+    case ColumnSource.NonNullLong(v)          => v
+    case ColumnSource.UniqueId                => java.util.UUID.randomUUID.toString
+    // a row count is the count of a group, and a grouping job reads no rows (ScenarioJob)
+    case ColumnSource.RowCount => throw new IllegalArgumentException("a job that reads rows does not group them")
+  }
 }
 
 /** What running a scenario through an adapter produced. `statuses` are the `ContractValidationEvent`

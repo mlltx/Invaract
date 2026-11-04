@@ -92,7 +92,8 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
       "rejectUndeclaredFields" -> options.rejectUndeclaredFields,
       "computeFingerprint" -> options.computeFingerprint,
       "staticDataQuality" -> options.staticDataQuality,
-      "roleConsistency" -> options.roleConsistency
+      "roleConsistency" -> options.roleConsistency,
+      "runtimeDataQuality" -> options.runtimeDataQuality
     ).collect { case (name, true) => PythonIoConfigSource.variable(name) -> "true" }.toMap
 
   /** An output the scenario registers in a catalog is, for a Python job, an Iceberg table: its location names the catalog,
@@ -140,7 +141,8 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
   def jobJson(scenarioId: String, contract: Contract, job: ScenarioJob): String = {
     def input(i: ScenarioInput) =
       Map("name" -> nameOf(contract.inputs, i.location), "location" -> i.location,
-        "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema))
+        "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema)) ++
+        (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows))
     def output(o: ScenarioOutput) =
       Map("name" -> nameOf(contract.outputs, o.location), "format" -> (if (o.registeredAs.isDefined) "iceberg" else o.format), "saveMode" -> o.saveMode)
     def source(s: ColumnSource): Map[String, Any] = s match {

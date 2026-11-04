@@ -35,6 +35,7 @@ object CapabilityCheck {
 
     val firstNested = fields.find(f => f.isStruct || f.fieldType.contains("<"))
     val firstSensitive = fields.find(_.sensitivityTags.nonEmpty)
+    val firstConstrained = contract.outputs.flatMap(_.schema.fields).find(_.constraints.nonEmpty)
 
     List(
       when(contract.inputs.nonEmpty, Capability.CheckInputExistence, s"it declares ${contract.inputs.size} input(s)"),
@@ -45,6 +46,8 @@ object CapabilityCheck {
       when(datasets.exists(_.format.isDefined), Capability.CheckFormat, "a dataset declares a format"),
       when(contract.outputs.exists(_.saveMode.isDefined), Capability.CheckSaveMode, "an output declares a save mode"),
       when(datasets.exists(_.catalog.isDefined), Capability.CheckCatalogRegistration, "a dataset declares a catalog requirement"),
+      when(options.runtimeDataQuality && firstConstrained.isDefined, Capability.CheckRuntimeDataQuality,
+        firstConstrained.map(f => s"runtimeDataQuality is enabled and output field '${f.name}' declares constraints").getOrElse("")),
       when((ruleTypes & RuleType.DmlTypes).nonEmpty, Capability.RulesDml, s"it declares DML rule(s): ${(ruleTypes & RuleType.DmlTypes).toList.sorted.mkString(", ")}"),
       when((ruleTypes & RuleType.PlanShapeTypes).nonEmpty, Capability.RulesPlanShape, s"it declares transformation-shape rule(s): ${(ruleTypes & RuleType.PlanShapeTypes).toList.sorted.mkString(", ")}"),
       when(contract.customRuleTypes.nonEmpty, Capability.RulesCustom, s"it declares custom rule type(s): ${contract.customRuleTypes.keys.toList.sorted.mkString(", ")}"),

@@ -79,6 +79,12 @@ capabilities:
       An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and
       write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials).
       Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
+  check.runtimeDataQuality:
+    status: partial
+    summary: "Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked."
+    note: >-
+      The package evaluates each constraint (equals, oneOf, range, length, fieldRange) on the data it stages and reports
+      how many rows broke it; a run with any is refused and publishes nothing. Only top-level fields are checked.
   rules.dml:
     status: not-applicable
     summary: The invaract package has no row-level changes, so there are no row-level rules to apply.

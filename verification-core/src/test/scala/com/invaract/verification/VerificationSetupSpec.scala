@@ -114,7 +114,8 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     InvaractConf.RejectUndeclaredFields -> ((o: VerificationOptions) => o.rejectUndeclaredFields),
     InvaractConf.ComputeFingerprint -> ((o: VerificationOptions) => o.computeFingerprint),
     InvaractConf.StaticDataQuality -> ((o: VerificationOptions) => o.staticDataQuality),
-    InvaractConf.RoleConsistency -> ((o: VerificationOptions) => o.roleConsistency)
+    InvaractConf.RoleConsistency -> ((o: VerificationOptions) => o.roleConsistency),
+    InvaractConf.RuntimeDataQuality -> ((o: VerificationOptions) => o.runtimeDataQuality)
   )
 
   test("resolveVerificationOptions: nothing configured leaves the caller's options exactly as passed") {
@@ -135,7 +136,7 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     allFlags.foreach { case (name, flag) =>
       assert(!flag(VerificationSetup.resolveVerificationOptions(VerificationOptions(), config(name -> "false"))), name)
     }
-    val allOn = VerificationOptions(true, true, true, true, true)
+    val allOn = VerificationOptions(true, true, true, true, true, true)
     assert(VerificationSetup.resolveVerificationOptions(allOn, config(allFlags.map(_._1 -> "false"): _*)) == allOn)
   }
 
@@ -279,7 +280,7 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
       VerificationSetup.enforceOrgPolicy(plainContract, VerificationOptions(), config(InvaractConf.OrgPolicy -> bad), None, None)
     }
     assert(ex.getMessage.contains(bad) && ex.getMessage.contains("rejectUndeclredFields"))
-    assert(ex.getMessage.contains("known keys: computeFingerprint, rejectUndeclaredFields, rejectUndeclaredInputs, roleConsistency, staticDataQuality"))
+    assert(ex.getMessage.contains("known keys: computeFingerprint, rejectUndeclaredFields, rejectUndeclaredInputs, roleConsistency, runtimeDataQuality, staticDataQuality"))
   }
 
   // --- small helpers ---------------------------------------------------------------------------
@@ -288,6 +289,8 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     val policy = com.invaract.contract.OrgPolicyParser.parse("version: \"1.0\"\ninject:\n  minVerificationOptions:\n    roleConsistency: true\n    computeFingerprint: false\n")
     val raised = VerificationSetup.applyMinVerificationOptions(VerificationOptions(computeFingerprint = true), policy)
     assert(raised == VerificationOptions(computeFingerprint = true, roleConsistency = true))
+    val runtime = com.invaract.contract.OrgPolicyParser.parse("version: \"1.0\"\ninject:\n  minVerificationOptions:\n    runtimeDataQuality: true\n")
+    assert(VerificationSetup.applyMinVerificationOptions(VerificationOptions(), runtime) == VerificationOptions(runtimeDataQuality = true))
   }
 
   test("splitCommaSeparated trims and drops blanks") {

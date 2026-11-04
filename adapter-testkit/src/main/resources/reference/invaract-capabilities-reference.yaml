@@ -43,6 +43,9 @@ capabilities:
   check.catalogRegistration:
     status: supported
     note: A write can carry a catalog identity (a table name), which is all the registration check needs.
+  check.runtimeDataQuality:
+    status: partial
+    note: The rows a scenario's job writes are checked in memory; constraints on fields nested in a struct are not checked.
   rules.dml:
     status: partial
     note: The DELETE rules are enforced; the reference adapter models only deletes.

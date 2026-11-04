@@ -287,6 +287,7 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
 | `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `INVARACT_REJECT_UNDECLARED_FIELDS=true` | Refuse an output column the contract does not declare. |
+| `INVARACT_RUNTIME_DATA_QUALITY=true` | Check every row the job writes against its outputs' declared value constraints, before anything is published ([Check Data Values at Run Time](/guides/checking-data-values-at-run-time/)). |
 | `INVARACT_REGISTRY_URL`, `INVARACT_REGISTRY_CLIENT_CLASS` | The contract registry. |
 | `INVARACT_CHECKER` | The command that runs the checker, instead of the one the package carries. |
 

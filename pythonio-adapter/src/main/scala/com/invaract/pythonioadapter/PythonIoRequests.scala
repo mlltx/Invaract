@@ -43,8 +43,12 @@ private[pythonioadapter] object Request {
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
-    * counted batch by batch as it was written. */
-  final case class Written(name: String, nulls: Map[String, Long]) extends Request
+    * counted batch by batch as it was written, and what it found evaluating the output's data checks (sent with `open`), in
+    * their order - none when it was given none. */
+  final case class Written(name: String, nulls: Map[String, Long], checks: List[Found] = Nil) extends Request
+
+  /** One data check's outcome: how many rows broke it, and some of the values they held. */
+  final case class Found(failed: Long, examples: List[String])
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
@@ -130,7 +134,23 @@ private[pythonioadapter] object Requests {
     for {
       name <- text(m, "name").toRight("a written must name the output it staged")
       nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
-    } yield Request.Written(name, nulls.toMap)
+      checks <- found(m.get("checks"), name)
+    } yield Request.Written(name, nulls.toMap, checks)
+
+  private def found(value: Option[AnyRef], name: String): Either[String, List[Request.Found]] = value match {
+    case None => Right(Nil)
+    case Some(items: JList[_]) =>
+      traverse(items.asScala.toList) {
+        case c: JMap[_, _] =>
+          val m = asMap(c)
+          for {
+            failed <- count(m.getOrElse("failed", null), s"the failing rows of a check of '$name'")
+            examples <- traverse(list(m.get("examples")))(e => Right(String.valueOf(e)))
+          } yield Request.Found(failed, examples)
+        case other => Left(s"each check of '$name' must be a JSON object, not '$other'")
+      }
+    case Some(other) => Left(s"the checks of '$name' must be a list, not '$other'")
+  }
 
   private def count(value: AnyRef, what: String): Either[String, Long] = value match {
     case n: java.lang.Number if n.longValue >= 0 && n.doubleValue == n.longValue.toDouble => Right(n.longValue)

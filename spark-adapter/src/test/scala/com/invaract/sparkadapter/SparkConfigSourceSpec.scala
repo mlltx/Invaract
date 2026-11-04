@@ -24,6 +24,7 @@ class SparkConfigSourceSpec extends AnyFunSuite {
       ContractEnforcementRule.ComputeFingerprintConfKey -> InvaractConf.ComputeFingerprint,
       ContractEnforcementRule.StaticDataQualityConfKey -> InvaractConf.StaticDataQuality,
       ContractEnforcementRule.RoleConsistencyConfKey -> InvaractConf.RoleConsistency,
+      ContractEnforcementRule.RuntimeDataQualityConfKey -> InvaractConf.RuntimeDataQuality,
       ContractEnforcementRule.OrgPolicyConfKey -> InvaractConf.OrgPolicy,
       ContractEnforcementRule.OrgPolicyOverlaysConfKey -> InvaractConf.OrgPolicyOverlays
     )

@@ -75,6 +75,8 @@ object InvaractConf {
   val ComputeFingerprint = "computeFingerprint"
   val StaticDataQuality = "staticDataQuality"
   val RoleConsistency = "roleConsistency"
+  /** `"true"` checks the values each write puts in an output against its fields' declared constraints (`RuntimeDataQuality`). */
+  val RuntimeDataQuality = "runtimeDataQuality"
   val OrgPolicy = "orgPolicy"
   val OrgPolicyOverlays = "orgPolicyOverlays"
   /** `"true"` makes a job that never wrote an output its contract declares exit with a failure status, for an adapter
@@ -100,6 +102,6 @@ object InvaractConf {
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
     Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
-    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, FailOnMissingOutput, TrustedSteps
+    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps
   )
 }

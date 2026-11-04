@@ -1,0 +1,122 @@
+---
+title: Check Data Values at Run Time
+description: Hold every row a job writes to the value constraints its contract declares, before anything is published.
+sidebar:
+  order: 4.7
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A contract's output fields can declare [value constraints](/reference/contract-format/#static-data-quality-constraints):
+a value must equal a constant, be one of a set, fall in a numeric range, have a length, or
+compare with another column of the same row. With `runtimeDataQuality` turned on, Invaract
+checks every row a job writes against them, as the job writes it. A run with a row that
+breaks one is refused, and its outputs are not published.
+
+This complements [static data quality](/guides/verifying-static-data-quality/), which
+proves a constraint from the job's logic and so holds for every run. A runtime check holds
+for the data of this run only, but it needs nothing from the job's logic, so it works where
+that logic is the team's own code.
+
+<Aside type="note" title="Python jobs only">
+Only an engine that sees the rows before they are published can check them. Python jobs
+that write through the `invaract` package do. Spark and Beam check a job before its rows
+exist, so they declare this unsupported: turning `runtimeDataQuality` on there refuses a
+contract whose outputs declare constraints (`UNSUPPORTED_CONTRACT_FEATURE`), rather than
+passing them unchecked. See [What Each Engine Checks](/reference/what-each-engine-checks/).
+</Aside>
+
+## Declare the constraints
+
+Constraints sit on an output's fields, as for static data quality:
+
+```yaml
+outputs:
+  - name: revenue
+    location: data/out/revenue
+    format: parquet
+    schema:
+      fields:
+        - name: region
+          type: string
+          required: true
+          constraints:
+            - { type: oneOf, values: [north, south, east, west] }
+        - name: total
+          type: long
+          constraints:
+            - { type: range, gte: 0 }
+```
+
+## Turn it on
+
+The setting is off by default. A platform turns it on for a job without changing the job:
+
+| Engine | Setting |
+|---|---|
+| Python | `INVARACT_RUNTIME_DATA_QUALITY=true` |
+| Spark | `--conf spark.invaract.runtimeDataQuality=true` (refuses constrained outputs: unsupported) |
+| Beam Java | `--invaractRuntimeDataQuality=true` (refuses constrained outputs: unsupported) |
+| Beam Python | `--invaract_runtime_data_quality=true` (refuses constrained outputs: unsupported) |
+
+An [organizational policy](/guides/enforcing-organizational-policy/) can require it too,
+with `runtimeDataQuality: true` under `inject.minVerificationOptions`.
+
+## A job that breaks a constraint
+
+This job writes a negative total:
+
+```python
+import pandas as pd
+import invaract
+
+@invaract.job("contract.yaml")
+def main():
+    revenue = pd.DataFrame({"region": ["north", "south", "east"], "total": [120, -15, 40]})
+    invaract.write(revenue, "revenue")
+```
+
+Without the setting it publishes all three rows. With `INVARACT_RUNTIME_DATA_QUALITY=true`
+the run is refused, and `data/out/revenue` is not written:
+
+```
+invaract.errors.ContractViolation: Contract violation: 'daily_revenue@1.0.0' rejected this transformation. Write aborted.
+...
+Why it violates the contract (1 violation):
+  1. [RUNTIME_DATA_QUALITY_VIOLATION] output field 'total' must meet its declared constraint (range gte 0), but this write breaks it in 1 row(s), for example -15
+
+How to correct it:
+  1. Find what produces these values of 'total' (the transformation or the data it reads) and fix it, or, if they are valid, relax or remove the constraint in the contract.
+```
+
+The violation's `expected` is the constraint and its `actual` the number of rows that
+broke it, with up to five of their values (`RUNTIME_DATA_QUALITY_VIOLATION` in
+[Violation Types](/reference/violation-types/#runtime-data-quality-violations)).
+
+## What each constraint means for a row
+
+- **A null value never breaks a constraint.** Whether a column may be null is its
+  `required`/`nullable` declaration, which is checked anyway.
+- **`equals` and `oneOf`** compare numbers by value whatever their type (`1`, `1.0` and a
+  decimal `1.00` are equal); anything else must be equal as it is. The text `"1"` is not the
+  number `1`, and `true` is not `1`.
+- **`range`** needs a number: text, a boolean or NaN breaks it.
+- **`length`** counts characters, not bytes (`"éü😀"` has length 3).
+- **`fieldRange`** compares with the named column of the same row. When that column is null
+  in a row, the row has no bound there and passes.
+
+Only the five constraint types above are checked. A `constraints` entry of another type is
+an extension Invaract does not interpret, and is not checked. Constraints on a field inside
+a struct are not checked either; only an output's top-level fields are.
+
+## What it costs
+
+Each row is evaluated as it is staged, with Arrow's own compute functions, so a job reads
+its output data once more in memory. Nothing is written twice and nothing is read back from
+storage.
+
+## Related
+
+- [Verify Static Data Quality](/guides/verifying-static-data-quality/)
+- [Use Invaract with Python Jobs](/guides/using-invaract-with-python/)
+- [Configuration](/reference/configuration/)
