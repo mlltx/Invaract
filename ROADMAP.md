@@ -4015,9 +4015,19 @@ Extend verification engine to support multiple execution engines.
   - [x] Milestone 4, `invaract-lint` (`pythonio-adapter/lint`): flags reads, writes, connections and file SQL made outside
         the package, by the names calls resolve to through imports; `# invaract: allow` exceptions; CI and pre-commit use;
         71 tests, mutmut 87.9% (CI's `pythonio-lint`, 80% floor)
-  - [ ] The user guide, the platform wheels carrying the native checker, the first release
-  - [ ] **Follow-fast, committed until delivered:** object storage (S3, GCS, Azure) for reads and writes
-  - [ ] **Follow-fast, committed until delivered:** Delta Lake and Iceberg outputs (atomic publishing on object storage)
+  - [x] Milestone 5, the user guide and the release tooling: the docs-site guide "Use Invaract with Python Jobs" (with
+        the Python column of the configuration reference and a troubleshooting entry); `release-python.yml`, which
+        builds a native checker and a wheel on each of Linux x86_64 and aarch64 and macOS arm64 and x86_64, a pure-Python
+        wheel carrying the checker jar (run with Java elsewhere) and `invaract-lint`, installs each and runs the example
+        job with it, and publishes to PyPI by trusted publishing on a `python-v<version>` tag (docs/RELEASING.md)
+  - [ ] The first release on PyPI: the one-time PyPI setup in docs/RELEASING.md, then the `python-v0.1.0` tag
+  - [x] **Follow-fast (milestone 6):** Delta Lake and Iceberg outputs and inputs, each output committed in one transaction
+        when the run passes, the table created if missing (`invaract[delta]`, `invaract[iceberg]`); plain-file outputs on
+        HDFS (staged and renamed) and on object storage (copied, `_SUCCESS` last, Spark-style; decided 2026-11-03); reads
+        from both. Tested locally, on S3 (moto) and on HDFS through a stand-in file system, oldest and newest library
+        releases (CI's `pythonio-python`)
+  - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
+        (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

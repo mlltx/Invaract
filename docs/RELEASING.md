@@ -168,3 +168,79 @@ cd contract && sbt clean test publishLocal publishSigned
 otherwise upload — inspect its contents (a real jar/sources/javadoc/pom,
 each with a matching `.asc` signature) to confirm signing actually worked
 before wiring up real CI secrets.
+
+# The Python packages
+
+The Python I/O adapter (docs/PYTHONIO_ADAPTER.md) is released to **PyPI**, separately from the Maven
+modules above, by `.github/workflows/release-python.yml`, on a tag of its own (`python-v<version>`; a `v*`
+tag never starts it, and it never starts `release.yml`).
+
+## What gets published
+
+- **`invaract`**, as five wheels: one per platform with a native checker built for it (Linux x86_64 and
+  aarch64, macOS arm64 and x86_64), each carrying that checker at `invaract/bin/`, and one pure-Python
+  wheel (`py3-none-any`) carrying the checker jar at `invaract/lib/`, which the package runs with Java
+  on every other platform. pip picks the platform wheel where one matches. There is no source
+  distribution: one built from source would carry no checker.
+- **`invaract-lint`**, a source distribution and a pure-Python wheel.
+- On the GitHub release for the tag: all of the above, the checker jar, and each native checker.
+
+A platform wheel's tag is read from the checker it carries (`.github/scripts/python_wheel.py`): the
+newest glibc symbol version the Linux program needs (`manylinux_<x>_<y>`), or the macOS program's
+minimum OS version. A checker built on a newer runner image gets a narrower tag, never one that claims
+more than it runs on. On macOS the linker records the build machine's own release as that minimum unless
+told otherwise, so the workflow links the checker for macOS 11 (`MACOSX_DEPLOYMENT_TARGET` and
+`-mmacosx-version-min`), and checks each wheel's tag. A further job installs each native wheel on an
+older runner image than the one that built it (Ubuntu 22.04, macOS 14) with Python 3.10 and runs the
+example job, so a wheel whose tag pip accepts there but whose checker does not run is caught before it
+is published. `python_wheel.py version` refuses a release whose package, checker
+(`pythonio-adapter/build.sbt`) and lint versions differ, and the workflow refuses a tag that does not
+name that version.
+
+## One-time setup (a human must do this)
+
+1. **Register both names on PyPI**, `invaract` and `invaract-lint` (decision 6 of
+   docs/PYTHON_IO_ADAPTER_DESIGN.md; both were free on 2026-11-01).
+2. **Add a trusted publisher to each project** on PyPI (the project's Publishing settings): owner
+   `mlltx`, repository `Invaract`, workflow `release-python.yml`, environment `pypi`. Trusted publishing
+   uses a short-lived token GitHub issues to the workflow; no PyPI token is stored anywhere. Before a
+   project exists, PyPI's "pending publisher" form does the same and creates the project on the first
+   upload.
+3. **Create the `pypi` environment** in the repository's settings (Settings → Environments). Restricting
+   it to tags matching `python-v*`, and requiring a reviewer, keeps a publish from running on anything
+   else.
+
+## Cutting a release
+
+1. Set one version in all three places: `__version__` in `pythonio-adapter/python/invaract/__init__.py`
+   and in `pythonio-adapter/lint/invaract_lint/__init__.py` (each `pyproject.toml` reads its package's),
+   and `ThisBuild / version` in `pythonio-adapter/build.sbt`. `python3 .github/scripts/python_wheel.py
+   version` prints it, or names each place that differs.
+2. Merge to `main`.
+3. Tag the merged commit and push the tag:
+   ```
+   git tag python-v0.1.0
+   git push origin python-v0.1.0
+   ```
+4. The workflow builds the checker jar, a native checker and wheel on each platform, the pure-Python
+   wheel and the lint, installs each wheel in a new virtual environment and runs the example job with
+   it (`python_wheel.py smoke`: it must run the checker the wheel carries, publish a passing run and
+   refuse a failing one), then publishes to PyPI and creates the GitHub release.
+5. PyPI refuses a version that already exists, as Central does. If the workflow fails after publishing
+   one package and not the other, re-run the failed jobs; to change what a published version contains,
+   release a new version.
+6. Until docs/PYTHON_IO_ADAPTER_DESIGN.md's milestone 6 is complete, each release note says what is still
+   missing (Google Cloud Storage, Azure and a real HDFS cluster, not yet tested); the workflow's release body does.
+
+## Dry run
+
+`release-python.yml` runs everything up to publishing on any pull request that changes how the packages
+are built (either package's `pyproject.toml` or `__init__.py`, `_checker.py`, `pythonio-adapter/build.sbt`,
+`python_wheel.py`, the workflow or this file), and on a manual run. It uses no secret and uploads nothing to PyPI; it cannot prove the
+trusted publisher is set up, which only a real release does. Locally, with the jar built
+(`cd pythonio-adapter && sbt assembly`):
+
+```
+python3 .github/scripts/python_wheel.py java --jar pythonio-adapter/target/scala-2.12/invaract-pythonio-checker-0.1.0.jar --out dist
+python3 .github/scripts/python_wheel.py smoke --wheel dist/invaract-0.1.0-py3-none-any.whl --expect java --extra pandas
+```

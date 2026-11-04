@@ -7,31 +7,35 @@
 # something says so, with a reason. Anything other than `supported` needs a `note` (for contributors)
 # and a `summary` (one plain sentence for users: the "What Each Engine Checks" page, written by EngineGuidePage).
 #
-# Written from docs/PYTHON_IO_ADAPTER_DESIGN.md and held to the conformance kit: PythonIoConformanceAdapter runs each
-# scenario through the checker (PythonIoCheck) as the `invaract` package will drive it, one protocol request per read
-# and write. The package itself (milestone 1) is not built yet; until it is, nothing here reaches a user.
+# Written from docs/PYTHON_IO_ADAPTER_DESIGN.md and held to the conformance kit twice: PythonIoConformanceAdapter runs each
+# scenario through the checker (PythonIoCheck) one protocol request per read and write, and
+# PythonIoPackageConformanceAdapter runs it as a real Python job through the `invaract` package.
 adapter: pythonio
-engine: Python (invaract package, in development)
+engine: Python (invaract package)
+guide: /guides/using-invaract-with-python/
 enforcement:
   point: staged-publish
   note: >-
-    The job reads and writes through the invaract package, which stages each output beside its location and publishes it
-    by a rename; a refusal raises ContractViolation in the job.
+    The job reads and writes through the invaract package, which stages each output and publishes it only if the whole
+    run passed: Parquet or CSV files by a rename (local, HDFS) or a copy with _SUCCESS written last (object storage), a
+    Delta or Iceberg table by one commit; a refusal raises ContractViolation in the job.
 capabilities:
   read.batch:
     status: supported
-    note: Reads go through invaract.read by the input's declared name, so the checker knows each one exactly.
+    note: >-
+      Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV
+      files (local, HDFS, object storage) and Delta and Iceberg tables.
   read.streaming:
     status: unsupported
     summary: Python jobs read whole datasets; reading a stream is not checked.
-    note: The first version reads whole files (Parquet, CSV); there is no streaming read in the package.
+    note: The package reads whole datasets (files and tables); there is no streaming read in it.
   write.batch:
     status: supported
     note: Writes go through invaract.write by the output's declared name; the table's columns are read from the data frame (Arrow).
   write.streaming:
     status: unsupported
     summary: Python jobs write whole datasets; writing a stream is not checked.
-    note: The first version writes whole files; there is no streaming write in the package.
+    note: The package writes whole datasets; there is no streaming write in it.
   write.rowLevelDml:
     status: not-applicable
     summary: The invaract package writes whole outputs; it has no row-level MERGE, UPDATE or DELETE.
@@ -64,10 +68,10 @@ capabilities:
     status: supported
   check.format:
     status: supported
-    note: The package writes the format itself (Parquet or CSV) and says which.
+    note: The package writes the format itself (Parquet, CSV, Delta or Iceberg) and says which.
   check.saveMode:
     status: supported
-    note: The package writes the save mode itself (overwrite or append) and says which.
+    note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
   check.catalogRegistration:
     status: unsupported
     summary: Python jobs write files; registering an output in a catalog is not checked yet.

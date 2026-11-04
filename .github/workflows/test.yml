@@ -683,9 +683,16 @@ jobs:
           - libraries: oldest
             python-version: "3.10"
             install: 'pyarrow==15.0.0 pandas==2.2.0 "numpy<2" polars==1.0.0 duckdb==1.0.0'
+          # Delta Lake, Iceberg and S3 (milestone 6; moto serves S3 in-process): the oldest releases the extras allow
+          # (pyiceberg 0.9 needs pyarrow 17), and the newest, which also run every other test
+          - libraries: oldest tables
+            python-version: "3.10"
+            install: 'pyarrow==17.0.0 pandas==2.2.0 "numpy<2" deltalake==1.0.0 "pyiceberg[pyarrow,sql-sqlite]==0.9.0" "moto[server]" boto3'
+            tables: "true"
           - libraries: newest
             python-version: "3.13"
-            install: "pyarrow pandas polars duckdb"
+            install: 'pyarrow pandas polars duckdb deltalake "pyiceberg[pyarrow,sql-sqlite]" "moto[server]" boto3'
+            tables: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -710,6 +717,7 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/checker/invaract-pythonio-checker"
           export INVARACT_TEST_CHECKER="$RUNNER_TEMP/checker/invaract-pythonio-checker"
+          export INVARACT_TEST_TABLES="${{ matrix.tables }}"
           cd pythonio-adapter/python
           python -m pytest -v
 
@@ -1718,6 +1726,11 @@ jobs:
       - name: Unit-test check_modules.py and dev/new-adapter
         shell: bash
         run: cd .github/scripts && python3 -m unittest -v test_check_modules test_new_adapter
+
+      # python_wheel.py tags the invaract package's platform wheels from the native checker each carries (release-python.yml)
+      - name: Unit-test python_wheel.py
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_python_wheel
 
       - name: Module registry check (modules.json against every file that lists modules)
         shell: bash

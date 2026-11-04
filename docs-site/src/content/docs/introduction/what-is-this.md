@@ -79,6 +79,7 @@ code, this is that missing layer. A platform team can attach it to jobs it doesn
 Invaract is early-stage. The Spark adapter is tested against real Spark jobs across Delta
 Lake, Iceberg, Parquet, CSV, Hive, Avro and ClickHouse. The Beam adapters are tested against
 real pipelines for the Java and Python SDK releases listed in
-[Engine Version Support](/reference/spark-version-support/). There is no Maven Central release
+[Engine Version Support](/reference/spark-version-support/). Plain Python jobs install the `invaract`
+package with pip ([Use Invaract with Python Jobs](/guides/using-invaract-with-python/)). There is no Maven Central release
 yet: build from source ([Installation](/getting-started/installation/)) or use the
 [prebuilt jars](/guides/using-prebuilt-jars-without-sbt/).

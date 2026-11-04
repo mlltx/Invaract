@@ -30,13 +30,54 @@ def test_the_decorators_contract_is_the_default_and_the_environments_wins():
     assert _settings.from_environment(None, environ={}) == {}
 
 
-def test_the_checker_command_is_split_as_a_shell_would_and_the_bundled_checker_is_the_fallback(monkeypatch):
+def test_the_checker_command_is_split_as_a_shell_would():
     assert _checker.command({"INVARACT_CHECKER": "java -jar '/a b/c.jar'"}) == ["java", "-jar", "/a b/c.jar"]
-    monkeypatch.setattr(_checker, "BUNDLED", sys.executable)
-    assert _checker.command({}) == [sys.executable]
-    monkeypatch.setattr(_checker, "BUNDLED", "/no/such/checker")
-    with pytest.raises(invaract.CheckNotRun):
-        _checker.command({})
+
+
+def executable(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.fixture
+def bundled(tmp_path, monkeypatch):
+    """What a wheel carries, empty: place a native checker and a jar in it as a test needs them."""
+    native, jar = tmp_path / "pkg" / "bin" / "checker", tmp_path / "pkg" / "lib" / "checker.jar"
+    monkeypatch.setattr(_checker, "BUNDLED", str(native))
+    monkeypatch.setattr(_checker, "BUNDLED_JAR", str(jar))
+    return type("Bundled", (), {"native": native, "jar": jar})
+
+
+def test_invaract_checker_comes_first_then_the_native_checker_then_the_jar_with_java(bundled, tmp_path):
+    java = executable(tmp_path / "jdk" / "bin" / "java")
+    bundled.jar.parent.mkdir(parents=True)
+    bundled.jar.write_bytes(b"jar")
+    executable(bundled.native)
+    assert _checker.command({"INVARACT_CHECKER": "mine", "JAVA_HOME": str(tmp_path / "jdk")}) == ["mine"]
+    assert _checker.command({"JAVA_HOME": str(tmp_path / "jdk")}) == [str(bundled.native)]
+    bundled.native.chmod(0o644)  # a native checker that cannot run is passed over
+    assert _checker.command({"JAVA_HOME": str(tmp_path / "jdk")}) == [java, "-jar", str(bundled.jar)]
+
+
+def test_the_jar_runs_with_java_home_s_java_else_the_one_on_path(bundled, tmp_path):
+    bundled.jar.parent.mkdir(parents=True)
+    bundled.jar.write_bytes(b"jar")
+    home = executable(tmp_path / "jdk" / "bin" / "java")
+    on_path = executable(tmp_path / "path" / "java")
+    path = str(tmp_path / "path")
+    assert _checker.command({"JAVA_HOME": str(tmp_path / "jdk"), "PATH": path})[0] == home
+    assert _checker.command({"JAVA_HOME": str(tmp_path / "no-jdk"), "PATH": path})[0] == on_path
+    assert _checker.command({"PATH": path})[0] == on_path
+    with pytest.raises(invaract.CheckNotRun, match="no native checker for this platform.*Java 11 or later"):
+        _checker.command({"PATH": str(tmp_path / "empty")})
+
+
+def test_with_nothing_bundled_and_nothing_named_the_run_is_not_checked(bundled, tmp_path):
+    executable(tmp_path / "path" / "java")
+    with pytest.raises(invaract.CheckNotRun, match="no checker to run on this platform.*INVARACT_CHECKER"):
+        _checker.command({"PATH": str(tmp_path / "path")})
 
 
 def run_job(body):

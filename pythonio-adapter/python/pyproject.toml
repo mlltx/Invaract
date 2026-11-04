@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "invaract"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Reads and writes a Python job's data by the names its data contract gives, and publishes only what the contract allows."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -14,12 +14,23 @@ dependencies = ["pyarrow>=15"]
 [project.optional-dependencies]
 pandas = ["pandas>=2.2"]
 polars = ["polars>=1.0"]
+# Delta Lake and Iceberg tables (milestone 6); an Iceberg catalog's own extra comes from pyiceberg (pyiceberg[glue], ...)
+delta = ["deltalake>=1.0"]
+iceberg = ["pyiceberg[pyarrow]>=0.9"]
 
 [project.urls]
 Homepage = "https://github.com/mlltx/Invaract"
 
 [tool.setuptools]
 packages = ["invaract"]
+
+# what a wheel carries besides the code (.github/scripts/python_wheel.py): the native checker in a platform wheel, the
+# checker jar in the pure-Python one; a source checkout has neither
+[tool.setuptools.package-data]
+invaract = ["bin/*", "lib/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "invaract.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -102,8 +102,8 @@ def test_a_csv_column_is_read_as_the_contracts_type(contract_type, arrow):
 
 
 def test_a_format_that_cannot_be_read_is_an_error():
-    with pytest.raises(ValueError, match="parquet and csv"):
-        _frames.read_table("anywhere", "delta", [])
+    with pytest.raises(ValueError, match="it reads parquet, csv, delta and iceberg"):
+        _frames.read_table("anywhere", "orc", [])
 
 
 def test_a_pandas_frames_row_index_is_not_written():

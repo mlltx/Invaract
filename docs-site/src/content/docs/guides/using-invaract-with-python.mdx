@@ -1,0 +1,378 @@
+---
+title: Use Invaract with Python Jobs
+description: Check a plain Python job (pandas, Polars, DuckDB, pyarrow) against a data contract as it reads and writes, and publish its outputs only if the whole run passes.
+sidebar:
+  order: 18
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide makes a plain Python job (one that reads and writes files with pandas, Polars, DuckDB or pyarrow, with no
+Spark or Beam underneath) keep to a data contract. The job reads and writes through the `invaract` package by the names
+its contract gives; every read and write is checked as it happens, and the job's outputs are published together, only
+if the whole run passed. The contract is the same YAML you [write for Spark](/guides/writing-a-contract/).
+
+<Aside type="caution" title="What this does and does not check">
+Invaract checks what a Python job reads and writes: which datasets, where, in which format and save mode, and with which
+columns and types (including that a required column holds no empty value). It cannot read what your own Python code
+does between a read and a write, so the transformation-shape rules (`required_filter_columns`, `required_join_columns`,
+`required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
+with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **Parquet and CSV files** on local and
+mounted file systems, HDFS and object storage, and **Delta Lake and Iceberg tables** (see
+[Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
+are not tested yet). The full
+list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
+</Aside>
+
+## How it works
+
+Unlike Spark and Beam, where Invaract is attached from the command line, a Python job adopts Invaract once, in its code:
+each read and write that named a path names the dataset instead, and the contract says where it is. The change is the
+same for every job, and small:
+
+```python
+orders = pd.read_parquet("data/in/orders")          # before
+orders = invaract.read("orders")                     # after
+
+report.to_parquet("data/out/report/part-0.parquet")  # before
+invaract.write(report, "report")                     # after
+```
+
+When the job starts, the package starts Invaract's checker, the same verification code the other engines use, and
+describes each read and write to it: the dataset's name, its columns, their types and how many empty values each holds.
+It never sends the data itself. Each write is checked before it is written, and written to a staging folder beside its
+location. When the job returns, every staged output is published (moved into place); if anything was refused, nothing
+is. So a run that breaks its contract leaves the outputs exactly as they were before it started.
+
+After that one change, a platform configures the job from outside it, with `INVARACT_*` environment variables: which
+contract, where events go, which policy applies (see [The settings](#the-settings)).
+
+## Install the package
+
+```bash
+pip install "invaract[pandas]"      # or invaract[polars], or plain invaract for pyarrow alone
+```
+
+Add `delta` or `iceberg` for Delta Lake or Iceberg tables: `pip install "invaract[pandas,delta]"`.
+
+It needs Python 3.10 or later and pyarrow 15 or later (installed with it); for pandas, 2.2 or later, and for Polars, 1.0
+or later.
+
+The checker comes with the package. On **Linux** (x86_64 and aarch64) with glibc 2.34 or later (Ubuntu 22.04, Debian 12,
+RHEL 9 and later) and on **macOS 11 or later** (Apple silicon and Intel), pip installs a wheel that carries the checker as
+a native program: nothing else is needed. On any other platform it installs a wheel that carries the checker as a Java
+program, so **Java 11 or later** must be installed there (`JAVA_HOME`, or `java` on the `PATH`). Set `INVARACT_CHECKER` to run a checker of your own instead (see
+[Python-only settings](/reference/configuration/#python-only-settings)).
+
+## Adopt it in a job
+
+<Steps>
+
+1. Write the contract: every input the job reads and every output it writes, with its location, format, save mode and
+   columns. This is the contract of the example job in the repository (`pythonio-adapter/python/examples/orders_job`),
+   which reads orders and customers and writes a revenue report and an audit list:
+
+   ```yaml
+   id: orders_report
+   version: "1.0.0"
+   inputs:
+     - name: orders
+       location: data/in/orders
+       format: parquet
+       schema:
+         fields:
+           - { name: order_id,    type: long,   required: true }
+           - { name: customer_id, type: long,   required: true }
+           - { name: amount,      type: long,   required: true }
+           - { name: status,      type: string, required: true }
+     - name: customers
+       location: data/in/customers.csv
+       format: csv
+       schema:
+         fields:
+           - { name: customer_id, type: long,   required: true }
+           - { name: region,      type: string, required: true }
+   outputs:
+     - name: report
+       type: DATA_ASSET
+       location: data/out/report
+       format: parquet
+       saveMode: overwrite
+       derivedFrom: [orders, customers]
+       schema:
+         fields:
+           - { name: region, type: string, required: true }
+           - { name: total,  type: long,   required: true }
+     - name: audit
+       type: DATA_ASSET
+       location: data/out/audit
+       format: parquet
+       saveMode: overwrite
+       derivedFrom: [orders]
+       schema:
+         fields:
+           - { name: order_id, type: long,   required: true }
+           - { name: status,   type: string }
+   ```
+
+   No contract yet? Start with a [dry run](#start-from-a-job-with-no-contract), which writes one for you.
+
+2. Mark the job's entry point with `@invaract.job`, naming the contract. Everything the function reads and writes is one
+   run:
+
+   ```python
+   import invaract
+
+   @invaract.job("contract.yaml")
+   def main():
+       paid = load.paid_orders()
+       build.audit(paid)
+       invaract.write(build.report(paid, load.customers()), "report")
+   ```
+
+   A script with no entry-point function uses `with invaract.run("contract.yaml"):` around its body instead.
+
+3. Replace each read and write with the dataset's name. `invaract.read(name)` returns a pandas DataFrame; pass
+   `as_="polars"`, `"polars-lazy"` or `"arrow"` for another kind. Only the columns the contract lists are read, and a CSV
+   input's columns are read as the contract's types. `invaract.write(frame, name)` takes a pandas, Polars or DuckDB
+   frame, a Polars LazyFrame, or a pyarrow Table or RecordBatchReader; a pandas frame's row index is not written. The
+   decorators `@invaract.reads(...)` and `@invaract.writes(...)` do the same for a function's arguments and its result:
+
+   ```python
+   def paid_orders():
+       orders = invaract.read("orders")       # was pd.read_parquet("data/in/orders")
+       return orders[orders["status"] == "paid"]
+
+   @invaract.reads("customers")               # was pd.read_csv("data/in/customers.csv")
+   def customers(customers):
+       return customers
+
+   @invaract.writes("audit")                  # was audit.to_parquet("data/out/audit/part-0.parquet")
+   def audit(paid):
+       return paid[["order_id", "status"]]
+   ```
+
+   Nothing else in the job changes: the transformations between the reads and the writes stay as they are.
+
+4. Check that nothing still reads or writes around the package, with [`invaract-lint`](#find-reads-and-writes-around-the-package).
+
+</Steps>
+
+Run the job as before (`python main.py`). It reads, writes and exits with status 0, and both outputs are published, each
+as one file named after the run: `data/out/report/part-de1def6d403e493d-00001.parquet` and
+`data/out/audit/part-de1def6d403e493d-00001.parquet`.
+
+## A job that breaks its contract
+
+If the report's `total` is no longer what the contract declares (here the contract was changed to say `string`), the
+write of the report is refused, the job stops with exit status 1, and neither output is published, the audit included.
+After Python's traceback, the reason:
+
+```text
+invaract.errors.ContractViolation: Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+
+What the contract expects:
+  input  'orders' at data/in/orders: order_id: long, customer_id: long, amount: long, status: string
+  input  'customers' at data/in/customers.csv: customer_id: long, region: string
+  output 'report' at data/out/report (derived from orders, customers): region: string, total: string
+  output 'audit' at data/out/audit (derived from orders): order_id: long, status: string (optional)
+
+What the plan contains:
+  Write(data/out/report, format=parquet, saveMode=overwrite)
+  └─ UnknownPlan(the job's own Python code)
+     ├─ Read(data/in/orders)
+     └─ Read(data/in/customers.csv)
+
+Why it violates the contract (1 violation):
+  1. [OUTPUT_FIELD_TYPE_MISMATCH] field 'total' declares type 'string' but the actual OUTPUT schema has type 'long'
+
+How to correct it:
+  1. Cast 'total' to 'string' in the transformation, or update the contract to declare 'long' if the new type is intentional.
+```
+
+"The job's own Python code" stands for everything between the reads and the write, which Invaract does not look into.
+The exception is `invaract.ContractViolation`, and the exit status 1 lets a scheduler tell a refused run from a crash.
+If the check could not be made at all (no checker for the platform, a contract that cannot be read, a format the package
+cannot write), the exception is `invaract.CheckNotRun`, the exit status is 2, and nothing is published either.
+
+## Start from a job with no contract
+
+Dry-run mode writes the contract for you. Replace each read and write, keeping its path as `location=`, and run the job
+with `INVARACT_DRY_RUN=true`: it reads and writes exactly where it did before, nothing is refused, and a draft contract is
+inferred from what it actually read and wrote.
+
+```python
+@invaract.job()
+def main():
+    orders = invaract.read("orders", location="data/in/orders")
+    customers = invaract.read("customers", location="data/in/customers.csv")
+    paid = orders[orders["status"] == "paid"]
+    invaract.write(paid[["order_id", "status"]], "audit", location="data/out/audit")
+    report = paid.merge(customers, on="customer_id").groupby("region", as_index=False).agg(total=("amount", "sum"))
+    invaract.write(report, "report", location="data/out/report")
+```
+
+```bash
+INVARACT_DRY_RUN=true INVARACT_NOTIFY_CONFIG=notify.properties python job.py
+```
+
+With a [notification sink](/guides/notification-sinks/) configured, each write's draft is published as a
+`CONTRACT_INFERENCE` event, and when the job returns one `DRY_RUN_SUMMARY` event merges them into one contract. For the
+job above, its `mergedContractYaml` begins (real output; the columns of each dataset follow in the same form):
+
+```yaml
+id: job___main__.main
+version: 0.1.0
+status: draft
+inputs:
+- name: orders
+  location: data/in/orders
+  schema:
+    fields:
+    - name: order_id
+      type: long
+      required: true
+      nullable: false
+```
+
+Review the draft before you commit it. Its id is the job's entry point; give it a real one. Each output's `derivedFrom`
+lists every input read before that output was written (here the audit is listed as derived from the customers too,
+because they were read first): keep only the inputs it really comes from. Then commit the contract, name it in
+`@invaract.job` (or with `INVARACT_CONTRACT`), and remove the `location=` arguments. With a contract in force, a
+`location=` that disagrees with it is refused. See [Dry-run mode](/guides/dry-run-mode/) for more on turning a draft into
+a contract.
+
+## Find reads and writes around the package
+
+The package checks every read and write that goes through it. One that does not (a `pd.read_csv` left behind, a
+`to_parquet` added later) is not checked. `invaract-lint` finds them before the job runs:
+
+```bash
+pip install invaract-lint
+invaract-lint jobs/
+```
+
+On the example job as it was before it adopted Invaract, it finds every read and write:
+
+```text
+jobs/orders/build.py:2:5: IVR002 `paid[['order_id', 'status']].to_parquet` writes data outside invaract: write it with invaract.write(<frame>, <name>), or mark the line `# invaract: allow`
+jobs/orders/load.py:4:14: IVR001 `pd.read_parquet` reads data outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`
+jobs/orders/load.py:8:12: IVR001 `pd.read_csv` reads data outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`
+jobs/orders/main.py:8:5: IVR002 `paid.merge(load.customers(), on='customer_id').to_parquet` writes data outside invaract: write it with invaract.write(<frame>, <name>), or mark the line `# invaract: allow`
+4 read(s) or write(s) outside invaract
+```
+
+It exits 0 when it finds nothing, 1 when it finds something, and 2 when a file cannot be parsed, so it can gate a CI
+build or a pre-commit hook. It flags reads (`IVR001`) and writes (`IVR002`) through pandas, Polars, pyarrow and DuckDB,
+database and storage connections (`IVR003`), and SQL that reads or writes files (`IVR004`), matching each call by the
+name it resolves to through the file's imports, so an alias is no way around it. A call kept on purpose is marked on its
+line, ideally with the reason:
+
+```python
+lookup = pd.read_csv("lookup/regions.csv")  # invaract: allow - a table shipped with the job, not a dataset
+```
+
+`invaract-lint --format github jobs/` prints each finding as an annotation on the pull request's diff.
+
+## The settings
+
+Every Invaract setting is an environment variable of the job, spelled `INVARACT_<SETTING>` (a switch is
+`INVARACT_DRY_RUN=true`), so a platform can set them for a job it does not own:
+
+| Variable | What it does |
+|---|---|
+| `INVARACT_CONTRACT` | The contract to enforce: a file path, or `registry://<id>@<version>` ([Use a Contract Registry](/guides/using-a-contract-registry/)). Overrides the one `@invaract.job` names. |
+| `INVARACT_DRY_RUN=true` | Infer a contract from the job's writes instead of enforcing one ([above](#start-from-a-job-with-no-contract)). |
+| `INVARACT_NOTIFY_CONFIG` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
+| `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
+| `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
+| `INVARACT_REJECT_UNDECLARED_FIELDS=true` | Refuse an output column the contract does not declare. |
+| `INVARACT_REGISTRY_URL`, `INVARACT_REGISTRY_CLIENT_CLASS` | The contract registry. |
+| `INVARACT_CHECKER` | The command that runs the checker, instead of the one the package carries. |
+
+A read of an input the contract does not declare is always refused, since every read names the input it reads. Every
+setting, with its spelling on the other engines, is in [Configuration Settings](/reference/configuration/).
+
+## Formats, save modes and locations
+
+- **Formats**: Parquet, CSV, Delta Lake (`delta`) and Iceberg (`iceberg`), for reading and writing. A write uses the
+  format the contract declares for the output, or Parquet.
+- **Save modes**: `overwrite` replaces what is at the location, `append` adds to what is there, `error` refuses the write
+  if the location already holds data, and `ignore` publishes nothing if it does. A write uses the save mode the contract
+  declares, or `overwrite`.
+- **Locations** of Parquet and CSV outputs are folders on a local or mounted file system, on HDFS (`hdfs://`) or on object
+  storage (`s3://`, `gs://`, `abfss://`). How they are published depends on which; see below.
+- **Required columns**: a column the contract marks `required: true` must hold no empty value; the file or table written
+  then states the column as not null.
+
+## Files, tables and object storage
+
+How an output is published when the job returns depends on where it lives:
+
+| Output | Staged during the run | Published when the job returns |
+|---|---|---|
+| Parquet or CSV, local or mounted file system | in a hidden folder beside the location | renamed into place: all at once |
+| Parquet or CSV, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
+| Parquet or CSV, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
+| Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
+
+In every case nothing is published unless the whole run passed, and a refused or failed run leaves the output as it was.
+
+**Plain files on object storage** are published the way Spark and Hadoop publish them, because object storage has no
+rename: first the old `_SUCCESS` marker is removed, then the run's files are uploaded, then (for `overwrite`) the old
+files are deleted, and `_SUCCESS` is written last. A reader that waits for `_SUCCESS`, as Spark and most schedulers can,
+sees a complete output. A reader that does not can see old and new files together for as long as the publish takes, and
+a job that crashes part way through publishing leaves them so, without `_SUCCESS`. When readers must never see that, write
+a Delta or Iceberg table instead. Deleting files on object storage leaves empty "folder" markers (`report/`), as
+Hadoop's own S3 client does; readers ignore them.
+
+**HDFS** goes through pyarrow's Hadoop file system, so the job needs Hadoop's client libraries (`libhdfs`, with
+`HADOOP_HOME` and `CLASSPATH` set) where it runs, as any pyarrow access to HDFS does.
+
+A location on any other kind of file system (`ftp://`, ...) is refused before anything is written (`CheckNotRun`).
+
+### Tables
+
+A Delta Lake or Iceberg output is written in **one commit, when the job returns**, and only if the whole run passed. Until
+then no reader of the table sees anything of the run, and a refused or failed run leaves the table exactly as it was. If
+the table does not exist yet, the run that passes creates it, with the contract's columns, in that same commit.
+
+```yaml
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: s3://analytics/sales/report     # a Delta table: its path or URI
+    format: delta
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }
+  - name: audit
+    type: DATA_ASSET
+    location: lake.sales.audit                # an Iceberg table: <catalog>.<namespace>.<table>
+    format: iceberg
+    saveMode: append
+```
+
+- **Delta Lake** tables are named by their path: a local folder, or a URI on object storage (`s3://bucket/path`). An
+  `overwrite` replaces the table's rows in the new commit; the files it replaced stay until the table is vacuumed, as with
+  any Delta write.
+- **Iceberg** tables are named `<catalog>.<namespace>.<table>`. The catalog is configured as pyiceberg configures any
+  catalog, so a platform sets it from outside the job: environment variables such as
+  `PYICEBERG_CATALOG__LAKE__TYPE=glue`, or a `.pyiceberg.yaml` file. A catalog type needs its own pyiceberg extra
+  (`pip install "pyiceberg[glue]"`). The run creates a missing namespace, then the table. An Iceberg output is held in
+  memory until the job returns, since pyiceberg writes a table's data in one piece.
+- **Object storage**: credentials and endpoints come from the usual sources (`AWS_*` environment variables, `~/.aws`, an
+  instance role; `GOOGLE_APPLICATION_CREDENTIALS`; `AZURE_STORAGE_*`); Invaract has no settings of its own for them. A
+  Delta output on object storage is staged on the job's local disk and uploaded when the job returns, just before its
+  commit, so a refused run never writes to the bucket.
+- Invaract tests object storage on S3. `gs://` and `abfss://` locations, and HDFS, go through the same libraries
+  (pyarrow, delta-rs, pyiceberg) and the same code, but are not tested against a real service yet.
+
+## Related
+
+- [Configuration Settings](/reference/configuration/): every `INVARACT_...` variable, with its Spark and Beam spelling.
+- [What Each Engine Checks](/reference/what-each-engine-checks/): what each engine checks and what it cannot, in plain words.
+- [Engine Capabilities](/reference/engine-capabilities/): the same, per capability, with the adapters' own notes.
+- [Dry-Run Mode](/guides/dry-run-mode/): from a draft contract to an enforced one.

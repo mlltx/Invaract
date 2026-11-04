@@ -386,11 +386,11 @@ def test_with_no_save_mode_declared_a_write_overwrites():
 
 
 def test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly():
-    report_contract(fmt="delta")
+    report_contract(fmt="orc")
     with pytest.raises(invaract.CheckNotRun) as not_run:
         with invaract.run("contract.yaml"):
             invaract.write(REPORT, "report")
-    assert "delta" in str(not_run.value)
+    assert "cannot yet write 'report' as orc with save mode overwrite: it writes parquet, csv, delta, iceberg" in str(not_run.value)
     assert not os.path.exists("data/out")
 
 

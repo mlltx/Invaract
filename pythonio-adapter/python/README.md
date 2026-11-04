@@ -3,6 +3,12 @@
 Reads and writes a Python job's data by the names its [Invaract](https://github.com/mlltx/Invaract) data contract gives,
 and publishes what the job writes only if the contract allows it.
 
+```bash
+pip install "invaract[pandas]"     # or invaract[polars], or invaract for pyarrow alone
+```
+
+The guide: [Use Invaract with Python Jobs](https://mlltx.github.io/Invaract/guides/using-invaract-with-python/).
+
 ```python
 import invaract
 
@@ -21,9 +27,18 @@ empty value). When the job returns, every staged output is published, or none if
 batch by batch into staging), a pyarrow Table or RecordBatchReader. A pandas frame's row index is not written.
 
 **The checker.** The checks are Invaract's own, made by its checker program. The package starts it once per run and
-describes each read and write to it (names, columns, types, empty values; never the data). Until the platform wheels that
-carry the native checker are released, name it with `INVARACT_CHECKER`: the native program, or
-`java -jar invaract-pythonio-checker-0.1.0.jar` (`cd pythonio-adapter && sbt assembly`).
+describes each read and write to it (names, columns, types, empty values; never the data). The wheels for Linux (x86_64,
+aarch64; glibc 2.34 or later) and macOS 11 or later (arm64, x86_64) carry it as a native program. On any other platform the wheel carries it as a Java
+program, which needs Java 11 or later (`JAVA_HOME`, or `java` on the `PATH`). `INVARACT_CHECKER` names a checker of your
+own instead: a native program, or `java -jar invaract-pythonio-checker-<version>.jar`. A source checkout carries none, so
+it needs `INVARACT_CHECKER` (`cd pythonio-adapter && sbt assembly` builds the jar).
+
+**Formats and storage.** Parquet and CSV files on local and mounted file systems and HDFS (renamed into place) and on
+object storage (copied into place with `_SUCCESS` written last, as Spark does); Delta Lake and Iceberg tables
+(`pip install "invaract[delta]"`, `"invaract[iceberg]"`), each output committed in one transaction when the run passes and
+created if it does not exist. An Iceberg location is `<catalog>.<namespace>.<table>`, with the catalog configured as
+pyiceberg configures any (`PYICEBERG_CATALOG__<NAME>__*`). Object storage is tested on S3; GCS, Azure and a real HDFS
+cluster are not yet.
 
 **Settings** come from the environment, so a platform can configure a job it does not own: `INVARACT_CONTRACT`,
 `INVARACT_DRY_RUN`, `INVARACT_NOTIFY_CONFIG`, `INVARACT_LOCATION_MAP`, `INVARACT_ORG_POLICY`, `INVARACT_REGISTRY_URL` and

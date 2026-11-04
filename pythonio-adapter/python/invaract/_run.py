@@ -1,24 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """A run: the checker started at its beginning, every read and write described to it as it is made, each output staged
-beside its location, and at the end every staged output published, or, if anything was refused or the job failed, none."""
+(beside its location, or uncommitted in its Delta or Iceberg table), and at the end every staged output published, or, if
+anything was refused or the job failed, none."""
 import functools
 import os
 import platform
-import shutil
 import sys
 import threading
 import uuid
 
 import pyarrow as pa
 
-from . import _frames
+from . import _files, _frames, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
 
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
-FORMATS = ("parquet", "csv")
+#: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
+FILE_FORMATS = ("parquet", "csv")
+FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
 DEFAULT_FORMAT = "parquet"
@@ -125,14 +127,15 @@ class Run:
         where = location if self.dry_run else declared.get("location")
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
-        if fmt.lower() not in FORMATS or mode.lower() not in SAVE_MODES:
+        fmt, mode = fmt.lower(), mode.lower()
+        if fmt not in FORMATS or mode not in SAVE_MODES:
             raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
-        out = self._outputs.get(name) or self._outputs.setdefault(name, _Output(where, mode.lower(), self.run_id))
-        if out.mode == "error" and _has_data(out.target):
+        out = self._outputs.get(name) or self._outputs.setdefault(name, _output(where, fmt, mode, self.run_id))
+        if out.mode == "error" and out.has_data():
             raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
         required = {f["name"] for f in declared.get("fields", []) if f.get("required")}
-        nulls = out.stage(fmt.lower(), schema, batches, required)
+        nulls = out.stage(schema, batches, required)
         self._ask({"op": "written", "name": name, "nulls": nulls})
 
     # talking to the checker
@@ -154,7 +157,7 @@ class Run:
 
     def _job(self):
         libraries = {"pyarrow": pa.__version__}
-        for module in ("pandas", "polars", "duckdb"):
+        for module in ("pandas", "polars", "duckdb", "deltalake", "pyiceberg"):
             if module in sys.modules:
                 libraries[module] = str(getattr(sys.modules[module], "__version__", "unknown"))
         return {"name": self.name, "runId": self.run_id, "pythonVersion": platform.python_version(), "libraries": libraries}
@@ -165,7 +168,7 @@ class Run:
         """Every staged output moved into place, in the order first written; an ``error`` output that has gained data since it
         was written stops the publish before anything moves."""
         for out in self._outputs.values():
-            if out.mode == "error" and _has_data(out.target):
+            if out.mode == "error" and out.has_data():
                 raise FileExistsError(f"Invaract published nothing: the save mode of {out.target} is error, and it already holds data")
         for out in self._outputs.values():
             out.publish()
@@ -173,96 +176,12 @@ class Run:
             out.forget_previous()
 
 
-class _Output:
-    """One output's staging folder, beside its location so that publishing is a rename on the same file system."""
-
-    def __init__(self, location, mode, run_id):
-        self.target = os.path.abspath(location)
-        parent, base = os.path.split(self.target)
-        self.staging = os.path.join(parent, f".{base}.invaract-staging-{run_id}")
-        self.previous = os.path.join(parent, f".{base}.invaract-previous-{run_id}")
-        self.mode = mode
-        self.run_id = run_id
-        self.files = 0
-
-    def stage(self, fmt, schema, batches, required):
-        """Writes the batches to a new file in staging, with ``not null`` on each required column, and returns the empty values
-        each column holds. A required column's first empty value ends the write: the checker refuses it, so nothing more is
-        written."""
-        os.makedirs(self.staging, exist_ok=True)
-        self.files += 1
-        path = os.path.join(self.staging, f"part-{self.run_id}-{self.files:05d}.{fmt}")
-        target = pa.schema([f.with_nullable(False) if f.name in required else f for f in schema], metadata=schema.metadata)
-        nulls = dict.fromkeys(schema.names, 0)
-        try:
-            writer = _writer(path, fmt, target)
-            try:
-                for batch in batches:
-                    counts = _frames.null_counts(batch)
-                    for column, n in counts.items():
-                        nulls[column] += n
-                    if any(counts.get(column) for column in required):
-                        break
-                    writer.write_batch(pa.RecordBatch.from_arrays(batch.columns, schema=target))
-            finally:
-                writer.close()
-        except BaseException:
-            _remove(path)
-            raise
-        return nulls
-
-    def publish(self):
-        if not os.path.isdir(self.staging):
-            return
-        if self.mode == "append":
-            os.makedirs(self.target, exist_ok=True)
-            for f in sorted(os.listdir(self.staging)):
-                destination = os.path.join(self.target, f)
-                if os.path.exists(destination):
-                    raise FileExistsError(f"Invaract will not replace {destination} when appending")
-                os.rename(os.path.join(self.staging, f), destination)
-            self.discard()
-        elif self.mode == "ignore" and _has_data(self.target):
-            self.discard()
-        else:
-            if os.path.lexists(self.target):
-                os.rename(self.target, self.previous)
-            try:
-                os.rename(self.staging, self.target)
-            except BaseException:
-                if os.path.lexists(self.previous):
-                    os.rename(self.previous, self.target)
-                raise
-
-    def forget_previous(self):
-        _remove(self.previous)
-
-    def discard(self):
-        _remove(self.staging)
-
-
-def _writer(path, fmt, schema):
-    if fmt == "csv":
-        import pyarrow.csv as csv
-
-        return csv.CSVWriter(path, schema)
-    import pyarrow.parquet as pq
-
-    return pq.ParquetWriter(path, schema)
-
-
-def _has_data(path):
-    """Whether a location holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata (``_``)."""
-    if os.path.isfile(path):
-        return True
-    return os.path.isdir(path) and any(not f.startswith((".", "_")) for f in os.listdir(path))
-
-
-def _remove(path):
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path, ignore_errors=True)
-    elif os.path.lexists(path):
-        os.remove(path)
+def _output(location, fmt, mode, run_id):
+    if fmt == "delta":
+        return _tables.DeltaOutput(location, mode, run_id)
+    if fmt == "iceberg":
+        return _tables.IcebergOutput(location, mode, run_id)
+    return _files.output(location, fmt, mode, run_id)
 
 
 def _with_location(request, location):

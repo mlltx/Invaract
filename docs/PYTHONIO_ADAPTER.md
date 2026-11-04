@@ -9,13 +9,15 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 4 done.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 6 done; the first release waits on PyPI's one-time setup, and Google Cloud Storage, Azure and
+a real HDFS cluster on tests.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
 the package and comes out as the declaration promises, and the declaration's enforcement point is `staged-publish`.
-`invaract-lint` (`lint/`) flags the reads and writes a job makes around the package. Nothing is released yet (the platform
-wheels carrying the native checker are milestone 5), so the user pages list the engine as "in development".
+`invaract-lint` (`lint/`) flags the reads and writes a job makes around the package. The user guide is written, and
+`release-python.yml` builds, tests and (on a `python-v<version>` tag) publishes the wheels; nothing is on PyPI until a
+maintainer has done docs/RELEASING.md's one-time setup and pushed the first tag.
 
 ## What it is
 
@@ -33,10 +35,12 @@ finished and every answer was yes.
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
 | `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
-| `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar) |
+| `python/invaract/_storage.py`, `_files.py`, `_tables.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (renamed into place locally and on HDFS, copied with `_SUCCESS` last on object storage); Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6) |
+| `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar); `test_tables.py` needs the `delta` and `iceberg` extras and moto, and runs strictly in CI (`INVARACT_TEST_TABLES=true`) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
 | `lint/tests` | the lint's pytest suite, including the example job before and after it adopted the package |
+| `.github/scripts/python_wheel.py` | the release's wheels: a platform wheel around a native checker, tagged from the program itself; the pure-Python wheel around the jar; the version check; the smoke test each wheel passes before it is published |
 
 ### The protocol
 
@@ -203,7 +207,16 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | Each save mode, against an output that holds data and one that does not | ✅ covered | `test_run.py`'s save-mode tests |
 | A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
 | A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
-| An output format the package cannot write yet (`delta`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
+| An output format the package cannot write (`orc`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
+| A Delta output, local or on S3: created, overwrite, append, error, ignore; a refused or failed run | ✅ covered: one commit at publish, the table created if missing; a refused or failed run leaves the table as it was and no file of its own | `test_tables.py`'s Delta tests |
+| An Iceberg output: created with its namespace, each save mode, a refused or failed run | ✅ covered: one transaction at publish | `test_tables.py`'s Iceberg tests |
+| A read of a Delta or Iceberg input, its declared columns only | ✅ covered | `test_a_delta_input_*`, `test_an_iceberg_input_*` |
+| A read of Parquet or CSV files on S3 | ✅ covered | `test_plain_parquet_and_csv_inputs_are_read_from_object_storage` |
+| A Parquet or CSV output on object storage, each save mode; a refused run | ✅ covered: copied into place at publish, `_SUCCESS` last; a refused run never writes to the bucket | `test_a_plain_output_on_object_storage_*`, `test_object_storage_*`, `test_a_refused_run_never_writes_a_plain_output_to_object_storage` |
+| A Parquet or CSV output on HDFS, each save mode; a refused run | ✅ covered through pyarrow's file-system interface (a local file system stands in for HDFS) | `test_an_hdfs_*`, `test_a_refused_run_leaves_hdfs_as_it_was` |
+| A Parquet or CSV output on a file system Invaract does not know (`ftp://`, ...) | 🚫 fails closed: `CheckNotRun`, nothing written anywhere | `test_a_location_on_a_file_system_invaract_does_not_know_is_refused_not_written_locally` |
+| A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
+| Google Cloud Storage, Azure and a real HDFS cluster | ❓ not investigated: the same libraries' code paths, with no emulator or cluster in CI yet | none |
 | A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
 ## Type mapping
@@ -300,6 +313,79 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
     the same as `"utf-8"`, and the default path label `"<source>"` is only a name.
   - CI's `pythonio-lint` job runs the tests and lints the example and conformance jobs. It also runs `mutmut` with an 80% floor.
 
+## Milestone 5: the user guide and the release
+
+Milestone 5 (design section 10) is the user guide and what a release needs:
+
+- **The guide.** docs-site's "Use Invaract with Python Jobs": installing, adopting the package in a job, a refused run, the
+  dry-run migration, the lint, the settings, and formats and save modes. Every example is from a real run of the example
+  job (`examples/orders_job`) or of its dry-run form. The configuration reference has a Python column, the troubleshooting
+  page lists every `CheckNotRun` message, and the declaration names the guide and drops "in development".
+- **The checker each wheel carries.** `_checker.command()` runs `INVARACT_CHECKER` if it is set, else the native checker at
+  `invaract/bin/` (platform wheels), else the jar at `invaract/lib/` (the pure-Python wheel) with `JAVA_HOME`'s `java` or
+  the one on the `PATH`. With a jar but no Java, or neither, the run stops with `CheckNotRun` naming what to install or set.
+- **The wheels.** `.github/scripts/python_wheel.py` builds the package's wheel around one of the two and, for a native
+  checker, retags it for the platform the program runs on: the newest `GLIBC_x.y` it names on Linux (`manylinux_x_y`), its
+  minimum OS version on macOS (`macosx_<major>_0` from macOS 11 on, the form pip matches). A checker built on a newer
+  runner image therefore narrows the tag rather than overstating it. On this environment's x86_64 Linux, a program
+  needing glibc 2.34 was tagged `manylinux_2_34_x86_64` (what `objdump -T` reports), and pip installed it with its
+  executable bit.
+- **The release workflow.** `release-python.yml` builds the jar once, then on each of `ubuntu-latest`, `ubuntu-24.04-arm`,
+  `macos-latest` and `macos-15-intel` the native checker, the protocol cases against it, and the wheel; the pure-Python wheel
+  with Python 3.10 and Java 11 (the oldest of each supported); and `invaract-lint`. Every wheel is installed in a new
+  virtual environment and runs the example job with no `INVARACT_CHECKER`: it must run the checker the wheel carries, publish
+  a passing run and refuse a failing one. On a `python-v<version>` tag it publishes to PyPI (trusted publishing, the `pypi`
+  environment) and attaches everything to a GitHub release; on a pull request that changes how the packages are built, it
+  stops before publishing.
+- **What the first run of the workflow showed** (this PR, 2026-11-03). On all four platforms the native checker gave the JVM's
+  replies on all 42 recorded cases (`registry` skipped as JVM-only; median 9 to 38 ms a case), weighed 40 to 43 MB, and
+  its wheel installed and ran the example job. The Linux wheels were tagged `manylinux_2_34_x86_64` and
+  `manylinux_2_34_aarch64`. The macOS wheels were tagged `macosx_26_0_arm64` and `macosx_15_0_x86_64`: the linker records
+  the runner's own release as the minimum, which would have kept the native wheel from every Mac older than the runner. The
+  workflow now links them for macOS 11, checks each wheel's tag, and installs each native wheel on an older runner image
+  (Ubuntu 22.04, macOS 14) before publishing.
+- **One version.** The package, the checker and the lint are released under one tag, so `python_wheel.py version` refuses
+  a release where they differ, and each `pyproject.toml` reads its package's `__version__` rather than stating it again.
+
+## Milestone 6: tables and object storage
+
+Milestone 6 (design section 12) is object storage, and Delta Lake and Iceberg outputs. Object storage has no rename, so the
+design left it for a design of its own (section 5). Probes first (2026-11-03, deltalake 1.6.6, pyiceberg 0.12.0, pyarrow
+26.0.1, moto 5.2.5 for S3):
+
+- **delta-rs can commit later.** Parquet files written into a table's folder are invisible until a commit names them, and
+  `create_table_with_add_actions` / `DeltaTable.create_write_transaction` commit given files in one transaction, append or
+  overwrite. A table created this way keeps a required column not-null and refuses an empty value in it. The same on S3.
+- **pyiceberg commits a transaction.** Writes inside an open transaction are invisible until it is committed; an abandoned
+  one leaves the table as it was; `create_table_transaction` creates a table and its data in one commit. A catalog is
+  configured by environment (`PYICEBERG_CATALOG__<NAME>__*`). The same with the warehouse on S3.
+- **Reads need no settings of Invaract's own**: pyarrow and delta-rs take S3 from the standard `AWS_*` variables.
+
+Two decisions followed, both the user's (2026-11-03): a Delta or Iceberg output that does not exist is created by the run
+that passes, in the same commit; and a Parquet or CSV *output* on object storage was at first refused (readers could see a
+copy-then-delete half done), then, the same day, allowed Spark-style, since writing Parquet to GCS or S3 is what teams
+expect: staged on local disk, and at publish the old `_SUCCESS` removed, the files uploaded, the old ones deleted
+(overwrite), `_SUCCESS` written last. HDFS, which has an atomic rename, stages and renames as a local disk does.
+
+What was built:
+
+- `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
+  Reads of Parquet and CSV go through pyarrow's own file systems, HDFS included.
+- `_files`: plain-file outputs. `LocalFileOutput` is milestone 2's, unchanged; `HadoopFileOutput` does the same on HDFS
+  through pyarrow's file system (staged beside the location, `move` into place); `ObjectStorageFileOutput` stages on local
+  disk and copies at publish, `_SUCCESS` last. Any other URI scheme is refused.
+- `_tables.DeltaOutput`: each write is a Parquet file staged uncommitted, in the table's folder when it is local, on local
+  disk when it is on object storage (uploaded at publish); publishing commits them all in one transaction, creating the
+  table if needed. `ignore` and `error` look at whether the table holds files.
+- `_tables.IcebergOutput`: each write is held until publishing, which writes and commits it in one transaction (creating
+  the namespace and table if needed), since pyiceberg writes a table in one piece. `error` and `ignore` look at the current
+  snapshot's record count.
+- Extras `invaract[delta]` (deltalake 1.0 or later) and `invaract[iceberg]` (pyiceberg 0.9 or later, which needs pyarrow
+  17); without them, a table format stops the run with `CheckNotRun` naming the extra.
+- Tests: `test_tables.py`, 60 tests, local, on S3 (moto in-process) and on HDFS through a local pyarrow file system
+  standing in for it, including a real job writing to S3 that must exit. They pass on the oldest releases the extras allow
+  (deltalake 1.0.0, pyiceberg 0.9.0, pyarrow 17.0.0, Python 3.10) and the newest; CI runs both, strictly.
+
 ## Friction log
 
 - `dev/new-adapter` takes an engine name without a hyphen, so the design's `python-io-adapter` and engine `python-io` became
@@ -347,9 +433,40 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
 - The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
   verification-core; a Python job sees it too. Left for a wording pass across adapters.
+- The package's help text for `computeFingerprint` said a run with it is refused. Writing the guide's settings table from
+  real runs showed it is not: like Beam, the run goes on and the checker logs that no fingerprint is published. Static data
+  quality and role consistency are refused when the run opens (`UNSUPPORTED_CONTRACT_FEATURE`). The help text now says so.
+- A dry run's draft lists, as each output's `derivedFrom`, every input read before it was written (D4): the example job's
+  audit is drawn from the orders only, but the draft says the customers too, because they were read first. The guide tells
+  the reader to correct it when reviewing the draft.
+- The version was written in four places (each package's `pyproject.toml` and `__init__.py`). Each `pyproject.toml` now
+  reads its package's `__init__.py`.
+- deltalake 1.6's `DeltaTable.to_pyarrow_table()`, used on S3, leaves the process unable to exit (it hung until killed);
+  `to_pyarrow_dataset().to_table()` does not. The package reads the second way, and a test runs a real job against S3 with
+  a timeout.
+- pyarrow's S3 file system recreates an empty "folder" object when it deletes the last file under a prefix, and
+  `delete_dir` recreates the parent's; deleting a refused run's staged files left `report/` behind. A Delta output on object
+  storage therefore stages on local disk and uploads only at publish, so a refused run never writes to the bucket.
+- pyiceberg refuses a frame whose columns are nullable when the table's are required, even with no empty values; the
+  package marks required columns not-null before writing, as it does for files.
+- pyiceberg reads its `PYICEBERG_` variables once, when imported. A job's are set before it starts; the tests reload them.
+- Milestone 2's plain-file output used `os` paths, so an `hdfs://` location made a local folder named `hdfs:` before pyarrow
+  reached for HDFS, and publishing renamed local paths: HDFS outputs had never worked, and any other URI scheme was
+  treated as a local path. Found when the user asked for Parquet on HDFS; `_files` now dispatches on the scheme and
+  refuses one it does not know.
+- After an overwrite, a Delta table keeps the replaced files for time travel until it is vacuumed; "nothing left behind"
+  means no file that no commit ever named.
 
 ## Unverified items
 
-- How the native program behaves on Linux aarch64 and on macOS: only Linux x86_64 is built so far.
+- Google Cloud Storage and Azure: `gs://` and `abfss://` locations go through pyarrow, delta-rs and pyiceberg as S3 does,
+  but no emulator runs them in CI yet (open in ROADMAP.md).
+- A real HDFS cluster: the HDFS output is tested through pyarrow's file-system interface with a local file system standing
+  in; pyarrow's own Hadoop file system (libhdfs) is not run in CI.
+- Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3's conditional writes, which moto accepted;
+  not checked against AWS itself, nor two runs racing.
+- The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
+  CI offers are macOS 14 and Ubuntu 22.04 (glibc 2.35). An Intel Mac older than macOS 15 likewise: macOS 15 is the only
+  Intel runner image.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).

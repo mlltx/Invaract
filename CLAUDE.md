@@ -1021,6 +1021,10 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   the job rebuilds every module
 - **`release-dry-run.yml`** (separate workflow, on changes to publishing files): signs and bundles all six
   modules with a throwaway key; see docs/RELEASING.md
+- **`release-python.yml`** (separate workflow): builds the `invaract` wheels (one per platform carrying its native
+  checker, built there, plus a pure-Python one carrying the checker jar) and `invaract-lint`, installs each and runs the
+  example job with it (`.github/scripts/python_wheel.py`), on changes to how they are built; on a `python-v<version>`
+  tag it also publishes them to PyPI and to a GitHub release (docs/RELEASING.md, "The Python packages")
 - **Shared steps**: `.github/actions/setup-jdk-sbt` (JDK + sbt) and `.github/actions/publish-engine-modules`
   (the local publish of the engine modules, cached) are used by the jobs above instead of copying the steps
 - **`summary`**: gates on all of the above

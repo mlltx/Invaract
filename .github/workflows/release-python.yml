@@ -1,0 +1,348 @@
+name: Release Python packages
+
+# Builds, tests and (on a python-v<version> tag) publishes the Python I/O adapter's packages (docs/RELEASING.md, "The Python
+# packages"; milestone 5 of docs/PYTHON_IO_ADAPTER_DESIGN.md):
+#
+# - `invaract`, as one wheel per platform carrying that platform's native checker (Linux x86_64 and aarch64, macOS arm64
+#   and x86_64), plus a pure-Python wheel carrying the checker jar, which it runs with Java, for every other platform. pip
+#   picks the platform wheel where one matches and the pure one elsewhere.
+# - `invaract-lint`, pure Python.
+# - The checker jar and each native checker, attached to the GitHub release.
+#
+# Every wheel is installed in a new virtual environment and runs the example job with no INVARACT_CHECKER before anything is
+# published (python_wheel.py smoke). On a pull request that changes how they are built, and on a manual run, everything up
+# to publishing runs: nothing is uploaded, and no secret is used.
+#
+# Publishing uses PyPI's trusted publishing (no token): PyPI must list this repository, this workflow and the `pypi`
+# environment as a trusted publisher of both projects first (docs/RELEASING.md's one-time setup).
+on:
+  push:
+    tags: ['python-v*']
+  pull_request:
+    paths:
+      - 'pythonio-adapter/build.sbt'
+      - 'pythonio-adapter/python/pyproject.toml'
+      - 'pythonio-adapter/python/invaract/__init__.py'
+      - 'pythonio-adapter/python/invaract/_checker.py'
+      - 'pythonio-adapter/lint/pyproject.toml'
+      - 'pythonio-adapter/lint/invaract_lint/__init__.py'
+      - '.github/scripts/python_wheel.py'
+      - '.github/workflows/release-python.yml'
+      - 'docs/RELEASING.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # one version for the package, the checker and the lint; a tag must name it
+      - name: Check the version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python3 .github/scripts/python_wheel.py version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/python-v* && "${GITHUB_REF#refs/tags/python-v}" != "$VERSION" ]]; then
+            echo "::error::the tag ${GITHUB_REF#refs/tags/} does not name the packages' version, $VERSION"
+            exit 1
+          fi
+          echo "Release version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  checker-jar:
+    name: Checker jar
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally (pythonio-adapter's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Test the checker and assemble its jar
+        shell: bash
+        run: |
+          cd pythonio-adapter
+          sbt -batch test assembly
+          cp target/scala-2.12/invaract-pythonio-checker-${{ needs.version.outputs.version }}.jar "$RUNNER_TEMP/"
+
+      - name: Upload the checker jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: checker-jar
+          path: ${{ runner.temp }}/invaract-pythonio-checker-${{ needs.version.outputs.version }}.jar
+          if-no-files-found: error
+
+  native-wheel:
+    name: Wheel (${{ matrix.platform }})
+    needs: [version, checker-jar]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # tag: what the wheel's platform tag must start with. On Linux it follows the glibc symbols the program needs; on
+          # macOS the checker is linked for macOS 11, not for the runner's own release (which the linker uses by default)
+          - { platform: linux-x86_64, os: ubuntu-latest, tag: manylinux_ }
+          - { platform: linux-aarch64, os: ubuntu-24.04-arm, tag: manylinux_ }
+          - { platform: macos-arm64, os: macos-latest, tag: macosx_11_0_ }
+          - { platform: macos-x86_64, os: macos-15-intel, tag: macosx_11_0_ }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download the checker jar
+        uses: actions/download-artifact@v7
+        with:
+          name: checker-jar
+          path: ${{ runner.temp }}/jar
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build the native checker
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/native"
+          OPTIONS=()
+          if [ "$RUNNER_OS" = macOS ]; then
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            OPTIONS=(-H:NativeLinkerOption=-mmacosx-version-min=11.0)
+          fi
+          native-image "${OPTIONS[@]}" -jar "$RUNNER_TEMP"/jar/invaract-pythonio-checker-*.jar -o "$RUNNER_TEMP/native/invaract-pythonio-checker"
+
+      # the same replies as the JVM, as the native-checker CI job holds on Linux x86_64, on this platform too
+      - name: Run the protocol cases against the native checker
+        shell: bash
+        run: |
+          cd pythonio-adapter
+          python native/cases.py src/test/resources/protocol --native --max-seconds 1 -- "$RUNNER_TEMP/native/invaract-pythonio-checker"
+
+      - name: Build the wheel
+        shell: bash
+        run: |
+          python .github/scripts/python_wheel.py native --checker "$RUNNER_TEMP/native/invaract-pythonio-checker" --out dist
+          WHEEL=$(basename dist/*.whl)
+          echo "Wheel: $WHEEL" >> "$GITHUB_STEP_SUMMARY"
+          case "$WHEEL" in
+            *-py3-none-${{ matrix.tag }}*) ;;
+            *) echo "::error::$WHEEL is not tagged ${{ matrix.tag }}*"; exit 1 ;;
+          esac
+
+      # the wheel the release will publish, installed with pip, finds its own checker and runs the example job
+      - name: Install the wheel and run the example job
+        shell: bash
+        run: python .github/scripts/python_wheel.py smoke --wheel dist/*.whl --expect native --extra pandas
+
+      - name: Name the native checker for the GitHub release
+        shell: bash
+        run: |
+          mkdir -p checker
+          cp "$RUNNER_TEMP/native/invaract-pythonio-checker" \
+            "checker/invaract-pythonio-checker-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: invaract-wheel-${{ matrix.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - name: Upload the native checker
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-checker-${{ matrix.platform }}
+          path: checker/*
+          if-no-files-found: error
+
+  # Each native wheel installed and run on an older system than the one that built it (the oldest runner image of each
+  # kind), with the oldest Python the package supports: pip must accept its tag there, and the checker must run.
+  native-wheel-elsewhere:
+    name: Wheel (${{ matrix.platform }}) on ${{ matrix.os }}
+    needs: native-wheel
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, os: ubuntu-22.04 }
+          - { platform: linux-aarch64, os: ubuntu-22.04-arm }
+          - { platform: macos-arm64, os: macos-14 }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v7
+        with:
+          name: invaract-wheel-${{ matrix.platform }}
+          path: dist
+
+      - name: Install the wheel and run the example job
+        shell: bash
+        run: python .github/scripts/python_wheel.py smoke --wheel dist/*.whl --expect native --extra pandas
+
+  java-wheel:
+    name: Wheel (any platform, with Java)
+    needs: [version, checker-jar]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download the checker jar
+        uses: actions/download-artifact@v7
+        with:
+          name: checker-jar
+          path: ${{ runner.temp }}/jar
+
+      # the oldest Python the package supports, and the oldest Java the checker runs on
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Build the wheel
+        shell: bash
+        run: python .github/scripts/python_wheel.py java --jar "$RUNNER_TEMP"/jar/invaract-pythonio-checker-*.jar --out dist
+
+      - name: Install the wheel and run the example job
+        shell: bash
+        run: python .github/scripts/python_wheel.py smoke --wheel dist/*.whl --expect java --extra pandas
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: invaract-wheel-any
+          path: dist/*.whl
+          if-no-files-found: error
+
+  lint:
+    name: invaract-lint
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build the source distribution and the wheel
+        shell: bash
+        run: |
+          python -m pip install build
+          python -m build pythonio-adapter/lint --outdir dist
+
+      - name: Install the wheel and lint the example job
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet dist/*.whl
+          "$RUNNER_TEMP/venv/bin/invaract-lint" pythonio-adapter/python/examples
+          test "$("$RUNNER_TEMP/venv/bin/python" -c 'import invaract_lint; print(invaract_lint.__version__)')" = "${{ needs.version.outputs.version }}"
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: invaract-lint
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/python-v')
+    needs: [version, native-wheel, native-wheel-elsewhere, java-wheel, lint]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the invaract wheels
+        uses: actions/download-artifact@v7
+        with:
+          pattern: invaract-wheel-*
+          merge-multiple: true
+          path: dist/invaract
+
+      - name: Download invaract-lint
+        uses: actions/download-artifact@v7
+        with:
+          name: invaract-lint
+          path: dist/invaract-lint
+
+      - name: Publish invaract
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/invaract
+
+      - name: Publish invaract-lint
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/invaract-lint
+
+  github-release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/python-v')
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download everything built
+        uses: actions/download-artifact@v7
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Invaract for Python ${{ needs.version.outputs.version }}"
+          body: |
+            `pip install invaract` and `pip install invaract-lint`; the guide is "Using Invaract with Python jobs" in the
+            user documentation.
+
+            Attached: the wheels and invaract-lint's distributions as published to PyPI, the checker jar (run with
+            `java -jar`, for INVARACT_CHECKER), and the native checker for each platform a wheel is built for.
+
+            Supported: Parquet and CSV files on local and mounted file systems, HDFS and object storage; Delta Lake and
+            Iceberg tables (`invaract[delta]`, `invaract[iceberg]`). Tested on S3; not yet tested against the real
+            services (docs/PYTHON_IO_ADAPTER_DESIGN.md, milestone 6, committed to come next): Google Cloud Storage, Azure
+            and an HDFS cluster.
+          files: release/*
+          fail_on_unmatched_files: true

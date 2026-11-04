@@ -5,26 +5,49 @@ standard output (the protocol, docs/PYTHONIO_ADAPTER.md). Its log goes to the jo
 import json
 import os
 import shlex
+import shutil
 import subprocess
 
 from ._settings import CHECKER
 from .errors import CheckNotRun
 
-#: The native checker a platform wheel carries (milestone 5 of the design); absent from a source checkout.
-BUNDLED = os.path.join(os.path.dirname(__file__), "bin", "invaract-pythonio-checker")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+#: The native checker a platform wheel carries.
+BUNDLED = os.path.join(_HERE, "bin", "invaract-pythonio-checker")
+#: The checker jar the pure-Python wheel carries, for a platform with no native checker; it runs with Java.
+BUNDLED_JAR = os.path.join(_HERE, "lib", "invaract-pythonio-checker.jar")
 
 
 def command(environ=None):
-    """The checker's command line: ``INVARACT_CHECKER`` if set, else the native checker this package carries."""
+    """The checker's command line: ``INVARACT_CHECKER`` if set, else the native checker this package carries, else the jar it
+    carries run with Java (``JAVA_HOME``'s, else the one on ``PATH``). A source checkout carries neither."""
     environ = os.environ if environ is None else environ
     if environ.get(CHECKER):
         return shlex.split(environ[CHECKER])
     if os.access(BUNDLED, os.X_OK):
         return [BUNDLED]
+    if os.path.isfile(BUNDLED_JAR):
+        java = _java(environ)
+        if java is None:
+            raise CheckNotRun(
+                "Invaract has no native checker for this platform, so it runs its checker with Java, and found none: install "
+                f"Java 11 or later (or set JAVA_HOME), or set {CHECKER}. Nothing the job writes will be published."
+            )
+        return [java, "-jar", BUNDLED_JAR]
     raise CheckNotRun(
         f"Invaract has no checker to run on this platform, so nothing the job writes will be published: set {CHECKER} to the "
         "native checker, or to 'java -jar <path>/invaract-pythonio-checker.jar'."
     )
+
+
+def _java(environ):
+    """``JAVA_HOME``'s ``java`` if there is one, else the one on ``PATH``, else ``None``."""
+    if environ.get("JAVA_HOME"):
+        java = os.path.join(environ["JAVA_HOME"], "bin", "java")
+        for candidate in (java, java + ".exe"):
+            if os.access(candidate, os.X_OK):
+                return candidate
+    return shutil.which("java", path=environ.get("PATH"))
 
 
 class Checker:

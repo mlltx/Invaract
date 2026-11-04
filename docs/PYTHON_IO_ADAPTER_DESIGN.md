@@ -235,8 +235,13 @@ build. Organisational policy, the registry and plug-ins would then be unavailabl
   rename is atomic per output. Across several outputs, publishing is ordered, not atomic: a crash between two renames
   leaves the first published. The run's event records exactly what was published.
 - **Object storage** (S3, GCS) has no rename. Publishing would be a copy, then a delete, which readers can see half done.
-  So object storage waits for a design of its own. Writing a Delta or Iceberg table is the likely answer: its commit is
-  atomic, and both were probed in the sink records survey.
+  Milestone 6 settled it (decided 2026-11-03). A Parquet or CSV output on object storage is published as Spark and Hadoop
+  publish one: staged on local disk, and only when the run passed, the old `_SUCCESS` removed, the files uploaded, the
+  old ones deleted (overwrite) and `_SUCCESS` written last. A reader that waits for `_SUCCESS` sees a complete output;
+  others can see the publish half done. (The first decision refused such outputs; it was reversed the same day, since
+  writing Parquet to GCS or S3 is what teams expect.) A Delta or Iceberg table is the choice when no reader may see a
+  publish half done. HDFS has an atomic rename, so a plain output there is staged and renamed as on a local disk. A
+  Delta or Iceberg output that does not exist yet is created by the run that passes, in the same commit as its data.
 
 ## 6. Configuration and external attachability
 
@@ -301,7 +306,7 @@ The draft declaration:
 - **not applicable:** row-level changes and their rules, schema-only changes, boundary resolution.
 
 As built (`invaract-capabilities-pythonio.yaml`, milestone 1), the declaration matches this draft, except that the engine is
-labelled "in development" on the user pages until the package exists. `failClosed.unverifiableWrites` is partial because a
+labelled "in development" on the user pages until the first release (milestone 5 removed the label). `failClosed.unverifiableWrites` is partial because a
 table the package cannot describe is refused (`UNVERIFIABLE_WRITE`), which is what the kit's scenario for it checks. A write
 made around the package is never refused, because it is not seen; the lint is the guard.
 
@@ -429,6 +434,15 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    finds its four reads and writes, and none after. Mutation testing with `mutmut`: 87.9%. Details are in
    docs/PYTHONIO_ADAPTER.md.
 5. **The user guide, and the first release** (small).
+
+   **Result (2026-11-03): built; the release itself waits on PyPI's one-time setup.** The docs-site guide "Use Invaract
+   with Python Jobs", from real runs of the example job. `release-python.yml` builds the native checker and a wheel on
+   each platform of section 11, tagged from the program itself (its glibc version, or its minimum macOS version), and a
+   pure-Python wheel carrying the checker jar, which the package runs with Java (11 or later) where no native wheel
+   matches; each wheel is installed and runs the example job before anything is published. `invaract-lint` is
+   released with them, under one version. Publishing is PyPI's trusted publishing on a `python-v<version>` tag; the
+   names, the trusted publishers and the `pypi` environment are a maintainer's one-time setup (docs/RELEASING.md).
+   Details are in docs/PYTHONIO_ADAPTER.md.
 6. **Immediately after the first release, committed and tracked until delivered (decision 4):**
    - **Object storage** (S3, GCS, Azure), for reading and for writing.
    - **Delta Lake and Iceberg outputs.** Their commits are atomic, which is what makes publishing safe on object storage.
@@ -439,6 +453,16 @@ long-standing public functions. The CI matrix tests the oldest and newest suppor
    - it is listed in ROADMAP.md as open items;
    - it is not displaced by other Python I/O work;
    - each release note until it lands states what is still missing.
+
+   **Result (2026-11-03): Delta, Iceberg, HDFS and object storage done; tested on S3, not yet on GCS, Azure or a real HDFS
+   cluster.** Two decisions, taken with probes in hand (section 5): plain-file outputs on object storage are published
+   Spark-style, with `_SUCCESS` last, and a missing table is created. Plain-file outputs on HDFS are staged and renamed. A Delta output's
+   files are staged uncommitted (in the table's folder, or on local disk for object storage) and committed in one
+   transaction at publish; an Iceberg output is held until publish and written in one transaction, creating its namespace
+   and table if needed. Reads of Parquet and CSV files from object storage, and of Delta and Iceberg tables. Tested
+   locally and on S3 (moto), on the oldest releases the extras allow (deltalake 1.0, pyiceberg 0.9 with pyarrow 17) and
+   the newest. `gs://` and `abfss://` go through the same libraries but have no emulator in CI yet, which stays open in
+   ROADMAP.md. Details are in docs/PYTHONIO_ADAPTER.md.
 7. **Later, each on its own:** partitioned outputs, Polars lazy plans for the transformation-shape rules, databases.
 
 ## 13. Decisions (settled 2026-11-01)

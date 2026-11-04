@@ -5,7 +5,7 @@ checks every read and write that goes through it; this lint is the guard against
 (docs/PYTHON_IO_ADAPTER_DESIGN.md, section 7). It has no dependencies.
 
 ```bash
-pip install "git+https://github.com/mlltx/Invaract#subdirectory=pythonio-adapter/lint"
+pip install invaract-lint
 invaract-lint jobs/                        # or: python -m invaract_lint jobs/
 ```
 
@@ -46,7 +46,7 @@ ordinary way of writing a job, not one built to get around it.
 **In CI**, `--format github` prints each finding as an annotation on the pull request's diff:
 
 ```yaml
-- run: pip install "git+https://github.com/mlltx/Invaract#subdirectory=pythonio-adapter/lint"
+- run: pip install invaract-lint
 - run: invaract-lint --format github jobs/
 ```
 
@@ -60,7 +60,7 @@ repos:
         name: invaract-lint
         entry: invaract-lint
         language: python
-        additional_dependencies: ["invaract-lint @ git+https://github.com/mlltx/Invaract#subdirectory=pythonio-adapter/lint"]
+        additional_dependencies: ["invaract-lint"]
         types: [python]
 ```
 
