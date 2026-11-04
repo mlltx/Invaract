@@ -613,9 +613,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install pyarrow
+      # pyiceberg and its SQL catalog: the catalog-registration scenarios write their registered output as an Iceberg table
+      - name: Install pyarrow and pyiceberg
         shell: bash
-        run: '"${{ steps.python.outputs.python-path }}" -m pip install pyarrow'
+        run: '"${{ steps.python.outputs.python-path }}" -m pip install pyarrow "pyiceberg[pyarrow,sql-sqlite]"'
 
       - name: Test the checker and assemble its jar
         shell: bash
