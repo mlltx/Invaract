@@ -439,6 +439,40 @@ dependencyOverrides += "com.google.guava" % "guava" % "33.7.2-jre"
 // artifact, and .10-.12 are a pure Hadoop-compatibility superset with no new CVEs).
 dependencyOverrides += "org.xerial.snappy" % "snappy-java" % "1.1.10.12"
 
+// org.apache.kerby:* (kerb-core/kerb-crypto/kerb-util/kerby-asn1/kerby-config/
+// kerby-pkix/kerby-util): a whole-family transitive of hadoop-client/hadoop-common
+// 3.4.1 (test scope), all seven resolving to 2.0.3, the sole version across the
+// entire tree (confirmed via `dependencyTree` - no eviction on any of the seven,
+// they come from the same upstream Apache Kerby release and move together).
+// CVE-2026-57914 (CWE-400, CVSS 6.5 Medium, "StackOverflow on parsing deeply
+// nested ASN1 structures"): kerby-asn1's ASN.1 decoder recurses once per nested
+// structure with no depth bound, so a crafted, sufficiently-deeply-nested payload
+// exhausts the stack and crashes the parsing thread - availability-only impact,
+// no confidentiality/integrity effect (CVSS vector AV:N/AC:L/PR:L/UI:N/S:U/C:N/
+// I:N/A:H). No GHSA ID was found for this CVE at the time of this change (checked
+// directly rather than assumed absent) - cited via Apache's own CNA record and
+// NVD/CVE.org instead, both of which name the Maven artifact `org.apache.kerby:
+// kerby-asn1` explicitly. Affected < 2.1.2, fixed 2.1.2. The Dependabot alert names
+// only kerby-asn1 itself, but every sibling artifact in this family is resolved
+// from the same Apache Kerby release and would otherwise split across two
+// versions if only kerby-asn1 were bumped (the same "move the matched set
+// together" rule this file's own Jackson/Netty overrides above already follow) -
+// confirmed each of the other six also has a real, published 2.1.2 release before
+// pinning it (direct Maven Central artifact-path fetches, not assumed from
+// kerby-asn1's own availability). Pinned to the bare fix floor, 2.1.2: this is a
+// patch release within the same 2.x line (not a major-version jump the way the
+// wire-runtime/kaml cases above were), and it is also the newest 2.x release
+// published, so there is no higher-but-still-examined choice to weigh against it.
+dependencyOverrides ++= Seq(
+  "org.apache.kerby" % "kerb-core" % "2.1.2",
+  "org.apache.kerby" % "kerb-crypto" % "2.1.2",
+  "org.apache.kerby" % "kerb-util" % "2.1.2",
+  "org.apache.kerby" % "kerby-asn1" % "2.1.2",
+  "org.apache.kerby" % "kerby-config" % "2.1.2",
+  "org.apache.kerby" % "kerby-pkix" % "2.1.2",
+  "org.apache.kerby" % "kerby-util" % "2.1.2"
+)
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
