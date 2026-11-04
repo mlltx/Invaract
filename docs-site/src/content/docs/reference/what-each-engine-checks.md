@@ -199,7 +199,7 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
-- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Files and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of a Delta table is refused.
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked.
 - [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
