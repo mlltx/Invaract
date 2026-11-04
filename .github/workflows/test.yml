@@ -534,6 +534,9 @@ jobs:
   mutation-testing-pythonio-adapter:
     name: Mutation testing (pythonio-adapter)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
