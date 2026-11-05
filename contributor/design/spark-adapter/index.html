@@ -492,6 +492,13 @@ being one of <code dir="auto">DataQualityVerdict.{Guaranteed, NotGuaranteed, Vio
 <code dir="auto">SensitivityLineage</code>’s tags, and never affect <code dir="auto">VerificationResult.passed</code>
 on their own; the load-bearing principle is that an <em>absence</em> of proof
 must never look like a failure to a caller only checking <code dir="auto">passed</code>.</p>
+<p><strong>Partitioning is not checked yet.</strong> <code dir="auto">check.partitioning</code> (an output’s declared
+partition keys and <code dir="auto">partitionOverwriteMode</code>, <code dir="auto">OUTPUT_PARTITIONING_MISMATCH</code>) is
+declared unsupported here, so a contract that declares partition keys is refused
+(<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>). Spark’s write commands carry what it needs
+(<code dir="auto">InsertIntoHadoopFsRelationCommand.partitionColumns</code>, Delta’s and Iceberg’s
+partitioning, <code dir="auto">spark.sql.sources.partitionOverwriteMode</code>); handing it to the
+pipeline as <code dir="auto">CheckedWrite.partitioning</code> is the follow-up ROADMAP lists.</p>
 <p><strong>Not the runtime check.</strong> <code dir="auto">VerificationOptions.runtimeDataQuality</code>
 (<code dir="auto">spark.invaract.runtimeDataQuality</code>, capability <code dir="auto">check.runtimeDataQuality</code>)
 holds the <em>rows</em> a write puts in an output to the same constraints, which
