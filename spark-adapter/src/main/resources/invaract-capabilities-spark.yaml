@@ -72,6 +72,13 @@ capabilities:
     status: supported
     note: Hive, Delta and Iceberg catalog registrations are recognized.
     docs: SPARK_ADAPTER.md
+  check.runtimeDataQuality:
+    status: unsupported
+    summary: Spark is checked from its plan, before a write runs, so the values it writes are never seen.
+    note: >-
+      The check rule judges the write's plan before any row is computed; checking values would mean a check inside the
+      write itself. Use staticDataQuality, which proves constraints from the plan, instead.
+    docs: SPARK_ADAPTER.md
 
   rules.dml:
     status: partial

@@ -17,7 +17,7 @@ logic, that the requirement holds for every possible row, not just check it agai
 whatever data happened to be present on one run.
 
 <Aside type="note" title="Spark only">
-Static data-quality proofs need the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `staticDataQuality` on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE` before it runs.
+Static data-quality proofs need the expressions a job computes each column with, which Spark's plan gives and Beam's pipeline graph doesn't. On Beam, turning `staticDataQuality` on refuses the pipeline with `UNSUPPORTED_CONTRACT_FEATURE` before it runs. A Python job's rows can be held to the same constraints as it writes them instead: see [Check Data Values at Run Time](/guides/checking-data-values-at-run-time/).
 </Aside>
 
 <Aside type="caution" title="This proves guarantees, not predicts them">

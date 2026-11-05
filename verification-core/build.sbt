@@ -157,7 +157,21 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.this"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.ContractValidationEvent$"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.JobSummaryEvent$"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.WriteEvent$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.WriteEvent$"),
+  // Deliberate break, runtime data quality (capability check.runtimeDataQuality): VerificationOptions gained a trailing
+  // `runtimeDataQuality` flag and CheckedWrite a trailing `dataChecks` (what the adapter found in the written data). A new
+  // case class field changes `apply`/`copy`/the constructor and `unapply`'s tuple. Nothing has been released and no
+  // consumers exist outside this repository; these are the lines MiMa's output suggests for such a change.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationOptions.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationOptions.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationOptions.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.VerificationOptions.unapply"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.VerificationOptions$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CheckedWrite.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CheckedWrite.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CheckedWrite.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.CheckedWrite.unapply"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.CheckedWrite$")
 )
 
 libraryDependencies ++= Seq(

@@ -39,15 +39,16 @@ class PythonIoPackageConformanceAdapter extends ConformanceAdapter {
 
   override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
     environment.left.foreach(why => throw new EnvironmentUnavailable(why))
+    if (job.output.registeredAs.isDefined) iceberg.left.foreach(why => throw new EnvironmentUnavailable(why))
     val root = Files.createTempDirectory("pythonio-conformance-")
     try {
       val events = root.resolve("events.jsonl")
       val settings = Map(
         "INVARACT_CHECKER" -> s"$javaCommand @${slashes(checkerArguments)} ${PythonIoCheck.getClass.getName.stripSuffix("$")}",
-        "INVARACT_CONTRACT" -> slashes(write(root, "contract.yaml", ContractParser.write(contract))),
+        "INVARACT_CONTRACT" -> slashes(write(root, "contract.yaml", ContractParser.write(registeredAsIceberg(contract, job)))),
         "INVARACT_NOTIFY_CONFIG" -> slashes(write(root, "sink.properties",
           s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${slashes(events)}\n"))
-      ) ++ optionVariables(options)
+      ) ++ optionVariables(options) ++ (if (job.output.registeredAs.isDefined) icebergCatalog(root) else Map.empty)
       val (status, output) = python(List(new File("python/tests/conformance_job.py").getAbsolutePath, slashes(write(root, "job.json", jobJson(scenarioId, contract, job)))), root, settings)
       val validations = readValidations(events)
       val statuses = validations.map(_.status)
@@ -91,8 +92,29 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
       "rejectUndeclaredFields" -> options.rejectUndeclaredFields,
       "computeFingerprint" -> options.computeFingerprint,
       "staticDataQuality" -> options.staticDataQuality,
-      "roleConsistency" -> options.roleConsistency
+      "roleConsistency" -> options.roleConsistency,
+      "runtimeDataQuality" -> options.runtimeDataQuality
     ).collect { case (name, true) => PythonIoConfigSource.variable(name) -> "true" }.toMap
+
+  /** An output the scenario registers in a catalog is, for a Python job, an Iceberg table: its location names the catalog,
+    * namespace and table, as Beam's adapter makes it a BigQuery table. The contract's other requirements are unchanged. */
+  def icebergTable(table: String): String =
+    s"${PythonIoConformanceAdapter.IcebergCatalog}.${PythonIoConformanceAdapter.IcebergNamespace}.$table"
+
+  def registeredAsIceberg(contract: Contract, job: ScenarioJob): Contract =
+    job.output.registeredAs.fold(contract)(table =>
+      contract.copy(outputs = contract.outputs.map(o => if (o.location == job.output.location) o.copy(location = icebergTable(table)) else o)))
+
+  /** The catalog `conformance`: SQLite, its warehouse under `root`, configured by environment as a platform would. */
+  def icebergCatalog(root: Path): Map[String, String] = {
+    val name = PythonIoConformanceAdapter.IcebergCatalog.toUpperCase
+    Files.createDirectories(root.resolve("warehouse"))
+    Map(
+      s"PYICEBERG_CATALOG__${name}__TYPE" -> "sql",
+      s"PYICEBERG_CATALOG__${name}__URI" -> s"sqlite:///${slashes(root.resolve("catalog.db"))}",
+      s"PYICEBERG_CATALOG__${name}__WAREHOUSE" -> s"file://${slashes(root.resolve("warehouse"))}"
+    )
+  }
 
   /** The name the job reads or writes a dataset by: the declared one's, or, for a location the contract does not declare, the
     * location itself, which the contract refuses. */
@@ -119,8 +141,10 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
   def jobJson(scenarioId: String, contract: Contract, job: ScenarioJob): String = {
     def input(i: ScenarioInput) =
       Map("name" -> nameOf(contract.inputs, i.location), "location" -> i.location,
-        "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema))
-    def output(o: ScenarioOutput) = Map("name" -> nameOf(contract.outputs, o.location), "format" -> o.format, "saveMode" -> o.saveMode)
+        "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema)) ++
+        (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows))
+    def output(o: ScenarioOutput) =
+      Map("name" -> nameOf(contract.outputs, o.location), "format" -> (if (o.registeredAs.isDefined) "iceberg" else o.format), "saveMode" -> o.saveMode)
     def source(s: ColumnSource): Map[String, Any] = s match {
       case ColumnSource.FromInput(i, c)    => Map("kind" -> "FromInput", "input" -> i, "column" -> c)
       case ColumnSource.CastInput(i, c, t) => Map("kind" -> "CastInput", "input" -> i, "column" -> c, "to" -> typeJson(t))
@@ -166,6 +190,15 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
       case Right((0, version))  => Right(version.trim)
       case Right((status, out)) => Left(s"$Python cannot import pyarrow and invaract (exit status $status): ${out.trim.split("\n").lastOption.getOrElse("")}")
       case Left(e)              => Left(s"no Python to run jobs with ($Python: ${e.getMessage}); set INVARACT_TEST_PYTHON")
+    }
+
+  /** `Right(version)` when the Python environment can also write Iceberg tables (pyiceberg, with its SQL catalog), else why not:
+    * only a scenario that registers its output needs it. */
+  lazy val iceberg: Either[String, String] =
+    scala.util.Try(python(List("-c", "import pyiceberg, sqlalchemy; print(pyiceberg.__version__)"), new File(".").toPath, Map.empty)).toEither match {
+      case Right((0, version))  => Right(version.trim)
+      case Right((status, out)) => Left(s"$Python cannot import pyiceberg and sqlalchemy (exit status $status), which a registered output needs: ${out.trim.split("\n").lastOption.getOrElse("")}")
+      case Left(e)              => Left(s"no Python to run jobs with ($Python: ${e.getMessage})")
     }
 
   /** Runs `python args` in `directory` with the package on its path and `variables` set (and no other `INVARACT_*` setting);

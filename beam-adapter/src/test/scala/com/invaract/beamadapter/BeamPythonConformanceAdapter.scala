@@ -105,7 +105,8 @@ private[beamadapter] object BeamPythonConformanceAdapter {
       "reject_undeclared_fields" -> options.rejectUndeclaredFields,
       "compute_fingerprint" -> options.computeFingerprint,
       "static_data_quality" -> options.staticDataQuality,
-      "role_consistency" -> options.roleConsistency
+      "role_consistency" -> options.roleConsistency,
+      "runtime_data_quality" -> options.runtimeDataQuality
     ).collect { case (flag, true) => s"--invaract_$flag=true" }
 
   /** `job` as `conformance_job.py` reads it. */

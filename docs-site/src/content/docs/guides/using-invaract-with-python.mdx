@@ -287,6 +287,7 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
 | `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `INVARACT_REJECT_UNDECLARED_FIELDS=true` | Refuse an output column the contract does not declare. |
+| `INVARACT_RUNTIME_DATA_QUALITY=true` | Check every row the job writes against its outputs' declared value constraints, before anything is published ([Check Data Values at Run Time](/guides/checking-data-values-at-run-time/)). |
 | `INVARACT_REGISTRY_URL`, `INVARACT_REGISTRY_CLIENT_CLASS` | The contract registry. |
 | `INVARACT_CHECKER` | The command that runs the checker, instead of the one the package carries. |
 
@@ -363,6 +364,19 @@ outputs:
   `PYICEBERG_CATALOG__LAKE__TYPE=glue`, or a `.pyiceberg.yaml` file. A catalog type needs its own pyiceberg extra
   (`pip install "pyiceberg[glue]"`). The run creates a missing namespace, then the table. An Iceberg output is held in
   memory until the job returns, since pyiceberg writes a table's data in one piece.
+- **Catalog registration**: an Iceberg table is registered in its catalog, so a contract's `catalog:` requirement is
+  checked against it ([Require Catalog Registration](/guides/requiring-catalog-registration/)): the technology is
+  `iceberg`, `catalogName` is the pyiceberg catalog's name, then the namespace and the table. A requirement the table does
+  not meet refuses the read or write (`OUTPUT_CATALOG_MISMATCH`, `INPUT_CATALOG_MISMATCH`). Files and Delta tables are
+  named by their path and registered in no catalog, so a contract that requires a registration refuses them
+  (`MISSING_OUTPUT_CATALOG_REGISTRATION`):
+
+  ```yaml
+  - name: report
+    location: lake.sales.report
+    format: iceberg
+    catalog: { required: true, technology: iceberg, catalogName: lake, namespace: [sales], table: report }
+  ```
 - **Object storage**: credentials and endpoints come from the usual sources (`AWS_*` environment variables, `~/.aws`, an
   instance role; `GOOGLE_APPLICATION_CREDENTIALS`; `AZURE_STORAGE_*`); Invaract has no settings of its own for them. A
   Delta output on object storage is staged on the job's local disk and uploaded when the job returns, just before its

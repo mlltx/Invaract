@@ -134,6 +134,12 @@ object CapabilityGuide {
         "Checks that a dataset the contract says must be catalog-registered is, in the catalog it names.",
         guide = "/guides/requiring-catalog-registration/"
       ),
+      CheckRuntimeDataQuality -> e(
+        "Written values meet their constraints",
+        "Checks every row a job writes against the constraints its contract declares for the output's columns (a range, a set of allowed values, a length, a comparison with another column), before the output is published. Turned on with the `runtimeDataQuality` setting.",
+        guide = "/guides/checking-data-values-at-run-time/",
+        refusedWhen = "you turn on `runtimeDataQuality` and an output's columns declare constraints"
+      ),
       RulesDml -> e(
         "Rules for MERGE, UPDATE and DELETE",
         "Enforces rules about row-level changes: the columns a MERGE must match on, no DELETE without a condition, the columns an UPDATE may change.",

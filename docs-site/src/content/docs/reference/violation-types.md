@@ -52,6 +52,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `*_FIELD_TYPE_MISMATCH`, `*_FIELD_NULLABILITY_MISMATCH` | dataset | path | declared / actual | — |
 | `ROLE_CONSISTENCY_VIOLATION` | the input | — | — | — |
 | `DATA_QUALITY_VIOLATION` | write | field | declared constraint / — | — |
+| `RUNTIME_DATA_QUALITY_VIOLATION` | write | field | declared constraint / failing rows, with example values | — |
 | `RULE_*` | write | — | the rule's own columns / what the plan has | rule type |
 | `RULE_UNVERIFIABLE_DML` | write | — | — / operation kind | — |
 | `ORG_POLICY_VIOLATION` | dataset, when named | — | — | policy id |
@@ -124,6 +125,18 @@ both ways to enable it, the identical mechanism `computeFingerprint` uses).
 | Type | Meaning |
 |---|---|
 | `DATA_QUALITY_VIOLATION` | The transformation's own logic provably guarantees an output field can produce a value that violates its declared `nullable: false`/`equals`/`oneOf`/`range` constraint — e.g. a filter's negation, or an arithmetic operation, that demonstrably crosses a declared bound. |
+
+## Runtime data-quality violations
+
+Produced when `runtimeDataQuality` is enabled and the rows a write puts in an output
+break one of its fields' declared constraints (`equals`, `oneOf`, `range`, `length`,
+`fieldRange`). Where a static violation is a proof about every run, this is what one
+run's data held. Only engines that see the data before it is published check it; see
+[Check Data Values at Run Time](/guides/checking-data-values-at-run-time/).
+
+| Type | Meaning |
+|---|---|
+| `RUNTIME_DATA_QUALITY_VIOLATION` | Rows of this write hold a value the field's declared constraint rules out. `expected` is the constraint (`range gte 0`); `actual` is how many rows broke it, with up to five of their values (`2 row(s), for example -5, -1`). Null values never break a constraint; whether a field may be null is its `nullable`/`required` declaration. |
 
 ## Role-consistency violations
 

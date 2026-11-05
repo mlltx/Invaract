@@ -1,0 +1,22 @@
+id: orders_report
+version: "1.0.0"
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: data/out/report
+    format: parquet
+    schema:
+      fields:
+        - name: region
+          type: string
+          constraints:
+            - { type: oneOf, values: [north, south] }
+        - name: total
+          type: long
+          constraints:
+            - { type: range, gte: 0, lt: 1000.5 }
+        - { name: budget, type: long }
+        - name: spent
+          type: long
+          constraints:
+            - { type: fieldRange, lte: budget }

@@ -4,6 +4,7 @@
 package com.invaract.pythonioadapter
 
 import com.invaract.contract.{LogicalField, LogicalType}
+import com.invaract.ir.CatalogIdentity
 import com.invaract.verification.{ArrowSchemas, ConfigSource, InvaractConf}
 import org.yaml.snakeyaml.{LoaderOptions, Yaml}
 import org.yaml.snakeyaml.constructor.SafeConstructor
@@ -23,24 +24,31 @@ private[pythonioadapter] object Request {
   final case class Open(settings: Map[String, String], job: JobDetails) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
-    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. */
-  final case class Read(name: String, location: Option[String], schema: List[Column]) extends Request
+    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `catalog` is the
+    * catalog the dataset is registered in, when it is a catalog table (an Iceberg table names its catalog and namespace). */
+  final case class Read(name: String, location: Option[String], schema: List[Column], catalog: Option[CatalogIdentity] = None) extends Request
 
   /** A table the job hands to `invaract.write`, described before any of it is staged: the output's name, the format and save
     * mode the package writes, and the table's columns. `unverifiable` says why the package could not describe the table (it
-    * offers no Arrow stream), and replaces the rest. `location` is the job's own only in dry-run mode. */
+    * offers no Arrow stream), and replaces the rest. `location` is the job's own only in dry-run mode. `catalog` is the catalog
+    * the output is registered in, as for `Read`. */
   final case class Write(
       name: String,
       location: Option[String],
       format: Option[String],
       saveMode: Option[String],
       schema: List[Column],
-      unverifiable: Option[String]
+      unverifiable: Option[String],
+      catalog: Option[CatalogIdentity] = None
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
-    * counted batch by batch as it was written. */
-  final case class Written(name: String, nulls: Map[String, Long]) extends Request
+    * counted batch by batch as it was written, and what it found evaluating the output's data checks (sent with `open`), in
+    * their order - none when it was given none. */
+  final case class Written(name: String, nulls: Map[String, Long], checks: List[Found] = Nil) extends Request
+
+  /** One data check's outcome: how many rows broke it, and some of the values they held. */
+  final case class Found(failed: Long, examples: List[String])
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
@@ -95,19 +103,54 @@ private[pythonioadapter] object Requests {
     for {
       name <- text(m, "name").toRight("a read must name the input it reads")
       schema <- columns(m.get("schema"), s"the read of '$name'")
-    } yield Request.Read(name, text(m, "location"), schema)
+      registered <- catalog(m.get("catalog"), s"the read of '$name'")
+    } yield Request.Read(name, text(m, "location"), schema, registered)
 
   private def write(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a write must name the output it writes")
       schema <- columns(m.get("schema"), s"the write of '$name'")
-    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"))
+      registered <- catalog(m.get("catalog"), s"the write of '$name'")
+    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered)
+
+  /** A catalog registration as `{"technology": ..., "catalogName": ..., "namespace": [...], "table": ...}`, each part optional. */
+  private def catalog(value: Option[AnyRef], what: String): Either[String, Option[CatalogIdentity]] =
+    value match {
+      case None => Right(None)
+      case Some(c: JMap[_, _]) =>
+        val m = asMap(c)
+        val parts = m.get("namespace") match {
+          case None | Some(_: JList[_]) => Right(list(m.get("namespace")))
+          case Some(other)              => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
+        }
+        parts.flatMap(traverse(_) {
+          case part: String => Right(part)
+          case other        => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
+        }).map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
+      case Some(other) => Left(s"the catalog of $what must be a JSON object, not '$other'")
+    }
 
   private def written(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a written must name the output it staged")
       nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
-    } yield Request.Written(name, nulls.toMap)
+      checks <- found(m.get("checks"), name)
+    } yield Request.Written(name, nulls.toMap, checks)
+
+  private def found(value: Option[AnyRef], name: String): Either[String, List[Request.Found]] = value match {
+    case None => Right(Nil)
+    case Some(items: JList[_]) =>
+      traverse(items.asScala.toList) {
+        case c: JMap[_, _] =>
+          val m = asMap(c)
+          for {
+            failed <- count(m.getOrElse("failed", null), s"the failing rows of a check of '$name'")
+            examples <- traverse(list(m.get("examples")))(e => Right(String.valueOf(e)))
+          } yield Request.Found(failed, examples)
+        case other => Left(s"each check of '$name' must be a JSON object, not '$other'")
+      }
+    case Some(other) => Left(s"the checks of '$name' must be a list, not '$other'")
+  }
 
   private def count(value: AnyRef, what: String): Either[String, Long] = value match {
     case n: java.lang.Number if n.longValue >= 0 && n.doubleValue == n.longValue.toDouble => Right(n.longValue)

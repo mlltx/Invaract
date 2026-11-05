@@ -189,6 +189,14 @@ object ContractEnforcementRule {
     */
   val RoleConsistencyConfKey = "spark.invaract.roleConsistency"
 
+  /** Names `VerificationOptions.runtimeDataQuality`, for completeness: Spark
+    * declares `check.runtimeDataQuality` unsupported (its check rule judges a
+    * write's plan before any row is computed), so a contract with output
+    * constraints run with this set is refused (`UNSUPPORTED_CONTRACT_FEATURE`)
+    * rather than passed with its constraints unchecked.
+    */
+  val RuntimeDataQualityConfKey = "spark.invaract.runtimeDataQuality"
+
   /** Overlays the three conf keys above onto `options` — `||`, not a
     * replacement: a flag ends up `true` if *either* the caller's own
     * `VerificationOptions` already set it, or the matching conf key is

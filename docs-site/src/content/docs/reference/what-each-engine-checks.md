@@ -52,7 +52,8 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
-| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
+| [Written values meet their constraints](#written-values-meet-their-constraints) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 
 ### Rules a contract can declare
 
@@ -120,6 +121,7 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
+- [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Beam steps are Java code Invaract cannot look inside, so it cannot prove what a column will contain. Refused if you turn on `staticDataQuality`.
 - [Datasets are used as their declared type says](#datasets-are-used-as-their-declared-type-says): Needs to know how each column is used, which Beam's description of a pipeline does not say. Refused if you turn on `roleConsistency`.
@@ -152,6 +154,7 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
+- [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): Python filters, joins and groupings are Python code, so Beam's description of the pipeline names no columns for them. Refused if your contract relies on it.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Steps in a Python pipeline are Python code Invaract cannot look inside, so it cannot prove what a column will contain. Refused if you turn on `staticDataQuality`.
@@ -181,6 +184,10 @@ Everything not listed here is checked in full.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): A user-defined function is a black box: an output column it computes is traced only to the columns passed into it.
 - [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches): A checkpoint or cache made after Invaract was installed is seen through. One made before, or one Spark has dropped from its cache, hides what is behind it.
 
+**Not checked**
+
+- [Written values meet their constraints](#written-values-meet-their-constraints): Spark is checked from its plan, before a write runs, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
+
 ### Python (invaract package)
 
 Everything not listed here is checked in full.
@@ -188,13 +195,14 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
+- [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
+- [Written values meet their constraints](#written-values-meet-their-constraints): Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked.
 - [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
 
 **Not checked**
 
 - [Streaming reads](#streaming-reads): Python jobs read whole datasets; reading a stream is not checked. A streaming read it cannot place is reported as unverifiable rather than checked.
 - [Streaming writes](#streaming-writes): Python jobs write whole datasets; writing a stream is not checked. A streaming write it does not recognize is refused, not passed unchecked.
-- [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Python jobs write files; registering an output in a catalog is not checked yet. Refused if your contract relies on it.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): What a Python job does between its reads and writes is its own code, which is not checked. Refused if your contract relies on it.
 - [Your own rule types](#your-own-rule-types): Custom rules judge a job's plan, and a Python job's plan is its own code, which is not checked. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Data quality rules need the transformation, which for a Python job is its own code. Refused if you turn on `staticDataQuality`.
@@ -297,6 +305,12 @@ Where an engine does not do it: If your contract relies on it, the job is refuse
 Checks that a dataset the contract says must be catalog-registered is, in the catalog it names.
 
 Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/guides/requiring-catalog-registration/)
+
+### Written values meet their constraints
+
+Checks every row a job writes against the constraints its contract declares for the output's columns (a range, a set of allowed values, a length, a comparison with another column), before the output is published. Turned on with the `runtimeDataQuality` setting.
+
+Where an engine does not do it: If you turn on `runtimeDataQuality` and an output's columns declare constraints, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/guides/checking-data-values-at-run-time/)
 
 ### Rules for MERGE, UPDATE and DELETE
 

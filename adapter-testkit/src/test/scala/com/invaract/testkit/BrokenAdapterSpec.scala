@@ -27,10 +27,13 @@ class BrokenAdapterSpec extends AnyFunSuite {
       rewriteOutcome: (ScenarioJob, ScenarioOutcome) => ScenarioOutcome = (_, o) => o,
       boundaryTypes: Set[String] = Set.empty,
       outputsWritten: Boolean = true,
-      extraWrites: Boolean = true
+      extraWrites: Boolean = true,
+      dataValues: Boolean = true
   ) extends ReferenceAdapter() {
     override protected def checksOutputsWritten: Boolean = outputsWritten
     override protected def checksExtraWrites: Boolean = extraWrites
+    override protected def dataChecks(contract: Contract, job: ScenarioJob, options: VerificationOptions): List[com.invaract.verification.DataCheckResult] =
+      if (dataValues) super.dataChecks(contract, job, options) else Nil
     override protected def checkedWrite(job: ScenarioJob): CheckedWrite = {
       val c = super.checkedWrite(job)
       rewriteChecked(c.copy(plan = rewritePlan(job, c.plan), lineageBoundaryTypes = boundaryTypes))
@@ -188,6 +191,8 @@ class BrokenAdapterSpec extends AnyFunSuite {
       Set("declared-output-never-written")),
     Mistake("checks only the first write a job makes", new Variant(extraWrites = false),
       Set("an-undeclared-second-write-is-blocked")),
+    Mistake("never looks at the values a job writes", new Variant(dataValues = false),
+      Set("runtime-data-quality-violation-blocks")),
     Mistake("cannot classify a row-level change", new Variant(rewriteChecked = _.copy(rowMutation = None)),
       Set("unconditional-delete-forbidden")),
     Mistake("flattens nested types to strings",
@@ -245,6 +250,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
     "undeclared-output-column-allowed-by-default" -> ControlFor("undeclared-output-column-rejected", "the default of rejectUndeclaredFields"),
     "fingerprint-flags-nothing-for-a-deterministic-job" -> ControlFor("fingerprint-flags-a-generated-id", "the deterministic job a generated id is told apart from"),
     "filtered-delete-allowed" -> ControlFor("unconditional-delete-forbidden", "the delete the rule must not block"),
+    "runtime-data-quality-passes" -> ControlFor("runtime-data-quality-violation-blocks", "the rows that meet the constraint, a value at its bound and an empty one among them"),
     "derived-from-excuses-an-input-the-output-is-not-built-from" -> ControlFor("derived-from-rejects-a-read-of-another-outputs-source", "the write the mapping must let through"),
     "derived-from-requires-every-source-of-the-output" -> HeldByCore(inputOutputChecker,
       "classifyUnread: no evidence => MISSING_INPUT; evidence => unverifiable instead; the derivedFrom nudge only for a derivedFrom-less output of a multi-output contract",

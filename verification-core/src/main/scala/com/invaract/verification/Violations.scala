@@ -46,6 +46,7 @@ import com.invaract.verification.SchemaChecker.Side
   * *_FIELD_NULLABILITY_MISMATCH           dataset   path    "not null" / "nullable"        -
   * ROLE_CONSISTENCY_VIOLATION             input     -       -                              -
   * DATA_QUALITY_VIOLATION                 write     field   the declared constraint / -    -
+  * RUNTIME_DATA_QUALITY_VIOLATION         write     field   the declared constraint / failing rows  -
   * RULE_* (plan and DML rules)             write     -       the rule's columns / what the plan has  rule type
   * RULE_UNVERIFIABLE_DML                  write     -       - / the operation kind         -
   * ORG_POLICY_VIOLATION                   dataset   -       -                              policy id
@@ -339,6 +340,23 @@ private[invaract] object Violations {
       location = location,
       expected = Some(constraint)
     )
+
+  /** `location`: the write's; `constraint` is reported as `expected`, and how many rows broke it, with some of their values, as
+    * `actual`. */
+  def runtimeDataQuality(field: String, constraint: String, failed: Long, examples: List[String], location: Option[String]): Violation = {
+    val found = s"$failed row(s)" + (if (examples.isEmpty) "" else s", for example ${examples.mkString(", ")}")
+    Violation(
+      ViolationType.RuntimeDataQualityViolation,
+      s"output field '$field' must meet its declared constraint ($constraint), but this write breaks it in $found",
+      remediation =
+        s"Find what produces these values of '$field' (the transformation or the data it reads) and fix it, or, if they are valid, relax or " +
+          "remove the constraint in the contract.",
+      column = Some(field),
+      location = location,
+      expected = Some(constraint),
+      actual = Some(found)
+    )
+  }
 
   /** `inputName`/`inputLocation`: the declared input whose observed role contradicts its declared type. */
   def roleConsistency(inputName: String, inputLocation: String, datasetType: DatasetType, detail: String): Violation =

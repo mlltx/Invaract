@@ -65,6 +65,7 @@ object Capability {
   val CheckFormat = Capability("check.format", StructuralChecks, "A declared output format is checked (OUTPUT_FORMAT_MISMATCH).", enforcesContract = true)
   val CheckSaveMode = Capability("check.saveMode", StructuralChecks, "A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH).", enforcesContract = true)
   val CheckCatalogRegistration = Capability("check.catalogRegistration", StructuralChecks, "A declared catalog requirement is checked for inputs and outputs.", enforcesContract = true)
+  val CheckRuntimeDataQuality = Capability("check.runtimeDataQuality", StructuralChecks, "With runtimeDataQuality on, the values a write puts in each output field are checked against the field's declared constraints (equals, oneOf, range, length, fieldRange) before the write is published (RUNTIME_DATA_QUALITY_VIOLATION).", enforcesContract = true)
 
   // --- rules ------------------------------------------------------------------------------------
   val RulesDml = Capability("rules.dml", Rules, "DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns.", enforcesContract = true)
@@ -98,7 +99,7 @@ object Capability {
   /** Every capability, in the order the matrix shows them (category order, then declaration order). */
   val all: List[Capability] = List(
     ReadBatch, ReadStreaming, WriteBatch, WriteStreaming, WriteRowLevelDml, WriteStateChange,
-    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration,
+    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration, CheckRuntimeDataQuality,
     RulesDml, RulesPlanShape, RulesCustom,
     AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,

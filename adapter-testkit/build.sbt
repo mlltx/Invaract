@@ -102,6 +102,13 @@ mimaPreviousArtifacts := Set(
 // `rowChange` and `opaqueStep` parameters (the fail-closed, row-level DML and unrecognized-step scenarios' job shapes). The kit has no consumers outside this repository yet; these are the exact lines
 // MiMa's own output suggests.
 mimaBinaryIssueFilters ++= Seq(
+  // Runtime data quality (check.runtimeDataQuality): ScenarioInput gained `rows`, the data its scenarios' jobs read, since
+  // that check is about values. Same reason as below: no consumer outside this repository yet.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioInput.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioInput.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioInput.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.ScenarioInput.unapply"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioInput$"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.this"),

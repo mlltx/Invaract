@@ -152,6 +152,19 @@ def _iceberg_identifier(location):
     return catalog, identifier
 
 
+def catalog_of(location, fmt):
+    """The catalog registration the checker is told a dataset has, as the protocol's ``catalog``: an Iceberg table's catalog,
+    namespace and table (its location names them); ``None`` for files and Delta tables, which are named by their path. The
+    catalog service's own address is not sent: a catalog URI can hold credentials."""
+    if fmt != "iceberg" or not location:
+        return None
+    catalog, _, identifier = str(location).partition(".")
+    namespace, _, table = identifier.rpartition(".")
+    if not catalog or not namespace or not table:
+        return None  # not an Iceberg location: reading or writing it is refused with the reason
+    return {"technology": "iceberg", "catalogName": catalog, "namespace": namespace.split("."), "table": table}
+
+
 def _iceberg_table(location):
     """``(catalog, identifier, table)``, the table ``None`` if it does not exist."""
     _require("pyiceberg", "iceberg")

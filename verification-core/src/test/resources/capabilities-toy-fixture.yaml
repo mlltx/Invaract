@@ -36,6 +36,9 @@ capabilities:
   check.catalogRegistration:
     status: unsupported
     note: The toy engine has no catalogs.
+  check.runtimeDataQuality:
+    status: unsupported
+    note: The toy engine never sees data.
   rules.dml:
     status: unsupported
     note: The toy engine has no row-level DML.

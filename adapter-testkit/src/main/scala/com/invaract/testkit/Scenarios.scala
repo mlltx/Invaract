@@ -124,6 +124,15 @@ object Scenarios {
   private def rangeGte(bound: Int): String = s"\n          constraints:\n            - type: range\n              gte: $bound"
   private val staticDq = defaults.copy(staticDataQuality = true)
 
+  /** Orders holding these amounts (ids 1, 2, ...), written as `id` and `total`, with `total` declared at least 0: the runtime
+    * data-quality scenarios, whose check is about the values the job writes. */
+  private def amounts(values: java.lang.Long*): ScenarioInput =
+    orders.copy(rows = values.toList.zipWithIndex.map { case (v, i) => Map[String, Any]("id" -> (i + 1).toLong, "amount" -> v, "label" -> s"o${i + 1}") })
+  private val runtimeDqContract = contract(outputFields = dqOutputFields("", rangeGte(0), totalRequired = false))
+  private def runtimeDqJob(input: ScenarioInput) =
+    job(columns = List(OutColumn("id", FromInput(0, "id")), OutColumn("total", FromInput(0, "amount"))), inputs = List(input))
+  private val runtimeDq = defaults.copy(runtimeDataQuality = true)
+
   /** The orders input declared with a role (`type:`), for the role-consistency scenarios. */
   private def roleInputs(role: String) =
     s"""  - name: orders
@@ -564,6 +573,20 @@ object Scenarios {
       contract(outputFields = dqOutputFields("", rangeGte(5), totalRequired = false)), job(), staticDq,
       Expectation.Reject(Set(ViolationType.DataQualityViolation)),
       analysis = Analysis(dataQuality = Some(Set("total" -> "Violated")))
+    ),
+    Scenario(
+      "runtime-data-quality-passes",
+      "with runtimeDataQuality, rows whose values all meet the output's declared range are written; a value at the bound and an empty value meet it",
+      "The contract says total must be 0 or more, and the job writes totals of 5, 0 and one left empty. Every row is checked as it is written, and all of them meet it.",
+      Set(Capability.CheckRuntimeDataQuality),
+      runtimeDqContract, runtimeDqJob(amounts(5L, 0L, null)), runtimeDq, Expectation.Pass
+    ),
+    Scenario(
+      "runtime-data-quality-violation-blocks",
+      "with runtimeDataQuality, a row whose value breaks the output's declared range blocks the write",
+      "The contract says total must be 0 or more, and one of the rows the job writes has a total of -3. Invaract finds that row as it is written and stops the output from being published.",
+      Set(Capability.CheckRuntimeDataQuality),
+      runtimeDqContract, runtimeDqJob(amounts(7L, -3L)), runtimeDq, Expectation.Reject(Set(ViolationType.RuntimeDataQualityViolation))
     ),
     Scenario(
       "role-source-contributing-conforms",

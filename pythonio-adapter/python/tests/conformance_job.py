@@ -86,16 +86,19 @@ def value(t, row):
 
 
 def make_input(dataset):
-    """The input's data, at its location, in its format: one row with every column set, then one per column it lets be empty,
-    with only that column empty."""
+    """The input's data, at its location, in its format: the rows the scenario gives, when its check is about values; otherwise
+    one row with every column set, then one per column it lets be empty, with only that column empty."""
     fields = dataset["fields"]
     nullable = [f["name"] for f in fields if f["nullable"]]
     rows = 1 + len(nullable)
     schema = pa.schema([pa.field(f["name"], arrow_type(f["type"]), nullable=f["nullable"]) for f in fields])
-    columns = [
-        pa.array([None if row > 0 and nullable[row - 1] == f["name"] else value(f["type"], row) for row in range(rows)], arrow_type(f["type"]))
-        for f in fields
-    ]
+    if dataset.get("rows"):
+        columns = [pa.array([row.get(f["name"]) for row in dataset["rows"]], arrow_type(f["type"])) for f in fields]
+    else:
+        columns = [
+            pa.array([None if row > 0 and nullable[row - 1] == f["name"] else value(f["type"], row) for row in range(rows)], arrow_type(f["type"]))
+            for f in fields
+        ]
     table = pa.Table.from_arrays(columns, schema=schema)
     os.makedirs(dataset["location"], exist_ok=True)
     # the data an earlier job wrote, made before the run: deliberately not through invaract

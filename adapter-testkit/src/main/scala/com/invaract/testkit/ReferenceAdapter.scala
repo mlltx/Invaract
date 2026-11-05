@@ -5,7 +5,10 @@ package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Union, UnknownPlan, Write}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, UnverifiableOperation, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{
+  AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, RuntimeDataQuality, UnverifiableOperation, VerificationOptions,
+  VerificationPipeline
+}
 import com.invaract.verification.notification.JobInfo
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
@@ -40,7 +43,8 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
       // the whole job is known, as on Beam: a declared output it never writes refuses it before its write is checked
       if (checksOutputsWritten)
         VerificationPipeline.requireOutputsWritten(contract, job.writtenLocations, ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
-      VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities), Some(jobInfo))
+      val checked = checkedWrite(job)
+      VerificationPipeline.verifyWrite(contract, checked.copy(dataChecks = dataChecks(contract, job, options)), options, Some(sink), None, Some(capabilities), Some(jobInfo))
       // the job's further writes, in order, each checked as a write of its own
       if (checksExtraWrites)
         job.extraWrites.foreach(w => VerificationPipeline.verifyWrite(contract, ReferenceAdapter.copyWrite(w), options, Some(sink), None, Some(capabilities), Some(jobInfo)))
@@ -57,6 +61,14 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
   /** Whether the adapter checks a job's further writes (`ScenarioJob.extraWrites`), not only its main one; the kit's own
     * tests turn it off to show the scenarios for it catch the omission. */
   protected def checksExtraWrites: Boolean = true
+
+  /** What the job's rows hold against its output's declared constraints (`check.runtimeDataQuality`), evaluated in memory on the
+    * rows the job writes (the pipeline judges them only with `runtimeDataQuality` on). The kit's own tests override it to show
+    * the scenarios for the check catch an adapter that skips it. */
+  protected def dataChecks(contract: Contract, job: ScenarioJob, options: VerificationOptions): List[com.invaract.verification.DataCheckResult] =
+    contract.outputs.find(o => com.invaract.verification.LocationMatching.matches(o.location, job.output.location)).toList.flatMap { output =>
+      RuntimeDataQuality.evaluate(RuntimeDataQuality.checks(output), ScenarioRows.of(job))
+    }
 
   /** Which engine and job the adapter's events name - an adapter that publishes events always says which engine it is. */
   protected def jobInfo: JobInfo = JobInfo(engine = Some(capabilities.adapter))

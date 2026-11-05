@@ -96,6 +96,32 @@ class CapabilityCheckSpec extends AnyFunSuite {
     assert(whyById(all)("analysis.staticDataQuality") == "staticDataQuality is enabled")
   }
 
+  test("required: runtime data quality is relied on only with its option on and a top-level output field declaring a constraint") {
+    def withField(constraint: String, nested: Boolean = false, side: String = "outputs"): Contract = ContractParser.parse(
+      s"""id: rdq
+         |version: "1.0.0"
+         |$side:
+         |  - name: out
+         |    location: out/path
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |${if (nested) "        - name: s\n          type: struct\n          properties:\n            - name: total\n              type: long" + constraint.replace("\n", "\n    ") else "        - name: total\n          type: long" + constraint}
+         |""".stripMargin + (if (side == "inputs") "outputs:\n  - name: o\n    location: o/path\n    schema:\n      fields:\n        - name: id\n          type: long\n" else "")
+    )
+    val constrained = "\n          constraints:\n            - type: range\n              gte: 0"
+    val on = VerificationOptions(runtimeDataQuality = true)
+    assert(whyById(CapabilityCheck.required(withField(constrained), on)).get("check.runtimeDataQuality")
+      .contains("runtimeDataQuality is enabled and output field 'total' declares constraints"))
+    // the capability sits in vocabulary order, after catalog registration
+    assert(ids(CapabilityCheck.required(withField(constrained), on)) == List("check.location", "check.schema", "check.runtimeDataQuality"))
+    assert(!ids(CapabilityCheck.required(withField(constrained), VerificationOptions())).contains("check.runtimeDataQuality"))
+    assert(!ids(CapabilityCheck.required(withField(""), on)).contains("check.runtimeDataQuality"))
+    assert(!ids(CapabilityCheck.required(withField(constrained, nested = true), on)).contains("check.runtimeDataQuality"))
+    assert(!ids(CapabilityCheck.required(withField(constrained, side = "inputs"), on)).contains("check.runtimeDataQuality"))
+  }
+
   test("required: a nested type is a struct with properties, or any type written with '<'; a bare 'array' keyword is not") {
     def contractWith(field: String): Contract = ContractParser.parse(
       s"""id: n

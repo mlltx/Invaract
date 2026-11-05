@@ -398,7 +398,10 @@ A third, independent mechanism — not a `rules` entry at all, but a `constraint
 *field* (see [Static data-quality constraints](#static-data-quality-constraints) above) —
 is checked by `StaticDataQualityVerifier` against per-column value-domain facts it can
 *prove* from the transformation's own semantics, opt-in via `staticDataQuality`. See
-[Verify Static Data Quality](/guides/verifying-static-data-quality/).
+[Verify Static Data Quality](/guides/verifying-static-data-quality/). The same constraints
+can instead be checked on the rows a job actually writes, opt-in via `runtimeDataQuality`,
+on an engine that sees them (Python jobs): see
+[Check Data Values at Run Time](/guides/checking-data-values-at-run-time/).
 
 Every other `rules` entry type (e.g. `compatibility`) is recorded on the parsed contract
 but not yet interpreted or enforced — unless it's named in `customRuleTypes`, in which case

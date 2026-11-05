@@ -5,8 +5,8 @@ package com.invaract.pythonioadapter
 
 import com.invaract.contract.{Contract, Dataset, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput}
-import com.invaract.verification.{AdapterCapabilities, ContractViolationException, VerificationOptions}
+import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput, ScenarioRows}
+import com.invaract.verification.{AdapterCapabilities, ContractViolationException, DataCheckResult, RuntimeDataQuality, VerificationOptions}
 import com.invaract.verification.notification.{JobInfo, NotificationJson}
 
 /** PythonIo as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
@@ -38,12 +38,12 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
       run.start(contract, options, Some(sink), JobInfo(name = Some(scenarioId), engine = Some(PythonIoCheck.Engine)))
       val main = job.inputs.map(readRequest(contract, _)) ++ (
         if (job.untranslatableWrite) List(unverifiableWrite(contract, job.output))
-        else writeRequests(contract, job.output, ReferenceAdapter.outputSchema(job))
+        else writeRequests(contract, job.output, ReferenceAdapter.outputSchema(job), dataChecks(contract, job.output, ScenarioRows.of(job), options))
       )
       // a further write reads its own input first, unless the job has read it already
       val extra = job.extraWrites.foldLeft((job.inputs.map(_.location).toSet, List.empty[String])) { case ((read, lines), w) =>
         val readIt = if (read.contains(w.input.location)) Nil else List(readRequest(contract, w.input))
-        (read + w.input.location, lines ++ readIt ++ writeRequests(contract, w.output, w.input.schema))
+        (read + w.input.location, lines ++ readIt ++ writeRequests(contract, w.output, w.input.schema, dataChecks(contract, w.output, w.input.rows, options)))
       }._2
       val replies = (main ++ extra :+ """{"op": "finish", "completed": true}""").iterator.map(run.answer)
       replies.find(_("ok") != true) match {
@@ -62,6 +62,10 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
 
 object PythonIoConformanceAdapter {
 
+  /** The Iceberg catalog and namespace a scenario's registered output is a table in. */
+  val IcebergCatalog = "conformance"
+  val IcebergNamespace = "scenarios"
+
   /** The name the package would send for a dataset at `location`: the declared one's, or, for a location the contract does not
     * declare, the location itself, which the checker treats as an undeclared dataset. */
   private def nameOf(datasets: List[Dataset], location: String): String = datasets.find(_.location == location).fold(location)(_.name)
@@ -78,14 +82,24 @@ object PythonIoConformanceAdapter {
   def readRequest(contract: Contract, input: ScenarioInput): String =
     json("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "schema" -> input.schema.fields.map(column(_, withNulls = true)))
 
-  /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. */
-  def writeRequests(contract: Contract, output: ScenarioOutput, schema: LogicalSchema): List[String] = {
+  /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. An output the scenario
+    * registers in a catalog is an Iceberg table, as the package writes one (`PythonIoPackageConformanceAdapter.icebergTable`). */
+  def writeRequests(contract: Contract, output: ScenarioOutput, schema: LogicalSchema, checks: Option[List[DataCheckResult]] = None): List[String] = {
     val name = nameOf(contract.outputs, output.location)
+    val registered = output.registeredAs.toList.flatMap(table =>
+      List("format" -> "iceberg", "catalog" -> Map("technology" -> "iceberg", "catalogName" -> IcebergCatalog, "namespace" -> List(IcebergNamespace), "table" -> table)))
     List(
-      json("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))),
-      json("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap)
+      json((List("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))) ++ registered): _*),
+      json((List("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap) ++
+        checks.map(found => "checks" -> found.map(r => Map("failed" -> r.failed, "examples" -> r.examples)))): _*)
     )
   }
+
+  /** What the package reports for the data checks the checker sends it for `output`, with `runtimeDataQuality` on: each
+    * evaluated on the rows the write puts there, as the package evaluates it on the data it stages. */
+  def dataChecks(contract: Contract, output: ScenarioOutput, rows: List[Map[String, Any]], options: VerificationOptions): Option[List[DataCheckResult]] =
+    if (!options.runtimeDataQuality) None
+    else Some(contract.outputs.find(_.location == output.location).toList.flatMap(o => RuntimeDataQuality.evaluate(RuntimeDataQuality.checks(o), rows)))
 
   def unverifiableWrite(contract: Contract, output: ScenarioOutput): String =
     json("op" -> "write", "name" -> nameOf(contract.outputs, output.location), "unverifiable" -> "it offers no __arrow_c_stream__")
