@@ -4108,6 +4108,14 @@ when the run passes, the table created if missing (<code dir="auto">invaract[del
 HDFS (staged and renamed) and on object storage (copied, <code dir="auto">_SUCCESS</code> last, Spark-style; decided 2026-11-03); reads
 from both. Tested locally, on S3 (moto) and on HDFS through a stand-in file system, oldest and newest library
 releases (CI’s <code dir="auto">pythonio-python</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Catalog registration (<code dir="auto">check.catalogRegistration</code>, partial): an Iceberg table reports the catalog, namespace and
+table it is registered in, checked against a contract’s <code dir="auto">catalog:</code> requirement on reads and writes; files and
+Delta tables, named by their path, are unregistered. The catalog URI is not sent (it can hold credentials)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Runtime data quality (<code dir="auto">check.runtimeDataQuality</code>, a new engine-neutral capability every adapter declares; opt-in
+<code dir="auto">runtimeDataQuality</code>): every row a job writes is held to its outputs’ declared constraints before anything is
+published, evaluated by the package with Arrow compute. Partial: top-level fields. Spark and Beam declare it
+unsupported (they check before rows exist) and refuse constrained outputs when it is on</li>
+<li class="task-list-item"><input type="checkbox" disabled> Partitioned outputs; database outputs (Postgres first)</li>
 <li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> Google Cloud Storage, Azure and a real HDFS cluster verified end to end
 (emulators or a cluster in CI); the code path is the same libraries’, untested</li>
 </ul>
