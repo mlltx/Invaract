@@ -72,7 +72,8 @@ cannot answer it. The pre-check judges every column as if it held no empty value
 
 **`catalog`.** A read or write of a catalog table also carries the catalog it is registered in:
 `"catalog": {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}`, which the package
-sends for an Iceberg dataset (its location, `<catalog>.<namespace>.<table>`, names them). The checker puts it on the plan's
+sends for an Iceberg dataset (its location, `<catalog>.<namespace>.<table>`, names them), and as
+`{"technology": "jdbc", "catalogName": <database>, "namespace": [<schema>], "table": <table>}` for a PostgreSQL table. The checker puts it on the plan's
 read or write, where the contract's `catalog:` requirement is checked as on every engine (`catalog-*` cases). Files and Delta
 tables, named by their path, carry none, so a requirement on them is never met. The catalog service's own address is not sent,
 since a catalog URI can hold credentials.
@@ -390,6 +391,22 @@ deletes only the written partitions' old files, Delta commits the new files and 
 old ones in one commit (deltalake releases without `RemoveAction`, 1.0 to 1.6.0 among them, refuse it), Iceberg uses
 `dynamic_partition_overwrite` (pyiceberg 0.9 has it). A Delta or Iceberg table that exists partitioned otherwise than the write
 is not written.
+
+**PostgreSQL tables (2026-11-04).** The user chose ADBC (`adbc-driver-postgresql`) over psycopg or SQLAlchemy: it speaks
+Arrow, so a write's batches go to the server by `COPY` without a conversion, and a read comes back as an Arrow table. A table's
+location is `postgresql://[user@]host[:port]/<database>/<schema>.<table>` (a password in it is refused: credentials come from
+libpq's own `PG*` variables and `~/.pgpass`); its format is `jdbc`, the name Spark and Beam give a JDBC dataset, and the read or
+write carries `"catalog": {"technology": "jdbc", "catalogName": <database>, "namespace": [<schema>], "table": <table>}`, as
+Spark's `JDBCTableCatalog` registers one. Staging: each output opens its own connection and transaction for the run and copies
+each write into a session-temporary table (`adbc_ingest(..., temporary=True)`), which no other session sees and the server drops
+with the session. Publishing, in that transaction: create the table if missing (`LIKE` the staging table, then `SET NOT NULL`
+on required columns), `TRUNCATE` it for an overwrite, `INSERT ... SELECT` the staged rows, drop the staging table, commit; a
+refused or failed run rolls back. An existing table is never replaced, so its other columns, defaults, indexes and grants stay.
+A PostgreSQL output is not written partitioned (declared partitioning on a database table is the table's own DDL, which the run
+does not create). adbc 1.0 and 1.1 are not supported: their bulk ingest fails against PostgreSQL 16 ("COPY file signature not
+recognized"); 1.2 to 1.4 refuse to close a connection with a cursor still open, which the publish avoids. Tested in CI against a
+PostgreSQL 16 service on adbc 1.2.0 and the newest (`test_postgres.py`, skipped only when `INVARACT_TEST_POSTGRES` is unset), and
+by the protocol case `postgres-table-registered`.
 
 What was built:
 

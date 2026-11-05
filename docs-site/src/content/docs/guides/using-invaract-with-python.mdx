@@ -18,7 +18,7 @@ columns and types (including that a required column holds no empty value). It ca
 does between a read and a write, so the transformation-shape rules (`required_filter_columns`, `required_join_columns`,
 `required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
 with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **Parquet and CSV files** on local and
-mounted file systems, HDFS and object storage, and **Delta Lake and Iceberg tables** (see
+mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL tables** (see
 [Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
 are not tested yet). The full
 list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
@@ -53,7 +53,7 @@ contract, where events go, which policy applies (see [The settings](#the-setting
 pip install "invaract[pandas]"      # or invaract[polars], or plain invaract for pyarrow alone
 ```
 
-Add `delta` or `iceberg` for Delta Lake or Iceberg tables: `pip install "invaract[pandas,delta]"`.
+Add `delta`, `iceberg` or `postgres` for Delta Lake, Iceberg or PostgreSQL tables: `pip install "invaract[pandas,delta]"`.
 
 It needs Python 3.10 or later and pyarrow 15 or later (installed with it); for pandas, 2.2 or later, and for Polars, 1.0
 or later.
@@ -296,8 +296,9 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 
 ## Formats, save modes and locations
 
-- **Formats**: Parquet, CSV, Delta Lake (`delta`) and Iceberg (`iceberg`), for reading and writing. A write uses the
-  format the contract declares for the output, or Parquet.
+- **Formats**: Parquet, CSV, Delta Lake (`delta`), Iceberg (`iceberg`) and PostgreSQL tables (`jdbc`), for reading and
+  writing. A write uses the format the contract declares for the output; otherwise `jdbc` for a `postgresql://` location
+  and Parquet for any other.
 - **Save modes**: `overwrite` replaces what is at the location, `append` adds to what is there, `error` refuses the write
   if the location already holds data, and `ignore` publishes nothing if it does. A write uses the save mode the contract
   declares, or `overwrite`.
@@ -320,6 +321,7 @@ How an output is published when the job returns depends on where it lives:
 | Parquet or CSV, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
 | Parquet or CSV, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
 | Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
+| PostgreSQL table | in a temporary table, in the run's own transaction | one transaction: all at once |
 
 In every case nothing is published unless the whole run passed, and a refused or failed run leaves the output as it was.
 
@@ -387,6 +389,50 @@ outputs:
   commit, so a refused run never writes to the bucket.
 - Invaract tests object storage on S3. `gs://` and `abfss://` locations, and HDFS, go through the same libraries
   (pyarrow, delta-rs, pyiceberg) and the same code, but are not tested against a real service yet.
+
+### PostgreSQL tables
+
+A PostgreSQL table is read and written through [ADBC](https://arrow.apache.org/adbc/)'s PostgreSQL driver
+(`pip install "invaract[postgres]"`, which needs version 1.2 or later). Its location names the server, the database, and
+the table, in its schema:
+
+```yaml
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: postgresql://etl@db.internal:5432/sales/finance.report   # <table> alone is in the public schema
+    format: jdbc
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long }
+```
+
+- **Credentials** never go in the location; one that holds a password is refused before anything is written
+  (`CheckNotRun`). They come from where every PostgreSQL client finds them: `PGPASSWORD`, `PGUSER`, a `~/.pgpass` file,
+  `PGSSLMODE`, and the rest of libpq's environment. A query string in the location (`?sslmode=require`) is passed on to
+  the driver.
+- **Writing**: each output has its own connection and transaction for the whole run. Its rows are copied into a
+  temporary table that only that connection sees. When the job returns and the whole run passed, one transaction creates
+  the table if it does not exist (with the staged columns, a `required: true` column as `NOT NULL`), empties it for an
+  `overwrite` (`TRUNCATE`; readers wait for the transaction rather than see the table half replaced), inserts the staged
+  rows, and commits. A refused or failed run rolls back, so the table is left exactly as it was, and a table that did not
+  exist is not created. An existing table is kept as it is: its other columns, defaults, indexes and grants stay.
+- **Save modes** are as for any output: `append` adds rows, `error` refuses a table that holds rows, `ignore` publishes
+  nothing to one that does.
+- **Reading**: an input reads the columns the contract lists (all of them when it lists none), each converted to the
+  contract's type where it declares one, so a `numeric` column declared `decimal(10,2)` arrives as a decimal.
+- **Catalog registration**: a PostgreSQL table is registered in the `jdbc` catalog, its `catalogName` the database, its
+  namespace the schema, so a contract can require it
+  ([Require Catalog Registration](/guides/requiring-catalog-registration/)):
+
+  ```yaml
+  catalog: { required: true, technology: jdbc, catalogName: sales, namespace: [finance], table: report }
+  ```
+- A PostgreSQL output is not written partitioned: a write with partition columns is refused (`CheckNotRun`).
+- Schema and table names are plain identifiers (letters, digits, `_` and `$`, not starting with a digit); Invaract
+  quotes them, so they are matched case-sensitively, as written.
 
 ## Related
 

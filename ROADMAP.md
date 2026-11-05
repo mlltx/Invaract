@@ -4038,7 +4038,11 @@ Extend verification engine to support multiple execution engines.
         and CSV (local, HDFS, object storage), as partition columns for Delta and identity partitions for Iceberg, static and
         dynamic overwrites; partitioned inputs read with their keys typed as declared. Spark and Beam declare it unsupported
   - [ ] Spark: hand a write's partition columns and overwrite mode to `check.partitioning`
-  - [ ] Database outputs (Postgres first, through ADBC: staged and moved into place at publish)
+  - [x] PostgreSQL outputs and inputs, through ADBC (`invaract[postgres]`, adbc 1.2 or later): location
+        `postgresql://host/<database>/<schema>.<table>`, format `jdbc`, registered in the `jdbc` catalog; an output is staged
+        in a session-temporary table and published in one transaction (created, `TRUNCATE`d for overwrite, inserted,
+        committed), a refused run rolled back. Tested against a real server in CI, on the oldest and newest driver
+  - [ ] Further databases (MySQL, SQL Server, Snowflake, ...) through their ADBC drivers, the same staging
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

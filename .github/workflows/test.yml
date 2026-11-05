@@ -677,6 +677,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # PostgreSQL outputs and inputs (tests/test_postgres.py) run against a real server on the table rows
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     strategy:
       fail-fast: false
       matrix:
@@ -688,11 +698,11 @@ jobs:
           # (pyiceberg 0.9 needs pyarrow 17), and the newest, which also run every other test
           - libraries: oldest tables
             python-version: "3.10"
-            install: 'pyarrow==17.0.0 pandas==2.2.0 "numpy<2" deltalake==1.0.0 "pyiceberg[pyarrow,sql-sqlite]==0.9.0" "moto[server]" boto3'
+            install: 'pyarrow==17.0.0 pandas==2.2.0 "numpy<2" deltalake==1.0.0 "pyiceberg[pyarrow,sql-sqlite]==0.9.0" "moto[server]" boto3 adbc-driver-postgresql==1.2.0 adbc-driver-manager==1.2.0'
             tables: "true"
           - libraries: newest
             python-version: "3.13"
-            install: 'pyarrow pandas polars duckdb deltalake "pyiceberg[pyarrow,sql-sqlite]" "moto[server]" boto3'
+            install: 'pyarrow pandas polars duckdb deltalake "pyiceberg[pyarrow,sql-sqlite]" "moto[server]" boto3 adbc-driver-postgresql adbc-driver-manager'
             tables: "true"
     steps:
       - name: Checkout code
@@ -719,6 +729,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/checker/invaract-pythonio-checker"
           export INVARACT_TEST_CHECKER="$RUNNER_TEMP/checker/invaract-pythonio-checker"
           export INVARACT_TEST_TABLES="${{ matrix.tables }}"
+          if [ "${{ matrix.tables }}" = "true" ]; then export INVARACT_TEST_POSTGRES="postgresql://postgres@localhost:5432/postgres"; fi
           cd pythonio-adapter/python
           python -m pytest -v
 

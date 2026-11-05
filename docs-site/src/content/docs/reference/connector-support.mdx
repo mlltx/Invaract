@@ -1,6 +1,6 @@
 ---
 title: Connector Support
-description: Which data sources and sinks Invaract recognizes on Spark and on Apache Beam, and what's checked for each.
+description: Which data sources and sinks Invaract recognizes on Spark, on Apache Beam and in plain Python jobs, and what's checked for each.
 sidebar:
   order: 2
 ---
@@ -66,6 +66,23 @@ A DataSourceV2 catalog write outside the shapes above falls into this fail-close
 Support for the connector you need may be straightforward to add: check the project's
 [issue tracker](https://github.com/mlltx/Invaract/issues) or open an issue.
 </Aside>
+
+## Plain Python jobs
+
+A Python job that reads and writes through the `invaract` package names each dataset by its contract name, and the
+package does the reading and writing; see [Use Invaract with Python](/guides/using-invaract-with-python/#files-tables-and-object-storage)
+for how each is staged and published.
+
+| Format | Reads | Writes | Where | Format checked as |
+|---|---|---|---|---|
+| Parquet | ✅ | ✅ | local and mounted file systems, HDFS, object storage (`s3://`, `gs://`, `abfss://`) | `parquet` |
+| CSV | ✅ | ✅ | the same | `csv` |
+| Delta Lake | ✅ | ✅ | a folder or an object storage URI (`invaract[delta]`) | `delta` |
+| Iceberg | ✅ | ✅ | `<catalog>.<namespace>.<table>`, any pyiceberg catalog (`invaract[iceberg]`) | `iceberg` |
+| PostgreSQL | ✅ | ✅ | `postgresql://host/<database>/<schema>.<table>` (`invaract[postgres]`) | `jdbc` |
+
+Object storage is tested on S3; Google Cloud Storage, Azure and a real HDFS cluster go through the same code but are not
+tested against a real service yet.
 
 ## Apache Beam IOs
 
