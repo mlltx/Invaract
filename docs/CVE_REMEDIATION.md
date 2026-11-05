@@ -2144,6 +2144,56 @@ copy this time — re-verified with the same three checks (`npm audit`: 0
 vulnerabilities; `npm run lint`: exit 0; `npm run build`: same four
 routes).
 
+## 7ad. `beam-adapter`'s fifteenth finding: the whole `org.apache.kerby` family, moved together
+
+A real Dependabot alert naming `org.apache.kerby:kerby-asn1` 2.0.3, test
+scope, via `hadoop-client`/`hadoop-common` 3.4.1:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `org.apache.kerby:kerb-core`/`kerb-crypto`/`kerb-util`/`kerby-asn1`/`kerby-config`/`kerby-pkix`/`kerby-util` | 2.0.3 (via `hadoop-client`/`hadoop-common` 3.4.1) | 2.1.2 | CVE-2026-57914 |
+
+**CVE-2026-57914** ("StackOverflow on parsing deeply nested ASN1
+structures", CWE-400, CVSS 6.5 Medium, vector
+`AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H` — availability-only): `kerby-asn1`'s
+ASN.1 decoder recurses once per nested structure with no depth bound, so
+a crafted, sufficiently-deeply-nested payload exhausts the stack and
+crashes the parsing thread. No GHSA ID was found for this CVE at the
+time of this change (checked directly via a GitHub Advisory Database
+search rather than assumed absent) — cited via Apache's own CNA record
+and the NVD/CVE.org mirrors instead, both of which name the Maven
+artifact `org.apache.kerby:kerby-asn1` explicitly. Affected `< 2.1.2`,
+fixed `2.1.2`.
+
+**Moved the whole family together, not just the alert's own named
+artifact.** The Dependabot alert names only `kerby-asn1`, but
+`dependencyTree` showed six sibling `org.apache.kerby:*` artifacts
+(`kerb-core`, `kerb-crypto`, `kerb-util`, `kerby-config`, `kerby-pkix`,
+`kerby-util`) all resolving to the identical `2.0.3` alongside it, all
+coming from the same upstream Apache Kerby release — the same "move the
+matched set together" rule this file's own Jackson/Netty overrides
+already follow, applied here because bumping only `kerby-asn1` would
+split the family across two releases rather than fix a single
+coordinate. Checked rather than assumed that a real `2.1.2` release
+exists for every one of the other six (direct Maven Central
+artifact-path fetches for each, not inferred from `kerby-asn1`'s own
+availability) before pinning all seven.
+
+**A rolling Maven Central CDN 429, same pattern as every prior case in
+this document.** The first three `dependencyTree` attempts each 429'd on
+a different artifact in the batch (`kerby-pkix` twice, then `kerby-config`)
+— confirmed as transient rather than a persistent per-coordinate block by
+directly `curl`ing the exact failing URL outside sbt, which cleared on
+its second attempt. A fourth `dependencyTree` run resolved clean.
+
+**Reachability**: test scope only, same as every other finding in
+§7p-§7ac.
+
+**Verified**: `sbt Test/dependencyTree` — all seven resolve to a single
+version (`2.1.2`), no evictions. A real `sbt test` run: 348 passed, 0
+failed, 26 canceled (the same working-as-intended cancellations as every
+prior run on this module).
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2368,6 +2418,18 @@ routes).
       lint` (clean, exit 0 — the actual consumer exercised, not just a
       version check), and `npm run build` (same four-route output as
       before).
+- [x] Fix `beam-adapter`'s `org.apache.kerby` family alert (this change)
+      — see §7ad: CVE-2026-57914 (StackOverflow parsing deeply nested
+      ASN.1 structures, CWE-400). The alert names only `kerby-asn1`, but
+      six sibling artifacts (`kerb-core`/`kerb-crypto`/`kerb-util`/
+      `kerby-config`/`kerby-pkix`/`kerby-util`) resolve to the identical
+      `2.0.3` from the same upstream release, so all seven were moved
+      together to `2.1.2`, each confirmed to actually exist on Maven
+      Central first. Hit the same rolling CDN 429 this document has seen
+      before (three different artifacts across three attempts); cleared
+      on a fourth `dependencyTree` run. Confirmed via `dependencyTree`
+      (all seven single-version, no evictions) and a real `sbt test` run
+      (348 passed, 0 failed, 26 canceled).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
