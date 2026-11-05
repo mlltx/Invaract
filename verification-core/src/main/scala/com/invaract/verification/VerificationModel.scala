@@ -213,6 +213,16 @@ object ViolationType {
     * with a few of their values.
     */
   val RuntimeDataQualityViolation = "RUNTIME_DATA_QUALITY_VIOLATION"
+
+  /** Produced by `OutputChecker` - an output declares partition keys
+    * (`Field.partitioned`) and the write partitions by other columns, in
+    * another order, or not at all; or, for an `overwrite`, replaces
+    * partitions in another way than its `partitionOverwriteMode` says
+    * (`static`: every partition; `dynamic`: only those it writes). Checked
+    * only when the adapter reports the write's partitioning
+    * (`CheckedWrite.partitioning`).
+    */
+  val OutputPartitioningMismatch = "OUTPUT_PARTITIONING_MISMATCH"
 }
 
 /** An operation an adapter cannot check against a contract, as

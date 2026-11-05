@@ -263,6 +263,47 @@ object ContractValidator {
       issues ++= validateField(s"$path.schema.${field.name}", field, Some(topLevelFieldsByName - field.name))
     }
 
+    issues ++= validatePartitioning(path, dataset)
+
+    issues.result()
+  }
+
+  /** A dataset's partition keys (`Field.partitioned`) and `partitionOverwriteMode`: a key is a top-level scalar field (its
+    * values name folders), each position is used once and counts from 1, not every field can be a key (there would be no
+    * data left in the files), and the overwrite mode is one of the two Spark names. */
+  private def validatePartitioning(path: String, dataset: Dataset): List[ValidationIssue] = {
+    val issues = List.newBuilder[ValidationIssue]
+    def nested(prefix: String, fields: List[Field]): Unit = fields.foreach { f =>
+      if (f.partitioned) issues += ValidationIssue(ValidationSeverity.Error, s"$prefix.${f.name}", "Only a top-level field can be a partition key")
+      nested(s"$prefix.${f.name}", f.properties)
+    }
+    dataset.schema.fields.foreach(f => nested(s"$path.schema.${f.name}", f.properties))
+
+    val keys = dataset.schema.fields.filter(_.partitioned)
+    keys.foreach { f =>
+      val base = baseType(f.fieldType)
+      if (f.isStruct || base == "array" || base == "map" || base == "struct")
+        issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema.${f.name}", s"A partition key must be a scalar field, not '${f.fieldType}'")
+      f.partitionKeyPosition.filter(_ < 1).foreach { p =>
+        issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema.${f.name}.partitionKeyPosition", s"A partition key's position counts from 1, not $p")
+      }
+    }
+    dataset.schema.fields.filter(f => !f.partitioned && f.partitionKeyPosition.isDefined).foreach { f =>
+      issues += ValidationIssue(ValidationSeverity.Warning, s"$path.schema.${f.name}.partitionKeyPosition",
+        "Has a partitionKeyPosition but is not 'partitioned: true', so it is not a partition key")
+    }
+    keys.flatMap(_.partitionKeyPosition).groupBy(identity).collect { case (p, ps) if ps.size > 1 => p }.toList.sorted.foreach { p =>
+      issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", s"More than one partition key has position $p")
+    }
+    if (keys.nonEmpty && keys.size == dataset.schema.fields.size)
+      issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", "Every field is a partition key, which leaves no data in the files")
+    dataset.partitionOverwriteMode.foreach { mode =>
+      if (!PartitionOverwriteModes.All.contains(mode.trim.toLowerCase))
+        issues += ValidationIssue(ValidationSeverity.Error, s"$path.partitionOverwriteMode",
+          s"Unknown partitionOverwriteMode '$mode' (expected one of ${PartitionOverwriteModes.All.toList.sorted.mkString(", ")})")
+      else if (keys.isEmpty)
+        issues += ValidationIssue(ValidationSeverity.Warning, s"$path.partitionOverwriteMode", "Declares a partitionOverwriteMode but no partition keys, so it has no effect")
+    }
     issues.result()
   }
 

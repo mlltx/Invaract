@@ -90,6 +90,10 @@
           "items": { "type": "string" },
           "description": "Optional, meaningful only on an output: the names of this contract's declared `inputs` this output is derived from. Absent means the original assumption - derived from ALL declared inputs; present scopes spark-adapter's per-write input checks (MISSING_INPUT, UNDECLARED_INPUT) to just these inputs whenever a write to this output is checked, so a contract governing several writes can say e.g. 'orders_summary uses orders and customers, audit_log uses only events'. An empty list means derived from no declared input. Many-to-many: an input may appear under several outputs. A name matching no declared input is a ContractValidator Error - not enforceable by this schema, since it needs the sibling `inputs` list."
         },
+        "partitionOverwriteMode": {
+          "type": "string",
+          "description": "What an `overwrite` of a partitioned output replaces: `static` (every existing partition - Spark's default, and what an absent key means) or `dynamic` (only the partitions the write puts data in). Matched case-insensitively; any other value is a ContractValidator Error. Only meaningful with partition keys (a field's `partitioned: true`)."
+        },
         "schema": { "$ref": "#/$defs/schema" }
       }
     },
@@ -173,6 +177,15 @@
           "default": [],
           "items": { "type": "string" },
           "description": "Open-vocabulary governance labels for this field (e.g. \"pii\", \"financial\", \"restricted\") - Invaract does not define or restrict which tags exist. spark-adapter's SensitivityLineage propagates whichever tags an input field carries to every output column that transitively derives from it, for audit/governance visibility - this is reporting, not enforcement, so a tagged field does not by itself cause verification to fail. A non-list value for this key is a ContractParser hard failure, not silently ignored."
+        },
+        "partitioned": {
+          "type": "boolean",
+          "default": false,
+          "description": "The Open Data Contract Standard's key: the dataset is partitioned by this field, one folder (or table partition) per value, Hive-style. Only a top-level scalar field can be one (a ContractValidator Error otherwise)."
+        },
+        "partitionKeyPosition": {
+          "type": "integer",
+          "description": "The ODCS key: where this field comes among the partition keys, 1 first; -1 (ODCS's own value for a field that is not a key) is the same as leaving it out. Keys with no position follow, in declaration order."
         },
         "constraints": {
           "type": "array",

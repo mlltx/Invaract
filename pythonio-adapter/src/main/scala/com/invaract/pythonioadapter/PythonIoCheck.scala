@@ -165,7 +165,9 @@ private[pythonioadapter] final class Run {
       case (None, contract) =>
         // no data yet, so no empty values: everything else is judged, and only a refusal is published
         contract.foreach { c =>
-          val result = VerificationPipeline.evaluateWrite(c, checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L))))), run.options, PythonIoCapabilities.declared)
+          val result = VerificationPipeline.evaluateWrite(
+            c, checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L))))).copy(partitioning = Some(w.partitioning)), run.options, PythonIoCapabilities.declared
+          )
           if (!result.passed) reject(c, result, plan, run)
         }
         pending += w.name -> (w -> location)
@@ -182,7 +184,8 @@ private[pythonioadapter] final class Run {
     run.contract match {
       case Some(c) =>
         val found = dataChecks(c, w.name, s, run.options)
-        VerificationPipeline.verifyWrite(c, checkedWrite(plan, schema).copy(dataChecks = found), run.options, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
+        val checked = checkedWrite(plan, schema).copy(dataChecks = found, partitioning = Some(w.partitioning))
+        VerificationPipeline.verifyWrite(c, checked, run.options, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
       case None => infer(location, w, plan, schema, run)
     }
     written :+= location
@@ -251,7 +254,7 @@ private[pythonioadapter] final class Run {
   private def infer(location: String, w: Request.Write, plan: ir.Write, schema: LogicalSchema, run: Opened): Unit = {
     val outcome =
       try {
-        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema), reads.toList, plan)
+        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning)), reads.toList, plan)
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads.toList, schema, run.options, caseSensitive = true, Set.empty)
         DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck))
         InferenceStatus.Inferred -> Some(draft)
@@ -315,7 +318,8 @@ private[pythonioadapter] object Run {
   private def dataset(d: Dataset): Map[String, Any] =
     Map("name" -> d.name, "location" -> d.location, "fields" -> d.schema.fields.map(f => Map("name" -> f.name, "type" -> f.fieldType, "required" -> f.required))) ++
       d.format.map("format" -> _) ++
-      d.saveMode.map("saveMode" -> _)
+      d.saveMode.map("saveMode" -> _) ++
+      (if (d.partitionKeys.isEmpty) Map.empty else Map("partitionBy" -> d.partitionKeys, "partitionOverwriteMode" -> d.effectivePartitionOverwriteMode))
 
   def refused(e: ContractViolationException): Map[String, Any] =
     Map("ok" -> false, "status" -> "refused", "violations" -> e.result.violations.map(_.violationType), "explanation" -> e.getMessage)

@@ -29,6 +29,10 @@ import org.slf4j.LoggerFactory
   * @param resolutionNotes the adapter's caveats about lineage it had to assume
   *   when resolving boundaries (Spark: the `CheckpointResolution` diagnostics);
   *   disclosed with the fingerprint, since the hash cannot reflect them.
+  * @param partitioning how the write lays out its data, when the adapter
+  *   knows it; checked against an output's declared partition keys
+  *   (`check.partitioning`). `None` leaves it unchecked, the same
+  *   both-sides-known rule as a write's format.
   * @param dataChecks what the adapter found evaluating the written output's
   *   `RuntimeDataQuality.checks` on this write's data, for an adapter that
   *   sees it before it is published; used only with
@@ -42,8 +46,13 @@ final case class CheckedWrite(
     rowMutation: Option[MutationClassification],
     lineageBoundaryTypes: Set[String],
     resolutionNotes: List[String] = Nil,
-    dataChecks: List[DataCheckResult] = Nil
+    dataChecks: List[DataCheckResult] = Nil,
+    partitioning: Option[WritePartitioning] = None
 )
+
+/** How a write lays out its data: the columns it partitions by, in order (empty when it does not partition), and what an
+  * overwrite replaces (`static` or `dynamic`, `com.invaract.contract.PartitionOverwriteModes`). */
+final case class WritePartitioning(columns: List[String], overwriteMode: String)
 
 /** The engine-neutral half of enforcement: given a contract and what an adapter
   * recognized about one operation, verify it, publish the outcome, and throw
@@ -199,11 +208,12 @@ object VerificationPipeline {
     val roleConsistencyViolations = RoleConsistencyVerifier.violations(contract, roleConformanceResults)
     // See VerificationOptions.runtimeDataQuality: what the adapter found in this write's data.
     val runtimeDataQualityViolations = if (options.runtimeDataQuality) RuntimeDataQuality.violations(checked.dataChecks, writeLocation) else Nil
+    val partitioningViolations = OutputChecker.partitioningCheck(contract, checked.plan, checked.partitioning)
 
     VerificationResult.of(
       structuralResult.contract,
       capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations ++
-        runtimeDataQualityViolations,
+        runtimeDataQualityViolations ++ partitioningViolations,
       fingerprints,
       dataQualityResults,
       roleConformanceResults,

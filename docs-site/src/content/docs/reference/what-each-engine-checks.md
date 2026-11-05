@@ -52,6 +52,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 | [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 | [Written values meet their constraints](#written-values-meet-their-constraints) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 
@@ -121,6 +122,7 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A pipeline's writes state no partition columns, so a contract that declares partition keys is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Beam steps are Java code Invaract cannot look inside, so it cannot prove what a column will contain. Refused if you turn on `staticDataQuality`.
@@ -154,6 +156,7 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A pipeline's writes state no partition columns, so a contract that declares partition keys is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): Python filters, joins and groupings are Python code, so Beam's description of the pipeline names no columns for them. Refused if your contract relies on it.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
@@ -186,6 +189,7 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A contract's partition keys are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Spark is checked from its plan, before a write runs, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 
 ### Python (invaract package)
@@ -195,6 +199,7 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Required inputs are read](#required-inputs-are-read): A declared input the job never reads, and a read of one the contract does not declare, are both caught. Which of the job's reads went into which output is not known, so every read counts toward every later write.
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked.
 - [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused; a write made around the package (straight to a file) is not seen, and the invaract-lint check finds those in the job's code.
@@ -299,6 +304,12 @@ Where an engine does not do it: If your contract relies on it, the job is refuse
 Stops a write that appends where the contract says overwrite, or the other way round (`OUTPUT_SAVE_MODE_MISMATCH`).
 
 Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/reference/contract-format/)
+
+### Outputs are partitioned as declared
+
+Checks that an output the contract says is partitioned (one folder or table partition per value of its partition keys) is written that way, by those keys in that order, and that an overwrite replaces partitions as the contract says: all of them, or only those written.
+
+Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/guides/partitioning-outputs/)
 
 ### Datasets are registered in a catalog
 

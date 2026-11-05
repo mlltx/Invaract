@@ -3,7 +3,7 @@
 
 package com.invaract.verification
 
-import com.invaract.contract.{Contract, Dataset, LogicalSchema}
+import com.invaract.contract.{Contract, Dataset, LogicalSchema, SaveModes}
 import com.invaract.ir.{Plan, Write}
 
 
@@ -128,6 +128,28 @@ private[invaract] object OutputChecker {
     (expectedOutput.saveMode, actualSaveMode) match {
       case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
         List(Violations.outputSaveModeMismatch(expected, actual, writeLocation))
+      case _ => Nil
+    }
+
+  /** The write's partitioning against its declared output's (`check.partitioning`), for the `Write` at the top of `plan`:
+    * nothing when the plan is no write, the write lands on no declared output, the output declares no partition keys, or
+    * the adapter does not know the write's partitioning (the both-sides-known rule). */
+  def partitioningCheck(contract: Contract, plan: Plan, actual: Option[WritePartitioning]): List[Violation] =
+    plan match {
+      case write: Write =>
+        expectedOutputFor(contract.outputs, namesOf(write)).toList.flatMap(partitioningFinding(_, actual, write.saveMode, write.dataset.location))
+      case _ => Nil
+    }
+
+  /** The columns, in order, whenever the output declares keys; the overwrite mode only for an `overwrite`. */
+  private[invaract] def partitioningFinding(expectedOutput: Dataset, actual: Option[WritePartitioning], saveMode: Option[String], writeLocation: String): List[Violation] =
+    (expectedOutput.partitionKeys, actual) match {
+      case (Nil, _) | (_, None) => Nil
+      case (keys, Some(p)) if keys != p.columns =>
+        List(Violations.outputPartitioningMismatch(keys.mkString(", "), if (p.columns.isEmpty) "none" else p.columns.mkString(", "), writeLocation))
+      case (_, Some(p))
+          if saveMode.exists(_.equalsIgnoreCase(SaveModes.Overwrite)) && !p.overwriteMode.equalsIgnoreCase(expectedOutput.effectivePartitionOverwriteMode) =>
+        List(Violations.outputPartitionOverwriteMismatch(expectedOutput.effectivePartitionOverwriteMode, p.overwriteMode.toLowerCase, writeLocation))
       case _ => Nil
     }
 

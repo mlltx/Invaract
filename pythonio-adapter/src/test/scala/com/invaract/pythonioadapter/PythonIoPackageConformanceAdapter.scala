@@ -144,7 +144,8 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
         "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema)) ++
         (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows))
     def output(o: ScenarioOutput) =
-      Map("name" -> nameOf(contract.outputs, o.location), "format" -> (if (o.registeredAs.isDefined) "iceberg" else o.format), "saveMode" -> o.saveMode)
+      Map("name" -> nameOf(contract.outputs, o.location), "format" -> (if (o.registeredAs.isDefined) "iceberg" else o.format), "saveMode" -> o.saveMode,
+        "partitionBy" -> o.partitionBy, "partitionOverwriteMode" -> o.partitionOverwriteMode)
     def source(s: ColumnSource): Map[String, Any] = s match {
       case ColumnSource.FromInput(i, c)    => Map("kind" -> "FromInput", "input" -> i, "column" -> c)
       case ColumnSource.CastInput(i, c, t) => Map("kind" -> "CastInput", "input" -> i, "column" -> c, "to" -> typeJson(t))

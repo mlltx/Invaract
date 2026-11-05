@@ -20,8 +20,18 @@ final case class ScenarioInput(location: String, schema: LogicalSchema, rows: Li
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).
   * With `registeredAs` set the data is also registered in the engine's catalog under that table
   * name (still stored at `location`), which is what a contract's `catalog:` requirement asks about.
+  * With `partitionBy` set the data is written partitioned by those output columns, in that order (Hive-style folders,
+  * or the table's own partitioning), and an overwrite replaces partitions as `partitionOverwriteMode` says (`static`:
+  * every partition; `dynamic`: only those written), which is what a contract's partition keys ask about.
   */
-final case class ScenarioOutput(location: String, format: String = "parquet", saveMode: String = "overwrite", registeredAs: Option[String] = None)
+final case class ScenarioOutput(
+    location: String,
+    format: String = "parquet",
+    saveMode: String = "overwrite",
+    registeredAs: Option[String] = None,
+    partitionBy: List[String] = Nil,
+    partitionOverwriteMode: String = "static"
+)
 
 /** What one output column is made of. Deliberately tiny: just enough to build every shape the
   * scenarios need on any engine - a pass-through, a cast, and a value that can never be null.

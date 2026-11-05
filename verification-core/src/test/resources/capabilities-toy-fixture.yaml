@@ -33,6 +33,9 @@ capabilities:
     status: supported
   check.saveMode:
     status: supported
+  check.partitioning:
+    status: unsupported
+    note: The toy engine writes no partitions.
   check.catalogRegistration:
     status: unsupported
     note: The toy engine has no catalogs.

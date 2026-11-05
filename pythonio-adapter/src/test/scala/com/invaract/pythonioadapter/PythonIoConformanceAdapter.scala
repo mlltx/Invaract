@@ -89,7 +89,8 @@ object PythonIoConformanceAdapter {
     val registered = output.registeredAs.toList.flatMap(table =>
       List("format" -> "iceberg", "catalog" -> Map("technology" -> "iceberg", "catalogName" -> IcebergCatalog, "namespace" -> List(IcebergNamespace), "table" -> table)))
     List(
-      json((List("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false))) ++ registered): _*),
+      json((List("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false)),
+        "partitionBy" -> output.partitionBy, "partitionOverwriteMode" -> output.partitionOverwriteMode) ++ registered): _*),
       json((List("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap) ++
         checks.map(found => "checks" -> found.map(r => Map("failed" -> r.failed, "examples" -> r.examples)))): _*)
     )

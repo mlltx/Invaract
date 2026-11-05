@@ -72,6 +72,14 @@ capabilities:
   check.saveMode:
     status: supported
     note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
+  check.partitioning:
+    status: partial
+    summary: "Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake."
+    note: >-
+      The package writes Hive-style folders (Parquet, CSV) or the table's own partitioning (Delta, Iceberg) and reports the
+      columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new
+      files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does
+      not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.
   check.catalogRegistration:
     status: partial
     summary: "Iceberg tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met."

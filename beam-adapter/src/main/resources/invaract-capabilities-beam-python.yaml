@@ -82,6 +82,10 @@ capabilities:
       A BigQuery write states one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File and
       Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the
       write refused as unverifiable rather than passed unchecked.
+  check.partitioning:
+    status: unsupported
+    summary: A pipeline's writes state no partition columns, so a contract that declares partition keys is refused.
+    note: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
   check.catalogRegistration:
     status: partial
     summary: "BigQuery tables are checked against the `bigquery` catalog. Files and Pub/Sub have no catalog in Beam, so a requirement on them is never met."

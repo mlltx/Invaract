@@ -133,6 +133,19 @@ object Scenarios {
     job(columns = List(OutColumn("id", FromInput(0, "id")), OutColumn("total", FromInput(0, "amount"))), inputs = List(input))
   private val runtimeDq = defaults.copy(runtimeDataQuality = true)
 
+  /** An output partitioned by `label`: the partitioning scenarios. */
+  private val partitionedFields =
+    """        - name: id
+      |          type: long
+      |        - name: label
+      |          type: string
+      |          partitioned: true
+      |        - name: total
+      |          type: long
+      |          required: true""".stripMargin
+  private def labelled(output: ScenarioOutput) =
+    job(columns = List(OutColumn("id", FromInput(0, "id")), OutColumn("label", FromInput(0, "label")), OutColumn("total", NonNullLong(1))), output = output)
+
   /** The orders input declared with a role (`type:`), for the role-consistency scenarios. */
   private def roleInputs(role: String) =
     s"""  - name: orders
@@ -454,6 +467,28 @@ object Scenarios {
       "The contract says append, but the job overwrites the table and wipes its history. Invaract stops it.",
       Set(Capability.CheckSaveMode),
       contract(outputExtras = "    saveMode: append"), job(), defaults, Expectation.Reject(Set(ViolationType.OutputSaveModeMismatch))
+    ),
+    Scenario(
+      "partitioned-output-matches",
+      "an output written partitioned by the keys the contract declares is allowed",
+      "The contract says the report is split into one folder per label, and the job writes it that way. Invaract lets it through.",
+      Set(Capability.CheckPartitioning),
+      contract(outputFields = partitionedFields), labelled(ScenarioOutput("out/report", partitionBy = List("label"))), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "partitioned-output-written-unpartitioned",
+      "an output the contract declares partitioned, written without partitions, is blocked",
+      "The contract says the report is split into one folder per label, which the teams reading it rely on, but the job writes it as one flat folder. Invaract stops it.",
+      Set(Capability.CheckPartitioning),
+      contract(outputFields = partitionedFields), labelled(ScenarioOutput("out/report")), defaults, Expectation.Reject(Set(ViolationType.OutputPartitioningMismatch))
+    ),
+    Scenario(
+      "partition-overwrite-mode-mismatch",
+      "an overwrite that replaces every partition, where the contract says only the partitions written are replaced, is blocked",
+      "The contract says a rerun replaces only the labels it writes, but the job's overwrite would wipe every other label too. Invaract stops it before anything is lost.",
+      Set(Capability.CheckPartitioning),
+      contract(outputFields = partitionedFields, outputExtras = "    partitionOverwriteMode: dynamic"),
+      labelled(ScenarioOutput("out/report", partitionBy = List("label"))), defaults, Expectation.Reject(Set(ViolationType.OutputPartitioningMismatch))
     ),
     Scenario(
       "nested-type-matches",

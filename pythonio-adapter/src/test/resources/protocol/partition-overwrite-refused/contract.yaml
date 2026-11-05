@@ -1,0 +1,12 @@
+id: orders_report
+version: "1.0.0"
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: data/out/report
+    format: parquet
+    partitionOverwriteMode: dynamic
+    schema:
+      fields:
+        - { name: region, type: string, partitioned: true, partitionKeyPosition: 1 }
+        - { name: total, type: long }

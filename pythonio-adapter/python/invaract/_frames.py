@@ -111,10 +111,12 @@ def arrow_type(contract_type):
     return pa.decimal128(int(m.group(1)), int(m.group(2))) if m else None
 
 
-def read_table(location, fmt, fields):
+def read_table(location, fmt, fields, partition_by=()):
     """The dataset at ``location`` in format ``fmt``: a file or a folder of files, local or on object storage, or a Delta or
     Iceberg table. Only the columns the contract lists are read, when it lists any, and, for CSV, each as the contract's
-    type. A declared column the data lacks is left for the checker to refuse."""
+    type. A declared column the data lacks is left for the checker to refuse. A folder partitioned Hive-style
+    (``region=north/``) gives its keys as columns: those in ``partition_by`` typed as the contract declares them, any other
+    typed as pyarrow infers it from the folder names."""
     import pyarrow.dataset as ds
 
     from . import _storage, _tables
@@ -133,6 +135,9 @@ def read_table(location, fmt, fields):
         file_format = "parquet"
     else:
         raise ValueError(f"invaract cannot read format {fmt!r}: it reads parquet, csv, delta and iceberg")
-    dataset = ds.dataset(_storage.uri(location), format=file_format)
+    declared_types = {f["name"]: arrow_type(f["type"]) for f in fields}
+    partitioning = (ds.partitioning(pa.schema([(k, declared_types.get(k) or pa.string()) for k in partition_by]), flavor="hive")
+                    if partition_by else "hive")
+    dataset = ds.dataset(_storage.uri(location), format=file_format, partitioning=partitioning)
     columns = [n for n in declared if n in dataset.schema.names] if declared else None
     return dataset.to_table(columns=columns)

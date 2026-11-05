@@ -305,6 +305,10 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
   storage (`s3://`, `gs://`, `abfss://`). How they are published depends on which; see below.
 - **Required columns**: a column the contract marks `required: true` must hold no empty value; the file or table written
   then states the column as not null.
+- **Partitions**: an output whose contract marks fields `partitioned: true` is written partitioned by them, Hive-style
+  (`region=north/`) or as the table's own partitions, and an `overwrite` replaces every partition or only those written, as
+  its `partitionOverwriteMode` says. `invaract.write(..., partition_by=[...], partition_overwrite="dynamic")` says it in the
+  job; a write laid out otherwise than the contract declares is refused. See [Partition Outputs](/guides/partitioning-outputs/).
 
 ## Files, tables and object storage
 

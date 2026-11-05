@@ -40,15 +40,20 @@ def read(name, as_="pandas", *, location=None, format=None):
     return _run.current("read").read(name, as_, location, format)
 
 
-def write(frame, name, *, location=None, format=None, save_mode=None):
+def write(frame, name, *, location=None, format=None, save_mode=None, partition_by=None, partition_overwrite=None):
     """Checks ``frame`` (anything offering an Arrow stream: a pandas, Polars or DuckDB frame, a Polars LazyFrame, a pyarrow
     Table or RecordBatchReader) against the output the contract declares as ``name``, stages it, and publishes it at the
-    run's end with the contract's format and save mode. A required column that holds an empty value is refused.
+    run's end with the contract's format, save mode and partitioning. A required column that holds an empty value is
+    refused.
 
     ``location``, ``format`` and ``save_mode`` are for migrating a job with no contract yet (``INVARACT_DRY_RUN=true``). With
     a contract in force, one that disagrees with it is refused. Without either, a write is Parquet, overwriting.
+
+    ``partition_by`` (column names, in order) and ``partition_overwrite`` (``"static"``: an overwrite replaces every
+    partition; ``"dynamic"``: only those written) default to the output's declared partition keys and
+    ``partitionOverwriteMode``; a write that partitions otherwise than the contract declares is refused.
     """
-    _run.current("write").write(frame, name, location, format, save_mode)
+    _run.current("write").write(frame, name, location, format, save_mode, partition_by, partition_overwrite)
 
 
 def reads(*names, as_="pandas"):

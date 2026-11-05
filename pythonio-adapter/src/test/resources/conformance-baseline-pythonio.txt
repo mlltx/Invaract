@@ -25,6 +25,9 @@ output-format-matches
 output-format-mismatch
 output-save-mode-matches
 output-save-mode-mismatch
+partitioned-output-matches
+partitioned-output-written-unpartitioned
+partition-overwrite-mode-mismatch
 nested-type-matches
 nested-type-mismatch
 required-filter-column-present

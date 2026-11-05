@@ -3,9 +3,9 @@
 
 package com.invaract.pythonioadapter
 
-import com.invaract.contract.{LogicalField, LogicalType}
+import com.invaract.contract.{LogicalField, LogicalType, PartitionOverwriteModes}
 import com.invaract.ir.CatalogIdentity
-import com.invaract.verification.{ArrowSchemas, ConfigSource, InvaractConf}
+import com.invaract.verification.{ArrowSchemas, ConfigSource, InvaractConf, WritePartitioning}
 import org.yaml.snakeyaml.{LoaderOptions, Yaml}
 import org.yaml.snakeyaml.constructor.SafeConstructor
 import java.util.{List => JList, Map => JMap}
@@ -39,7 +39,8 @@ private[pythonioadapter] object Request {
       saveMode: Option[String],
       schema: List[Column],
       unverifiable: Option[String],
-      catalog: Option[CatalogIdentity] = None
+      catalog: Option[CatalogIdentity] = None,
+      partitioning: WritePartitioning = WritePartitioning(Nil, PartitionOverwriteModes.Static)
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
@@ -111,7 +112,26 @@ private[pythonioadapter] object Requests {
       name <- text(m, "name").toRight("a write must name the output it writes")
       schema <- columns(m.get("schema"), s"the write of '$name'")
       registered <- catalog(m.get("catalog"), s"the write of '$name'")
-    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered)
+      partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'")
+      mode <- overwriteMode(text(m, "partitionOverwriteMode"), name)
+    } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered,
+      WritePartitioning(partitionBy, mode))
+
+  private def names(value: Option[AnyRef], what: String): Either[String, List[String]] = value match {
+    case None => Right(Nil)
+    case Some(items: JList[_]) =>
+      traverse(items.asScala.toList) {
+        case n: String => Right(n)
+        case other     => Left(s"$what must be column names, not '$other'")
+      }
+    case Some(other) => Left(s"$what must be a list of column names, not '$other'")
+  }
+
+  private def overwriteMode(mode: Option[String], name: String): Either[String, String] =
+    mode.fold[Either[String, String]](Right(PartitionOverwriteModes.Static)) { m =>
+      if (PartitionOverwriteModes.All.contains(m)) Right(m)
+      else Left(s"the partition overwrite mode of the write of '$name' must be static or dynamic, not '$m'")
+    }
 
   /** A catalog registration as `{"technology": ..., "catalogName": ..., "namespace": [...], "table": ...}`, each part optional. */
   private def catalog(value: Option[AnyRef], what: String): Either[String, Option[CatalogIdentity]] =
