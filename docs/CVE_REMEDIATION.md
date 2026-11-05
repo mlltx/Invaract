@@ -2054,6 +2054,96 @@ pages built (the generated-docs sync `contributor-docs` itself runs as
 part of that build, per `contributor-docs/README.md`). No build error,
 no changed output page count from before the bump in either site.
 
+## 7ac. `web`'s `minimatch` — checked and ruled out updating the direct dependency, before overriding the transitive
+
+A real Dependabot alert against `web`: `org.xerial.snappy`'s npm cousin
+here is `minimatch`, nested three levels deep under `eslint`'s own
+dependency tree, introduced two ways at once:
+
+| Artifact | Before | After | CVE |
+|---|---|---|---|
+| `minimatch` | 3.1.5 (via `eslint` 9.39.5's own `@eslint/eslintrc`/`@eslint/config-array`, and separately via `eslint-config-next` 16.4.3's bundled `eslint-plugin-react`) | 11.0.4 | GHSA-g3hv-75wg-m249 |
+
+**Checked whether updating the direct dependency (`eslint`) actually
+clears this, rather than assuming an `overrides` entry was the only
+option.** Tried it directly: bumped `eslint` from `^9.39.5` to
+`^10.14.0` (the latest major) and ran `npm install`. Two things went
+wrong, confirmed rather than guessed at:
+
+1. `eslint-config-next` 16.4.3 bundles its own `eslint-plugin-react`,
+   whose peer range (`^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9.7`) caps
+   below `eslint` 10 — npm couldn't satisfy it and fell back to
+   installing a second, nested `eslint@9.39.5` copy alongside the
+   bumped top-level one, with its own bundled `minimatch@3.1.5` still
+   present (`node_modules/eslint-config-next/node_modules/minimatch`).
+2. Even where it resolved cleanly, the top-level `minimatch` landed at
+   `10.2.6` — still `< 11.0.1`, because `eslint` 10.14.0 (checked via
+   `npm view eslint@10.14.0 dependencies`, the actual latest release at
+   the time) still declares `minimatch: "^10.2.6"` itself. There is no
+   `eslint` release yet whose own declared range reaches the fixed
+   `minimatch` line.
+
+So "update the direct dependency" was the right first instinct to check,
+but doesn't clear this alert on its own — confirmed by an actual `npm
+install` and `npm audit` after the bump, not inferred from version
+numbers alone. Reverted the `eslint` bump and used an `overrides` entry
+instead, this repository's first (`web/package.json` had none before):
+
+```json
+"overrides": {
+  "minimatch": "11.0.4"
+}
+```
+
+**Why `11.0.4`, a real major-version jump, and why it's safe here.**
+The CVE's own fix floor is `11.0.1`; checked minimatch's changelog
+before picking a version past that floor, since `11.0.0` is described
+there as an internal rewrite (path matching moved from `RegExp` to a new
+`Matcher` class from `@isaacs/nonrecursive-glob-match`; `makeRe()`, the
+`regexp` property, the `AST` class, and the `debug`/`maxExtglobRecursion`
+options were removed). None of those removed APIs are touched by `eslint`
+or `eslint-config-next`'s own glob-ignore-pattern matching, which calls
+only `.match()` — the surface those packages actually use is unchanged.
+`11.0.4` specifically (not the bare `11.0.1`) because the floor and the
+latest 11.x release declare the identical `engines.node` range except for
+one difference already checked against this repository's own CI: `11.0.4`
+drops Node 18 support (`"20 || >=22"` vs. `11.0.1`'s `"18 || 20 ||
+>=22"`), and `.github/workflows/test.yml` runs `web` on Node 20 only — so
+the dropped floor costs nothing here, and `11.0.4` is otherwise a pure
+patch-level superset of `11.0.1`.
+
+**Reachability**: `eslint` and everything under it is a `devDependency`,
+reachable only through the `npm run lint` script — never bundled into
+the Next.js app itself (confirmed: `next build`'s own output traces no
+`eslint`/`minimatch` module into the production bundle). Low blast
+radius, same shape as this document's other dev-tooling-only findings,
+fixed anyway since a clean, verified-compatible version exists.
+
+**Verified**: `npm install` — a single, uniform `minimatch@11.0.4`
+across the whole tree afterward (no split, no leftover nested copy), and
+`eslint` itself unchanged at `9.39.5`. `npm audit`: 0 vulnerabilities.
+`npm run lint`: clean, exit 0 — the actual consumer of `minimatch`
+exercised directly, not just a version-number check. `npm run build`:
+succeeds, same four-route output as before (`/`, `/_not-found`,
+`/api/report`).
+
+**Confirmed again after a merge conflict, against a real-world case of
+the exact failure mode this section tested and ruled out.** While this
+PR was open, an unrelated automated Dependabot PR (#196) bumped `web`'s
+`eslint` to `^10.14.0` on its own and merged — precisely the bump this
+section already tried and reverted, because it doesn't clear the alert
+by itself. Confirmed directly against the merged result: `main` after
+#196 still resolved `minimatch` to `10.2.6` at the top level *and* a
+second, still-`3.1.5` copy nested under `eslint-config-next` — the exact
+two-part failure described above, now actually live rather than just
+tested in isolation. Merging `main` into this branch and resolving the
+conflict (`eslint` stays at the now-merged `^10.14.0`; this branch's
+`overrides` entry carries over) and regenerating the lockfile from
+scratch produced a single `minimatch@11.0.4` with no duplicate `eslint`
+copy this time — re-verified with the same three checks (`npm audit`: 0
+vulnerabilities; `npm run lint`: exit 0; `npm run build`: same four
+routes).
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -2261,6 +2351,23 @@ no changed output page count from before the bump in either site.
       Confirmed via `npm audit` (0 vulnerabilities in both, after) and a
       real `npm run build` in both (`docs-site`: 43 pages; `contributor-
       docs`: 28 pages, no change in either's output page count).
+- [x] Fix `web`'s `minimatch` alert (this change) — see §7ac: nested
+      three levels under `eslint`'s own tree. Actually tried updating
+      the direct dependency first (`eslint` → `^10.14.0`) rather than
+      assuming an override was the only path — confirmed by a real `npm
+      install` that it doesn't clear the alert (a stale peer range in
+      `eslint-config-next`'s bundled `eslint-plugin-react` forces a
+      duplicate nested `eslint@9.39.5`/`minimatch@3.1.5`, and even
+      `eslint`'s own latest release still declares `minimatch: "^10.2.6"`,
+      below the fix). Reverted that, added `web/package.json`'s first
+      `overrides` entry (`minimatch` → `11.0.4`, a real major jump past
+      the `11.0.1` floor, checked against the changelog's removed APIs
+      and this repo's own Node-20 CI before picking the newer patch).
+      `devDependency`-only, never bundled into the Next.js app itself.
+      Confirmed via `npm audit` (0 vulnerabilities), a real `npm run
+      lint` (clean, exit 0 — the actual consumer exercised, not just a
+      version check), and `npm run build` (same four-route output as
+      before).
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
