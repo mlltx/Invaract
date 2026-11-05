@@ -19,6 +19,12 @@ class ContractViolation(PermissionError):
         self.violations = list(violations)
         self.explanation = explanation
 
+    def add_notes(self, heading, notes):
+        """Adds ``notes`` under ``heading`` to the explanation: what the package knows of the job that the checker does not
+        (how pandas held a column it could not write as declared)."""
+        self.explanation = self.explanation.rstrip("\n") + f"\n\n{heading}:\n" + "".join(f"  - {n}\n" for n in notes)
+        self.args = (self.explanation,)
+
 
 class CheckNotRun(RuntimeError):
     """The check could not be made: no checker to run, a checker that stopped, a contract it could not read, or a setting it

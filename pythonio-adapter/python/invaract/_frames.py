@@ -6,6 +6,8 @@ import re
 
 import pyarrow as pa
 
+from . import _pandas
+
 #: What ``invaract.read`` can return.
 FRAME_KINDS = ("pandas", "polars", "polars-lazy", "arrow")
 
@@ -26,10 +28,10 @@ def stream(frame):
 
         schema = pl.DataFrame(schema=frame.collect_schema()).to_arrow().schema
         return schema, (batch for part in _lazy_batches(frame) for batch in part.to_arrow().cast(schema).to_batches())
-    if type(frame).__module__.split(".")[0] == "pandas" and type(frame).__name__ == "DataFrame":
+    if _pandas.is_frame(frame):
         # pandas' own stream carries the row index as a column (__index_level_0__) once a filter or sort has made it anything
-        # but 0, 1, 2, ...; the index is pandas' bookkeeping, not data the contract declares, so it is left out
-        table = pa.Table.from_pandas(frame, preserve_index=False)
+        # but 0, 1, 2, ...; the index is pandas' bookkeeping, not data the contract declares, so it is left out (_pandas)
+        table, _ = _pandas.to_arrow(frame)
         return table.schema, iter(table.to_batches())
     if hasattr(frame, "__arrow_c_stream__"):
         reader = pa.RecordBatchReader.from_stream(frame)
@@ -77,12 +79,12 @@ def take(schema, target, batches, required, write):
     return nulls
 
 
-def as_frame(table, kind):
-    """The table read, as the frame library ``kind`` names."""
+def as_frame(table, kind, dtype_backend=None):
+    """The table read, as the frame library ``kind`` names (a pandas frame in the dtypes ``dtype_backend`` names)."""
     if kind == "arrow":
         return table
     if kind == "pandas":
-        return table.to_pandas()
+        return _pandas.as_pandas(table, dtype_backend)
     if kind in ("polars", "polars-lazy"):
         import polars as pl
 

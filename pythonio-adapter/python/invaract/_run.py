@@ -12,7 +12,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _files, _frames, _postgres, _tables
+from . import _checks, _files, _frames, _pandas, _postgres, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -98,9 +98,10 @@ class Run:
     def dry_run(self):
         return self.mode == "dry-run"
 
-    def read(self, name, as_, location, fmt):
+    def read(self, name, as_, location, fmt, dtype_backend=None):
         if as_ not in _frames.FRAME_KINDS:
             raise ValueError(f"invaract.read cannot return as_={as_!r}: give one of {', '.join(_frames.FRAME_KINDS)}")
+        _pandas.check_dtype_backend(dtype_backend, as_)
         declared = self._declared("inputs", name)
         request = _with_location({"op": "read", "name": name}, location)
         where = location if self.dry_run else declared.get("location")
@@ -112,12 +113,18 @@ class Run:
         table = _frames.read_table(where, fmt, declared.get("fields", []), declared.get("partitionBy", []))
         nulls = {n: table.column(n).null_count for n in table.column_names}
         self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
-        return _frames.as_frame(table, as_)
+        return _frames.as_frame(table, as_, dtype_backend)
 
     def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None):
         declared = self._declared("outputs", name)
         request = _with_location({"op": "write", "name": name}, location)
-        described = _frames.stream(frame)
+        notes = []
+        if _pandas.is_frame(frame):
+            # written as the contract declares where pandas cannot hold it, and no value changes (_pandas)
+            table, notes = _pandas.to_arrow(frame, declared.get("fields", []))
+            described = table.schema, iter(table.to_batches())
+        else:
+            described = _frames.stream(frame)
         if described is None:
             kind = f"{type(frame).__module__}.{type(frame).__qualname__}"
             self._ask({**request, "unverifiable": f"a {kind} offers no Arrow stream (__arrow_c_stream__)"})
@@ -129,8 +136,13 @@ class Run:
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
         layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
                                (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
-        self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
-                   "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite})
+        try:
+            self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
+                       "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite})
+        except ContractViolation as refused:
+            if notes:
+                refused.add_notes("In pandas", notes)
+            raise
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()

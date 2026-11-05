@@ -408,6 +408,20 @@ recognized"); 1.2 to 1.4 refuse to close a connection with a cursor still open, 
 PostgreSQL 16 service on adbc 1.2.0 and the newest (`test_postgres.py`, skipped only when `INVARACT_TEST_POSTGRES` is unset), and
 by the protocol case `postgres-table-registered`.
 
+**pandas frames (2026-11-05).** The user's main audience is pandas. Probing everyday pandas writes against real runs found 10
+of 18 refused or failing, and a frame read through `invaract.read` and written back unchanged refused (`long` with a missing
+value reads as `float64`). pandas cannot hold several contract types (integers with missing values, dates, decimals of a given
+precision, an empty column's type), so the package now writes a pandas frame's declared columns as the declared type when no
+value changes (`_pandas.conform`): Arrow's checked conversion (a decimal's precision, an integer's range), then a conversion
+back that must give every value as it was (a float as a decimal goes back by way of its text, since Arrow's own conversion is
+not exact). Only within one kind of value (numbers, text, times), never adding or dropping a time zone; Polars, DuckDB and
+Arrow frames are untouched, since they can hold the declared types and a mismatch there is the job's. A column left as it was
+gets a note in pandas' terms, added to the refusal's explanation (`ContractViolation.add_notes`); a named index level the
+contract declares is written as a column (a `groupby` result); an `object` column of mixed values raises a `TypeError` naming
+it; `invaract.read(..., dtype_backend=)` takes pandas' own `numpy_nullable`/`pyarrow`. Nothing changes for the checker or the
+protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented: a bare
+top-level `type: int` is not `integer` (docs-site's contract format says so), for every engine.
+
 What was built:
 
 - `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).

@@ -4043,6 +4043,9 @@ Extend verification engine to support multiple execution engines.
         in a session-temporary table and published in one transaction (created, `TRUNCATE`d for overwrite, inserted,
         committed), a refused run rolled back. Tested against a real server in CI, on the oldest and newest driver
   - [ ] Further databases (MySQL, SQL Server, Snowflake, ...) through their ADBC drivers, the same staging
+  - [x] pandas frames written as declared where pandas cannot hold the declared type and no value changes (integers with
+        missing values, dates, decimals, empty columns; never across kinds or time zones); `groupby` keys in the index written
+        as columns; refusals noted in pandas' terms; `invaract.read(..., dtype_backend=)`. Other frame libraries unchanged
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
