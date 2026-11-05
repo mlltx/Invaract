@@ -11,6 +11,9 @@ on:
       - main
       - develop
 
+permissions:
+  contents: read
+
 # One live run per pull request: a new push to the PR cancels the previous
 # run instead of letting every push's full ~30-job run pile up behind it.
 # Before this existed, 7 pushes to one PR branch inside an hour put roughly
