@@ -492,6 +492,16 @@ being one of <code dir="auto">DataQualityVerdict.{Guaranteed, NotGuaranteed, Vio
 <code dir="auto">SensitivityLineage</code>’s tags, and never affect <code dir="auto">VerificationResult.passed</code>
 on their own; the load-bearing principle is that an <em>absence</em> of proof
 must never look like a failure to a caller only checking <code dir="auto">passed</code>.</p>
+<p><strong>Not the runtime check.</strong> <code dir="auto">VerificationOptions.runtimeDataQuality</code>
+(<code dir="auto">spark.invaract.runtimeDataQuality</code>, capability <code dir="auto">check.runtimeDataQuality</code>)
+holds the <em>rows</em> a write puts in an output to the same constraints, which
+needs an adapter that sees the data before it is published. This one judges
+a write’s plan before any row exists, so it declares that capability
+unsupported: with the flag on, a contract whose outputs declare constraints
+is refused (<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>) rather than passed unchecked.
+A check inside the write itself (an assertion projected into the plan, the
+way Delta’s CHECK constraints are enforced) would be the route to supporting
+it; it is not built.</p>
 <p><strong>Opt-in, off by default</strong>: <code dir="auto">VerificationOptions.staticDataQuality</code>
 (fourth flag alongside <code dir="auto">rejectUndeclaredInputs</code>/<code dir="auto">rejectUndeclaredFields</code>/
 <code dir="auto">computeFingerprint</code>), attachable purely via <code dir="auto">spark-submit --conf spark.invaract.staticDataQuality=true</code> against a job whose source you
