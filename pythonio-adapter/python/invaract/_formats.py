@@ -129,7 +129,11 @@ def _read_json(stream, fields, types):
 
     # a date is text in a JSON file, which pyarrow reads only as a number of days: read as text, then cast
     explicit = pa.schema([(n, pa.string() if pa.types.is_date(t) else t) for n, t in types.items() if t is not None])
-    table = pj.read_json(stream, parse_options=pj.ParseOptions(explicit_schema=explicit, unexpected_field_behavior="infer"))
+    data = stream.read()
+    if not data.strip():
+        # a file of no lines (an output of no rows), which pyarrow will not read: the contract's columns, empty
+        return pa.schema([(n, t) for n, t in types.items() if t is not None]).empty_table()
+    table = pj.read_json(pa.BufferReader(data), parse_options=pj.ParseOptions(explicit_schema=explicit, unexpected_field_behavior="infer"))
     for name, t in types.items():
         if t is not None and pa.types.is_date(t) and name in table.column_names:
             i = table.schema.get_field_index(name)
@@ -247,13 +251,17 @@ class OrcWriter:
             import pyarrow.orc as orc
         except ImportError as e:
             raise CheckNotRun("this pyarrow has no ORC support (pyarrow on Windows has none), so Invaract cannot write orc") from e
-        self._stream, self._out = stream, orc.ORCWriter(stream)
+        self._stream, self._out, self._schema, self._written = stream, orc.ORCWriter(stream), schema, False
 
     def write_batch(self, batch):
         self._out.write(pa.Table.from_batches([batch]))
+        self._written = True
 
     def close(self):
         try:
+            if not self._written:
+                # an ORC file holds its schema only once something is written: an output of no rows writes an empty table
+                self._out.write(self._schema.empty_table())
             self._out.close()
         finally:
             self._stream.close()
