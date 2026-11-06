@@ -90,6 +90,41 @@ def _has_rows(cursor, schema, table):
 def read(location, fields):
     """The table at ``location``: the columns the contract lists (all of them when it lists none), each cast to the
     contract's type where it declares one (the driver gives some types, ``numeric`` among them, as text)."""
+    server, columns, query = _select(location, fields)
+    with _connect(server) as conn, conn.cursor() as cursor:
+        cursor.execute(query(columns))
+        data = cursor.fetch_arrow_table()
+    return _typed(data, fields)
+
+
+def batches(location, fields):
+    """``(schema, batches)`` of the table at ``location``, as ``_frames.read_batches`` gives them: ``batches(columns)`` runs
+    the query afresh and yields its record batches, typed as ``read`` types them, as the server sends them."""
+    server, columns, query = _select(location, fields)
+    with _connect(server) as conn, conn.cursor() as cursor:
+        cursor.execute(query(columns) + " WHERE false")
+        schema = _typed(cursor.fetch_arrow_table(), fields).schema
+
+    def read(only=None):
+        conn = _connect(server)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query(list(only if only is not None else columns)))
+                reader = cursor.fetch_record_batch()
+                try:
+                    for batch in reader:
+                        yield _typed(pa.Table.from_batches([batch]), fields).to_batches()[0] if batch.num_rows else batch
+                finally:
+                    reader.close()
+        finally:
+            conn.close()
+
+    return schema, read
+
+
+def _select(location, fields):
+    """``(server, columns, query)``: the columns of the table at ``location`` to read (those the contract lists, all of them
+    when it lists none), and the query that selects given ones."""
     server, _, schema, table = parse(location)
     declared = [f["name"] for f in fields]
     with _connect(server) as conn, conn.cursor() as cursor:
@@ -97,9 +132,12 @@ def read(location, fields):
             raise FileNotFoundError(f"there is no PostgreSQL table {schema}.{table} in {location}")
         cursor.execute(f"SELECT * FROM {_quote(schema)}.{_quote(table)} WHERE false")
         present = [d[0] for d in cursor.description]
-        columns = [c for c in declared if c in present] if declared else present
-        cursor.execute(f"SELECT {', '.join(_quote(c) for c in columns)} FROM {_quote(schema)}.{_quote(table)}")
-        data = cursor.fetch_arrow_table()
+    columns = [c for c in declared if c in present] if declared else present
+    return server, columns, lambda selected: f"SELECT {', '.join(_quote(c) for c in selected)} FROM {_quote(schema)}.{_quote(table)}"
+
+
+def _typed(data, fields):
+    """``data`` with each column the contract types cast to that type."""
     types = {f["name"]: _frames.arrow_type(f["type"]) for f in fields}
     return pa.table({c: data[c].cast(types[c]) if types.get(c) is not None and data[c].type != types[c] else data[c]
                      for c in data.column_names})

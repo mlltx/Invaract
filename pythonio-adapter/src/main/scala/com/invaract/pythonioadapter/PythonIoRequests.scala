@@ -20,8 +20,9 @@ private[pythonioadapter] sealed trait Request
 
 private[pythonioadapter] object Request {
 
-  /** Start a run: the Invaract settings by their neutral names (`contract`, `orgPolicy`, ...), and the job's details. */
-  final case class Open(settings: Map[String, String], job: JobDetails) extends Request
+  /** Start a run: the Invaract settings by their neutral names (`contract`, `orgPolicy`, ...), and the job's details. `check`
+    * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read. */
+  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
     * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `catalog` is the
@@ -97,7 +98,8 @@ private[pythonioadapter] object Requests {
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
     val job = section(m, "job")
-    Right(Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries"))))
+    Right(Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
+      check = m.get("check").contains(java.lang.Boolean.TRUE)))
   }
 
   private def read(m: Map[String, AnyRef]): Either[String, Request] =

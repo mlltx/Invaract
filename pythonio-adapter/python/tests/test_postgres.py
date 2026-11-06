@@ -137,6 +137,20 @@ def test_an_input_table_is_read_with_its_declared_columns_typed_as_declared(sche
     assert orders.to_pylist() == [{"id": 1, "amount": decimal.Decimal("1.50")}, {"id": 2, "amount": None}]
 
 
+def test_an_input_table_is_read_in_chunks_typed_as_declared(schema):
+    sql(f"CREATE TABLE {schema}.orders (id bigint, amount numeric(10,2), secret text)")
+    sql(f"INSERT INTO {schema}.orders SELECT g, g * 1.5, 'x' FROM generate_series(1, 5) g")
+    inputs = (f"  - name: orders\n    location: {location(schema, 'orders')}\n    format: jdbc\n    schema:\n      fields:\n"
+              "        - { name: id, type: long, required: true }\n        - { name: amount, type: \"decimal(10,2)\" }\n")
+    contract(location(schema), inputs=inputs)
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", as_="arrow", chunksize=2))
+        invaract.write(REPORT, "report")
+    assert [c.num_rows for c in chunks] == [2, 2, 1]
+    assert chunks[0].column_names == ["id", "amount"] and chunks[0].schema.field("amount").type == pa.decimal128(10, 2)
+    assert sorted(v for c in chunks for v in c.column("id").to_pylist()) == [1, 2, 3, 4, 5]
+
+
 def test_a_table_is_registered_in_the_jdbc_catalog_under_its_database_schema_and_table(schema):
     database = _postgres.parse(location(schema))[1]
     contract(location(schema), extra_output=f"    catalog: {{ required: true, technology: jdbc, catalogName: {database}, namespace: [{schema}], table: report }}\n")

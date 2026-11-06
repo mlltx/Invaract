@@ -3,7 +3,7 @@
 
 package com.invaract.pythonioadapter
 
-import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalSchema}
+import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir
 import com.invaract.ir.{CatalogIdentity, DatasetRef, UnknownPlan}
 import com.invaract.verification.{
@@ -22,7 +22,7 @@ import scala.util.control.NonFatal
   * JSON object per line each way:
   *
   * {{{
-  * {"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}}
+  * {"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}, "check": false}
   * {"op": "read", "name": "orders", "schema": [{"name": "id", "type": "int64", "nullable": true, "nulls": 0}]}
   * {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "total", "type": "int64"}]}
   * {"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [{"failed": 0, "examples": []}]}
@@ -107,6 +107,7 @@ private[pythonioadapter] final class Run {
       val config = new PythonIoConfigSource(o.settings)
       val job = jobInfo(o.job)
       AttachSetup.select(config) match {
+        case AttachPlan.DryRun(_) if o.check => notChecked("a check needs a contract to judge the frame against")
         case AttachPlan.DryRun(sink) =>
           state = Opened(None, VerificationOptions(), sink, job)
           Map("ok" -> true, "mode" -> DryRunMode)
@@ -114,10 +115,27 @@ private[pythonioadapter] final class Run {
           val located = VerificationSetup.resolveContractLocations(contract, config)
           val resolved = VerificationSetup.resolveVerificationOptions(VerificationOptions(), config)
           val (governed, options) = VerificationSetup.enforceOrgPolicy(located, resolved, config, sink, job.runId, Some(job))
-          start(governed, options, sink, job)
+          val reply = start(governed, options, sink, job)
+          if (o.check) assumeDeclaredInputsRead(governed)
+          reply
       }
     }
   }
+
+  /** A check asks whether one frame would pass as a write, whatever the job has read: every declared input counts as read, with
+    * its declared columns and the catalog it must be registered in, so the write is judged on its own. */
+  private def assumeDeclaredInputsRead(contract: Contract): Unit = {
+    reads = contract.inputs.toVector.map(i => i.location -> declaredSchema(i))
+    readCatalogs = contract.inputs.flatMap { i =>
+      i.catalog.filter(_.required).map(c => i.location -> CatalogIdentity(c.technology, c.catalogName, c.location, c.namespace, c.table))
+    }.toMap
+  }
+
+  /** A dataset's columns as its contract declares them: a required column never empty. */
+  private def declaredSchema(d: Dataset): LogicalSchema =
+    LogicalSchema(d.schema.fields.map { f =>
+      LogicalField(f.name, LogicalType.parse(f.fieldType).getOrElse(LogicalType.OtherType(f.fieldType, f.fieldType)), f.nullable && !f.required)
+    })
 
   /** Opens the run on a contract already resolved and governed: what `open` does once the settings are read, and where the
     * conformance kit, which hands the checker its contract and options directly, starts a run. */

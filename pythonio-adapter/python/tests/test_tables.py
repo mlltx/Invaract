@@ -166,6 +166,18 @@ def test_a_delta_input_is_read_with_only_its_declared_columns():
     assert orders.column_names == ["order_id", "region"] and orders.num_rows == 2
 
 
+def test_a_delta_input_is_read_in_chunks_with_only_its_declared_columns():
+    deltalake.write_deltalake(_storage.uri("data/in/orders"), pa.table({"order_id": [1, 2, 3], "region": ["n", None, "s"], "extra": [0, 0, 0]}))
+    write_contract(inputs="  - name: orders\n    location: data/in/orders\n    format: delta\n    schema:\n      fields:\n"
+                          "        - { name: order_id, type: long, required: true }\n        - { name: region, type: string }\n",
+                   outputs=output())
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", as_="arrow", chunksize=2))
+        invaract.write(REPORT, "report")
+    assert [c.num_rows for c in chunks] == [2, 1] and chunks[0].column_names == ["order_id", "region"]
+    assert sorted(v for c in chunks for v in c.column("order_id").to_pylist()) == [1, 2, 3]
+
+
 def test_a_delta_input_that_does_not_exist_is_an_error():
     write_contract(inputs="  - name: orders\n    location: data/in/orders\n    format: delta\n", outputs=output())
     with pytest.raises(FileNotFoundError, match="no Delta table at data/in/orders"):
@@ -274,6 +286,16 @@ def test_an_iceberg_input_is_read_with_only_its_declared_columns(catalog):
         orders = invaract.read("orders", as_="arrow")
         invaract.write(REPORT, "report")
     assert orders.column_names == ["total"] and orders.num_rows == 2
+
+
+def test_an_iceberg_input_is_read_in_chunks_with_only_its_declared_columns(catalog):
+    existing_iceberg(catalog, regions=("west", "east", "north"))
+    write_contract(inputs=f"  - name: orders\n    location: {ICEBERG}\n    format: iceberg\n    schema:\n      fields:\n"
+                          "        - { name: total, type: long, required: true }\n", outputs=output())
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", as_="arrow", chunksize=2))
+        invaract.write(REPORT, "report")
+    assert [c.num_rows for c in chunks] == [2, 1] and chunks[0].column_names == ["total"]
 
 
 @pytest.mark.parametrize("location", ["lake", "lake.report", ".sales.report"])

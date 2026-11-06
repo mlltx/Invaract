@@ -4046,6 +4046,13 @@ Extend verification engine to support multiple execution engines.
   - [x] pandas frames written as declared where pandas cannot hold the declared type and no value changes (integers with
         missing values, dates, decimals, empty columns; never across kinds or time zones); `groupby` keys in the index written
         as columns; refusals noted in pandas' terms; `invaract.read(..., dtype_backend=)`. Other frame libraries unchanged
+  - [x] pandas, second pass: dry runs write named index levels as `to_parquet` does and give `Decimal` columns precision 38;
+        `invaract.check(frame, name)` (check-only, no run, no events); `invaract.read(..., chunksize=)` for every input kind;
+        nested declared types as conversion targets; sparse columns; clear errors for duplicate and `MultiIndex` column names;
+        notes for missing values in required columns, `period` and `timedelta`
+  - [ ] CSV options in the contract (delimiter, encoding, header, null markers, date formats), applied by the package
+  - [ ] JSON lines, ORC, Avro, Excel and Feather inputs and outputs
+  - [ ] SQLite inputs and outputs through ADBC
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

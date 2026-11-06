@@ -61,12 +61,17 @@ def _delta_table(location):
 
 
 def read_delta(location, columns):
+    dataset = delta_dataset(location)
+    return dataset.to_table(columns=[c for c in columns if c in dataset.schema.names] if columns else None)
+
+
+def delta_dataset(location):
+    """The Delta table at ``location`` as a pyarrow dataset of its current version."""
     table = _delta_table(location)
     if table is None:
         raise FileNotFoundError(f"there is no Delta table at {location}")
     # to_pyarrow_dataset, not to_pyarrow_table: the latter leaves a process using S3 unable to exit (deltalake 1.6)
-    dataset = table.to_pyarrow_dataset()
-    return dataset.to_table(columns=[c for c in columns if c in dataset.schema.names] if columns else None)
+    return table.to_pyarrow_dataset()
 
 
 class DeltaOutput:
@@ -281,6 +286,19 @@ def read_iceberg(location, columns):
         raise FileNotFoundError(f"there is no Iceberg table {location}")
     present = [c for c in columns if c in table.schema().column_names] if columns else []
     return table.scan(selected_fields=tuple(present) or ("*",)).to_arrow()
+
+
+def iceberg_batches(location, columns):
+    """``(schema, batches)`` of the Iceberg table at ``location``, as ``_frames.read_batches`` gives them."""
+    _, _, table = _iceberg_table(location)
+    if table is None:
+        raise FileNotFoundError(f"there is no Iceberg table {location}")
+    present = tuple(c for c in columns if c in table.schema().column_names) if columns else tuple(table.schema().column_names)
+
+    def batches(only=None):
+        return iter(table.scan(selected_fields=tuple(only if only is not None else present)).to_arrow_batch_reader())
+
+    return table.scan(selected_fields=present).to_arrow_batch_reader().schema, batches
 
 
 def _iceberg_keys(table):

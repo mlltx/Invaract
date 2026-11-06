@@ -5,6 +5,7 @@ declares written as columns, notes in pandas' terms on a refusal, and reads in t
 libraries are written as they were."""
 import datetime
 import decimal
+import os
 
 import numpy as np
 import pandas as pd
@@ -303,3 +304,214 @@ def test_an_unknown_dtype_backend_or_one_for_another_library_is_refused_before_r
     with pytest.raises(ValueError, match=message):
         with invaract.run("contract.yaml"):
             invaract.read("orders", as_=as_, dtype_backend=backend)
+
+
+# nested columns, sparse columns, column names, and what pandas cannot say
+
+
+def test_a_list_of_whole_numbers_held_as_floats_beside_a_missing_one_is_written_as_the_declared_list():
+    table, notes = _pandas.to_arrow(pd.DataFrame({"x": [[1.0, np.nan], [3.0]]}), [{"name": "x", "type": "array<long>"}])
+    assert notes == [] and table.schema.field("x").type == pa.list_(pa.int64())
+    assert table.column("x").to_pylist() == [[1, None], [3]]
+
+
+def test_a_list_with_a_fraction_is_not_written_as_a_list_of_integers():
+    table, notes = _pandas.to_arrow(pd.DataFrame({"x": [[1.5]]}), [{"name": "x", "type": "array<long>"}])
+    assert table.schema.field("x").type == pa.list_(pa.float64())
+    assert notes == ["'x' (object in pandas) is not written as array<long>: its values are not all list<item: int64>; convert them in the job"]
+
+
+def test_an_empty_list_column_takes_the_declared_type():
+    table, _ = _pandas.to_arrow(pd.DataFrame({"x": pd.Series([], dtype=object)}), [{"name": "x", "type": "array<long>"}])
+    assert table.schema.field("x").type == pa.list_(pa.int64())
+
+
+@pytest.mark.parametrize("declared, arrow", [
+    ("long", pa.int64()),
+    ("decimal(10, 2)", pa.decimal128(10, 2)),
+    ("array<string>", pa.list_(pa.string())),
+    (" ARRAY< array<int> > ", pa.list_(pa.list_(pa.int32()))),
+    ("map<string,double>", pa.map_(pa.string(), pa.float64())),
+    ("struct<a:long, `b c`:string>", pa.struct([("a", pa.int64()), ("b c", pa.string())])),
+    ("struct<a long>", pa.struct([("a", pa.int64())])),
+    ("interval", None), ("array<interval>", None), ("array<long", None), ("array<long>>", None), ("struct<>", None),
+    ("map<string>", None), ("", None),
+])
+def test_which_contract_types_a_pandas_column_can_be_written_as(declared, arrow):
+    assert _pandas.arrow_target(declared) == arrow
+
+
+def test_a_sparse_column_is_written_with_its_values():
+    table, _ = _pandas.to_arrow(pd.DataFrame({"x": pd.arrays.SparseArray([0.0, 1.5, 0.0])}), [{"name": "x", "type": "double"}])
+    assert table.schema.field("x").type == pa.float64() and table.column("x").to_pylist() == [0.0, 1.5, 0.0]
+
+
+def test_columns_that_cannot_be_the_columns_of_one_table_are_named():
+    with pytest.raises(TypeError, match=r"more than one column named 'x'"):
+        _pandas.to_arrow(pd.DataFrame([[1, 2, 3]], columns=["x", "x", "y"]))
+    with pytest.raises(TypeError, match=r"more than one level .*'_'\.join"):
+        _pandas.to_arrow(pd.DataFrame([[1]], columns=pd.MultiIndex.from_tuples([("x", "a")])))
+
+
+def test_a_required_column_with_missing_values_says_how_pandas_holds_them():
+    _, notes = _pandas.to_arrow(pd.DataFrame({"region": ["a", None], "total": [1.0, np.nan]}),
+                                [{"name": "region", "type": "string", "required": True}, {"name": "total", "type": "long"}])
+    assert notes == ["'region' holds 1 missing value(s) (NaN, None, NaT or pd.NA in pandas), and the contract requires a value in "
+                     "every row: fill them (df['region'].fillna(...)) or drop those rows (df.dropna(subset=['region']))"]
+
+
+def test_periods_and_timedeltas_are_explained_rather_than_converted():
+    frame = pd.DataFrame({"month": pd.period_range("2026-01", periods=2, freq="M"), "took": pd.to_timedelta(["1h", "2h"])})
+    _, notes = _pandas.to_arrow(frame, [{"name": "month", "type": "date"}, {"name": "took", "type": "interval"}])
+    assert len(notes) == 2
+    assert "a pandas period is a span of time" in notes[0] and "df['month'].dt.to_timestamp()" in notes[0]
+    assert "a pandas timedelta is a fixed length of time" in notes[1] and "df['took'].dt.total_seconds()" in notes[1]
+
+
+# dry runs: written as pandas' own to_parquet writes them
+
+
+def dry_run(monkeypatch):
+    monkeypatch.setenv("INVARACT_DRY_RUN", "true")
+
+
+def test_a_dry_run_writes_every_named_index_level_as_pandas_to_parquet_does(monkeypatch):
+    dry_run(monkeypatch)
+    sales = pd.DataFrame({"region": ["n", "n", "s"], "day": [1, 1, 2], "total": [1, 2, 3]})
+    with invaract.run():
+        invaract.write(sales.groupby(["region", "day"]).sum(), "by_region", location="data/out/by_region")
+        invaract.write(sales[sales.total > 1], "filtered", location="data/out/filtered")
+    assert written("data/out/by_region").column_names == ["region", "day", "total"]
+    assert written("data/out/filtered").column_names == ["region", "day", "total"]
+
+
+def test_a_dry_run_gives_a_column_of_decimals_the_widest_precision_at_its_scale(monkeypatch):
+    dry_run(monkeypatch)
+    with invaract.run():
+        invaract.write(pd.DataFrame({"amount": [decimal.Decimal("1.50"), None]}), "out", location="data/out/amounts")
+    assert written("data/out/amounts").schema.field("amount").type == pa.decimal128(38, 2)
+
+
+def test_under_a_contract_decimals_are_the_declared_precision_and_an_undeclared_named_index_is_not_written():
+    write_contract(outputs=output(fields=[("region", "string", True), ("amount", '"decimal(10,2)"', True)]))
+    frame = pd.DataFrame({"region": ["a"], "amount": [decimal.Decimal("1.50")]}).set_index(pd.Index(["x"], name="key"))
+    with invaract.run("contract.yaml"):
+        invaract.write(frame, "report")
+    assert written().schema.field("amount").type == pa.decimal128(10, 2)
+    assert written().column_names == ["region", "amount"]
+
+
+# invaract.check
+
+
+def test_a_check_that_passes_writes_nothing():
+    contract()
+    assert invaract.check(pd.DataFrame({"region": ["a"], "total": [1.0]}), "report", contract="contract.yaml") is None
+    assert not os.path.exists("data/out")
+
+
+def test_a_check_that_fails_raises_what_the_write_would_with_its_pandas_notes():
+    contract()
+    with pytest.raises(invaract.ContractViolation) as refusal:
+        invaract.check(pd.DataFrame({"region": ["a", None], "total": [1, 2]}), "report", contract="contract.yaml")
+    assert refusal.value.violations == ["OUTPUT_FIELD_NULLABILITY_MISMATCH"]
+    assert "In pandas:\n  - 'region' holds 1 missing value(s)" in refusal.value.explanation
+    assert not os.path.exists("data/out")
+
+
+def test_a_check_judges_the_frame_alone_whatever_the_job_has_read(orders):
+    # the contract declares the input orders: a run that never read it would be refused, a check of the output is not
+    invaract.check(pd.DataFrame({"region": ["a"], "total": [1]}), "report", contract="contract.yaml")
+
+
+def test_a_check_inside_a_run_uses_the_runs_contract_and_leaves_the_run_alone(orders):
+    with invaract.run("contract.yaml"):
+        invaract.read("orders")
+        with pytest.raises(invaract.ContractViolation):
+            invaract.check(pd.DataFrame({"region": [None], "total": [1]}), "report")
+        invaract.check(pd.DataFrame({"region": ["a"], "total": [1]}), "report")
+        invaract.write(pd.DataFrame({"region": ["b"], "total": [2]}), "report")
+    assert written().to_pydict() == {"region": ["b"], "total": [2]}
+
+
+def test_a_check_needs_a_contract_and_ignores_a_dry_run_setting(monkeypatch):
+    with pytest.raises(invaract.CheckNotRun, match="contract"):
+        invaract.check(pd.DataFrame({"x": [1]}), "report")
+    contract()
+    dry_run(monkeypatch)
+    with pytest.raises(invaract.ContractViolation):
+        invaract.check(pd.DataFrame({"region": ["a"], "total": ["text"]}), "report", contract="contract.yaml")
+
+
+def test_a_check_publishes_no_events(monkeypatch):
+    from conftest import notify_to_file
+
+    contract()
+    notify_to_file(monkeypatch)
+    with pytest.raises(invaract.ContractViolation):
+        invaract.check(pd.DataFrame({"region": [None], "total": [1]}), "report", contract="contract.yaml")
+    assert not os.path.exists("events.jsonl") or open("events.jsonl").read().strip() == ""
+
+
+# reading in chunks
+
+
+def test_an_input_is_read_in_chunks_of_the_given_size(orders):
+    pq.write_table(pa.table({"region": [f"r{i}" for i in range(10)], "total": pa.array(range(10), pa.int64())}),
+                   "data/in/orders.parquet")
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", chunksize=4))
+        invaract.write(pd.concat(chunks), "report")
+    assert [len(c) for c in chunks] == [4, 4, 2]
+    assert all(isinstance(c, pd.DataFrame) for c in chunks)
+    assert written().column("total").to_pylist() == list(range(10))
+
+
+@pytest.mark.parametrize("as_, kind", [("arrow", pa.Table), ("pandas", pd.DataFrame)])
+def test_chunks_come_as_the_library_asked_for(orders, as_, kind):
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", as_=as_, chunksize=1, **({"dtype_backend": "numpy_nullable"} if as_ == "pandas" else {})))
+        invaract.write(pd.DataFrame({"region": ["a"], "total": [1]}), "report")
+    assert [type(c) for c in chunks] == [kind, kind]
+    if as_ == "pandas":
+        assert [str(c["total"].dtype) for c in chunks] == ["Int64", "Int64"]
+
+
+@pytest.mark.parametrize("size", [0, -1, True, 2.5, "10"])
+def test_a_chunksize_that_is_not_a_number_of_rows_is_refused_before_reading(orders, size):
+    with pytest.raises(ValueError, match="chunksize"):
+        with invaract.run("contract.yaml"):
+            invaract.read("orders", chunksize=size)
+
+
+def test_a_required_input_column_with_an_empty_value_in_a_later_chunk_is_refused_before_any_chunk(environment):
+    (environment / "data" / "in").mkdir(parents=True)
+    pq.write_table(pa.table({"region": ["a", "b", None]}), "data/in/orders.parquet")
+    inputs = ("  - name: orders\n    location: data/in/orders.parquet\n    format: parquet\n    schema:\n      fields:\n"
+              "        - { name: region, type: string, required: true }\n")
+    contract(inputs=inputs)
+    with pytest.raises(invaract.ContractViolation) as refusal:
+        with invaract.run("contract.yaml"):
+            invaract.read("orders", chunksize=1)
+    assert "INPUT_FIELD_NULLABILITY_MISMATCH" in refusal.value.violations
+
+
+def test_an_empty_input_read_in_chunks_gives_no_chunks(environment):
+    (environment / "data" / "in").mkdir(parents=True)
+    pq.write_table(pa.table({"region": pa.array([], pa.string()), "total": pa.array([], pa.int64())}), "data/in/orders.parquet")
+    contract(inputs=ORDERS)
+    with invaract.run("contract.yaml"):
+        assert list(invaract.read("orders", chunksize=5)) == []
+        invaract.write(pd.DataFrame({"region": ["a"], "total": [1]}), "report")
+
+
+def test_a_csv_input_read_in_chunks_is_typed_as_declared(environment):
+    (environment / "data" / "in").mkdir(parents=True)
+    with open("data/in/orders.csv", "w") as f:
+        f.write("region,total\n" + "".join(f"r{i},{i}\n" for i in range(5)))
+    contract(inputs=ORDERS.replace("orders.parquet", "orders.csv").replace("format: parquet", "format: csv"))
+    with invaract.run("contract.yaml"):
+        chunks = list(invaract.read("orders", as_="arrow", chunksize=2))
+        invaract.write(pd.DataFrame({"region": ["a"], "total": [1]}), "report")
+    assert [c.num_rows for c in chunks] == [2, 2, 1]
+    assert chunks[0].schema.field("total").type == pa.int64()
