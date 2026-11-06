@@ -13,7 +13,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _csv, _files, _formats, _frames, _pandas, _postgres, _tables
+from . import _checks, _csv, _files, _formats, _frames, _pandas, _postgres, _sqlite, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -21,7 +21,7 @@ from .errors import CheckNotRun, ContractViolation
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
 #: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
 FILE_FORMATS = _formats.FORMATS
-#: Databases (``_postgres``): staged in a temporary table, moved into place in one transaction.
+#: Databases (``_postgres``, ``_sqlite``): staged in a temporary table or file, moved into place in one transaction.
 FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS + (_postgres.FORMAT,)
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
@@ -279,8 +279,10 @@ def _noted(notes):
 
 def _output(location, fmt, mode, run_id, layout=_files.FLAT):
     if fmt == _postgres.FORMAT:
+        if _sqlite.is_sqlite(location):
+            return _sqlite.SqliteOutput(location, mode, run_id, layout)
         if not _postgres.is_postgres(location):
-            raise CheckNotRun(f"Invaract writes jdbc only to PostgreSQL tables (postgresql://...), not {location}")
+            raise CheckNotRun(f"Invaract writes jdbc only to PostgreSQL (postgresql://...) and SQLite (sqlite:///...) tables, not {location}")
         return _postgres.PostgresOutput(location, mode, run_id, layout)
     if fmt == "delta":
         return _tables.DeltaOutput(location, mode, run_id, layout)
@@ -293,6 +295,8 @@ def _registered(location, fmt):
     """The ``catalog`` a request carries for a catalog table (``_tables.catalog_of``, ``_postgres.catalog_of``), or nothing."""
     if (fmt or "").lower() == _postgres.FORMAT and _postgres.is_postgres(location):
         return {"catalog": _postgres.catalog_of(location)}
+    if (fmt or "").lower() == _sqlite.FORMAT and _sqlite.is_sqlite(location):
+        return {"catalog": _sqlite.catalog_of(location)}
     catalog = _tables.catalog_of(location, (fmt or "").lower())
     return {"catalog": catalog} if catalog else {}
 
@@ -302,7 +306,7 @@ def _with_location(request, location):
 
 
 def _format_of(location):
-    if _postgres.is_postgres(location):
+    if _postgres.is_postgres(location) or _sqlite.is_sqlite(location):
         return _postgres.FORMAT
     return _formats.by_extension(os.fspath(location)) or DEFAULT_FORMAT
 

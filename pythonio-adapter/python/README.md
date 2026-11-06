@@ -37,7 +37,8 @@ it needs `INVARACT_CHECKER` (`cd pythonio-adapter && sbt assembly` builds the ja
 (`"invaract[excel]"`) on local and mounted file systems and HDFS (renamed into place) and on
 object storage (copied into place with `_SUCCESS` written last, as Spark does); Delta Lake and Iceberg tables
 (`pip install "invaract[delta]"`, `"invaract[iceberg]"`), each output committed in one transaction when the run passes and
-created if it does not exist. An Iceberg location is `<catalog>.<namespace>.<table>`, with the catalog configured as
+created if it does not exist; PostgreSQL and SQLite tables (`"invaract[postgres]"`, `"invaract[sqlite]"`), published in one
+transaction. An Iceberg location is `<catalog>.<namespace>.<table>`, with the catalog configured as
 pyiceberg configures any (`PYICEBERG_CATALOG__<NAME>__*`). Object storage is tested on S3; GCS, Azure and a real HDFS
 cluster are not yet.
 

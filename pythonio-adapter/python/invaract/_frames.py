@@ -123,9 +123,9 @@ def read_table(location, fmt, fields, partition_by=(), csv=None):
 
     declared = [f["name"] for f in fields]
     if fmt == "jdbc":
-        from . import _postgres
+        from . import _postgres, _sqlite
 
-        return _postgres.read(location, fields)
+        return (_sqlite if _sqlite.is_sqlite(location) else _postgres).read(location, fields)
     if fmt == "delta":
         return _tables.read_delta(location, declared)
     if fmt == "iceberg":
@@ -142,9 +142,9 @@ def read_batches(location, fmt, fields, partition_by=(), csv=None):
 
     declared = [f["name"] for f in fields]
     if fmt == "jdbc":
-        from . import _postgres
+        from . import _postgres, _sqlite
 
-        return _postgres.batches(location, fields)
+        return (_sqlite if _sqlite.is_sqlite(location) else _postgres).batches(location, fields)
     if fmt == "iceberg":
         return _tables.iceberg_batches(location, declared)
     dataset, finish = (_tables.delta_dataset(location), _same) if fmt == "delta" else _file_dataset(location, fmt, fields, partition_by, csv)

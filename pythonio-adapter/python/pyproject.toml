@@ -22,6 +22,8 @@ avro = ["fastavro>=1.9"]
 excel = ["openpyxl>=3.1"]
 # PostgreSQL tables, through ADBC (bulk COPY in and Arrow out)
 postgres = ["adbc-driver-postgresql>=1.2", "adbc-driver-manager>=1.2"]
+# SQLite tables, through ADBC
+sqlite = ["adbc-driver-sqlite>=1.2", "adbc-driver-manager>=1.2"]
 
 [project.urls]
 Homepage = "https://github.com/mlltx/Invaract"

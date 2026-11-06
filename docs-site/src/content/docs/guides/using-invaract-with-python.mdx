@@ -18,7 +18,7 @@ columns and types (including that a required column holds no empty value). It ca
 does between a read and a write, so the transformation-shape rules (`required_filter_columns`, `required_join_columns`,
 `required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
 with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **files** (Parquet, CSV, JSON lines, ORC,
-Avro, Feather and Excel) on local and mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL tables** (see
+Avro, Feather and Excel) on local and mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL and SQLite tables** (see
 [Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
 are not tested yet). The full
 list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
@@ -53,7 +53,7 @@ contract, where events go, which policy applies (see [The settings](#the-setting
 pip install "invaract[pandas]"      # or invaract[polars], or plain invaract for pyarrow alone
 ```
 
-Add `delta`, `iceberg` or `postgres` for Delta Lake, Iceberg or PostgreSQL tables, and `avro` or `excel` for Avro files
+Add `delta`, `iceberg`, `postgres` or `sqlite` for Delta Lake, Iceberg, PostgreSQL or SQLite tables, and `avro` or `excel` for Avro files
 or Excel workbooks: `pip install "invaract[pandas,delta]"`.
 
 It needs Python 3.10 or later and pyarrow 15 or later (installed with it); for pandas, 2.2 or later, and for Polars, 1.0
@@ -296,7 +296,7 @@ In pandas:
 
 **Reading in chunks.** For an input larger than memory, `invaract.read(name, chunksize=100_000)` returns the input as
 frames of that many rows each, one at a time, as pandas' `read_csv(chunksize=...)` does (the last one shorter), for any
-input: files, Delta, Iceberg and PostgreSQL tables. The checker is told the input's missing values before any chunk is
+input: files, Delta, Iceberg, PostgreSQL and SQLite tables. The checker is told the input's missing values before any chunk is
 handed over, so the input is read twice: once to count them, once for the chunks; neither holds it whole. Writing in
 chunks needs nothing new: each `invaract.write` of the same output in one run adds to what is staged.
 
@@ -419,9 +419,9 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 ## Formats, save modes and locations
 
 - **Formats**: for reading and writing, files in `parquet`, `csv`, `json`, `orc`, `avro`, `feather` and `excel`, and
-  Delta Lake (`delta`), Iceberg (`iceberg`) and PostgreSQL tables (`jdbc`). A read or write uses the format the contract
+  Delta Lake (`delta`), Iceberg (`iceberg`), PostgreSQL and SQLite tables (`jdbc`). A read or write uses the format the contract
   declares for the dataset; otherwise the one the location's extension names (`.json`, `.jsonl`, `.orc`, `.avro`,
-  `.feather`, `.xlsx`, `.csv`), `jdbc` for a `postgresql://` location, and Parquet for any other. See the
+  `.feather`, `.xlsx`, `.csv`), `jdbc` for a `postgresql://` or `sqlite://` location, and Parquet for any other. See the
   [file formats](#file-formats) below.
 - **CSV layout**: a CSV dataset is read and written with its contract's `csv:` options (delimiter, header, encoding,
   quote, escape, the text for a missing value, date formats); `invaract.read(..., csv={...})` and
@@ -466,6 +466,7 @@ How an output is published when the job returns depends on where it lives:
 | Files, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
 | Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
 | PostgreSQL table | in a temporary table, in the run's own transaction | one transaction: all at once |
+| SQLite table | in a database file of its own, on the job's local disk | one transaction: all at once |
 
 In every case nothing is published unless the whole run passed, and a refused or failed run leaves the output as it was.
 
@@ -577,6 +578,45 @@ outputs:
 - A PostgreSQL output is not written partitioned: a write with partition columns is refused (`CheckNotRun`).
 - Schema and table names are plain identifiers (letters, digits, `_` and `$`, not starting with a digit); Invaract
   quotes them, so they are matched case-sensitively, as written.
+
+### SQLite tables
+
+A SQLite table is read and written through ADBC's SQLite driver (`pip install "invaract[sqlite]"`, which needs version
+1.2 or later). Its location names the database file and the table, the way SQLAlchemy names a SQLite database:
+`sqlite:///` and a path relative to the job's working directory, or `sqlite:////` and an absolute path, then `/` and the
+table:
+
+```yaml
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: sqlite:///data/shop.db/report   # sqlite:////var/lib/shop.db/report for an absolute path
+    format: jdbc
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long }
+```
+
+- **Writing**: an output's rows are written to a database file of its own on the job's local disk, so the target
+  database is neither locked nor changed during the run. When the job returns and the whole run passed, one transaction
+  on the target creates the table if it does not exist (a `required: true` column `NOT NULL`), empties it for an
+  `overwrite`, inserts the staged rows, and commits. A refused or failed run leaves the database exactly as it was, and
+  does not create one that did not exist. An existing table keeps its other columns and defaults.
+- **Types**: SQLite keeps each value as an integer, a real number, text or bytes, whatever its column says. Invaract
+  writes a boolean as 0 or 1, and a date, a timestamp (ISO 8601, with `Z` for one with a time zone) and a decimal (exactly)
+  as text. Reading converts each column the contract types back to that type; a timestamp written by another program
+  without an offset is taken to be in UTC.
+- **Reading** opens the database read-only, and reads the columns the contract lists (all of them when it lists none). A
+  missing database or table is an error, and is not created.
+- **Catalog registration**: a SQLite table is registered in the `jdbc` catalog, its `catalogName` the file's name
+  without its extension, its namespace `main`:
+
+  ```yaml
+  catalog: { required: true, technology: jdbc, catalogName: shop, namespace: [main], table: report }
+  ```
+- A SQLite output is not written partitioned, and its table name is a plain identifier, as for PostgreSQL.
 
 ## Related
 

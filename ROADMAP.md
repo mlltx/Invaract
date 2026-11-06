@@ -4057,7 +4057,9 @@ Extend verification engine to support multiple execution engines.
   - [x] JSON lines (`json`), ORC, Avro (`invaract[avro]`), Feather and Excel (`invaract[excel]`) inputs and outputs, laid out
         as Spark lays them out and partitioned Hive-style like Parquet; `excel` and `feather` added to the canonical formats;
         a location's extension names its format when nothing else does
-  - [ ] SQLite inputs and outputs through ADBC
+  - [x] SQLite inputs and outputs through ADBC (`invaract[sqlite]`, adbc 1.2 or later): location
+        `sqlite:///<path>/<table>`, format `jdbc`; staged in a private database file and published in one transaction
+        on the target, which a refused run never touches; dates, timestamps and decimals stored as text and read back typed
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
