@@ -87,6 +87,20 @@ def test_a_csv_output_is_partitioned_too():
     assert all(f.endswith(".csv") for f in os.listdir("data/out/report/region=north"))
 
 
+def test_a_partitioned_csv_output_is_written_with_its_declared_csv_options():
+    path = contract(fmt="csv")
+    with open(path, encoding="utf-8") as f:
+        text = f.read().replace("    format: csv\n", '    format: csv\n    csv: { delimiter: ";", header: false }\n')
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    run(DAY1)
+    assert tree() == {"region=north": 1, "region=south": 1}
+    [north] = os.listdir("data/out/report/region=north")
+    assert north.endswith(".csv")
+    with open(f"data/out/report/region=north/{north}", encoding="utf-8") as f:
+        assert f.read() == "1\n3\n"
+
+
 # the job's own layout, checked
 
 
