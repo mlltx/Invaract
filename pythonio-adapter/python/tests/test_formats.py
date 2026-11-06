@@ -305,3 +305,10 @@ def test_a_location_s_extension_names_its_format_when_nothing_else_does(monkeypa
         invaract.write(pa.table({"n": [1]}), "report", location="data/out/report.jsonl")
     with open(files("json", "data/out/report.jsonl")[0], encoding="utf-8") as f:
         assert json.loads(f.read()) == {"n": 1}
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_an_output_of_no_rows_reads_back_as_its_columns_empty(fmt):
+    read = round_trip(fmt, table=TABLE.slice(0, 0))
+    assert read.num_rows == 0 and set(TABLE.column_names) <= set(read.column_names)
+    assert read.schema.field("day").type == pa.date32()
