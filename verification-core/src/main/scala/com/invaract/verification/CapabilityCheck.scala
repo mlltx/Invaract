@@ -37,6 +37,7 @@ object CapabilityCheck {
     val firstSensitive = fields.find(_.sensitivityTags.nonEmpty)
     val firstConstrained = contract.outputs.flatMap(_.schema.fields).find(_.constraints.nonEmpty)
     val firstPartitioned = contract.outputs.find(_.partitionKeys.nonEmpty)
+    val firstWithCsv = datasets.find(_.csv.exists(_.declared.nonEmpty))
 
     List(
       when(contract.inputs.nonEmpty, Capability.CheckInputExistence, s"it declares ${contract.inputs.size} input(s)"),
@@ -47,6 +48,7 @@ object CapabilityCheck {
       when(datasets.exists(_.format.isDefined), Capability.CheckFormat, "a dataset declares a format"),
       when(contract.outputs.exists(_.saveMode.isDefined), Capability.CheckSaveMode, "an output declares a save mode"),
       when(firstPartitioned.isDefined, Capability.CheckPartitioning, firstPartitioned.map(o => s"output '${o.name}' declares partition keys").getOrElse("")),
+      when(firstWithCsv.isDefined, Capability.CheckCsvOptions, firstWithCsv.map(d => s"dataset '${d.name}' declares CSV options").getOrElse("")),
       when(datasets.exists(_.catalog.isDefined), Capability.CheckCatalogRegistration, "a dataset declares a catalog requirement"),
       when(options.runtimeDataQuality && firstConstrained.isDefined, Capability.CheckRuntimeDataQuality,
         firstConstrained.map(f => s"runtimeDataQuality is enabled and output field '${f.name}' declares constraints").getOrElse("")),

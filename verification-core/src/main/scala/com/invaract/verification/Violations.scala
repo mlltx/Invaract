@@ -157,6 +157,19 @@ private[invaract] object Violations {
     )
 
   /** The declared partition keys against the columns the write partitions by (`none` when it does not). */
+  /** A CSV read or write using other options than its dataset declares (`check.csvOptions`); `expected` and `actual` list
+    * the differing options, as `delimiter ';', header true`. */
+  def csvOptionsMismatch(side: SchemaChecker.Side, expected: String, actual: String, location: String): Violation =
+    Violation(
+      if (side == SchemaChecker.Side.Input) ViolationType.InputCsvOptionsMismatch else ViolationType.OutputCsvOptionsMismatch,
+      s"contract declares the ${side.noun} CSV options $expected but the ${if (side == SchemaChecker.Side.Input) "read" else "write"} uses $actual",
+      remediation =
+        s"${if (side == SchemaChecker.Side.Input) "Read" else "Write"} the file with $expected, or update the contract's csv options if the file's layout changed on purpose.",
+      location = Some(location),
+      expected = Some(expected),
+      actual = Some(actual)
+    )
+
   def outputPartitioningMismatch(expected: String, actual: String, writeLocation: String): Violation =
     Violation(
       ViolationType.OutputPartitioningMismatch,

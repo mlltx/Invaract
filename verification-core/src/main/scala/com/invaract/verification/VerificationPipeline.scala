@@ -37,6 +37,11 @@ import org.slf4j.LoggerFactory
   *   `RuntimeDataQuality.checks` on this write's data, for an adapter that
   *   sees it before it is published; used only with
   *   `VerificationOptions.runtimeDataQuality` on.
+  * @param formatOptions the format options each dataset was read or written
+  *   with, by location, for an adapter that knows them (a CSV read's
+  *   `delimiter`, `header`, ...: `CsvOptionsChecker.Names`); checked against
+  *   the datasets' declared CSV options (`check.csvOptions`). An option not
+  *   reported, and a location not in the map, are not checked.
   */
 final case class CheckedWrite(
     plan: ir.Plan,
@@ -47,7 +52,8 @@ final case class CheckedWrite(
     lineageBoundaryTypes: Set[String],
     resolutionNotes: List[String] = Nil,
     dataChecks: List[DataCheckResult] = Nil,
-    partitioning: Option[WritePartitioning] = None
+    partitioning: Option[WritePartitioning] = None,
+    formatOptions: Map[String, Map[String, String]] = Map.empty
 )
 
 /** How a write lays out its data: the columns it partitions by, in order (empty when it does not partition), and what an
@@ -209,11 +215,12 @@ object VerificationPipeline {
     // See VerificationOptions.runtimeDataQuality: what the adapter found in this write's data.
     val runtimeDataQualityViolations = if (options.runtimeDataQuality) RuntimeDataQuality.violations(checked.dataChecks, writeLocation) else Nil
     val partitioningViolations = OutputChecker.partitioningCheck(contract, checked.plan, checked.partitioning)
+    val csvViolations = CsvOptionsChecker.check(contract, checked.plan, planFacts.reads, checked.formatOptions)
 
     VerificationResult.of(
       structuralResult.contract,
       capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations ++
-        runtimeDataQualityViolations ++ partitioningViolations,
+        runtimeDataQualityViolations ++ partitioningViolations ++ csvViolations,
       fingerprints,
       dataQualityResults,
       roleConformanceResults,

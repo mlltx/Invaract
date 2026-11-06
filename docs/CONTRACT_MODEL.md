@@ -109,6 +109,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`. Matched case-insensitively; any other value is a `ContractParser` hard failure (a closed three-value set, unlike `format`'s open vocabulary). Absent by default — see "Input and Output Types" below for the full model, including how an organizational policy can make it mandatory. |
 | `derivedFrom` | no | Outputs only: the `name`s of the contract's declared `inputs` this output is built from — see "Output-to-input lineage" below. Absent (the default) means every declared input; `[]` means none. |
 | `partitionOverwriteMode` | no | With partition keys: what an `overwrite` replaces, `static` (every partition; the default, `Dataset.effectivePartitionOverwriteMode`) or `dynamic` (only those written). `PartitionOverwriteModes`; any other value is a validation error. Checked (`check.partitioning`, `OUTPUT_PARTITIONING_MISMATCH`) for an overwrite of an output. |
+| `csv` | no | How a CSV dataset's text is laid out (`CsvOptions`): `delimiter` (or Spark's `sep`), `header`, `encoding`, `quote`, `escape`, `nullValue`, `dateFormat`, `timestampFormat`, Spark's own option names. An option the block does not know is a parse error. Checked (`check.csvOptions`, `INPUT_CSV_OPTIONS_MISMATCH`/`OUTPUT_CSV_OPTIONS_MISMATCH`) against the options a read or write reports, by meaning (`CsvText`: `\t` is a tab, `latin1` is `ISO-8859-1`). Declaring or changing an option is BREAKING; dropping one is not. |
 | `schema.fields` | no | List of fields. A dataset with no `schema` (or no fields) declares no columns: its content is not governed, schema checks skip it (`SchemaChecker.check`), and `ContractValidator` warns. |
 
 A dataset's `catalog` block, when present:
@@ -364,6 +365,8 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | `derivedFrom` on an output naming an input the contract doesn't declare | Error |
 | A nested or non-scalar partition key; a key position below 1 or used twice; every field a key; an unknown `partitionOverwriteMode` | Error |
 | A `partitionKeyPosition` without `partitioned: true`; a `partitionOverwriteMode` with no keys | Warning |
+| A `csv` quote or escape not one character, an empty delimiter, an unknown encoding, a `dateFormat`/`timestampFormat` `DateTimeFormatter` rejects | Error |
+| `csv` options on a dataset of another format; a delimiter of more than one character | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on

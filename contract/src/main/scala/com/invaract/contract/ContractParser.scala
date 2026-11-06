@@ -134,6 +134,20 @@ object ContractParser {
     // is written whenever it's defined, not only when non-empty.
     dataset.derivedFrom.foreach(names => m.put("derivedFrom", names.asJava))
     dataset.partitionOverwriteMode.foreach(m.put("partitionOverwriteMode", _))
+    dataset.csv.foreach(c => m.put("csv", csvToJava(c)))
+    m
+  }
+
+  private def csvToJava(csv: CsvOptions): java.util.Map[String, Any] = {
+    val m = new java.util.LinkedHashMap[String, Any]()
+    csv.delimiter.foreach(m.put("delimiter", _))
+    csv.header.foreach(h => m.put("header", Boolean.box(h)))
+    csv.encoding.foreach(m.put("encoding", _))
+    csv.quote.foreach(m.put("quote", _))
+    csv.escape.foreach(m.put("escape", _))
+    csv.nullValue.foreach(m.put("nullValue", _))
+    csv.dateFormat.foreach(m.put("dateFormat", _))
+    csv.timestampFormat.foreach(m.put("timestampFormat", _))
     m
   }
 
@@ -188,7 +202,7 @@ object ContractParser {
   }
 
   private val ContractKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions", "customRuleTypes")
-  private val DatasetKeys = Set("name", "location", "format", "saveMode", "catalog", "description", "type", "derivedFrom", "schema", "partitionOverwriteMode")
+  private val DatasetKeys = Set("name", "location", "format", "saveMode", "catalog", "description", "type", "derivedFrom", "schema", "partitionOverwriteMode", "csv")
   private val CatalogKeys = Set("required", "technology", "catalogName", "location", "namespace", "table")
   private val SchemaKeys = Set("fields")
   private val FieldKeys = Set("name", "type", "required", "nullable", "sensitivityTags", "properties", "constraints", "partitioned", "partitionKeyPosition")
@@ -299,7 +313,7 @@ object ContractParser {
     // export), and its columns are not checked. ContractValidator warns, so it is never mistaken for a schema left out.
     val schema = raw.get("schema").fold(Schema(Nil))(schemaRaw => parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema"))
     val partitionOverwriteMode = optString(raw, "partitionOverwriteMode")
-    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom, partitionOverwriteMode)
+    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom, partitionOverwriteMode, parseCsv(raw, context))
   }
 
   /** Parses a dataset's optional `type:` key — a closed three-value enum
@@ -341,6 +355,35 @@ object ContractParser {
         table = optString(m, "table")
       )
     }
+
+  /** A dataset's `csv:` block. An option it does not know is an error, not ignored: a misspelt one would otherwise leave the
+    * engine's default in force while the contract seems to say otherwise. Spark's `sep` is taken for `delimiter`. */
+  private def parseCsv(raw: Map[String, Any], context: String): Option[CsvOptions] =
+    optValue(raw, "csv").map { value =>
+      val csvContext = s"$context.csv"
+      val m = loadMap(value, csvContext)
+      val unknown = (m.keySet -- CsvOptions.Names - "sep").toList.sorted
+      if (unknown.nonEmpty)
+        throw new ContractParseException(s"Unknown CSV option(s) ${unknown.mkString(", ")} in $csvContext (it takes ${CsvOptions.Names.mkString(", ")})")
+      val delimiter = (optScalarText(m, "delimiter"), optScalarText(m, "sep")) match {
+        case (Some(d), Some(s)) if d != s => throw new ContractParseException(s"$csvContext gives delimiter '$d' and sep '$s': give one")
+        case (d, s)                       => d.orElse(s)
+      }
+      CsvOptions(
+        delimiter = delimiter,
+        header = optBoolean(m, "header", csvContext),
+        encoding = optScalarText(m, "encoding"),
+        quote = optScalarText(m, "quote"),
+        escape = optScalarText(m, "escape"),
+        nullValue = optScalarText(m, "nullValue"),
+        dateFormat = optScalarText(m, "dateFormat"),
+        timestampFormat = optScalarText(m, "timestampFormat")
+      )
+    }
+
+  /** A key's value as its text: YAML reads `nullValue: NA` as text, `nullValue: 0` as a number, and both mean the text. */
+  private def optScalarText(raw: Map[String, Any], key: String): Option[String] =
+    raw.get(key).flatMap(Option(_)).map(String.valueOf)
 
   private def parseSchema(raw: Map[String, Any], context: String): Schema = {
     val fieldsRaw = raw.getOrElse(

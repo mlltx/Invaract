@@ -54,6 +54,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `DATA_QUALITY_VIOLATION` | write | field | declared constraint / — | — |
 | `RUNTIME_DATA_QUALITY_VIOLATION` | write | field | declared constraint / failing rows, with example values | — |
 | `OUTPUT_PARTITIONING_MISMATCH` | write | — | declared partition keys or overwrite mode / the write's | — |
+| `INPUT_CSV_OPTIONS_MISMATCH`, `OUTPUT_CSV_OPTIONS_MISMATCH` | the read or write | — | declared CSV options / the ones used (only those that differ) | — |
 | `RULE_*` | write | — | the rule's own columns / what the plan has | rule type |
 | `RULE_UNVERIFIABLE_DML` | write | — | — / operation kind | — |
 | `ORG_POLICY_VIOLATION` | dataset, when named | — | — | policy id |
@@ -73,6 +74,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `INPUT_FIELD_NULLABILITY_MISMATCH` | The contract requires an input field to be non-null, but the actual schema permits nulls. |
 | `MISSING_INPUT_CATALOG_REGISTRATION` | The contract's input declares `catalog: { required: true }`, but the actual read has no catalog registration at all. |
 | `INPUT_CATALOG_MISMATCH` | The input is catalog-registered, but a declared `catalog` sub-field (`technology`/`catalogName`/`location`/`namespace`/`table`) disagrees with the actual registration. |
+| `INPUT_CSV_OPTIONS_MISMATCH` | The input declares `csv:` options and the read used other ones (a header read where the file has none, another delimiter or encoding, ...). `expected`/`actual` list only the options that differ. Only checked for options the engine reports. |
 
 ## Structural violations — outputs
 
@@ -83,6 +85,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `OUTPUT_FORMAT_MISMATCH` | The write's actual format doesn't match the contract's declared format. Only checked when both are known. |
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |
 | `OUTPUT_PARTITIONING_MISMATCH` | The output declares partition keys (fields marked `partitioned`) and the write partitions by other columns, in another order, or not at all (`actual: none`); or an `overwrite` replaces partitions another way than the output's `partitionOverwriteMode` says (`expected: static overwrite`, `actual: dynamic overwrite`). Only checked when the engine reports how the write is partitioned. |
+| `OUTPUT_CSV_OPTIONS_MISMATCH` | The output declares `csv:` options and the write used other ones (a different delimiter, no header, another encoding, ...). `expected`/`actual` list only the options that differ. Only checked for options the engine reports. |
 | `MISSING_OUTPUT_FIELD` | A required output field is absent from the actual output schema. |
 | `UNDECLARED_OUTPUT_COLUMN` | The actual output schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
 | `OUTPUT_FIELD_TYPE_MISMATCH` | An output field's actual type doesn't match the contract's declared type — including the contents of an `array<...>`/`map<...>`/`struct<...>` type or a struct's `properties` (the violation's `column` is then a dotted path such as `address.zip`). |

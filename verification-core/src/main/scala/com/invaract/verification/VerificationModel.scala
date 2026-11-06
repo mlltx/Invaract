@@ -223,6 +223,8 @@ object ViolationType {
     * (`CheckedWrite.partitioning`).
     */
   val OutputPartitioningMismatch = "OUTPUT_PARTITIONING_MISMATCH"
+  val InputCsvOptionsMismatch = "INPUT_CSV_OPTIONS_MISMATCH"
+  val OutputCsvOptionsMismatch = "OUTPUT_CSV_OPTIONS_MISMATCH"
 }
 
 /** An operation an adapter cannot check against a contract, as

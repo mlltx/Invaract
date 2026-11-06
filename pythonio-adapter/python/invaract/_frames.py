@@ -113,7 +113,7 @@ def arrow_type(contract_type):
     return pa.decimal128(int(m.group(1)), int(m.group(2))) if m else None
 
 
-def read_table(location, fmt, fields, partition_by=()):
+def read_table(location, fmt, fields, partition_by=(), csv=None):
     """The dataset at ``location`` in format ``fmt``: a file or a folder of files, local or on object storage, or a Delta or
     Iceberg table. Only the columns the contract lists are read, when it lists any, and, for CSV, each as the contract's
     type. A declared column the data lacks is left for the checker to refuse. A folder partitioned Hive-style
@@ -130,11 +130,11 @@ def read_table(location, fmt, fields, partition_by=()):
         return _tables.read_delta(location, declared)
     if fmt == "iceberg":
         return _tables.read_iceberg(location, declared)
-    dataset = _file_dataset(location, fmt, fields, partition_by)
-    return dataset.to_table(columns=_present(declared, dataset.schema.names) or None)
+    dataset, finish = _file_dataset(location, fmt, fields, partition_by, csv)
+    return finish(dataset.to_table(columns=_present(declared, dataset.schema.names) or None))
 
 
-def read_batches(location, fmt, fields, partition_by=()):
+def read_batches(location, fmt, fields, partition_by=(), csv=None):
     """The dataset at ``location``, as ``read_table`` reads it, a batch at a time: ``(schema, batches)``, where ``batches(columns)``
     reads the dataset afresh and yields its record batches of ``columns`` (by default the columns ``schema`` holds) one by
     one, without holding the whole dataset in memory."""
@@ -147,10 +147,10 @@ def read_batches(location, fmt, fields, partition_by=()):
         return _postgres.batches(location, fields)
     if fmt == "iceberg":
         return _tables.iceberg_batches(location, declared)
-    dataset = _tables.delta_dataset(location) if fmt == "delta" else _file_dataset(location, fmt, fields, partition_by)
+    dataset, finish = (_tables.delta_dataset(location), _same) if fmt == "delta" else _file_dataset(location, fmt, fields, partition_by, csv)
     columns = _present(declared, dataset.schema.names) or dataset.schema.names
-    schema = pa.schema([dataset.schema.field(c) for c in columns])
-    return schema, lambda only=None: dataset.to_batches(columns=list(only if only is not None else columns))
+    schema = finish(pa.schema([dataset.schema.field(c) for c in columns]).empty_table()).schema
+    return schema, lambda only=None: (finish(b) for b in dataset.to_batches(columns=list(only if only is not None else columns)))
 
 
 def chunks(schema, batches, size):
@@ -178,14 +178,24 @@ def _present(declared, names):
     return [n for n in declared if n in names]
 
 
-def _file_dataset(location, fmt, fields, partition_by):
-    """A file or folder of Parquet or CSV files as a pyarrow dataset (a CSV's columns typed as the contract declares them)."""
+def _same(data):
+    return data
+
+
+def _file_dataset(location, fmt, fields, partition_by, csv=None):
+    """``(dataset, finish)``: a file or folder of Parquet or CSV files as a pyarrow dataset (a CSV's columns typed as the
+    contract declares them, read with its CSV options), and what a table or batch read from it still needs (``_csv``)."""
     import pyarrow.dataset as ds
 
     from . import _storage
 
     types = {f["name"]: arrow_type(f["type"]) for f in fields}
-    if fmt == "csv":
+    finish = _same
+    if fmt == "csv" and csv:
+        from . import _csv
+
+        file_format, finish = _csv.read_format(fields, csv)
+    elif fmt == "csv":
         import pyarrow.csv as csv
 
         file_format = ds.CsvFileFormat(convert_options=csv.ConvertOptions(column_types={n: t for n, t in types.items() if t is not None}))
@@ -195,4 +205,4 @@ def _file_dataset(location, fmt, fields, partition_by):
         raise ValueError(f"invaract cannot read format {fmt!r}: it reads parquet, csv, delta and iceberg")
     partitioning = (ds.partitioning(pa.schema([(k, types.get(k) or pa.string()) for k in partition_by]), flavor="hive")
                     if partition_by else "hive")
-    return ds.dataset(_storage.uri(location), format=file_format, partitioning=partitioning)
+    return ds.dataset(_storage.uri(location), format=file_format, partitioning=partitioning), finish

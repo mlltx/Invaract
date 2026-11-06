@@ -82,6 +82,10 @@ capabilities:
     status: unsupported
     summary: A pipeline's writes state no partition columns, so a contract that declares partition keys is refused.
     note: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
+  check.csvOptions:
+    status: unsupported
+    summary: A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused.
+    note: A TextIO file's delimiter and quoting are the pipeline's own code, which the graph does not describe; CsvIO's format is not handed to the check.
   check.catalogRegistration:
     status: partial
     summary: "BigQuery tables are checked against the `bigquery` catalog. Files, Kafka, JDBC and Pub/Sub have no catalog in Beam, so a requirement on them is never met."

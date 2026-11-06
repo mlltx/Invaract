@@ -4050,7 +4050,10 @@ Extend verification engine to support multiple execution engines.
         `invaract.check(frame, name)` (check-only, no run, no events); `invaract.read(..., chunksize=)` for every input kind;
         nested declared types as conversion targets; sparse columns; clear errors for duplicate and `MultiIndex` column names;
         notes for missing values in required columns, `period` and `timedelta`
-  - [ ] CSV options in the contract (delimiter, encoding, header, null markers, date formats), applied by the package
+  - [x] CSV options in the contract (`csv:` on a dataset, Spark's option names; capability `check.csvOptions`): the Python
+        package reads and writes with them and reports what it used; refusals `INPUT_CSV_OPTIONS_MISMATCH`,
+        `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Spark and Beam declare it unsupported for now
+  - [ ] Spark: hand a CSV read's and write's options to `check.csvOptions`
   - [ ] JSON lines, ORC, Avro, Excel and Feather inputs and outputs
   - [ ] SQLite inputs and outputs through ADBC
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end

@@ -405,6 +405,9 @@ object DatasetType {
   *   replaces: `static` (every existing partition, Spark's default, and what
   *   an absent key means) or `dynamic` (only the partitions the write puts
   *   data in; the others are left as they are). `PartitionOverwriteModes`.
+  * @param csv how a CSV dataset's text is laid out (`CsvOptions`): its delimiter, header, encoding, quoting, empty-value
+  *   marker and date formats, under Spark's own option names. Absent: nothing is declared, and each engine reads and writes
+  *   with its own defaults. Appended last for the same binary-compatibility reason `datasetType` above was.
   */
 case class Dataset(
   name: String,
@@ -416,7 +419,8 @@ case class Dataset(
   description: Option[String] = None,
   datasetType: Option[DatasetType] = None,
   derivedFrom: Option[List[String]] = None,
-  partitionOverwriteMode: Option[String] = None
+  partitionOverwriteMode: Option[String] = None,
+  csv: Option[CsvOptions] = None
 ) {
 
   /** The fields the dataset is partitioned by (`Field.partitioned`), in order: by `partitionKeyPosition`, then the ones with
@@ -428,6 +432,37 @@ case class Dataset(
 
   /** The overwrite mode that applies to this dataset: the declared one, or `static`. */
   def effectivePartitionOverwriteMode: String = partitionOverwriteMode.map(_.trim.toLowerCase).getOrElse(PartitionOverwriteModes.Static)
+}
+
+/** How a CSV dataset's text is laid out: each option a dataset declares is what every read and write of it must use, and an
+  * undeclared one is left to the engine. The names, and the meaning of each, are Spark's CSV options, so one contract reads
+  * the same on every engine: `delimiter` (Spark's `sep`; one character, `\t` for a tab), `header` (whether the first line
+  * names the columns), `encoding` (a charset name: `UTF-8`, `ISO-8859-1`), `quote` and `escape` (one character each),
+  * `nullValue` (the text an empty value is written as, and read as), `dateFormat` and `timestampFormat` (Java
+  * `DateTimeFormatter` patterns: `dd/MM/yyyy`). */
+case class CsvOptions(
+  delimiter: Option[String] = None,
+  header: Option[Boolean] = None,
+  encoding: Option[String] = None,
+  quote: Option[String] = None,
+  escape: Option[String] = None,
+  nullValue: Option[String] = None,
+  dateFormat: Option[String] = None,
+  timestampFormat: Option[String] = None
+) {
+
+  /** The options declared, by their names, each as the text it is compared as. */
+  def declared: List[(String, String)] =
+    List(
+      "delimiter" -> delimiter, "header" -> header.map(_.toString), "encoding" -> encoding, "quote" -> quote, "escape" -> escape,
+      "nullValue" -> nullValue, "dateFormat" -> dateFormat, "timestampFormat" -> timestampFormat
+    ).collect { case (name, Some(value)) => name -> value }
+}
+
+object CsvOptions {
+
+  /** The option names a `csv:` block takes, in the order they are written. */
+  val Names: List[String] = List("delimiter", "header", "encoding", "quote", "escape", "nullValue", "dateFormat", "timestampFormat")
 }
 
 /** What an `overwrite` of a partitioned dataset replaces (`Dataset.partitionOverwriteMode`): Spark's two modes, under its own

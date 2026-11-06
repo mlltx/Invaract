@@ -75,6 +75,7 @@ extensions:
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked against a real write. An [organizational policy](/guides/enforcing-organizational-policy/) can require every dataset to declare one. |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`, matched case-insensitively. A closed set: any other value is rejected when the contract is parsed. See [Declare Input and Output Types](/guides/declaring-input-and-output-types/). |
 | `partitionOverwriteMode` | no | Outputs only, with partition keys: what an `overwrite` replaces, `static` (every partition; the default) or `dynamic` (only the partitions the write puts data in). See [Partition Outputs](/guides/partitioning-outputs/). |
+| `csv` | no | How a CSV dataset's text is laid out: `delimiter` (or `sep`), `header`, `encoding`, `quote`, `escape`, `nullValue`, `dateFormat`, `timestampFormat`, under Spark's own names. Each one declared is what every read and write of the dataset must use; an option not listed is a parse error. See [Read and Write CSV as Declared](/guides/csv-options/). |
 | `derivedFrom` | no | Outputs only: the `name`s of the contract's `inputs` this output is built from. Absent means "all of them" (the default, and the only behavior before this key existed); a list scopes every input check for a write to *this* output to just those inputs. `[]` means derived from no declared input. A name that isn't a declared input is a validation error. See [Map Outputs to Their Inputs](/guides/mapping-outputs-to-inputs/). |
 | `schema.fields` | no | List of fields. Leave `schema` out (or list no fields) for a dataset whose content no contract governs, such as a dead-letter folder of text lines: its columns are not checked, and validation warns so a schema left out by mistake is never silent. |
 
@@ -166,6 +167,8 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Output `saveMode`, dataset `format` or `catalog.technology` outside the canonical names | Warning |
 | A partition key that is nested, or not a scalar type; a position below 1 or used twice; every field a key; a `partitionOverwriteMode` other than `static`/`dynamic` | Error |
 | A `partitionKeyPosition` without `partitioned: true`; a `partitionOverwriteMode` with no partition keys | Warning |
+| A `csv` quote or escape that is not one character, an empty delimiter, an encoding the JVM doesn't know, a `dateFormat` or `timestampFormat` that isn't a `DateTimeFormatter` pattern | Error |
+| `csv` options on a dataset whose format isn't `csv`; a delimiter of more than one character (Spark reads it, the Python package doesn't) | Warning |
 | Rule with empty `type` | Error |
 | Interpretable rule type (the three [DML rule types](/guides/enforcing-dml-rules/) or the four [transformation shape rule types](/guides/enforcing-transformation-rules/)) with malformed/missing properties | Error |
 

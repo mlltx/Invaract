@@ -53,6 +53,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ✖ No | ◐ Partly |
+| [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ✖ No | ✖ No | ✖ No | ✅ Yes |
 | [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 | [Written values meet their constraints](#written-values-meet-their-constraints) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 
@@ -123,6 +124,7 @@ Everything not listed here is checked in full.
 **Not checked**
 
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A pipeline's writes state no partition columns, so a contract that declares partition keys is refused. Refused if your contract relies on it.
+- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Beam steps are Java code Invaract cannot look inside, so it cannot prove what a column will contain. Refused if you turn on `staticDataQuality`.
@@ -157,6 +159,7 @@ Everything not listed here is checked in full.
 **Not checked**
 
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A pipeline's writes state no partition columns, so a contract that declares partition keys is refused. Refused if your contract relies on it.
+- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): Python filters, joins and groupings are Python code, so Beam's description of the pipeline names no columns for them. Refused if your contract relies on it.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
@@ -190,6 +193,7 @@ Everything not listed here is checked in full.
 **Not checked**
 
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A contract's partition keys are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
+- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): A contract's CSV options are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Spark is checked from its plan, before a write runs, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 
 ### Python (invaract package)
@@ -310,6 +314,12 @@ Where an engine does not do it: If your contract relies on it, the job is refuse
 Checks that an output the contract says is partitioned (one folder or table partition per value of its partition keys) is written that way, by those keys in that order, and that an overwrite replaces partitions as the contract says: all of them, or only those written.
 
 Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/guides/partitioning-outputs/)
+
+### CSV files are read and written as declared
+
+Checks that a CSV dataset is read and written with the options its contract declares: the delimiter, whether the first line names the columns, the character set, the quote and escape characters, the text an empty value is written as, and the date formats.
+
+Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/guides/csv-options/)
 
 ### Datasets are registered in a catalog
 

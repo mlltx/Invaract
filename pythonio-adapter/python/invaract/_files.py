@@ -62,6 +62,10 @@ def output(location, fmt, mode, run_id, layout=FLAT):
 
 def writer(path, fmt, schema, filesystem=None):
     """A writer of ``fmt`` (``parquet`` or ``csv``) at ``path``, on ``filesystem`` (pyarrow's) or the local one."""
+    if fmt == "csv" and getattr(fmt, "options", None):
+        from . import _csv
+
+        return _csv.Writer(open(path, "wb") if filesystem is None else filesystem.open_output_stream(path), schema, fmt.options)
     if fmt == "csv":
         import pyarrow.csv as csv
 

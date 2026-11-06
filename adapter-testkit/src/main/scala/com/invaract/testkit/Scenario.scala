@@ -13,8 +13,11 @@ import com.invaract.verification.{Capability, VerificationOptions}
   * The exception is a check of the values a job writes (`check.runtimeDataQuality`): its scenarios give
   * the input `rows` (column name to value - a `Long`, a `String`, or null), which an adapter that
   * supports the check materializes as the input's data. `ScenarioRows` gives the rows the job then writes.
+  *
+  * With `csvOptions` set the input is a CSV file the job reads with those options (Spark's CSV option names: `delimiter`,
+  * `header`, ...), which is what a contract's `csv:` options ask about; an adapter materializes it written the same way.
   */
-final case class ScenarioInput(location: String, schema: LogicalSchema, rows: List[Map[String, Any]] = Nil)
+final case class ScenarioInput(location: String, schema: LogicalSchema, rows: List[Map[String, Any]] = Nil, csvOptions: Map[String, String] = Map.empty)
 
 /** Where a scenario's job writes. `format` and `saveMode` use the engine-neutral spellings the
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).
@@ -23,6 +26,8 @@ final case class ScenarioInput(location: String, schema: LogicalSchema, rows: Li
   * With `partitionBy` set the data is written partitioned by those output columns, in that order (Hive-style folders,
   * or the table's own partitioning), and an overwrite replaces partitions as `partitionOverwriteMode` says (`static`:
   * every partition; `dynamic`: only those written), which is what a contract's partition keys ask about.
+  * With `csvOptions` set (a `csv` output) the file is written with those CSV options, which is what a contract's `csv:`
+  * options ask about.
   */
 final case class ScenarioOutput(
     location: String,
@@ -30,7 +35,8 @@ final case class ScenarioOutput(
     saveMode: String = "overwrite",
     registeredAs: Option[String] = None,
     partitionBy: List[String] = Nil,
-    partitionOverwriteMode: String = "static"
+    partitionOverwriteMode: String = "static",
+    csvOptions: Map[String, String] = Map.empty
 )
 
 /** What one output column is made of. Deliberately tiny: just enough to build every shape the

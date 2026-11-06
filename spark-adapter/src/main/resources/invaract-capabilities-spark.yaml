@@ -75,6 +75,13 @@ capabilities:
       Spark's write commands do carry their partition columns (partitionBy) and the overwrite mode
       (spark.sql.sources.partitionOverwriteMode), but the adapter does not hand them to the check yet.
     docs: SPARK_ADAPTER.md
+  check.csvOptions:
+    status: unsupported
+    summary: A contract's CSV options are not checked on Spark yet, so a contract that declares them is refused.
+    note: >-
+      Spark's CSV reads and writes do carry their options (sep, header, encoding, quote, escape, nullValue, dateFormat,
+      timestampFormat), but the adapter does not hand them to the check yet.
+    docs: SPARK_ADAPTER.md
   check.catalogRegistration:
     status: supported
     note: Hive, Delta and Iceberg catalog registrations are recognized.

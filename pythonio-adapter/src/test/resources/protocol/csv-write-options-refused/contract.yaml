@@ -1,0 +1,20 @@
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: data/in/orders.csv
+    format: csv
+    csv: { delimiter: ";", header: false, encoding: ISO-8859-1, nullValue: NA, dateFormat: dd/MM/yyyy }
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: day, type: date }
+outputs:
+  - name: report
+    location: data/out/report
+    format: csv
+    csv: { delimiter: "\t", header: true }
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: day, type: date }

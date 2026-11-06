@@ -114,6 +114,7 @@ permanent as the recorded fixtures. What building it added:
 | `check.format` | partial | scenarios 24, 25 |
 | `check.saveMode` | partial | scenarios 26, 27 (BigQuery) |
 | `check.partitioning` | unsupported | the partitioning scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |
+| `check.csvOptions` | unsupported | the CSV option scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |
 | `check.catalogRegistration` | partial | scenarios 10, 11 (BigQuery) |
 | `check.runtimeDataQuality` | unsupported | the runtime data-quality scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE`: the pipeline is checked before it runs |
 | `rules.dml` | not-applicable | — |
