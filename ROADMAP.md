@@ -4054,7 +4054,9 @@ Extend verification engine to support multiple execution engines.
         package reads and writes with them and reports what it used; refusals `INPUT_CSV_OPTIONS_MISMATCH`,
         `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Spark and Beam declare it unsupported for now
   - [ ] Spark: hand a CSV read's and write's options to `check.csvOptions`
-  - [ ] JSON lines, ORC, Avro, Excel and Feather inputs and outputs
+  - [x] JSON lines (`json`), ORC, Avro (`invaract[avro]`), Feather and Excel (`invaract[excel]`) inputs and outputs, laid out
+        as Spark lays them out and partitioned Hive-style like Parquet; `excel` and `feather` added to the canonical formats;
+        a location's extension names its format when nothing else does
   - [ ] SQLite inputs and outputs through ADBC
   - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
         (emulators or a cluster in CI); the code path is the same libraries', untested

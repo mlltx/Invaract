@@ -183,14 +183,20 @@ def _same(data):
 
 
 def _file_dataset(location, fmt, fields, partition_by, csv=None):
-    """``(dataset, finish)``: a file or folder of Parquet or CSV files as a pyarrow dataset (a CSV's columns typed as the
-    contract declares them, read with its CSV options), and what a table or batch read from it still needs (``_csv``)."""
+    """``(dataset, finish)``: a file or folder of files as a pyarrow dataset (a CSV's columns typed as the contract declares
+    them, read with its CSV options), or as ``_formats.Files`` for a format pyarrow's datasets do not read, and what a table
+    or batch read from it still needs (``_csv``)."""
     import pyarrow.dataset as ds
 
     from . import _storage
 
+    from . import _formats
+
+    fmt = fmt.lower()
     types = {f["name"]: arrow_type(f["type"]) for f in fields}
     finish = _same
+    if fmt in _formats.FOREIGN:
+        return _formats.Files(location, fmt, fields, types), finish
     if fmt == "csv" and csv:
         from . import _csv
 
@@ -199,10 +205,10 @@ def _file_dataset(location, fmt, fields, partition_by, csv=None):
         import pyarrow.csv as csv
 
         file_format = ds.CsvFileFormat(convert_options=csv.ConvertOptions(column_types={n: t for n, t in types.items() if t is not None}))
-    elif fmt == "parquet":
-        file_format = "parquet"
+    elif fmt in _formats.DATASET:
+        file_format = _formats.DATASET[fmt]
     else:
-        raise ValueError(f"invaract cannot read format {fmt!r}: it reads parquet, csv, delta and iceberg")
+        raise ValueError(f"invaract cannot read format {fmt!r}: it reads {', '.join(_formats.FORMATS)}, delta, iceberg and jdbc")
     partitioning = (ds.partitioning(pa.schema([(k, types.get(k) or pa.string()) for k in partition_by]), flavor="hive")
                     if partition_by else "hive")
     return ds.dataset(_storage.uri(location), format=file_format, partitioning=partitioning), finish

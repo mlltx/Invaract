@@ -339,7 +339,7 @@ declares it absolute.
 
 **Formats and catalog technologies use canonical names too.** `ir.Write.format` and
 `CatalogIdentity.technology` are `com.invaract.contract.Formats` (`parquet`, `orc`, `avro`, `csv`, `json`,
-`text`, `table`, `delta`, `iceberg`, `hudi`, `hive`, `jdbc`, `bigquery`, `kafka`) and
+`text`, `excel`, `feather`, `table`, `delta`, `iceberg`, `hudi`, `hive`, `jdbc`, `bigquery`, `kafka`) and
 `CatalogTechnologies` (`hive`, `delta`, `iceberg`, `hudi`, `jdbc`, `glue`, `bigquery`, `in-memory`). Both are
 open in the same way as write modes: an engine whose format is none of these reports its own name, and a
 contract declaring a name outside the set still validates, with a warning. What an adapter must not do is

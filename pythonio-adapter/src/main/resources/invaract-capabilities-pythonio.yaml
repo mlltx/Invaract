@@ -17,14 +17,16 @@ enforcement:
   point: staged-publish
   note: >-
     The job reads and writes through the invaract package, which stages each output and publishes it only if the whole
-    run passed: Parquet or CSV files by a rename (local, HDFS) or a copy with _SUCCESS written last (object storage), a
-    Delta or Iceberg table by one commit; a refusal raises ContractViolation in the job.
+    run passed: files (Parquet, CSV, JSON lines, ORC, Avro, Feather, Excel) by a rename (local, HDFS) or a copy with
+    _SUCCESS written last (object storage), a Delta or Iceberg table by one commit; a refusal raises ContractViolation in
+    the job.
 capabilities:
   read.batch:
     status: supported
     note: >-
-      Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet and CSV
-      files (local, HDFS, object storage), Delta and Iceberg tables, and PostgreSQL tables (format jdbc).
+      Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet, CSV,
+      JSON lines, ORC, Avro, Feather and Excel files (local, HDFS, object storage), Delta and Iceberg tables, and
+      PostgreSQL tables (format jdbc).
   read.streaming:
     status: unsupported
     summary: Python jobs read whole datasets; reading a stream is not checked.
@@ -68,7 +70,9 @@ capabilities:
     status: supported
   check.format:
     status: supported
-    note: The package writes the format itself (Parquet, CSV, Delta, Iceberg, or jdbc for a PostgreSQL table) and says which.
+    note: >-
+      The package writes the format itself (parquet, csv, json, orc, avro, feather, excel, delta, iceberg, or jdbc for a
+      PostgreSQL table) and says which.
   check.saveMode:
     status: supported
     note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
@@ -76,7 +80,7 @@ capabilities:
     status: partial
     summary: "Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake; a PostgreSQL table is not written partitioned."
     note: >-
-      The package writes Hive-style folders (Parquet, CSV) or the table's own partitioning (Delta, Iceberg) and reports the
+      The package writes Hive-style folders (every file format) or the table's own partitioning (Delta, Iceberg) and reports the
       columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new
       files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does
       not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.

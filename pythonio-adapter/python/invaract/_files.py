@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
-"""Outputs of plain Parquet or CSV files: staged during the run, published only when the whole run passed. How depends on
+"""Outputs of plain files (Parquet, CSV and the formats in ``_formats``): staged during the run, published only when the
+whole run passed. How depends on
 where the location lives:
 
 - **A local or mounted file system** (``LocalFileOutput``): staged in a hidden folder beside the location and renamed into
@@ -27,7 +28,7 @@ import posixpath
 import shutil
 import tempfile
 
-from . import _frames, _storage
+from . import _formats, _frames, _storage
 from .errors import CheckNotRun
 
 #: Schemes of file systems whose rename is atomic, through pyarrow's Hadoop file system.
@@ -61,7 +62,11 @@ def output(location, fmt, mode, run_id, layout=FLAT):
 
 
 def writer(path, fmt, schema, filesystem=None):
-    """A writer of ``fmt`` (``parquet`` or ``csv``) at ``path``, on ``filesystem`` (pyarrow's) or the local one."""
+    """A writer of ``fmt`` (``_formats.FORMATS``) at ``path``, on ``filesystem`` (pyarrow's) or the local one."""
+    if fmt not in ("parquet", "csv"):
+        import pyarrow as pa
+
+        return _formats.writer(pa.OSFile(path, "wb") if filesystem is None else filesystem.open_output_stream(path), fmt, schema)
     if fmt == "csv" and getattr(fmt, "options", None):
         from . import _csv
 
@@ -110,7 +115,7 @@ def _stage_into(path, fmt, schema, batches, required, filesystem, remove):
 
 def _stage_partitioned(base, prefix, fmt, schema, batches, required, keys, filesystem, remove_prefixed):
     """``_stage_into`` for a partitioned output: each batch written under ``base`` in Hive-style folders by ``keys``, as files
-    named ``<prefix>-<batch>-<n>.<fmt>``; a write that fails part way leaves none of them."""
+    named ``<prefix>-<batch>-<n>.<extension>``; a write that fails part way leaves none of them."""
     import pyarrow as pa
     import pyarrow.dataset as ds
 
@@ -120,15 +125,15 @@ def _stage_partitioned(base, prefix, fmt, schema, batches, required, keys, files
     target = _frames.with_required(schema, required)
     partitioning = ds.partitioning(pa.schema([target.field(k) for k in keys]), flavor="hive")
     written = [0]
-    # pyarrow's dataset writer lays out the folders; a format it writes only one way (CSV with options) is written to a
-    # local scratch folder as Arrow files first, then each file copied into the format by ``writer``
-    direct = not getattr(fmt, "options", None)
+    # pyarrow's dataset writer lays out the folders; a format it does not write, or writes only one way (CSV with
+    # options), is written to a local scratch folder as Arrow files first, then each file copied into the format by ``writer``
+    direct = fmt in ("parquet", "feather") or (fmt == "csv" and not getattr(fmt, "options", None))
     into, into_fs, kind = (base, filesystem, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
 
     def write(batch):
         written[0] += 1
         ds.write_dataset(pa.Table.from_batches([batch]), into, format=kind, partitioning=partitioning, filesystem=into_fs,
-                         basename_template=f"{prefix}-{written[0]:05d}-{{i}}.{fmt}", existing_data_behavior="overwrite_or_ignore")
+                         basename_template=f"{prefix}-{written[0]:05d}-{{i}}.{_formats.extension(fmt)}", existing_data_behavior="overwrite_or_ignore")
 
     try:
         nulls = _frames.take(schema, target, batches, required, write)
@@ -193,7 +198,7 @@ class LocalFileOutput:
         if self.layout.keys:
             return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, None,
                                       lambda base, p: _remove_prefixed_local(base, p))
-        return _stage_into(os.path.join(self.staging, f"{prefix}.{self.fmt}"), self.fmt, schema, batches, required, None, _remove)
+        return _stage_into(os.path.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, None, _remove)
 
     def publish(self):
         if not os.path.isdir(self.staging):
@@ -338,7 +343,7 @@ class HadoopFileOutput:
         prefix = f"part-{self.run_id}-{self.files:05d}"
         if self.layout.keys:
             return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, self.fs, self._remove_prefixed)
-        return _stage_into(posixpath.join(self.staging, f"{prefix}.{self.fmt}"), self.fmt, schema, batches, required, self.fs, self._remove_file)
+        return _stage_into(posixpath.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, self.fs, self._remove_file)
 
     def publish(self):
         if not _exists(self.fs, self.staging):
@@ -431,7 +436,7 @@ class ObjectStorageFileOutput:
         if self.layout.keys:
             return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, None,
                                       lambda base, p: _remove_prefixed_local(base, p))
-        return _stage_into(os.path.join(self.staging, f"{prefix}.{self.fmt}"), self.fmt, schema, batches, required, None, _remove)
+        return _stage_into(os.path.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, None, _remove)
 
     def publish(self):
         import pyarrow.fs as pafs
