@@ -81,8 +81,9 @@ for how each is staged and published.
 | Iceberg | ✅ | ✅ | `<catalog>.<namespace>.<table>`, any pyiceberg catalog (`invaract[iceberg]`) | `iceberg` |
 | PostgreSQL | ✅ | ✅ | `postgresql://host/<database>/<schema>.<table>` (`invaract[postgres]`) | `jdbc` |
 
-Object storage is tested on S3; Google Cloud Storage, Azure and a real HDFS cluster go through the same code but are not
-tested against a real service yet.
+Every location kind is tested end to end against a real service or its emulator: S3, Google Cloud Storage, Azure and a
+single-node HDFS cluster. The one combination not tested is a Delta table on Google Cloud Storage, which no emulator can
+serve.
 
 ## Apache Beam IOs
 

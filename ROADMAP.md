@@ -4060,8 +4060,11 @@ Extend verification engine to support multiple execution engines.
   - [x] SQLite inputs and outputs through ADBC (`invaract[sqlite]`, adbc 1.2 or later): location
         `sqlite:///<path>/<table>`, format `jdbc`; staged in a private database file and published in one transaction
         on the target, which a refused run never touches; dates, timestamps and decimals stored as text and read back typed
-  - [ ] **Follow-fast, committed until delivered:** Google Cloud Storage, Azure and a real HDFS cluster verified end to end
-        (emulators or a cluster in CI); the code path is the same libraries', untested
+  - [x] Google Cloud Storage, Azure and a real HDFS cluster verified end to end in CI (`pythonio-storage`: fake-gcs-server,
+        Azurite, a single-node HDFS): files, partitions, Delta and Iceberg. Found and fixed: `az://` never worked (pyarrow
+        knows no `az://`), a Delta table on HDFS was staged as a local path, and GCS emulators named by
+        `STORAGE_EMULATOR_HOST` were not used. A Delta table on GCS stays unverified: no emulator serves both pyarrow and
+        delta-rs
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

@@ -39,8 +39,8 @@ object storage (copied into place with `_SUCCESS` written last, as Spark does); 
 (`pip install "invaract[delta]"`, `"invaract[iceberg]"`), each output committed in one transaction when the run passes and
 created if it does not exist; PostgreSQL and SQLite tables (`"invaract[postgres]"`, `"invaract[sqlite]"`), published in one
 transaction. An Iceberg location is `<catalog>.<namespace>.<table>`, with the catalog configured as
-pyiceberg configures any (`PYICEBERG_CATALOG__<NAME>__*`). Object storage is tested on S3; GCS, Azure and a real HDFS
-cluster are not yet.
+pyiceberg configures any (`PYICEBERG_CATALOG__<NAME>__*`). S3, GCS, Azure and HDFS are tested end to end against their
+emulators and a single-node cluster (a Delta table on GCS excepted).
 
 **Settings** come from the environment, so a platform can configure a job it does not own: `INVARACT_CONTRACT`,
 `INVARACT_DRY_RUN`, `INVARACT_NOTIFY_CONFIG`, `INVARACT_LOCATION_MAP`, `INVARACT_ORG_POLICY`, `INVARACT_REGISTRY_URL` and

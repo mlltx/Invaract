@@ -9,8 +9,8 @@ found.
 While `modules.json` says this adapter is `in-progress`, `TODO` and `❓` are expected. Setting it to `complete` makes
 `.github/scripts/check_modules.py` fail until neither remains, so "done" means this document has no open item.
 
-**Status: milestones 0 to 6 done; the first release waits on PyPI's one-time setup, and Google Cloud Storage, Azure and
-a real HDFS cluster on tests.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
+**Status: milestones 0 to 6 done, Google Cloud Storage, Azure and a real HDFS cluster tested end to end; the first
+release waits on PyPI's one-time setup.** The checker, `PythonIoCheck`, speaks the whole protocol (`open`, `read`, `write`,
 `written`, `finish`, and dry-run mode) over Arrow's own type names, and builds as a native program that gives the same replies
 as the JVM. The `invaract` Python package (`python/invaract`) drives it: reads and writes by name, staging and publishing,
 the save modes, the settings, and the dry-run migration path. Every conformance scenario runs as a real Python job through
@@ -232,7 +232,10 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A read of a SQLite input, its declared columns typed as declared, whole or in chunks; a missing database or table | ✅ covered; 🚫 a missing one fails, and is not created (opened read-only) | `tests/test_sqlite.py` |
 | A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
 | An input or output whose contract declares a `catalog:` requirement | ✅ covered for Iceberg (catalog, namespace and table checked); 🚫 fails closed for files and Delta tables (`MISSING_*_CATALOG_REGISTRATION`) | the `catalog-*` and `input-catalog-mismatch-refused` cases; `test_tables.py`'s catalog tests |
-| Google Cloud Storage, Azure and a real HDFS cluster | ❓ not investigated: the same libraries' code paths, with no emulator or cluster in CI yet | none |
+| Files, partitioned outputs, JSON and Feather on Google Cloud Storage, Azure and a real HDFS cluster, each save mode; a refused run | ✅ covered against fake-gcs-server, Azurite and a single-node HDFS (CI's `pythonio-storage` job) | `tests/test_storage.py` |
+| A Delta table on Azure or HDFS; an Iceberg warehouse on Google Cloud Storage, Azure or HDFS | ✅ covered, the same job | `tests/test_storage.py` |
+| A Delta table on Google Cloud Storage | ❓ not verifiable in CI: upstream fake-gcs-server refuses delta-rs's XML API upload ("invalid uploadType"), and arrow-rs's fork, which takes it, breaks pyarrow's resumable uploads; delta-rs's own GCS support is upstream's to test | none |
+| An `az://` location | ✅ covered: an `AzureFileSystem` from delta-rs's variables (pyarrow knows no `az://`); pyarrow older than 16 has no Azure and says so | `test_an_azure_location_is_configured_from_the_environment` |
 | A write or read made around the package | 🚫 flagged before the job runs by `invaract-lint` (in the team's CI or a pre-commit hook), unless marked `# invaract: allow`; never seen by the checker at run time | `lint/tests`: every rule from both sides, and the example job before adoption (4 findings) and after (none) |
 
 ## Type mapping
@@ -487,6 +490,21 @@ affinity would turn `12.30` into a real), and a read casts each declared column 
 missing database is an error, not an empty file left behind. The catalog identity is the `jdbc` catalog, the file's name
 without its extension, `main`, and the table.
 
+**Storage services verified (2026-11-07).** Google Cloud Storage, Azure and HDFS had gone through the same libraries as S3
+untested. CI's `pythonio-storage` job now runs `tests/test_storage.py` against fake-gcs-server and Azurite (containers) and
+a single-node HDFS from Hadoop's release (pyarrow reaches it through libhdfs and Java): plain files in each save mode and a
+refused run, partitioned outputs, JSON and Feather, Delta and Iceberg. Each backend's endpoint is read when the test module
+loads (conftest clears `INVARACT_*` per test), and the job sets `INVARACT_TEST_STORAGE_REQUIRED`, so a missing backend fails
+instead of skipping. The first runs found three defects: `az://` locations went straight to pyarrow, which knows no `az://`
+(so no `az://` file location ever worked); a Delta table on HDFS was staged as a local path; and a GCS emulator named by
+`STORAGE_EMULATOR_HOST`, the variable every Google client library reads, was not used. `_storage` now builds an
+`AzureFileSystem` from the variables delta-rs reads (`AZURE_STORAGE_ACCOUNT_NAME`/`_KEY`, `AZURE_STORAGE_USE_EMULATOR`,
+Azure's default credential without a key) and a `GcsFileSystem` for an emulator, and plain-file reads use the same
+resolution; a Delta table anywhere but the local file system stages on local disk. pyiceberg names Azure `abfs[s]://` and
+reaches it through adlfs, and has no anonymous GCS mode, so an emulator gets a token. A Delta table on GCS is not
+verified: upstream fake-gcs-server refuses delta-rs's XML API upload, and arrow-rs's fork, which takes it, breaks pyarrow's
+resumable uploads.
+
 What was built:
 
 - `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
@@ -579,10 +597,9 @@ What was built:
 
 ## Unverified items
 
-- Google Cloud Storage and Azure: `gs://` and `abfss://` locations go through pyarrow, delta-rs and pyiceberg as S3 does,
-  but no emulator runs them in CI yet (open in ROADMAP.md).
-- A real HDFS cluster: the HDFS output is tested through pyarrow's file-system interface with a local file system standing
-  in; pyarrow's own Hadoop file system (libhdfs) is not run in CI.
+- A Delta table on Google Cloud Storage: no emulator serves both pyarrow and delta-rs (see the ledger).
+- Google Cloud Storage, Azure and HDFS themselves, as opposed to their emulators and a single-node cluster: real
+  credentials, a multi-node cluster and Kerberos are not exercised.
 - Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3's conditional writes, which moto accepted;
   not checked against AWS itself, nor two runs racing.
 - The native program on a Mac older than macOS 15, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images

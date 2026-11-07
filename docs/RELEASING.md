@@ -229,8 +229,8 @@ name that version.
 5. PyPI refuses a version that already exists, as Central does. If the workflow fails after publishing
    one package and not the other, re-run the failed jobs; to change what a published version contains,
    release a new version.
-6. Until docs/PYTHON_IO_ADAPTER_DESIGN.md's milestone 6 is complete, each release note says what is still
-   missing (Google Cloud Storage, Azure and a real HDFS cluster, not yet tested); the workflow's release body does.
+6. Each release note says what is not tested (a Delta table on Google Cloud Storage, which no emulator serves); the
+   workflow's release body does.
 
 ## Dry run
 

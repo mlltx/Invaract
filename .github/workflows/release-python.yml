@@ -342,8 +342,8 @@ jobs:
             `java -jar`, for INVARACT_CHECKER), and the native checker for each platform a wheel is built for.
 
             Supported: Parquet and CSV files on local and mounted file systems, HDFS and object storage; Delta Lake and
-            Iceberg tables (`invaract[delta]`, `invaract[iceberg]`). Tested on S3; not yet tested against the real
-            services (docs/PYTHON_IO_ADAPTER_DESIGN.md, milestone 6, committed to come next): Google Cloud Storage, Azure
-            and an HDFS cluster.
+            Iceberg tables (`invaract[delta]`, `invaract[iceberg]`). Tested end to end against S3, Google Cloud Storage
+            and Azure (their emulators) and a single-node HDFS cluster; a Delta table on Google Cloud Storage is the one
+            combination no emulator can serve, so it is not tested.
           files: release/*
           fail_on_unmatched_files: true
