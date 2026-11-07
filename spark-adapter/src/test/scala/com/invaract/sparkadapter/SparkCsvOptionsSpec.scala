@@ -31,6 +31,9 @@ class SparkCsvOptionsSpec extends ConnectorSpecBase {
 
   private def at(name: String): String = scratchDir.resolve(name).toString
 
+  /** `at(name)` as a `file:` URI, for a SQL `LOCATION`: a Windows path's backslashes are escapes in a SQL string. */
+  private def uriAt(name: String): String = scratchDir.resolve(name).toUri.toString
+
   private def output(location: String, csv: String): String =
     s"""id: csv_options
        |version: "1.0.0"
@@ -105,13 +108,13 @@ class SparkCsvOptionsSpec extends ConnectorSpecBase {
   }
 
   test("an insert into an existing USING csv table and a CREATE TABLE AS SELECT are checked with their table's options") {
-    spark.sql(s"CREATE TABLE csv_opts_tbl (id BIGINT, value BIGINT) USING csv OPTIONS (sep '|') LOCATION '${at("csv_opts_tbl")}'")
+    spark.sql(s"CREATE TABLE csv_opts_tbl (id BIGINT, value BIGINT) USING csv OPTIONS (sep '|') LOCATION '${uriAt("csv_opts_tbl")}'")
     val tableLocation = spark.sql("DESCRIBE TABLE EXTENDED csv_opts_tbl").where("col_name = 'Location'").head().getString(1)
     withContract(output(tableLocation, """{ delimiter: ";" }""")) {
       val ex = refused(df().write.insertInto("csv_opts_tbl"))
       assert(ex.result.violations.flatMap(_.actual) == List("delimiter '|'"))
     }
-    val ctas = at("csv_opts_ctas")
+    val ctas = uriAt("csv_opts_ctas")
     withContract(output(ctas, """{ delimiter: ";" }""")) {
       df().createOrReplaceTempView("csv_opts_src")
       val ex = refused(spark.sql(s"CREATE TABLE csv_opts_ctas USING csv OPTIONS (sep '|') LOCATION '$ctas' AS SELECT * FROM csv_opts_src"))
