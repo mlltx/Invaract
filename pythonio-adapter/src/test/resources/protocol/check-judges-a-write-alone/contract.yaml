@@ -1,0 +1,25 @@
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: data/in/orders
+    format: parquet
+    schema:
+      fields:
+        - { name: order_id, type: long, required: true }
+        - { name: amount,   type: "decimal(10,2)" }
+  - name: customers
+    location: lake.sales.customers
+    format: iceberg
+    catalog: { required: true, technology: iceberg, catalogName: lake, namespace: [sales], table: customers }
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: data/out/report
+    format: parquet
+    saveMode: overwrite
+    derivedFrom: [orders, customers]
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }

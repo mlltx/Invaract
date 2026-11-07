@@ -3,6 +3,7 @@
 """A run: the checker started at its beginning, every read and write described to it as it is made, each output staged
 (beside its location, or uncommitted in its Delta or Iceberg table), and at the end every staged output published, or, if
 anything was refused or the job failed, none."""
+import contextlib
 import functools
 import os
 import platform
@@ -33,8 +34,10 @@ _starting = threading.Lock()
 class Run:
     """One run of a job: a context manager (``with invaract.run():``), or what ``@invaract.job`` wraps the entry point in."""
 
-    def __init__(self, contract=None, name=None):
+    def __init__(self, contract=None, name=None, checking=False):
         self._default_contract = contract
+        #: a check (``invaract.check``): its own checker, no events, nothing staged or published, and no run of its own
+        self.checking = checking
         self.name = name or _script_name()
         self.run_id = uuid.uuid4().hex[:16]
         self.mode = None
@@ -48,14 +51,19 @@ class Run:
 
     def __enter__(self):
         global _current
-        with _starting:
-            if _current is not None:
-                raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
-            _current = self
+        if not self.checking:
+            with _starting:
+                if _current is not None:
+                    raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
+                _current = self
         try:
             _exit_status_on_check_not_run()
+            settings = from_environment(self._default_contract)
+            if self.checking:
+                # a check judges against the contract, and tells no one: it is the job's author's question, not a run
+                settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
             self._checker = Checker(command())
-            reply = self._ask({"op": "open", "settings": from_environment(self._default_contract), "job": self._job()})
+            reply = self._ask({"op": "open", "settings": settings, "job": self._job(), **({"check": True} if self.checking else {})})
             self.mode, self.contract = reply["mode"], reply.get("contract")
         except BaseException:
             self._end_unpublished()
@@ -63,6 +71,9 @@ class Run:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        if self.checking:
+            self._end_unpublished()
+            return False
         if exc_type is not None or self._failure is not None:
             # the job failed, or swallowed a refusal: nothing is published, and the run ends refused
             self._end_unpublished()
@@ -90,7 +101,8 @@ class Run:
                         pass
                 self._checker.close()
         finally:
-            _current = None
+            if _current is self:
+                _current = None
 
     # reads and writes
 
@@ -98,10 +110,12 @@ class Run:
     def dry_run(self):
         return self.mode == "dry-run"
 
-    def read(self, name, as_, location, fmt, dtype_backend=None):
+    def read(self, name, as_, location, fmt, dtype_backend=None, chunksize=None):
         if as_ not in _frames.FRAME_KINDS:
             raise ValueError(f"invaract.read cannot return as_={as_!r}: give one of {', '.join(_frames.FRAME_KINDS)}")
         _pandas.check_dtype_backend(dtype_backend, as_)
+        if chunksize is not None and (isinstance(chunksize, bool) or not isinstance(chunksize, int) or chunksize < 1):
+            raise ValueError(f"invaract.read takes chunksize as a number of rows, 1 or more, not {chunksize!r}")
         declared = self._declared("inputs", name)
         request = _with_location({"op": "read", "name": name}, location)
         where = location if self.dry_run else declared.get("location")
@@ -110,7 +124,14 @@ class Run:
             self._ask({**request, "schema": []})
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
         fmt = declared.get("format") or fmt or _format_of(where)
-        table = _frames.read_table(where, fmt, declared.get("fields", []), declared.get("partitionBy", []))
+        fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
+        if chunksize is not None:
+            # the checker is told the input's empty values before any of it is handed over: one pass counts them, a
+            # second reads the chunks, and neither holds the whole input in memory
+            schema, batches = _frames.read_batches(where, fmt, fields, partition_by)
+            self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(schema, _frames.count_nulls(schema, batches))})
+            return (_frames.as_frame(chunk, as_, dtype_backend) for chunk in _frames.chunks(schema, batches(), chunksize))
+        table = _frames.read_table(where, fmt, fields, partition_by)
         nulls = {n: table.column(n).null_count for n in table.column_names}
         self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
         return _frames.as_frame(table, as_, dtype_backend)
@@ -121,7 +142,7 @@ class Run:
         notes = []
         if _pandas.is_frame(frame):
             # written as the contract declares where pandas cannot hold it, and no value changes (_pandas)
-            table, notes = _pandas.to_arrow(frame, declared.get("fields", []))
+            table, notes = _pandas.to_arrow(frame, declared.get("fields", []), dry_run=self.dry_run)
             described = table.schema, iter(table.to_batches())
         else:
             described = _frames.stream(frame)
@@ -136,20 +157,17 @@ class Run:
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
         layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
                                (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
-        try:
+        with _noted(notes):
             self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
                        "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite})
-        except ContractViolation as refused:
-            if notes:
-                refused.add_notes("In pandas", notes)
-            raise
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()
         if fmt not in FORMATS or mode not in SAVE_MODES:
             raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
-        out = self._outputs.get(name) or self._outputs.setdefault(name, _output(where, fmt, mode, self.run_id, layout))
+        out = self._outputs.get(name) or self._outputs.setdefault(
+            name, _Checked(where, mode, layout) if self.checking else _output(where, fmt, mode, self.run_id, layout))
         if out.layout != layout:
             raise CheckNotRun(f"invaract.write('{name}') is {layout.describe()}, but an earlier write of it in this run is "
                               f"{out.layout.describe()}: one output has one layout")
@@ -159,7 +177,8 @@ class Run:
         # with runtimeDataQuality on, the checker sent this output's data checks: each batch is evaluated as it is staged
         checks = _checks.Evaluation(declared["checks"]) if "checks" in declared else None
         nulls = out.stage(schema, checks.observe(batches) if checks else batches, required)
-        self._ask({"op": "written", "name": name, "nulls": nulls, **({"checks": checks.results()} if checks else {})})
+        with _noted(notes):
+            self._ask({"op": "written", "name": name, "nulls": nulls, **({"checks": checks.results()} if checks else {})})
 
     # talking to the checker
 
@@ -197,6 +216,52 @@ class Run:
             out.publish()
         for out in self._outputs.values():
             out.forget_previous()
+
+
+class _Checked:
+    """What a check "writes" to: nothing. Staging only counts the empty values, which the checker judges."""
+
+    target = None
+
+    def __init__(self, location, mode, layout):
+        self.target, self.mode, self.layout = location, mode, layout
+
+    def has_data(self):
+        return False
+
+    def stage(self, schema, batches, required):
+        return _frames.take(schema, _frames.with_required(schema, required), batches, required, lambda batch: None)
+
+    def publish(self):
+        pass
+
+    def forget_previous(self):
+        pass
+
+    def discard(self):
+        pass
+
+
+def check(frame, name, contract=None):
+    """``invaract.check``: ``frame`` judged as a write of the output ``name`` would be, then nothing written."""
+    if contract is None and _current is not None:
+        # inside a run: the run's own contract, as the job named it
+        contract = _current._default_contract
+    with Run(contract, f"invaract.check('{name}')", checking=True) as run:
+        if run.mode != "enforce":
+            raise CheckNotRun("invaract.check needs a contract: name one, or set INVARACT_CONTRACT")
+        run.write(frame, name, None, None, None)
+
+
+@contextlib.contextmanager
+def _noted(notes):
+    """Adds ``notes`` (what the package knows of how pandas held the frame) to a refusal raised inside."""
+    try:
+        yield
+    except ContractViolation as refused:
+        if notes:
+            refused.add_notes("In pandas", notes)
+        raise
 
 
 def _output(location, fmt, mode, run_id, layout=_files.FLAT):

@@ -52,7 +52,7 @@ holds, where the data has been seen.
 
 | Request | The checker | Reply |
 |---|---|---|
-| `{"op": "open", "settings": {...}, "job": {...}}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties) | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
+| `{"op": "open", "settings": {...}, "job": {...}, "check": false}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties); with `"check": true`, a check (`invaract.check`): every declared input counts as read, with its declared columns and catalog, and a dry run is not checked | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
 | `{"op": "read", "name": "orders", "schema": [...]}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read for every later write | `{"ok": true}` |
 | `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...], "partitionBy": ["region"], "partitionOverwriteMode": "static"}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses; the layout (`partitionBy`, empty for none; `partitionOverwriteMode`, `static` when absent) against the output's partition keys (`OUTPUT_PARTITIONING_MISMATCH`) | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
@@ -421,6 +421,21 @@ contract declares is written as a column (a `groupby` result); an `object` colum
 it; `invaract.read(..., dtype_backend=)` takes pandas' own `numpy_nullable`/`pyarrow`. Nothing changes for the checker or the
 protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented: a bare
 top-level `type: int` is not `integer` (docs-site's contract format says so), for every engine.
+
+**pandas, second pass (2026-11-06).** The user asked for every remaining pandas gap, and chose: a dry run writes named index
+levels as pandas' `to_parquet` does (it dropped them, so a migrated `groupby` job lost its keys and the draft never declared
+them); enforced runs still write only the levels the contract declares. Also: in a dry run a pandas column of `Decimal` values
+is written at precision 38 and the scale its values have, so drafts stop declaring the narrowest precision one run needed;
+`invaract.check(frame, name)` judges a frame as a write would and writes nothing (its own checker, opened with `"check":
+true`, under which every declared input counts as read with its declared columns and catalog, so the frame is judged alone,
+and with no `dryRun` or `notifyConfig`, so it publishes nothing); `invaract.read(..., chunksize=)` reads any input a batch at a
+time (files and Delta through pyarrow datasets, Iceberg through `to_arrow_batch_reader`, PostgreSQL through ADBC's
+`fetch_record_batch`), counting empty values in a first pass because the `read` request carries them before any data is
+handed over; nested declared types (`array`, `map`, `struct`) are conversion targets too (a list of whole numbers held as
+floats beside a missing one), sparse columns are written dense; duplicate names and `MultiIndex` columns raise a `TypeError`;
+notes for required columns with missing values, `period` and `timedelta`. A `timedelta` stays unconverted: Arrow's
+`duration` is not the contract's `interval` (a calendar interval; `ArrowSchemas` keeps them apart on purpose, as Spark's own
+mapping does), and Parquet cannot hold Arrow's calendar intervals.
 
 What was built:
 

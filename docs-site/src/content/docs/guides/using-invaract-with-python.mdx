@@ -212,7 +212,9 @@ declares for it, **when no value changes**:
 | a time zone other than UTC | `timestamp` | always: the same moments, in UTC |
 | `Decimal` values, `float64`, `int64` | `decimal(p,s)` | every value fits `p` and `s` exactly (a float, as the nearest float to a decimal: `19.99`, not `0.1 + 0.2`) |
 | `category` | the type of its values | as for those values |
+| lists, dicts (`object`) | `array<...>`, `map<...>`, `struct<...>` | every value converts back unchanged (a list of whole numbers held as floats beside a missing one, `[1.0, NaN]`, is written as `array<long>`) |
 | no values at all (a column of `None`, an empty frame) | any type | always |
+| a sparse column | its values' type | always: it is written as its values |
 
 Otherwise the column is written as pandas holds it, and the write is refused as a type mismatch, as it would be anyway.
 Values of another kind are never converted (numbers and text, true/false and numbers), and a time zone is never added or
@@ -220,7 +222,8 @@ dropped: datetimes without a zone are not a moment in UTC until the job says so.
 
 **Index keys are columns.** A named index level the contract declares as a column is written as that column, so a
 `groupby` result is written with its keys, without `reset_index()`. Any other index is pandas' bookkeeping and is not
-written.
+written. In a [dry run](#start-from-a-job-with-no-contract), with no contract yet, every named index level is written, as
+pandas' own `to_parquet` writes it, so the draft declares the keys the job wrote before.
 
 This job counts orders a day per region; `day` is a `datetime64`, `revenue` a `float64` sum, and both keys are in the
 index:
@@ -250,13 +253,57 @@ With `daily["first_at"] = daily["first_at"].dt.tz_localize("UTC")` before the wr
 the contract's types: `day: date32`, `region: string`, `orders: int64`, `revenue: decimal128(12, 2)`,
 `first_at: timestamp[us, tz=UTC]`.
 
-A column pandas holds as `object` with values of more than one kind (text and numbers) cannot be one column of a file:
-the write raises a `TypeError` naming the column, before anything is checked or staged.
+Some frames cannot be a table at all, and the write raises a `TypeError` saying which column and why, before anything is
+checked or staged: a column pandas holds as `object` with values of more than one kind (text and numbers), two columns
+with one name, and columns with more than one level of names (a `MultiIndex`; flatten them first).
+
+Other notes a refusal can carry: a required column holding missing values (pandas' `NaN`, `None`, `NaT` and `pd.NA` all
+count) says how to fill or drop them; a `period` column says to convert it with `.dt.to_timestamp()`; a `timedelta`
+column, which no contract type holds (`interval` is a calendar interval of months, days and time), says to store it as a
+number, for example `.dt.total_seconds()`.
+
+**Checking a frame without writing it.** `invaract.check(frame, name)` judges a frame exactly as `invaract.write` would,
+against the contract's output `name`, and writes nothing: for a notebook, or the job's own tests. It raises the same
+`ContractViolation`, with the same pandas notes, and returns `None` when the frame would pass. It is a question about one
+frame, not a run: the job's reads do not matter, it publishes no events, and inside a run it uses the run's contract
+without counting as one of its writes. Outside a run, name the contract with `contract=` or `INVARACT_CONTRACT`.
+
+```python
+def test_the_report_keeps_its_contract():
+    invaract.check(build_report(sample_orders()), "report", contract="contract.yaml")
+```
+
+For a frame with a missing `region` and a `total` of `20.5`, against `region: string` (required) and `total: long`
+(required), it raises (real output, the end of the explanation):
+
+```
+Why it violates the contract (1 violation):
+  1. [OUTPUT_FIELD_TYPE_MISMATCH] field 'total' declares type 'long' but the actual OUTPUT schema has type 'double'
+
+How to correct it:
+  1. Cast 'total' to 'long' in the transformation, or update the contract to declare 'double' if the new type is intentional.
+
+In pandas:
+  - 'region' holds 1 missing value(s) (NaN, None, NaT or pd.NA in pandas), and the contract requires a value in every row: fill them (df['region'].fillna(...)) or drop those rows (df.dropna(subset=['region']))
+  - 'total' (float64 in pandas) is not written as long: 20.5 is not a whole number, or is out of range (a whole-number column with missing values is float64 in pandas, and is written as an integer as it is); round it in the job if that is intended
+```
 
 **Reading.** `invaract.read(name)` returns pandas' default dtypes, in which an integer column with a missing value is
 `float64`; written back, it is written as the integer the contract declares. To keep it an integer in the job, pass
 `dtype_backend`, as pandas' own readers take it: `"numpy_nullable"` gives `Int64`, `boolean` and `string` columns,
 `"pyarrow"` gives `ArrowDtype` columns. `@invaract.reads(..., dtype_backend=...)` takes it too.
+
+**Reading in chunks.** For an input larger than memory, `invaract.read(name, chunksize=100_000)` returns the input as
+frames of that many rows each, one at a time, as pandas' `read_csv(chunksize=...)` does (the last one shorter), for any
+input: files, Delta, Iceberg and PostgreSQL tables. The checker is told the input's missing values before any chunk is
+handed over, so the input is read twice: once to count them, once for the chunks; neither holds it whole. Writing in
+chunks needs nothing new: each `invaract.write` of the same output in one run adds to what is staged.
+
+```python
+with invaract.run("contract.yaml"):
+    for chunk in invaract.read("orders", chunksize=100_000):
+        invaract.write(summarise(chunk), "report")
+```
 
 Frames of other libraries (Polars, DuckDB, pyarrow) hold the declared types themselves, so they are written as they are:
 a Polars `Float64` column against a `long` declaration is refused.
@@ -300,6 +347,14 @@ inputs:
       required: true
       nullable: false
 ```
+
+A pandas frame is written in a dry run as pandas' own `to_parquet` writes it: every named index level is a column, so a
+`groupby` result keeps its keys. A column of `Decimal` values, whose precision pandas does not know, is written with the
+widest precision (38) at the scale its values have, rather than the narrowest one run's values needed, so the draft
+declares `decimal(38,2)`, not `decimal(3,2)`; narrow it if the data has a known precision. pandas holds an integer column
+with a missing value as `float64` and a date as a `datetime64`, so the draft declares them `double` and `timestamp_ntz`:
+change them to the integer type and `date` they are (writes are then held to those, as [pandas frames](#pandas-frames)
+says), or give the columns pandas' `Int64` dtype before the dry run.
 
 Review the draft before you commit it. Its id is the job's entry point; give it a real one. Each output's `derivedFrom`
 lists every input read before that output was written (here the audit is listed as derived from the customers too,

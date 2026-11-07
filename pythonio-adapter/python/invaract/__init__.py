@@ -21,7 +21,7 @@ from ._run import Run, job
 from .errors import CheckNotRun, ContractViolation
 
 __version__ = "0.1.0"
-__all__ = ["job", "run", "read", "write", "reads", "writes", "Run", "ContractViolation", "CheckNotRun"]
+__all__ = ["job", "run", "read", "write", "check", "reads", "writes", "Run", "ContractViolation", "CheckNotRun"]
 
 
 def run(contract=None, *, name=None):
@@ -29,7 +29,7 @@ def run(contract=None, *, name=None):
     return Run(contract, name)
 
 
-def read(name, as_="pandas", *, location=None, format=None, dtype_backend=None):
+def read(name, as_="pandas", *, location=None, format=None, dtype_backend=None, chunksize=None):
     """Reads the input the contract declares as ``name``, from the contract's location, as a pandas DataFrame (``as_``:
     ``"pandas"``, ``"polars"``, ``"polars-lazy"`` or ``"arrow"``). Only the columns the contract lists are read, if it lists
     any; a CSV input's columns are read as the contract's types.
@@ -38,10 +38,14 @@ def read(name, as_="pandas", *, location=None, format=None, dtype_backend=None):
     ``boolean`` and ``string`` columns (an integer column with a missing value stays an integer), ``"pyarrow"`` gives
     ``ArrowDtype`` columns; without it, pandas' default dtypes.
 
+    ``chunksize`` (a number of rows) returns the input as frames of that many rows each, one at a time, as pandas'
+    ``read_csv(chunksize=)`` does, for an input larger than memory: it is read twice, once to count its empty values (which
+    are checked before any of it is handed over) and once for the chunks, and never held whole.
+
     ``location`` and ``format`` are for migrating a job with no contract yet (``INVARACT_DRY_RUN=true``): they say where the
     job reads. With a contract in force, a ``location`` that disagrees with it is refused.
     """
-    return _run.current("read").read(name, as_, location, format, dtype_backend)
+    return _run.current("read").read(name, as_, location, format, dtype_backend, chunksize)
 
 
 def write(frame, name, *, location=None, format=None, save_mode=None, partition_by=None, partition_overwrite=None):
@@ -63,6 +67,17 @@ def write(frame, name, *, location=None, format=None, save_mode=None, partition_
     written as declared is refused, with a note saying why in pandas' terms.
     """
     _run.current("write").write(frame, name, location, format, save_mode, partition_by, partition_overwrite)
+
+
+def check(frame, name, *, contract=None):
+    """Checks ``frame`` against the output the contract declares as ``name`` exactly as ``invaract.write`` would (its columns,
+    their types, empty values, and with ``INVARACT_RUNTIME_DATA_QUALITY`` on, its values), and writes nothing: for a notebook,
+    or a job's own tests. Raises ``ContractViolation`` when the write would be refused; returns ``None`` when it would pass.
+
+    It works with or without a run in progress, and does not count as one of the run's writes. ``contract`` names the
+    contract when ``INVARACT_CONTRACT`` does not. A check publishes no events.
+    """
+    _run.check(frame, name, contract)
 
 
 def reads(*names, as_="pandas", dtype_backend=None):
