@@ -76,11 +76,14 @@ capabilities:
       (spark.sql.sources.partitionOverwriteMode), but the adapter does not hand them to the check yet.
     docs: SPARK_ADAPTER.md
   check.csvOptions:
-    status: unsupported
-    summary: A contract's CSV options are not checked on Spark yet, so a contract that declares them is refused.
+    status: partial
+    summary: "CSV reads and writes are checked against the contract's CSV options, Spark's own default standing for each option the job leaves unset. A streaming CSV sink's options are not checked."
     note: >-
-      Spark's CSV reads and writes do carry their options (sep, header, encoding, quote, escape, nullValue, dateFormat,
-      timestampFormat), but the adapter does not hand them to the check yet.
+      The adapter hands the check the options of each CSV read (HadoopFsRelation, by path or through a USING csv table,
+      and a streaming file source) and each CSV write to a path, into an existing table, or by CREATE TABLE ... USING csv
+      AS SELECT, under the contract's names (sep is delimiter, charset is encoding), with Spark's default for each option
+      the job did not set: a contract declaring header true refuses a job that never set header, since Spark reads and
+      writes without one by default. A streaming CSV sink keeps its options to itself, so they are not compared.
     docs: SPARK_ADAPTER.md
   check.catalogRegistration:
     status: supported

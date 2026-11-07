@@ -89,7 +89,7 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     }
     enforced(contract, options) {
       val result = resultFrame(job, readInputs(scenarioId, job), materialize = job.boundary)
-      val writer = result.write.format(job.output.format).mode(job.output.saveMode)
+      val writer = result.write.format(job.output.format).mode(job.output.saveMode).options(job.output.csvOptions)
       job.output.registeredAs match {
         case Some(table) => writer.insertInto(table)
         case None        => writer.save(target)
@@ -222,12 +222,18 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     */
   private def materializeInputs(scenarioId: String, job: ScenarioJob): Unit =
     (job.inputs ++ job.extraWrites.map(_.input)).distinct.foreach { input =>
-      spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite").parquet(path(scenarioId, input.location))
+      val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite")
+      // a CSV input is the file an earlier job wrote with the options this job reads it with
+      if (input.csvOptions.nonEmpty) empty.options(input.csvOptions).csv(path(scenarioId, input.location))
+      else empty.parquet(path(scenarioId, input.location))
     }
 
-  /** The materialized inputs, read back as the frames the job works on. */
+  /** The materialized inputs, read back as the frames the job works on (a CSV input with its options and schema). */
   private def readInputs(scenarioId: String, job: ScenarioJob): List[DataFrame] =
-    job.inputs.map(i => spark.read.parquet(path(scenarioId, i.location)))
+    job.inputs.map { i =>
+      if (i.csvOptions.nonEmpty) spark.read.options(i.csvOptions).schema(structType(i.schema)).csv(path(scenarioId, i.location))
+      else spark.read.parquet(path(scenarioId, i.location))
+    }
 
   private def selectColumns(job: ScenarioJob, frames: List[DataFrame]): List[Column] =
     job.columns.map { c =>

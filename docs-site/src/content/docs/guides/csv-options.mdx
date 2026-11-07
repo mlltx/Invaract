@@ -16,9 +16,12 @@ declare the layout, and every read and write of the dataset is then held to it.
 
 <Aside type="note" title="Which engines check it">
 Python jobs that read and write through the `invaract` package are checked, and the package
-reads and writes with the declared options itself. Spark and Beam don't check CSV options yet,
-so they refuse a contract that declares them (`UNSUPPORTED_CONTRACT_FEATURE`) rather than let a
-read or write use other ones unseen. See [What Each Engine Checks](/reference/what-each-engine-checks/).
+reads and writes with the declared options itself. Spark jobs are checked too: each CSV read
+and write is held to the options it was given, with Spark's own default standing for any option
+the job leaves unset (a streaming CSV sink is the exception; its options are not checked). Beam
+doesn't check CSV options yet, so it refuses a contract that declares them
+(`UNSUPPORTED_CONTRACT_FEATURE`) rather than let a read or write use other ones unseen. See
+[What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
 ## Declare the layout
@@ -104,6 +107,33 @@ hours, minutes, seconds, AM/PM, weekday names and zone offsets, plus quoted text
 second and week numbers can't be read or written by the Python package, which stops the run
 (`CheckNotRun`) rather than misread them. A timestamp read without a zone in its pattern is taken
 as UTC.
+
+## What Spark jobs are held to
+
+A Spark job sets its options itself, with `.option(...)` on the reader or writer or in a table's
+`OPTIONS (...)`. Invaract compares them with the contract under the contract's names: Spark's
+`sep` is `delimiter` and `charset` is `encoding`. An option the job leaves unset counts as Spark's
+default, which is not always what you expect: Spark reads and writes **without** a header line
+unless `header` is `true`. So this contract and job:
+
+```yaml
+outputs:
+  - name: report
+    location: out/report
+    format: csv
+    csv: { delimiter: ";", header: true }
+```
+
+```scala
+df.write.mode("overwrite").option("sep", ";").csv("out/report")
+```
+
+are refused with `OUTPUT_CSV_OPTIONS_MISMATCH` before anything is written, because the job never
+asked for a header line: *contract declares the output CSV options header true but the write uses
+header false*.
+
+Adding `.option("header", "true")` lets it through. A dry run's draft contract declares the options
+the job set, and `header` always, since engines disagree on its default.
 
 ## Related
 

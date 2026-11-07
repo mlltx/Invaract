@@ -574,7 +574,9 @@ object ContractEnforcementRule {
       lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes,
       // A resolution that had to pick the most recent of several same-source
       // plans is an assumption the fingerprint cannot reflect; disclosed with it.
-      resolutionNotes = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType).map(_.message)
+      resolutionNotes = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType).map(_.message),
+      // the CSV options each CSV read and write used, Spark's defaults filled in (check.csvOptions)
+      formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList)
     )
   }
 
@@ -658,7 +660,13 @@ object ContractEnforcementRule {
         Some(
           InferenceOutcome.Inferred(
             ContractInference.infer(
-              InferredWrite(writeInfo.location, writeInfo.format, writeInfo.saveMode, SparkSchemas.toLogicalSchema(writeInfo.outputSchema)),
+              InferredWrite(
+                writeInfo.location,
+                writeInfo.format,
+                writeInfo.saveMode,
+                SparkSchemas.toLogicalSchema(writeInfo.outputSchema),
+                formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query))
+              ),
               inputSchemas,
               translated.plan
             ),
