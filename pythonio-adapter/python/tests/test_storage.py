@@ -26,6 +26,10 @@ REPORT = pd.DataFrame({"region": ["north", "south"], "total": [10, 20]})
 MORE = pd.DataFrame({"region": ["east"], "total": [40]})
 
 VARIABLES = {"gcs": "INVARACT_TEST_GCS", "azure": "INVARACT_TEST_AZURE", "hdfs": "INVARACT_TEST_HDFS"}
+#: Read when the module loads: conftest's per-test environment clears every INVARACT_* variable but the checker's.
+ENDPOINTS = {name: os.environ.get(variable) for name, variable in VARIABLES.items()}
+#: Set by CI's storage job, where every backend must be there: a missing one fails rather than skips.
+REQUIRED = os.environ.get("INVARACT_TEST_STORAGE_REQUIRED") == "true"
 
 
 class Store:
@@ -92,9 +96,9 @@ def _hdfs(namenode):
 
 @pytest.fixture(params=sorted(VARIABLES))
 def store(request, monkeypatch, tmp_path):
-    endpoint = os.environ.get(VARIABLES[request.param])
+    endpoint = ENDPOINTS[request.param]
     if not endpoint:
-        pytest.skip(f"set {VARIABLES[request.param]} to test {request.param}")
+        (pytest.fail if REQUIRED else pytest.skip)(f"set {VARIABLES[request.param]} to test {request.param}")
     if request.param == "gcs":
         return _gcs(monkeypatch, tmp_path, endpoint)
     if request.param == "azure":

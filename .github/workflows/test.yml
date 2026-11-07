@@ -825,6 +825,7 @@ jobs:
           export INVARACT_TEST_GCS="http://127.0.0.1:4443"
           export INVARACT_TEST_AZURE="http://127.0.0.1:10000"
           export INVARACT_TEST_HDFS="hdfs://localhost:9000"
+          export INVARACT_TEST_STORAGE_REQUIRED=true
           cd pythonio-adapter/python
           python -m pytest -v -rs tests/test_storage.py
 
