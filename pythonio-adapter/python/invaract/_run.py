@@ -126,10 +126,16 @@ class Run:
             # a name the contract does not declare, or a dry run with nowhere to read: the checker refuses it
             self._ask({**request, "schema": []})
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
-        fmt = (declared.get("format") or fmt or _datasets.format_of(where)).lower()
+        # the job's format if it names one, else the contract's: what is reported is what is read
+        fmt = (fmt or declared.get("format") or _datasets.format_of(where)).lower()
         fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
         used = _csv_options(name, fmt, declared, csv)
-        request = {**request, **_registered(where, fmt), **({"csv": used} if used else {})}
+        request = {**request, **_registered(where, fmt), "format": fmt, **({"csv": used} if used else {})}
+        if declared.get("format") and declared["format"].lower() != fmt:
+            # a read in another format than the contract declares is refused on its description, before it is made: the
+            # checker is never told columns the package did not read
+            self._ask(request)
+            raise CheckNotRun(f"Invaract's checker did not refuse reading '{name}' as {fmt}, which its contract does not declare")
         if chunksize is not None:
             # the checker is told the input's empty values before any of it is handed over: one pass counts them, a
             # second reads the chunks, and neither holds the whole input in memory

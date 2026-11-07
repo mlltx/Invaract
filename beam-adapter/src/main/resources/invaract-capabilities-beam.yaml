@@ -71,6 +71,13 @@ capabilities:
     status: partial
     summary: "The format comes from the IO the pipeline uses. A text write cannot tell CSV from JSON or plain text."
     note: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
+  check.inputFormat:
+    status: partial
+    summary: "The format comes from the IO the pipeline reads with. A text read cannot tell CSV from JSON or plain text."
+    note: >-
+      The format is the IO transform (ParquetIO is parquet, AvroIO is avro), or the parser a text read goes straight to
+      (JsonToRow is json, CsvIO.parseRows csv). Any other TextIO read cannot tell csv from json from plain text, so it
+      satisfies an input declared as any of them.
   check.saveMode:
     status: partial
     summary: "Only BigQuery writes state a save mode. A contract that declares one for a file, Kafka, JDBC or Pub/Sub write has that write refused."

@@ -35,6 +35,7 @@ import com.invaract.verification.SchemaChecker.Side
   * kind                                   location  column  expected / actual              rule
   * MISSING_INPUT                          declared  -       -                              -
   * UNDECLARED_INPUT                       read      -       -                              -
+  * INPUT_FORMAT_MISMATCH                  read      -       format / format                -
   * MISSING_OUTPUT                         declared  -       -                              -
   * OUTPUT_LOCATION_MISMATCH               write     -       declared locations / write     -
   * OUTPUT_FORMAT_MISMATCH                 write     -       format / format                -
@@ -133,6 +134,17 @@ private[invaract] object Violations {
       actual = Some(actualLocation)
     )
   }
+
+  def inputFormatMismatch(expected: String, actual: String, readLocation: String): Violation =
+    Violation(
+      ViolationType.InputFormatMismatch,
+      s"contract declares input format '$expected' but the plan reads '$readLocation' in format '$actual'",
+      remediation =
+        s"Read '$readLocation' as '$expected' instead, or update the contract's declared format to '$actual' if the input's format has changed.",
+      location = Some(readLocation),
+      expected = Some(expected),
+      actual = Some(actual)
+    )
 
   def outputFormatMismatch(expected: String, actual: String, writeLocation: String): Violation =
     Violation(

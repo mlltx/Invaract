@@ -33,7 +33,7 @@ class CapabilitySpec extends AnyFunSuite {
     val blocking = Capability.all.filter(_.enforcesContract).map(_.id).toSet
     assert(
       blocking == Set(
-        "check.inputExistence", "check.location", "check.schema", "check.nestedTypes", "check.format", "check.saveMode",
+        "check.inputExistence", "check.location", "check.schema", "check.nestedTypes", "check.format", "check.inputFormat", "check.saveMode",
         "check.partitioning", "check.csvOptions", "check.catalogRegistration", "check.runtimeDataQuality", "rules.dml", "rules.planShape", "rules.custom", "analysis.staticDataQuality", "analysis.roleConsistency"
       )
     )

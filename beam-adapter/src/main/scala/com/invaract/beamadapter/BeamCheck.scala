@@ -5,7 +5,10 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser, Formats, LogicalSchema, RuleType}
 import com.invaract.ir.{UnknownPlan, Write}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunReporting, DryRunSelfCheck, InferredWrite, OutputChecker, TrustedSteps, VerificationOptions, VerificationPipeline, Violation}
+import com.invaract.verification.{
+  AdapterCapabilities, CheckedWrite, ContractInference, DryRunReporting, DryRunSelfCheck, InferredWrite, InputChecker, LocationMatching, OutputChecker, TrustedSteps,
+  VerificationOptions, VerificationPipeline, Violation
+}
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -78,7 +81,8 @@ final class BeamCheck private[beamadapter] (
         w.outputSchema.getOrElse(LogicalSchema(Nil)),
         caseSensitive = true,
         rowMutation = None,
-        lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType)
+        lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType),
+        inputFormats = BeamCheck.inputFormatsAsDeclared(c, w)
       ),
       options,
       sink,
@@ -97,7 +101,7 @@ final class BeamCheck private[beamadapter] (
         LogicalSchema(Nil) -> Some(s"the write to ${w.location} exposes no columns, so the draft declares none for it")
       )(_ -> None)
       try {
-        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.draftInputs, w.plan)
+        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema, inputFormats = w.readFormats), w.draftInputs, w.plan)
         // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
         val unlocated =
           if (w.unlocatedReads.isEmpty) None
@@ -156,6 +160,20 @@ private[beamadapter] object BeamCheck {
   def asDeclared(contract: Contract, write: TranslatedWrite): Write =
     if (!write.format.contains(Formats.Text)) write.plan
     else declaredFormat(contract, write).filter(TextFamily.contains).fold(write.plan)(f => write.plan.copy(format = Some(f)))
+
+  /** `write`'s read formats, a text read reported in the text-family format its declared input declares (`csv` and `json`
+    * included), for the reason `asDeclared` gives a text write's: nothing in the graph says what its lines are. A read the
+    * contract declares any other format for, or none, stays `text`, and a mismatch stays a mismatch. The declared input is
+    * the one the core's input format check matches the read to. */
+  def inputFormatsAsDeclared(contract: Contract, write: TranslatedWrite): Map[String, String] = {
+    val declared = InputChecker.Declared(contract.inputs)
+    write.readFormats.map {
+      case (location, Formats.Text) =>
+        val matched = declared.index.matchingIndicesOf(LocationMatching.namesOf(location, None)).headOption.flatMap(declared.inputs(_).format)
+        location -> matched.map(_.trim.toLowerCase).filter(TextFamily.contains).getOrElse(Formats.Text)
+      case other => other
+    }
+  }
 
   /** The format the contract declares for the dataset `write` is checked against, normalised as the core compares it. */
   def declaredFormat(contract: Contract, write: TranslatedWrite): Option[String] =

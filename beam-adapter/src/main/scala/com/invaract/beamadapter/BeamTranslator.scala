@@ -12,7 +12,8 @@ import scala.collection.mutable
 /** A write the translator recognised, with what the contract checks need: where it writes and in which format (`None` when the
   * writer's format could not be told), the plan that produces its data (with the save mode and catalog table a BigQuery write
   * states), the columns of the data it writes (the write's own declared schema, else the data's; `None` when neither is
-  * known), the columns of every located read upstream of it, and the reads upstream of it that could not be located.
+  * known), the columns of every located read upstream of it, the reads upstream of it that could not be located, and the
+  * format of each located read the IO states (`readFormats`, by location).
   *
   * For the transformation-shape rules (docs/BEAM_ADAPTER.md, D19): `opaqueCombines` are the steps upstream of it that combine
   * several collections in code the translation cannot read (a `CoGroupByKey`, a function given another collection as a side
@@ -27,7 +28,8 @@ private[beamadapter] final case class TranslatedWrite(
     unlocatedReads: List[String] = Nil,
     opaqueCombines: List[String] = Nil,
     unreadableShapes: List[String] = Nil,
-    readLocations: List[String] = Nil
+    readLocations: List[String] = Nil,
+    readFormats: Map[String, String] = Map.empty
 ) {
 
   /** Every located read this write depends on, with its columns where the pipeline states them and none where it does not (a
@@ -102,11 +104,12 @@ private[beamadapter] object BeamTranslator {
 
   private sealed trait Node { def step: BeamStep }
 
-  /** A read whose source is stated; `schema` is the one the read states for the dataset (else its output's columns are used). */
-  private final case class ReadNode(step: BeamStep, locations: List[String], catalog: Option[CatalogIdentity], schema: Option[LogicalSchema]) extends Node
+  /** A read whose source is stated, in `format` when the IO says; `schema` is the one the read states for the dataset (else its
+    * output's columns are used). */
+  private final case class ReadNode(step: BeamStep, locations: List[String], format: Option[String], catalog: Option[CatalogIdentity], schema: Option[LogicalSchema]) extends Node
 
-  /** A reader of files matched by an upstream step. */
-  private final case class FileReaderNode(step: BeamStep, schema: Option[LogicalSchema]) extends Node
+  /** A reader, in `format` when the IO says, of files matched by an upstream step. */
+  private final case class FileReaderNode(step: BeamStep, format: Option[String], schema: Option[LogicalSchema]) extends Node
   private final case class UnlocatedReadNode(step: BeamStep, what: String) extends Node
   private final case class WriteNode(step: BeamStep, write: IoWrite.Located) extends Node
   private final case class UnverifiableWriteNode(step: BeamStep, why: String) extends Node
@@ -129,9 +132,9 @@ private[beamadapter] object BeamTranslator {
     }
 
   private def readNode(step: BeamStep, read: IoRead): Node = read match {
-    case IoRead.Located(locations, _, catalog, schema) => ReadNode(step, locations, catalog, schema)
-    case IoRead.FileReader(_, schema)                  => FileReaderNode(step, schema)
-    case IoRead.Unlocated(what)                        => UnlocatedReadNode(step, what)
+    case IoRead.Located(locations, format, catalog, schema) => ReadNode(step, locations, format, catalog, schema)
+    case IoRead.FileReader(format, schema)                  => FileReaderNode(step, format, schema)
+    case IoRead.Unlocated(what)                             => UnlocatedReadNode(step, what)
   }
 
   private def writeNode(step: BeamStep, write: IoWrite): Node = write match {
@@ -278,9 +281,20 @@ private[beamadapter] object BeamTranslator {
         // Flatten, which only concatenates them), or a schema transform it could not read
         others.collect { case o if !io.recognisesShape(o.step) && !io.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step) }.distinct,
         others.collect { case o if io.shape(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }.distinct,
-        above.collect { case r: ReadNode => r }.flatMap(_.locations).distinct
+        above.collect { case r: ReadNode => r }.flatMap(_.locations).distinct,
+        readFormats(above)
       )
     }
+
+    /** The format of each located read in `above`, by location, where the IO says: the read's own, or, for a text read parsed
+      * straight away into rows, the parser's (`JsonToRow` is json, `CsvIO.parseRows` csv); for the folders a file reader reads,
+      * the reader's. */
+    private def readFormats(above: List[Node]): Map[String, String] =
+      (above.collect { case r: ReadNode => r }.flatMap { r =>
+        parsedFormat(r).orElse(r.format).toList.flatMap(f => r.locations.map(_ -> f))
+      } ++ above.collect { case f: FileReaderNode => f }.flatMap { f =>
+        f.format.toList.flatMap(format => upstream(f).collect { case r: ReadNode => r }.flatMap(_.locations).map(_ -> format))
+      }).toMap
 
     /** The columns of each located read in `above`, by location: what the read yields, or, for a text read parsed straight away
       * into rows (`JsonToRow`, `CsvIO.parseRows`), the parser's columns. */
@@ -289,10 +303,17 @@ private[beamadapter] object BeamTranslator {
         columnsRead(r.step, r.schema).orElse(parsedColumns(r)).toList.flatMap(s => r.locations.map(_ -> s))
       }
 
-    private def parsedColumns(r: ReadNode): Option[LogicalSchema] =
+    private def parsedColumns(r: ReadNode): Option[LogicalSchema] = parser(r).flatMap(_.step.outputs.headOption.flatMap(BeamSchemas.of))
+
+    /** The format of a text read's lines, when it is parsed straight away into rows: the parser's. */
+    private def parsedFormat(r: ReadNode): Option[String] =
+      if (r.format.contains(Formats.Text)) parser(r).flatMap(p => io.textParserFormat(p.step)) else None
+
+    /** The step a read's output goes straight to, when it is the only one and parses lines of text into rows. */
+    private def parser(r: ReadNode): Option[Node] =
       r.step.outputs.headOption.flatMap(o => consumers.getOrElse(o.name, Nil) match {
-        case parser :: Nil if io.isTextParser(parser.step) => parser.step.outputs.headOption.flatMap(BeamSchemas.of)
-        case _                                             => None
+        case only :: Nil if io.textParserFormat(only.step).isDefined => Some(only)
+        case _                                                       => None
       })
 
     /** The columns of each file reader in `above`, for the folders the matches feeding it read. */

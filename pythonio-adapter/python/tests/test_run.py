@@ -296,6 +296,37 @@ def test_a_read_location_that_disagrees_with_the_contract_is_refused():
     assert refused.value.violations == ["UNDECLARED_INPUT"]
 
 
+def test_a_read_format_that_disagrees_with_the_contract_is_refused_before_anything_is_read(monkeypatch):
+    from invaract import _datasets
+
+    write_contract(inputs=orders_input(), outputs=output())
+    reads = []
+    monkeypatch.setattr(_datasets, "read_table", lambda *args, **kwargs: reads.append(args))
+    with pytest.raises(invaract.ContractViolation) as refused:
+        with invaract.run("contract.yaml"):
+            invaract.read("orders", format="csv")
+    assert refused.value.violations == ["INPUT_FORMAT_MISMATCH"]
+    assert "contract declares input format 'parquet' but the plan reads 'data/in/orders' in format 'csv'" in str(refused.value)
+    assert reads == [], "the data is never read in a format the contract does not declare"
+
+
+def test_a_read_format_that_agrees_with_the_contract_is_read_in_it():
+    write_contract(inputs=orders_input(), outputs=output())
+    with invaract.run("contract.yaml"):
+        assert invaract.read("orders", format="PARQUET", as_="arrow").column_names == ["order_id", "region"]
+        invaract.write(REPORT, "report")
+
+
+def test_a_dry_runs_draft_declares_the_format_each_input_was_read_in(monkeypatch):
+    orders_input()
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_DRY_RUN", "true")
+    with invaract.run(name="orders_job.main"):
+        invaract.read("orders", location="data/in/orders")
+        invaract.write(REPORT, "report", location="data/out/report")
+    assert "location: data/in/orders\n  format: parquet\n" in events()[-1]["mergedContractYaml"]
+
+
 def test_a_format_or_save_mode_that_disagrees_with_the_contract_is_refused():
     report_contract()
     with pytest.raises(invaract.ContractViolation) as refused:

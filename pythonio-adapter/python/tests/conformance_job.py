@@ -161,7 +161,7 @@ def main(job):
     for dataset in job["inputs"] + [e["input"] for e in job["extraWrites"]]:
         make_input(dataset)
     with invaract.run(name=job["scenario"]):
-        tables = [invaract.read(i["name"], as_="arrow", csv=i.get("csv")) for i in job["inputs"]]
+        tables = [invaract.read(i["name"], as_="arrow", format=i["format"], csv=i.get("csv")) for i in job["inputs"]]
         output = job["output"]
         if job["untranslatableWrite"]:
             # a table the package cannot describe: no Arrow stream
@@ -174,7 +174,7 @@ def main(job):
         for extra in job["extraWrites"]:
             source = extra["input"]
             if source["location"] not in read:
-                read[source["location"]] = invaract.read(source["name"], as_="arrow")
+                read[source["location"]] = invaract.read(source["name"], as_="arrow", format=source["format"])
             invaract.write(read[source["location"]], extra["output"]["name"], format=extra["output"]["format"], save_mode=extra["output"]["saveMode"])
 
 

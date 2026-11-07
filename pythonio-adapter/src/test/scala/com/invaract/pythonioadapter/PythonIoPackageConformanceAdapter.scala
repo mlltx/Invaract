@@ -136,12 +136,11 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
   private def fields(schema: LogicalSchema): List[Map[String, Any]] =
     schema.fields.map(f => Map("name" -> f.name, "type" -> typeJson(f.dataType), "nullable" -> f.nullable))
 
-  /** `job` as `conformance_job.py` reads it: each dataset by the name the job uses for it, inputs with the format their
-    * contract declares (the data a job reads is in the format it was written in). */
+  /** `job` as `conformance_job.py` reads it: each dataset by the name the job uses for it, each input with the format the
+    * job reads it in (`ScenarioInput.format`), which is the format its data is made in. */
   def jobJson(scenarioId: String, contract: Contract, job: ScenarioJob): String = {
     def input(i: ScenarioInput) =
-      Map("name" -> nameOf(contract.inputs, i.location), "location" -> i.location,
-        "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema)) ++
+      Map("name" -> nameOf(contract.inputs, i.location), "location" -> i.location, "format" -> i.format, "fields" -> fields(i.schema)) ++
         (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows)) ++
         (if (i.csvOptions.isEmpty) Map.empty else Map("csv" -> i.csvOptions))
     def output(o: ScenarioOutput) =

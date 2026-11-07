@@ -38,6 +38,8 @@ capabilities:
     status: supported
   check.format:
     status: supported
+  check.inputFormat:
+    status: supported
   check.saveMode:
     status: supported
   check.partitioning:

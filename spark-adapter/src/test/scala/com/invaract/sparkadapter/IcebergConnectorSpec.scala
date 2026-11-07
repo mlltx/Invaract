@@ -83,6 +83,14 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(translated.diagnostics.isEmpty, "a resolved catalog table read should need no fallback diagnostic")
   }
 
+  test("an Iceberg table is read as iceberg (check.inputFormat), by the table's provider, as a write to it is named") {
+    val tableName = "local.db.read_format_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    def formats(df: org.apache.spark.sql.DataFrame) = df.queryExecution.analyzed.collect(Function.unlift(SparkPlanAdapter.readFormatOf)).toList
+    assert(formats(spark.table(tableName)) == List("iceberg"))
+    assert(formats(spark.read.format("iceberg").load(tableName)) == List("iceberg"))
+  }
+
   // --- Write: AppendData/OverwriteByExpression/ReplaceTableAsSelect - confirmed generic, not Iceberg-specific ---
 
   test("PASS: appending to an existing Iceberg table satisfying its contract executes normally") {

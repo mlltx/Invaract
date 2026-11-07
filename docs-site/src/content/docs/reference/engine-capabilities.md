@@ -35,9 +35,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (56) | ✅ | ✅ | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (58) | ✅ | ✅ | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✖ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (57) | ✅ | ✅ | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (59) | ✅ | ✅ | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ✖ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | — | ✅ |
@@ -52,6 +52,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (7) | ◐ | ◐ | ✅ | ✅ |
 | `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ | ✅ | ✅ | ✅ |
 | `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
+| `check.inputFormat` | A declared input format is checked against the format the job reads it in (INPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.partitioning` | An output's declared partitioning is checked: its partition keys, in order, and, for an overwrite, its partitionOverwriteMode (OUTPUT_PARTITIONING_MISMATCH). *(blocks if unsupported)* | verified (3) | ✖ | ✖ | ◐ | ✖ |
 | `check.csvOptions` | A dataset's declared CSV options (delimiter, header, encoding, quote, escape, nullValue, dateFormat, timestampFormat) are checked against the options its reads and writes use (INPUT_CSV_OPTIONS_MISMATCH, OUTPUT_CSV_OPTIONS_MISMATCH). *(blocks if unsupported)* | verified (3) | ✖ | ✖ | ✅ | ◐ |
@@ -125,14 +126,14 @@ Attested:
 
 ## Conformance results
 
-The suite has 63 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 65 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 52 | 63 |
-| `beam-python` | 52 | 63 |
-| `pythonio` | 50 | 63 |
-| `spark` | 63 | 63 |
+| `beam` | 54 | 65 |
+| `beam-python` | 54 | 65 |
+| `pythonio` | 52 | 65 |
+| `spark` | 65 | 65 |
 
 ## Notes
 
@@ -149,6 +150,7 @@ The suite has 63 scenarios. For each adapter, the scenarios it is held to confor
 - `check.schema` — partial: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare; its write is refused unless the output declares no columns.
 - `check.nestedTypes` — supported: Beam ROW, ARRAY and MAP, and Avro records, arrays and maps, map to struct, array and map wherever a schema is known.
 - `check.format` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
+- `check.inputFormat` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro), or the parser a text read goes straight to (JsonToRow is json, CsvIO.parseRows csv). Any other TextIO read cannot tell csv from json from plain text, so it satisfies an input declared as any of them.
 - `check.saveMode` — partial: BigQueryIO writes state one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File, Kafka, JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.partitioning` — unsupported: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
 - `check.csvOptions` — unsupported: A TextIO file's delimiter and quoting are the pipeline's own code, which the graph does not describe; CsvIO's format is not handed to the check.
@@ -181,6 +183,7 @@ The suite has 63 scenarios. For each adapter, the scenarios it is held to confor
 - `check.schema` — partial: Known where the write states the schema its files are written with (a Parquet write's pyarrow schema, an Avro write's record schema, a BigQuery load's table schema) or the data carries a Beam row schema (typed rows, ReadFromParquet with as_rows=True). Python dictionaries, and a row schema with an untyped field (a computed beam.Select field), have no columns to compare; such a write is refused unless the output declares no columns.
 - `check.nestedTypes` — supported: pyarrow lists, structs and maps, Avro records, arrays and maps, BigQuery RECORD and REPEATED fields and Beam row, array and map fields map to struct, array and map wherever a schema is known.
 - `check.format` — partial: The format is the sink the write uses (parquet, avro, tfrecord, text). A text write cannot tell csv from json from plain text.
+- `check.inputFormat` — partial: The format is the source the read uses (parquet, avro, tfrecord, text). A text read cannot tell csv from json from plain text, so it satisfies an input declared as any of them.
 - `check.saveMode` — partial: A BigQuery write states one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.partitioning` — unsupported: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
 - `check.csvOptions` — unsupported: A text file's delimiter and quoting are the pipeline's own code, which the graph does not describe.
@@ -213,6 +216,7 @@ The suite has 63 scenarios. For each adapter, the scenarios it is held to confor
 - `check.outputsWritten` — supported: The checker records each output written and, when the run finishes, refuses one that never wrote a declared output.
 - `check.schema` — supported: The written table's columns and types come from its Arrow schema, mapped to the contract's types by the shared ArrowSchemas, and are checked before anything is staged; a required column is checked against the empty values the staged data holds (decision 3), not against the frame library's nullable flag.
 - `check.format` — supported: The package writes the format itself (parquet, csv, json, orc, avro, feather, excel, delta, iceberg, or jdbc for a PostgreSQL or SQLite table) and says which.
+- `check.inputFormat` — supported: The package reads each input in the format its contract declares, or in the one the job's format= names, and says which; a format= that disagrees with the contract is refused before anything is read.
 - `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
 - `check.partitioning` — partial: The package writes Hive-style folders (every file format) or the table's own partitioning (Delta, Iceberg) and reports the columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.
 - `check.csvOptions` — supported: The package reads and writes a CSV dataset with the options its contract declares (a job may give its own with csv=, as a migrating job says how it read the file), and reports the options it used; the checker compares them with the declared ones.
@@ -249,6 +253,7 @@ The suite has 63 scenarios. For each adapter, the scenarios it is held to confor
 - `check.outputsWritten` — partial: Spark is checked one write at a time, as each runs, so a declared output never written is found only when the application ends. It is reported then (a FAILED validation and an error in the driver log) after the job's other writes have happened; with spark.invaract.failOnMissingOutput=true the driver also exits with status 1.
 - `check.schema` — supported: Column names follow spark.sql.caseSensitive.
 - `check.nestedTypes` — supported: array, map and struct are compared structurally, ignoring nullability inside a container.
+- `check.inputFormat` — supported: Each read is named as a write to the same dataset is: a catalog table by its provider (a Hive table is hive, whichever reader Spark plans), a Delta table read by path delta, any other file read by its file format, a JDBC read jdbc, a DataSourceV2 table by its provider, a streaming source by its data source. A read of a third-party relation that names no format is not compared.
 - `check.partitioning` — unsupported: Spark's write commands do carry their partition columns (partitionBy) and the overwrite mode (spark.sql.sources.partitionOverwriteMode), but the adapter does not hand them to the check yet. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `check.csvOptions` — partial: The adapter hands the check the options of each CSV read (HadoopFsRelation, by path or through a USING csv table, and a streaming file source) and each CSV write to a path, into an existing table, or by CREATE TABLE ... USING csv AS SELECT, under the contract's names (sep is delimiter, charset is encoding), with Spark's default for each option the job did not set: a contract declaring header true refuses a job that never set header, since Spark reads and writes without one by default. A streaming CSV sink keeps its options to itself, so they are not compared. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `check.catalogRegistration` — supported: Hive, Delta and Iceberg catalog registrations are recognized. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))

@@ -43,6 +43,7 @@ class CapabilityCheckSpec extends AnyFunSuite {
       |outputs:
       |  - name: out
       |    location: out/path
+      |    format: delta
       |    saveMode: append
       |    catalog:
       |      required: true
@@ -64,6 +65,25 @@ class CapabilityCheckSpec extends AnyFunSuite {
 
   // --- what a contract relies on ---------------------------------------------------------------
 
+  test("required: an input's format is the input format check's, and an output's the output format check's") {
+    def declaring(inputFormat: Option[String], outputFormat: Option[String]): List[String] =
+      ids(CapabilityCheck.required(ContractParser.parse(
+        s"""id: f
+           |version: "1.0.0"
+           |inputs:
+           |  - name: src
+           |    location: in/path
+           |${inputFormat.fold("")(f => s"    format: $f\n")}outputs:
+           |  - name: out
+           |    location: out/path
+           |${outputFormat.fold("")(f => s"    format: $f\n")}""".stripMargin
+      ), VerificationOptions())).filter(_.endsWith("ormat"))
+    assert(declaring(None, None) == Nil)
+    assert(declaring(Some("csv"), None) == List("check.inputFormat"))
+    assert(declaring(None, Some("csv")) == List("check.format"))
+    assert(declaring(Some("csv"), Some("csv")) == List("check.format", "check.inputFormat"))
+  }
+
   test("required: a minimal contract relies only on location and schema checks") {
     assert(ids(CapabilityCheck.required(minimal, VerificationOptions())) == List("check.location", "check.schema"))
   }
@@ -72,14 +92,15 @@ class CapabilityCheckSpec extends AnyFunSuite {
     val required = CapabilityCheck.required(rich, VerificationOptions())
     assert(
       ids(required) == List(
-        "check.inputExistence", "check.location", "check.schema", "check.nestedTypes", "check.format", "check.saveMode",
+        "check.inputExistence", "check.location", "check.schema", "check.nestedTypes", "check.format", "check.inputFormat", "check.saveMode",
         "check.catalogRegistration", "rules.dml", "rules.planShape", "rules.custom", "analysis.sensitivityPropagation"
       )
     )
     val why = whyById(required)
     assert(why("check.inputExistence") == "it declares 1 input(s)")
+    assert(why("check.format") == "output 'out' declares a format")
+    assert(why("check.inputFormat") == "input 'src' declares a format")
     assert(why("check.nestedTypes") == "field 'tags' has a nested type")
-    assert(why("check.format") == "a dataset declares a format")
     assert(why("check.saveMode") == "an output declares a save mode")
     assert(why("check.catalogRegistration") == "a dataset declares a catalog requirement")
     assert(why("rules.dml") == "it declares DML rule(s): forbid_unconditional_delete")

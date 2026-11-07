@@ -405,6 +405,13 @@ object ContractEnforcementRule {
         writeQuery.toList.flatMap(_.collect(recognizedRead))
     ).distinct.toList.map { case (location, schema) => location -> SparkSchemas.toLogicalSchema(schema) }
 
+  /** The format of every recognized read `collectInputSchemas` finds, by the same location, where Spark says what it is
+    * (`SparkPlanAdapter.readFormatOf`), for `check.inputFormat`. */
+  private def collectInputFormats(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): Map[String, String] =
+    (plan :: writeQuery.toList).flatMap(_.collect(Function.unlift { read: LogicalPlan =>
+      recognizedRead.lift(read).flatMap { case (location, _) => SparkPlanAdapter.readFormatOf(read).map(location -> _) }
+    })).toMap
+
   /** The registry is a best-effort aid: it can only ever turn an unresolved
     * boundary into a resolved one, so a failure inside it (a pathologically
     * deep plan overflowing the stack, an unexpected Catalyst shape) must
@@ -576,7 +583,9 @@ object ContractEnforcementRule {
       // plans is an assumption the fingerprint cannot reflect; disclosed with it.
       resolutionNotes = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType).map(_.message),
       // the CSV options each CSV read and write used, Spark's defaults filled in (check.csvOptions)
-      formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList)
+      formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList),
+      // the format each read was made in (check.inputFormat)
+      inputFormats = collectInputFormats(plan, writeInfo.map(_.query))
     )
   }
 
@@ -665,7 +674,8 @@ object ContractEnforcementRule {
                 writeInfo.format,
                 writeInfo.saveMode,
                 SparkSchemas.toLogicalSchema(writeInfo.outputSchema),
-                formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query))
+                formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query)),
+                inputFormats = collectInputFormats(plan, Some(writeInfo.query))
               ),
               inputSchemas,
               translated.plan

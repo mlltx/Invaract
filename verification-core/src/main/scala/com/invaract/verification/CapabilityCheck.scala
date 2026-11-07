@@ -38,6 +38,8 @@ object CapabilityCheck {
     val firstConstrained = contract.outputs.flatMap(_.schema.fields).find(_.constraints.nonEmpty)
     val firstPartitioned = contract.outputs.find(_.partitionKeys.nonEmpty)
     val firstWithCsv = datasets.find(_.csv.exists(_.declared.nonEmpty))
+    val firstOutputFormat = contract.outputs.find(_.format.isDefined)
+    val firstInputFormat = contract.inputs.find(_.format.isDefined)
 
     List(
       when(contract.inputs.nonEmpty, Capability.CheckInputExistence, s"it declares ${contract.inputs.size} input(s)"),
@@ -45,7 +47,8 @@ object CapabilityCheck {
       when(datasets.nonEmpty, Capability.CheckLocation, "it declares dataset locations"),
       when(fields.nonEmpty, Capability.CheckSchema, "it declares field schemas"),
       when(firstNested.isDefined, Capability.CheckNestedTypes, firstNested.map(f => s"field '${f.name}' has a nested type").getOrElse("")),
-      when(datasets.exists(_.format.isDefined), Capability.CheckFormat, "a dataset declares a format"),
+      when(firstOutputFormat.isDefined, Capability.CheckFormat, firstOutputFormat.map(o => s"output '${o.name}' declares a format").getOrElse("")),
+      when(firstInputFormat.isDefined, Capability.CheckInputFormat, firstInputFormat.map(i => s"input '${i.name}' declares a format").getOrElse("")),
       when(contract.outputs.exists(_.saveMode.isDefined), Capability.CheckSaveMode, "an output declares a save mode"),
       when(firstPartitioned.isDefined, Capability.CheckPartitioning, firstPartitioned.map(o => s"output '${o.name}' declares partition keys").getOrElse("")),
       when(firstWithCsv.isDefined, Capability.CheckCsvOptions, firstWithCsv.map(d => s"dataset '${d.name}' declares CSV options").getOrElse("")),

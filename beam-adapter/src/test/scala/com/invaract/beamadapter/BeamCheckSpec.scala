@@ -10,7 +10,9 @@ import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TextIO}
 import org.apache.beam.sdk.io.parquet.ParquetIO
 import org.apache.beam.sdk.options.PipelineOptionsFactory
-import org.apache.beam.sdk.transforms.{Create, ParDo}
+import org.apache.beam.sdk.extensions.avro.coders.AvroCoder
+import org.apache.beam.sdk.transforms.{Create, MapElements, ParDo, SerializableFunction}
+import org.apache.beam.sdk.values.TypeDescriptor
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.collection.mutable.ListBuffer
@@ -352,6 +354,57 @@ class BeamCheckSpec extends AnyFunSuite {
       "    location: out/lines\n" + format.map(f => s"    format: $f\n").getOrElse("")
     ))
 
+  /** The example contract with its `orders` input declared in `format` (none for `None`). */
+  private def contractWithInputFormat(format: Option[String]) =
+    com.invaract.contract.ContractParser.parse(ExampleJob.contractYaml().replace(
+      "    location: in/orders\n    format: parquet\n",
+      "    location: in/orders\n" + format.map(f => s"    format: $f\n").getOrElse("")
+    ))
+
+  private def linesToParquet(p: Pipeline): Unit =
+    p.apply("ReadLines", TextIO.read().from("/data/in/orders/*.csv"))
+      .apply("Parse", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new ParseOrderLine)).setCoder(AvroCoder.of(OrdersSchema))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+
+  test("an input read in the format its contract declares passes; in another, the job is refused naming the read") {
+    val p = pipeline
+    ordersToParquet(p)
+    InvaractBeam.enforce(contractWithInputFormat(Some("PARQUET"))).verify(p) // does not throw
+    val q = pipeline
+    ordersToParquet(q)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithInputFormat(Some("csv"))).verify(q))
+    assert(e.result.violations.map(v => (v.violationType, v.expected, v.actual)) == List((ViolationType.InputFormatMismatch, Some("csv"), Some("parquet"))))
+    val r = pipeline
+    ordersToParquet(r)
+    InvaractBeam.enforce(contractWithInputFormat(None)).verify(r) // an input that declares no format is not compared
+  }
+
+  test("a text read satisfies an input declared csv, json or text, because the graph cannot tell them apart, and no other format") {
+    Seq("csv", "json", "text").foreach { declared =>
+      val p = pipeline
+      linesToParquet(p)
+      InvaractBeam.enforce(contractWithInputFormat(Some(declared))).verify(p) // does not throw
+    }
+    val p = pipeline
+    linesToParquet(p)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithInputFormat(Some("avro"))).verify(p))
+    assert(e.result.violations.map(v => (v.violationType, v.actual)) == List((ViolationType.InputFormatMismatch, Some("text"))))
+  }
+
+  test("a text read is reported in the declared text-family format only for the input it is, and stays text otherwise") {
+    val p = pipeline
+    linesToParquet(p)
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(BeamCheck.inputFormatsAsDeclared(contractWithInputFormat(Some("json")), w) == Map("/data/in/orders" -> "json"))
+    assert(BeamCheck.inputFormatsAsDeclared(contractWithInputFormat(None), w) == Map("/data/in/orders" -> "text"))
+    assert(BeamCheck.inputFormatsAsDeclared(ExampleJob.contract(inputLocation = "in/elsewhere"), w) == Map("/data/in/orders" -> "text"))
+    // a read in a format of its own is reported as it is, whatever the input declares
+    val q = pipeline
+    ordersToParquet(q)
+    val Seq(parquet) = BeamTranslator.translate(q).writes
+    assert(BeamCheck.inputFormatsAsDeclared(contractWithInputFormat(Some("csv")), parquet) == Map("/data/in/orders" -> "parquet"))
+  }
+
   test("a text write satisfies a declared csv, json or text format, because the graph cannot tell them apart") {
     Seq("csv", "json", "text").foreach { declared =>
       val p = pipeline
@@ -554,5 +607,16 @@ class BeamCheckSpec extends AnyFunSuite {
       .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(upper)).to("/data/out/report"))
     val e = intercept[ContractViolationException](InvaractBeam.enforce(ExampleJob.contract()).verify(p))
     assert(e.result.violations.map(_.violationType).contains(ViolationType.MissingOutputField), "'ID' is not the declared 'id'")
+  }
+}
+
+/** A line `id,amount` as an order record: a pipeline that reads its orders as text and parses them in its own code. */
+final class ParseOrderLine extends SerializableFunction[String, GenericRecord] {
+  override def apply(line: String): GenericRecord = {
+    val Array(id, amount) = line.split(",")
+    val record = new org.apache.avro.generic.GenericData.Record(ExampleJob.OrdersSchema)
+    record.put("id", id.toLong)
+    record.put("amount", amount.toLong)
+    record
   }
 }

@@ -67,6 +67,10 @@ class BeamTranslatorSpec extends AnyFunSuite {
     assert(readsIn(byLocation("/data/out/report").plan) == List("/data/in/orders"))
     assert(readsIn(byLocation("/data/out/lines").plan) == List("/data/in/lines"))
     assert(readsIn(byLocation("/data/out/avro/part").plan) == List("/data/in/avro"), "an Avro write is located by the prefix the job passed to .to()")
+    // each read's format, as the IO transform states it (check.inputFormat)
+    assert(byLocation("/data/out/report").readFormats == Map("/data/in/orders" -> "parquet"))
+    assert(byLocation("/data/out/lines").readFormats == Map("/data/in/lines" -> "text"))
+    assert(byLocation("/data/out/avro/part").readFormats == Map("/data/in/avro" -> "avro"))
   }
 
   /** A location without the drive letter Beam adds to a text write's prefix on Windows (`D:/data/x` is `/data/x`). */
@@ -228,7 +232,7 @@ class BeamTranslatorSpec extends AnyFunSuite {
       override def fileWrite(unit: BeamStep): IoWrite = IoWrite.Unverifiable("none")
       override def isInJobData(step: BeamStep): Boolean = false
       override def isUnion(step: BeamStep): Boolean = false
-      override def isTextParser(step: BeamStep): Boolean = false
+      override def textParserFormat(step: BeamStep): Option[String] = None
       override def textFormatterFormat(step: BeamStep): Option[String] = None
       override def recognisesShape(step: BeamStep): Boolean = false
       override def shape(step: BeamStep): Option[SchemaShape] = None

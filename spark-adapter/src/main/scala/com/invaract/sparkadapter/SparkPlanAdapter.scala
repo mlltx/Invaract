@@ -454,6 +454,38 @@ private[sparkadapter] object SparkPlanAdapter {
     case _                                => None
   }
 
+  /** The format a recognized read is made in (`check.inputFormat`), named as a write to the same dataset is named
+    * (`WriteCommandSupport`), so one contract means the same thing on both sides: a catalog table by its provider (`hive`,
+    * `delta`, `parquet`, ...), whatever reader Spark plans for it (a Parquet or ORC Hive table is read as files, but is still
+    * `hive`); a Delta table read by its path `delta`, though Spark reads its files as Parquet; any other file relation by its
+    * file format (`formatOf`); a JDBC relation `jdbc`; a DataSourceV2 table by its `provider` property; a streaming source
+    * by its data source. `None` for a read Spark says nothing reliable about, which is then not checked. Keyed, by
+    * `ContractEnforcementRule`, by the same location the read translates to. */
+  private[sparkadapter] def readFormatOf(plan: LogicalPlan): Option[String] = plan match {
+    case lr: LogicalRelation =>
+      lr.catalogTable.flatMap(_.provider).orElse(lr.relation match {
+        case h: HadoopFsRelation if isDeltaIndex(h)                   => Some("delta")
+        case h: HadoopFsRelation                                       => formatOf(h.fileFormat)
+        case other if other.getClass.getSimpleName == "JDBCRelation" => Some("jdbc")
+        case _                                                         => None
+      })
+    case htr: HiveTableRelation       => Some(htr.tableMeta.provider.getOrElse("hive"))
+    case dsv2: DataSourceV2Relation   => tableLocationAndFormat(dsv2.table)._2
+    case sr: StreamingRelation        => streamingSourceFormatOf(sr)
+    case sr2: StreamingRelationV2     => tableLocationAndFormat(sr2.table)._2.orElse(Option(sr2.sourceName))
+    case _                            => None
+  }
+
+  /** A Delta table's files, as Spark reads them: a `HadoopFsRelation` over Delta's own file index (`TahoeLogFileIndex`,
+    * `TahoeBatchFileIndex`, ...), named by class, as this module names every Delta-internal class it needs no API of. */
+  private def isDeltaIndex(h: HadoopFsRelation): Boolean = h.location.getClass.getName.startsWith("org.apache.spark.sql.delta.")
+
+  /** A legacy streaming source's format: its data source's registered name, which is what the job named
+    * (`readStream.format("csv")`); its class name when the job named it by class, as the data source then reports itself. */
+  private def streamingSourceFormatOf(sr: StreamingRelation): Option[String] =
+    scala.util.Try(sr.dataSource.providingClass.getConstructor().newInstance().asInstanceOf[AnyRef]).toOption.flatMap(formatOf)
+      .orElse(Some(sr.dataSource.className).filterNot(_.contains(".")))
+
   /** Normalizes Spark's `SaveMode` enum to the same lowercase string
     * vocabulary a contract's `saveMode` field uses ("append", "overwrite",
     * "ignore", "error") — mirroring `formatOf`'s convention of matching

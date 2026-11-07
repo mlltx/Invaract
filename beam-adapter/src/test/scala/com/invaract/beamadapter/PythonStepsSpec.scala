@@ -185,7 +185,7 @@ class PythonStepsSpec extends AnyFunSuite {
     assert(PythonSteps.isUnion(step("S", "apache_beam.transforms.core.Flatten")) && PythonSteps.isUnion(step("S", "beam:transform:flatten:v1")))
     assert(!PythonSteps.isUnion(step("S", "apache_beam.transforms.util.CoGroupByKey")))
     val any = step("S", "x")
-    assert(!PythonSteps.isFileWrite(any) && !PythonSteps.isTextParser(any) && PythonSteps.textFormatterFormat(any).isEmpty)
+    assert(!PythonSteps.isFileWrite(any) && PythonSteps.textParserFormat(any).isEmpty && PythonSteps.textFormatterFormat(any).isEmpty)
     assert(!PythonSteps.recognisesShape(any) && PythonSteps.shape(any).isEmpty)
     assert(PythonSteps.fileWrite(any).isInstanceOf[IoWrite.Unverifiable])
   }

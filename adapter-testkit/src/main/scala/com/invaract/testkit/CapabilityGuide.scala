@@ -120,8 +120,13 @@ object CapabilityGuide {
         guide = "/reference/contract-format/"
       ),
       CheckFormat -> e(
-        "The file format matches",
+        "The output's file format matches",
         "Stops a write in a different format from the one the contract declares, such as CSV where it says Parquet (`OUTPUT_FORMAT_MISMATCH`).",
+        guide = "/reference/contract-format/"
+      ),
+      CheckInputFormat -> e(
+        "Inputs are read in their declared format",
+        "Stops a job that reads an input in a different format from the one the contract declares, such as Parquet where it says CSV (`INPUT_FORMAT_MISMATCH`).",
         guide = "/reference/contract-format/"
       ),
       CheckSaveMode -> e(

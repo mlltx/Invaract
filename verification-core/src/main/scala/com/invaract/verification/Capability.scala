@@ -63,6 +63,7 @@ object Capability {
   val CheckSchema = Capability("check.schema", StructuralChecks, "Field presence, type and nullability of inputs and outputs.", enforcesContract = true)
   val CheckNestedTypes = Capability("check.nestedTypes", StructuralChecks, "Nested types (array, map, struct) are compared structurally, not just by keyword.", enforcesContract = true)
   val CheckFormat = Capability("check.format", StructuralChecks, "A declared output format is checked (OUTPUT_FORMAT_MISMATCH).", enforcesContract = true)
+  val CheckInputFormat = Capability("check.inputFormat", StructuralChecks, "A declared input format is checked against the format the job reads it in (INPUT_FORMAT_MISMATCH).", enforcesContract = true)
   val CheckSaveMode = Capability("check.saveMode", StructuralChecks, "A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH).", enforcesContract = true)
   val CheckPartitioning = Capability("check.partitioning", StructuralChecks, "An output's declared partitioning is checked: its partition keys, in order, and, for an overwrite, its partitionOverwriteMode (OUTPUT_PARTITIONING_MISMATCH).", enforcesContract = true)
   val CheckCsvOptions = Capability("check.csvOptions", StructuralChecks, "A dataset's declared CSV options (delimiter, header, encoding, quote, escape, nullValue, dateFormat, timestampFormat) are checked against the options its reads and writes use (INPUT_CSV_OPTIONS_MISMATCH, OUTPUT_CSV_OPTIONS_MISMATCH).", enforcesContract = true)
@@ -101,7 +102,7 @@ object Capability {
   /** Every capability, in the order the matrix shows them (category order, then declaration order). */
   val all: List[Capability] = List(
     ReadBatch, ReadStreaming, WriteBatch, WriteStreaming, WriteRowLevelDml, WriteStateChange,
-    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckPartitioning, CheckCsvOptions, CheckCatalogRegistration, CheckRuntimeDataQuality,
+    CheckInputExistence, CheckLocation, CheckOutputsWritten, CheckSchema, CheckNestedTypes, CheckFormat, CheckInputFormat, CheckSaveMode, CheckPartitioning, CheckCsvOptions, CheckCatalogRegistration, CheckRuntimeDataQuality,
     RulesDml, RulesPlanShape, RulesCustom,
     AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,

@@ -64,6 +64,15 @@ object Scenarios {
        |${if (otherOutputs.isEmpty) "" else otherOutputs + "\n"}${if (rules.isEmpty) "" else "rules:\n" + rules + "\n"}""".stripMargin
   )
 
+  /** The orders input, declaring the format `format`. */
+  private def ordersIn(format: String): String =
+    s"""  - name: orders
+       |    location: in/orders
+       |    format: $format
+       |    schema:
+       |      fields:
+       |$ordersContractFields""".stripMargin
+
   private val passThrough = List(OutColumn("id", FromInput(0, "id")), OutColumn("total", NonNullLong(1)))
 
   private def job(
@@ -768,6 +777,21 @@ object Scenarios {
       "The contract itself is broken, for example it contradicts itself. Invaract rejects it up front rather than checking jobs against nonsense.",
       Set.empty,
       ContractParser.parse("id: broken\nversion: \"1.0.0\"\n"), job(), defaults, Expectation.Reject(Set(ViolationType.InvalidContract))
+    ),
+    // appended, so the scenarios before them keep the numbers adapter documents cite them by
+    Scenario(
+      "input-format-matches",
+      "an input read in the format the contract declares is allowed",
+      "The contract says the orders are Parquet files and the job reads them as Parquet. Invaract lets it through.",
+      Set(Capability.CheckInputFormat),
+      contract(inputs = ordersIn("parquet")), job(), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "input-format-mismatch",
+      "an input read in a different format than the contract declares is blocked",
+      "The contract says the orders arrive as CSV files, the format their producer publishes, but the job reads the folder as Parquet: it would be reading something other than the orders the contract describes. Invaract stops it.",
+      Set(Capability.CheckInputFormat),
+      contract(inputs = ordersIn("csv")), job(), defaults, Expectation.Reject(Set(ViolationType.InputFormatMismatch))
     )
   )
 

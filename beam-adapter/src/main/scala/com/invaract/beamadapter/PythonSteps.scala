@@ -175,7 +175,7 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
   // transform whose columns its portable form states
   override def isFileWrite(step: BeamStep): Boolean = false
   override def fileWrite(unit: BeamStep): IoWrite = IoWrite.Unverifiable(s"${unit.name}: not a file write")
-  override def isTextParser(step: BeamStep): Boolean = false
+  override def textParserFormat(step: BeamStep): Option[String] = None
   override def textFormatterFormat(step: BeamStep): Option[String] = None
   override def recognisesShape(step: BeamStep): Boolean = false
   override def shape(step: BeamStep): Option[SchemaShape] = None

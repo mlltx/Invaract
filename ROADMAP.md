@@ -4061,6 +4061,10 @@ Extend verification engine to support multiple execution engines.
   - [x] SQLite inputs and outputs through ADBC (`invaract[sqlite]`, adbc 1.2 or later): location
         `sqlite:///<path>/<table>`, format `jdbc`; staged in a private database file and published in one transaction
         on the target, which a refused run never touches; dates, timestamps and decimals stored as text and read back typed
+  - [x] Input formats (capability `check.inputFormat`, `INPUT_FORMAT_MISMATCH`): an input's declared `format` checked against
+        the format each read uses, on every adapter (Spark: a read named as a write to the same dataset is; Beam: the IO, or
+        the parser a text read goes to, a text read satisfying csv, json or text; Python: the package's own read, a
+        disagreeing `format=` refused before anything is read); dry runs draft each input's format
   - [x] Google Cloud Storage, Azure and a real HDFS cluster verified end to end in CI (`pythonio-storage`: fake-gcs-server,
         Azurite, a single-node HDFS): files, partitions, Delta and Iceberg. Found and fixed: `az://` never worked (pyarrow
         knows no `az://`), a Delta table on HDFS was staged as a local path, and GCS emulators named by

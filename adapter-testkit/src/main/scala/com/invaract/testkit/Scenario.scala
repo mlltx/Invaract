@@ -17,7 +17,12 @@ import com.invaract.verification.{Capability, VerificationOptions}
   * With `csvOptions` set the input is a CSV file the job reads with those options (Spark's CSV option names: `delimiter`,
   * `header`, ...), which is what a contract's `csv:` options ask about; an adapter materializes it written the same way.
   */
-final case class ScenarioInput(location: String, schema: LogicalSchema, rows: List[Map[String, Any]] = Nil, csvOptions: Map[String, String] = Map.empty)
+final case class ScenarioInput(location: String, schema: LogicalSchema, rows: List[Map[String, Any]] = Nil, csvOptions: Map[String, String] = Map.empty) {
+
+  /** The format the job reads the input in, under the contract format's spelling: `csv` for an input with `csvOptions`,
+    * otherwise `parquet`, which is how every adapter materializes an input. What a contract's input `format` asks about. */
+  def format: String = if (csvOptions.nonEmpty) "csv" else "parquet"
+}
 
 /** Where a scenario's job writes. `format` and `saveMode` use the engine-neutral spellings the
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).

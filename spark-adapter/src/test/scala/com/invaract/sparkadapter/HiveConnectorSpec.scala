@@ -183,6 +183,17 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(result.diagnostics.isEmpty)
   }
 
+  // --- Read: a Hive table's format (check.inputFormat) is `hive` whichever reader Spark plans for it, the name a write
+  // to the table reports, so one contract means the same for both. ---
+
+  test("a Hive table is read as hive, whether Spark reads it natively or converts it to its Parquet reader") {
+    spark.sql("CREATE TABLE hive_format_text_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
+    spark.sql("CREATE TABLE hive_format_parquet_tbl (id BIGINT, value BIGINT) STORED AS PARQUET")
+    def formats(table: String) = spark.table(table).queryExecution.analyzed.collect(Function.unlift(SparkPlanAdapter.readFormatOf)).toList
+    assert(formats("hive_format_text_tbl") == List("hive"), "HiveTableRelation")
+    assert(formats("hive_format_parquet_tbl") == List("hive"), "a LogicalRelation over Spark's Parquet reader, with conversion on")
+  }
+
   // --- Read: a Hive PARQUET table with metastore conversion OFF - confirmed
   // to take the SAME HiveTableRelation path as a TEXTFILE table, not the
   // LogicalRelation path - the format-conversion setting, not the on-disk

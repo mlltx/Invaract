@@ -80,7 +80,8 @@ object PythonIoConformanceAdapter {
   private def nullsOf(f: LogicalField): Long = if (f.nullable) 1L else 0L
 
   def readRequest(contract: Contract, input: ScenarioInput): String =
-    json((List("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "schema" -> input.schema.fields.map(column(_, withNulls = true))) ++
+    json((List("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "format" -> input.format,
+      "schema" -> input.schema.fields.map(column(_, withNulls = true))) ++
       (if (input.csvOptions.isEmpty) Nil else List("csv" -> input.csvOptions))): _*)
 
   /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. An output the scenario

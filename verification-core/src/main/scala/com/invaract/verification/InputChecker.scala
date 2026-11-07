@@ -175,6 +175,33 @@ private[invaract] object InputChecker {
     }
   }
 
+  /** `check.inputFormat`: each read's format, as the adapter reports it by the read's location (`CheckedWrite.inputFormats`),
+    * against the format the declared input it reads declares. Both sides must be known, as for an output's format: an
+    * input that declares no format, or a read whose format the adapter does not report, is not compared; case is ignored.
+    * A read that is no declared input is `UNDECLARED_INPUT`'s concern, not this one's. */
+  def formatFindings(contract: Contract, reads: List[Read], used: Map[String, String]): List[Violation] = {
+    val declared = Declared(contract.inputs)
+    for {
+      read <- firstAtEachLocation(reads)
+      index <- declared.index.matchingIndicesOf(LocationMatching.namesOf(read.dataset.location, read.catalog)).headOption.toList
+      finding <- formatFinding(declared.inputs(index), used.get(read.dataset.location), read.dataset.location).toList
+    } yield finding
+  }
+
+  /** `INPUT_FORMAT_MISMATCH` when `input` declares a format and the read at `location` was made in another, `actual`; nothing
+    * when either is unknown (the both-sides-known rule) or they agree, case aside. For an adapter that checks each read as it
+    * is made, against the input it names. */
+  def formatFinding(input: Dataset, actual: Option[String], location: String): Option[Violation] =
+    for {
+      expected <- input.format
+      read <- actual
+      if !expected.equalsIgnoreCase(read)
+    } yield Violations.inputFormatMismatch(expected, read, location)
+
+  /** `reads`, the first at each location, in order: a dataset read twice is one finding, not two. */
+  private def firstAtEachLocation(reads: List[Read]): List[Read] =
+    reads.foldLeft(List.empty[Read])((kept, read) => if (kept.exists(_.dataset.location == read.dataset.location)) kept else read :: kept).reverse
+
   /** Catalog findings, read side: each `ir.Read` already carries its own resolved
     * `CatalogIdentity` (populated at translation time), matched to a declared
     * input by location or table name - the first read (in plan order) that matches.
