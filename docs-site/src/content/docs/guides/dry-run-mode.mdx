@@ -55,6 +55,7 @@ intend before treating it as a finished document.
    inputs:
    - name: input
      location: /home/user/.../demo/input/sample.csv
+     format: csv
      schema:
        fields:
        - name: id
@@ -65,6 +66,9 @@ intend before treating it as a finished document.
          type: integer
          required: true
          nullable: true
+     description: 'Observed: contributes to at least one produced output column.'
+     csv:
+       header: true
    outputs:
    - name: output
      location: /home/user/.../demo/output/dry_run_result.parquet
