@@ -204,14 +204,20 @@ def test_an_iceberg_output_with_its_warehouse_on_the_store(store, monkeypatch, t
 
     monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__TYPE", "sql")
     monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__URI", f"sqlite:///{tmp_path}/catalog.db")
-    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__WAREHOUSE", f"{store.root}/warehouse")
+    warehouse = f"{store.root}/warehouse"
     if store.name == "gcs":
+        # pyiceberg's GCS file IO has no anonymous mode: an emulator takes any token
         monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__GCS__SERVICE__HOST", os.environ["STORAGE_EMULATOR_HOST"])
+        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__GCS__OAUTH2__TOKEN", "emulator")
+        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__GCS__OAUTH2__TOKEN_EXPIRES_AT", str(4_102_444_800_000))
     if store.name == "azure":
-        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__ADLS__ACCOUNT_NAME", AZURITE_ACCOUNT)
-        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__ADLS__ACCOUNT_KEY", AZURITE_KEY)
-        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__ADLS__BLOB_STORAGE_AUTHORITY", os.environ["AZURITE_BLOB_STORAGE_URL"].split("://")[1])
-        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__ADLS__BLOB_STORAGE_SCHEME", "http")
+        # pyiceberg knows Azure as abfs[s]://<container>@<account>.dfs.core.windows.net, not az://
+        warehouse = f"abfs://{store.base.split('/')[0]}@{AZURITE_ACCOUNT}.dfs.core.windows.net/warehouse"
+        authority = os.environ["AZURITE_BLOB_STORAGE_URL"].split("://")[1]
+        for key, value in {"ACCOUNT_NAME": AZURITE_ACCOUNT, "ACCOUNT_KEY": AZURITE_KEY, "BLOB_STORAGE_AUTHORITY": authority,
+                           "BLOB_STORAGE_SCHEME": "http", "DFS_STORAGE_AUTHORITY": authority, "DFS_STORAGE_SCHEME": "http"}.items():
+            monkeypatch.setenv(f"PYICEBERG_CATALOG__LAKE__ADLS__{key}", value)
+    monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__WAREHOUSE", warehouse)
     monkeypatch.setattr(pyiceberg.catalog, "_ENV_CONFIG", Config())
     run_writes(REPORT, location="lake.sales.report", fmt="iceberg")
     assert any(f.startswith("warehouse/") and f.endswith(".parquet") for f in store.files())

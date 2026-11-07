@@ -773,7 +773,9 @@ jobs:
       - name: Start the Google Cloud Storage and Azure emulators
         shell: bash
         run: |
-          docker run -d --name gcs -p 4443:4443 fsouza/fake-gcs-server:1.52.2 -scheme http -backend memory -public-host 127.0.0.1:4443
+          # arrow-rs's fork of fake-gcs-server, as arrow-rs's own CI uses: delta-rs (object_store) uploads through GCS's XML
+          # API, which upstream fake-gcs-server answers with "invalid uploadType"
+          docker run -d --name gcs -p 4443:4443 tustvold/fake-gcs-server -scheme http -backend memory -public-host 127.0.0.1:4443
           docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.35.0 \
             azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --loose --skipApiVersionCheck
 
