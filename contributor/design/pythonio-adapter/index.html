@@ -872,7 +872,7 @@ its wheel installed and ran the example job. The Linux wheels were tagged <code 
 <code dir="auto">manylinux_2_34_aarch64</code>. The macOS wheels were tagged <code dir="auto">macosx_26_0_arm64</code> and <code dir="auto">macosx_15_0_x86_64</code>: the linker records
 the runner’s own release as the minimum, which would have kept the native wheel from every Mac older than the runner. The
 workflow now links them for macOS 11, checks each wheel’s tag, and installs each native wheel on an older runner image
-(Ubuntu 22.04, macOS 14) before publishing.</li>
+(Ubuntu 22.04, macOS 15) before publishing.</li>
 <li><strong>One version.</strong> The package, the checker and the lint are released under one tag, so <code dir="auto">python_wheel.py version</code> refuses
 a release where they differ, and each <code dir="auto">pyproject.toml</code> reads its package’s <code dir="auto">__version__</code> rather than stating it again.</li>
 </ul>
@@ -1020,9 +1020,9 @@ but no emulator runs them in CI yet (open in ROADMAP.md).</li>
 in; pyarrow’s own Hadoop file system (libhdfs) is not run in CI.</li>
 <li>Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3’s conditional writes, which moto accepted;
 not checked against AWS itself, nor two runs racing.</li>
-<li>The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
-CI offers are macOS 14 and Ubuntu 22.04 (glibc 2.35). An Intel Mac older than macOS 15 likewise: macOS 15 is the only
-Intel runner image.</li>
+<li>The native program on a Mac older than macOS 15, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
+CI offers are macOS 15 (GitHub retired macOS 14’s on 2026-11-02; it ran there until then) and Ubuntu 22.04 (glibc 2.35).
+An Intel Mac older than macOS 15 likewise: macOS 15 is the only Intel runner image.</li>
 <li>The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (<code dir="auto">--enable-url-protocols=http,https</code>
 is set for it).</li>
 </ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/PYTHONIO_ADAPTER.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
