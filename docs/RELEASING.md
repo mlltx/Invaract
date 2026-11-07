@@ -191,7 +191,7 @@ minimum OS version. A checker built on a newer runner image gets a narrower tag,
 more than it runs on. On macOS the linker records the build machine's own release as that minimum unless
 told otherwise, so the workflow links the checker for macOS 11 (`MACOSX_DEPLOYMENT_TARGET` and
 `-mmacosx-version-min`), and checks each wheel's tag. A further job installs each native wheel on an
-older runner image than the one that built it (Ubuntu 22.04, macOS 14) with Python 3.10 and runs the
+older runner image than the one that built it (Ubuntu 22.04, macOS 15) with Python 3.10 and runs the
 example job, so a wheel whose tag pip accepts there but whose checker does not run is caught before it
 is published. `python_wheel.py version` refuses a release whose package, checker
 (`pythonio-adapter/build.sbt`) and lint versions differ, and the workflow refuses a tag that does not

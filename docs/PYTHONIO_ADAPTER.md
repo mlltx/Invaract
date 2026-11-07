@@ -354,7 +354,7 @@ Milestone 5 (design section 10) is the user guide and what a release needs:
   `manylinux_2_34_aarch64`. The macOS wheels were tagged `macosx_26_0_arm64` and `macosx_15_0_x86_64`: the linker records
   the runner's own release as the minimum, which would have kept the native wheel from every Mac older than the runner. The
   workflow now links them for macOS 11, checks each wheel's tag, and installs each native wheel on an older runner image
-  (Ubuntu 22.04, macOS 14) before publishing.
+  (Ubuntu 22.04, macOS 15) before publishing.
 - **One version.** The package, the checker and the lint are released under one tag, so `python_wheel.py version` refuses
   a release where they differ, and each `pyproject.toml` reads its package's `__version__` rather than stating it again.
 
@@ -506,8 +506,8 @@ What was built:
   in; pyarrow's own Hadoop file system (libhdfs) is not run in CI.
 - Concurrent writers to one Delta table on real S3: delta-rs 1.x commits with S3's conditional writes, which moto accepted;
   not checked against AWS itself, nor two runs racing.
-- The native program on a Mac older than macOS 14, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
-  CI offers are macOS 14 and Ubuntu 22.04 (glibc 2.35). An Intel Mac older than macOS 15 likewise: macOS 15 is the only
-  Intel runner image.
+- The native program on a Mac older than macOS 15, and on Linux with glibc 2.34 exactly (RHEL 9): the oldest runner images
+  CI offers are macOS 15 (GitHub retired macOS 14's on 2026-11-02; it ran there until then) and Ubuntu 22.04 (glibc 2.35).
+  An Intel Mac older than macOS 15 likewise: macOS 15 is the only Intel runner image.
 - The HTTPS path of the HTTP sink natively: the cases use plain HTTP to a local receiver (`--enable-url-protocols=http,https`
   is set for it).
