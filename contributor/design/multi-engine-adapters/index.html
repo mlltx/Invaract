@@ -517,7 +517,7 @@ a relative one matches any location ending in it, so a contract that must distin
 declares it absolute.</p>
 <p><strong>Formats and catalog technologies use canonical names too.</strong> <code dir="auto">ir.Write.format</code> and
 <code dir="auto">CatalogIdentity.technology</code> are <code dir="auto">com.invaract.contract.Formats</code> (<code dir="auto">parquet</code>, <code dir="auto">orc</code>, <code dir="auto">avro</code>, <code dir="auto">csv</code>, <code dir="auto">json</code>,
-<code dir="auto">text</code>, <code dir="auto">table</code>, <code dir="auto">delta</code>, <code dir="auto">iceberg</code>, <code dir="auto">hudi</code>, <code dir="auto">hive</code>, <code dir="auto">jdbc</code>, <code dir="auto">bigquery</code>, <code dir="auto">kafka</code>) and
+<code dir="auto">text</code>, <code dir="auto">excel</code>, <code dir="auto">feather</code>, <code dir="auto">table</code>, <code dir="auto">delta</code>, <code dir="auto">iceberg</code>, <code dir="auto">hudi</code>, <code dir="auto">hive</code>, <code dir="auto">jdbc</code>, <code dir="auto">bigquery</code>, <code dir="auto">kafka</code>) and
 <code dir="auto">CatalogTechnologies</code> (<code dir="auto">hive</code>, <code dir="auto">delta</code>, <code dir="auto">iceberg</code>, <code dir="auto">hudi</code>, <code dir="auto">jdbc</code>, <code dir="auto">glue</code>, <code dir="auto">bigquery</code>, <code dir="auto">in-memory</code>). Both are
 open in the same way as write modes: an engine whose format is none of these reports its own name, and a
 contract declaring a name outside the set still validates, with a warning. What an adapter must not do is

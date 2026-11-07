@@ -4125,6 +4125,24 @@ dynamic overwrites; partitioned inputs read with their keys typed as declared. S
 in a session-temporary table and published in one transaction (created, <code dir="auto">TRUNCATE</code>d for overwrite, inserted,
 committed), a refused run rolled back. Tested against a real server in CI, on the oldest and newest driver</li>
 <li class="task-list-item"><input type="checkbox" disabled> Further databases (MySQL, SQL Server, Snowflake, …) through their ADBC drivers, the same staging</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> pandas frames written as declared where pandas cannot hold the declared type and no value changes (integers with
+missing values, dates, decimals, empty columns; never across kinds or time zones); <code dir="auto">groupby</code> keys in the index written
+as columns; refusals noted in pandas’ terms; <code dir="auto">invaract.read(..., dtype_backend=)</code>. Other frame libraries unchanged</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> pandas, second pass: dry runs write named index levels as <code dir="auto">to_parquet</code> does and give <code dir="auto">Decimal</code> columns precision 38;
+<code dir="auto">invaract.check(frame, name)</code> (check-only, no run, no events); <code dir="auto">invaract.read(..., chunksize=)</code> for every input kind;
+nested declared types as conversion targets; sparse columns; clear errors for duplicate and <code dir="auto">MultiIndex</code> column names;
+notes for missing values in required columns, <code dir="auto">period</code> and <code dir="auto">timedelta</code></li>
+<li class="task-list-item"><input type="checkbox" checked disabled> CSV options in the contract (<code dir="auto">csv:</code> on a dataset, Spark’s option names; capability <code dir="auto">check.csvOptions</code>): the Python
+package reads and writes with them and reports what it used; refusals <code dir="auto">INPUT_CSV_OPTIONS_MISMATCH</code>,
+<code dir="auto">OUTPUT_CSV_OPTIONS_MISMATCH</code>; dry runs draft them. Beam declares it unsupported for now; Spark checks it (below)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Spark: hand a CSV read’s and write’s options to <code dir="auto">check.csvOptions</code> (<code dir="auto">CsvOptionsSupport</code>; Spark’s defaults stand
+for options a job leaves unset; a streaming CSV sink’s options are not reported, so the capability is <code dir="auto">partial</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> JSON lines (<code dir="auto">json</code>), ORC, Avro (<code dir="auto">invaract[avro]</code>), Feather and Excel (<code dir="auto">invaract[excel]</code>) inputs and outputs, laid out
+as Spark lays them out and partitioned Hive-style like Parquet; <code dir="auto">excel</code> and <code dir="auto">feather</code> added to the canonical formats;
+a location’s extension names its format when nothing else does</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> SQLite inputs and outputs through ADBC (<code dir="auto">invaract[sqlite]</code>, adbc 1.2 or later): location
+<code dir="auto">sqlite:///&#x3C;path>/&#x3C;table></code>, format <code dir="auto">jdbc</code>; staged in a private database file and published in one transaction
+on the target, which a refused run never touches; dates, timestamps and decimals stored as text and read back typed</li>
 <li class="task-list-item"><input type="checkbox" disabled> <strong>Follow-fast, committed until delivered:</strong> Google Cloud Storage, Azure and a real HDFS cluster verified end to end
 (emulators or a cluster in CI); the code path is the same libraries’, untested</li>
 </ul>

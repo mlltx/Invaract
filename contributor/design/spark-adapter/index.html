@@ -499,6 +499,22 @@ declared unsupported here, so a contract that declares partition keys is refused
 (<code dir="auto">InsertIntoHadoopFsRelationCommand.partitionColumns</code>, Delta’s and Iceberg’s
 partitioning, <code dir="auto">spark.sql.sources.partitionOverwriteMode</code>); handing it to the
 pipeline as <code dir="auto">CheckedWrite.partitioning</code> is the follow-up ROADMAP lists.</p>
+<p><strong>CSV options.</strong> <code dir="auto">check.csvOptions</code> (a dataset’s declared <code dir="auto">csv:</code> options,
+<code dir="auto">INPUT_CSV_OPTIONS_MISMATCH</code>/<code dir="auto">OUTPUT_CSV_OPTIONS_MISMATCH</code>) is declared <code dir="auto">partial</code>.
+<code dir="auto">CsvOptionsSupport</code> hands the pipeline, as <code dir="auto">CheckedWrite.formatOptions</code> by location, the options of each
+CSV read (<code dir="auto">HadoopFsRelation.options</code>, by path or through a <code dir="auto">USING csv</code> table, and a streaming file
+source’s <code dir="auto">DataSource.options</code>) and of each CSV write (<code dir="auto">InsertIntoHadoopFsRelationCommand.options</code>, for a
+write to a path or into an existing table, and <code dir="auto">CreateDataSourceTableAsSelectCommand</code>’s
+<code dir="auto">table.storage.properties</code>). Each is under the contract’s name (<code dir="auto">sep</code> is <code dir="auto">delimiter</code>, <code dir="auto">charset</code> is
+<code dir="auto">encoding</code>, the spelling Spark’s own <code dir="auto">CSVOptions</code> reads first winning), and every option the job left
+unset is reported as Spark’s default (<code dir="auto">SparkDefaults</code>: comma, no header, UTF-8, <code dir="auto">"</code>, <code dir="auto">\</code>, an empty
+string for a missing value, <code dir="auto">yyyy-MM-dd</code>, Spark’s default timestamp pattern). Defaults matter: a
+contract declaring <code dir="auto">header: true</code> against a job that never set <code dir="auto">header</code> is a real mismatch, since Spark
+then reads the header line as data. A dry run’s draft declares the options the job set and <code dir="auto">header</code>,
+whose default differs between engines (pyarrow reads a header line by default; Spark does not). Not
+covered: a streaming CSV sink (<code dir="auto">FileStreamSink</code> keeps its options in a constructor parameter that is not
+a field), whose options are therefore not compared. Tests: <code dir="auto">SparkCsvOptionsSpec</code> (a real session), and
+the <code dir="auto">csv-*</code> conformance scenarios.</p>
 <p><strong>Not the runtime check.</strong> <code dir="auto">VerificationOptions.runtimeDataQuality</code>
 (<code dir="auto">spark.invaract.runtimeDataQuality</code>, capability <code dir="auto">check.runtimeDataQuality</code>)
 holds the <em>rows</em> a write puts in an output to the same constraints, which
