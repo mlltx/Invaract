@@ -420,6 +420,10 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 - **Formats**: Parquet, CSV, Delta Lake (`delta`), Iceberg (`iceberg`) and PostgreSQL tables (`jdbc`), for reading and
   writing. A write uses the format the contract declares for the output; otherwise `jdbc` for a `postgresql://` location
   and Parquet for any other.
+- **CSV layout**: a CSV dataset is read and written with its contract's `csv:` options (delimiter, header, encoding,
+  quote, escape, the text for a missing value, date formats); `invaract.read(..., csv={...})` and
+  `invaract.write(..., csv={...})` give them for a job with no contract yet. See
+  [Read and Write CSV as Declared](/guides/csv-options/).
 - **Save modes**: `overwrite` replaces what is at the location, `append` adds to what is there, `error` refuses the write
   if the location already holds data, and `ignore` publishes nothing if it does. A write uses the save mode the contract
   declares, or `overwrite`.

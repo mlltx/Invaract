@@ -80,7 +80,8 @@ object PythonIoConformanceAdapter {
   private def nullsOf(f: LogicalField): Long = if (f.nullable) 1L else 0L
 
   def readRequest(contract: Contract, input: ScenarioInput): String =
-    json("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "schema" -> input.schema.fields.map(column(_, withNulls = true)))
+    json((List("op" -> "read", "name" -> nameOf(contract.inputs, input.location), "schema" -> input.schema.fields.map(column(_, withNulls = true))) ++
+      (if (input.csvOptions.isEmpty) Nil else List("csv" -> input.csvOptions))): _*)
 
   /** The `write` describing a table with `schema` before it is staged, and the `written` once it is. An output the scenario
     * registers in a catalog is an Iceberg table, as the package writes one (`PythonIoPackageConformanceAdapter.icebergTable`). */
@@ -90,7 +91,8 @@ object PythonIoConformanceAdapter {
       List("format" -> "iceberg", "catalog" -> Map("technology" -> "iceberg", "catalogName" -> IcebergCatalog, "namespace" -> List(IcebergNamespace), "table" -> table)))
     List(
       json((List("op" -> "write", "name" -> name, "format" -> output.format, "saveMode" -> output.saveMode, "schema" -> schema.fields.map(column(_, withNulls = false)),
-        "partitionBy" -> output.partitionBy, "partitionOverwriteMode" -> output.partitionOverwriteMode) ++ registered): _*),
+        "partitionBy" -> output.partitionBy, "partitionOverwriteMode" -> output.partitionOverwriteMode) ++ registered ++
+        (if (output.csvOptions.isEmpty) Nil else List("csv" -> output.csvOptions))): _*),
       json((List("op" -> "written", "name" -> name, "nulls" -> schema.fields.map(f => f.name -> nullsOf(f)).toMap) ++
         checks.map(found => "checks" -> found.map(r => Map("failed" -> r.failed, "examples" -> r.examples)))): _*)
     )

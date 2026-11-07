@@ -34,7 +34,8 @@ private[invaract] case class InferredWrite(
     format: Option[String],
     saveMode: Option[String],
     outputSchema: LogicalSchema,
-    partitioning: Option[WritePartitioning] = None
+    partitioning: Option[WritePartitioning] = None,
+    formatOptions: Map[String, Map[String, String]] = Map.empty
 )
 
 private[invaract] object ContractInference {
@@ -64,6 +65,16 @@ private[invaract] object ContractInference {
     *   represents observed implementation behavior, not proof of a
     *   semantic role).
     */
+  /** The CSV options a read or write was made with, as a draft declares them; none when it reported none. */
+  private[invaract] def csvOf(options: Option[Map[String, String]]): Option[com.invaract.contract.CsvOptions] =
+    options.map(_.filter { case (name, _) => CsvOptionsChecker.Names.contains(name) }).filter(_.nonEmpty).map { o =>
+      com.invaract.contract.CsvOptions(
+        delimiter = o.get("delimiter"), header = o.get("header").map(_.trim.equalsIgnoreCase("true")), encoding = o.get("encoding"),
+        quote = o.get("quote"), escape = o.get("escape"), nullValue = o.get("nullValue"), dateFormat = o.get("dateFormat"),
+        timestampFormat = o.get("timestampFormat")
+      )
+    }
+
   def infer(write: InferredWrite, inputSchemas: List[(String, LogicalSchema)], plan: Plan): Contract = {
     val totalInputs = inputSchemas.size
     val locationOf = PlanRuleVerifier.locationResolver(plan)
@@ -76,7 +87,8 @@ private[invaract] object ContractInference {
         location = normalizedLocation,
         format = None, // recognizedRead only ever yields a (location, schema) pair - no format is collected alongside it
         schema = schemaOf(schema),
-        description = observedUsageDescription(normalizedLocation, outputContributingQualifiers, conditionReferencedQualifiers)
+        description = observedUsageDescription(normalizedLocation, outputContributingQualifiers, conditionReferencedQualifiers),
+        csv = csvOf(write.formatOptions.get(location))
       )
     }
     // the partition keys the write used, in its order; a dynamic overwrite is said, a static one is the default
@@ -91,6 +103,7 @@ private[invaract] object ContractInference {
         if (position < 0) f else f.copy(partitioned = true, partitionKeyPosition = Some(position + 1))
       }),
       saveMode = write.saveMode,
+      csv = csvOf(write.formatOptions.get(write.location)),
       partitionOverwriteMode = write.partitioning.filter(p => keys.nonEmpty && p.overwriteMode.equalsIgnoreCase(com.invaract.contract.PartitionOverwriteModes.Dynamic))
         .map(_ => com.invaract.contract.PartitionOverwriteModes.Dynamic),
       // Every input this write was observed reading - stated explicitly, so

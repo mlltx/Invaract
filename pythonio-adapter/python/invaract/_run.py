@@ -13,7 +13,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _files, _frames, _pandas, _postgres, _tables
+from . import _checks, _csv, _files, _frames, _pandas, _postgres, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -110,7 +110,7 @@ class Run:
     def dry_run(self):
         return self.mode == "dry-run"
 
-    def read(self, name, as_, location, fmt, dtype_backend=None, chunksize=None):
+    def read(self, name, as_, location, fmt, dtype_backend=None, chunksize=None, csv=None):
         if as_ not in _frames.FRAME_KINDS:
             raise ValueError(f"invaract.read cannot return as_={as_!r}: give one of {', '.join(_frames.FRAME_KINDS)}")
         _pandas.check_dtype_backend(dtype_backend, as_)
@@ -125,18 +125,20 @@ class Run:
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
         fmt = declared.get("format") or fmt or _format_of(where)
         fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
+        used = _csv_options(name, (fmt or "").lower(), declared, csv)
+        request = {**request, **({"csv": used} if used else {})}
         if chunksize is not None:
             # the checker is told the input's empty values before any of it is handed over: one pass counts them, a
             # second reads the chunks, and neither holds the whole input in memory
-            schema, batches = _frames.read_batches(where, fmt, fields, partition_by)
+            schema, batches = _frames.read_batches(where, fmt, fields, partition_by, used)
             self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(schema, _frames.count_nulls(schema, batches))})
             return (_frames.as_frame(chunk, as_, dtype_backend) for chunk in _frames.chunks(schema, batches(), chunksize))
-        table = _frames.read_table(where, fmt, fields, partition_by)
+        table = _frames.read_table(where, fmt, fields, partition_by, used)
         nulls = {n: table.column(n).null_count for n in table.column_names}
         self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
         return _frames.as_frame(table, as_, dtype_backend)
 
-    def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None):
+    def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None, csv=None):
         declared = self._declared("outputs", name)
         request = _with_location({"op": "write", "name": name}, location)
         notes = []
@@ -157,9 +159,10 @@ class Run:
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
         layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
                                (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
+        used = _csv_options(name, (fmt or "").lower(), declared, csv)
         with _noted(notes):
             self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
-                       "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite})
+                       "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite, **({"csv": used} if used else {})})
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()
@@ -167,7 +170,7 @@ class Run:
             raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
         out = self._outputs.get(name) or self._outputs.setdefault(
-            name, _Checked(where, mode, layout) if self.checking else _output(where, fmt, mode, self.run_id, layout))
+            name, _Checked(where, mode, layout) if self.checking else _output(where, _csv.Format(used) if used else fmt, mode, self.run_id, layout))
         if out.layout != layout:
             raise CheckNotRun(f"invaract.write('{name}') is {layout.describe()}, but an earlier write of it in this run is "
                               f"{out.layout.describe()}: one output has one layout")
@@ -218,6 +221,16 @@ class Run:
             out.forget_previous()
 
 
+def _csv_options(name, fmt, declared, given):
+    """The CSV options a read or write of ``name`` uses (``_csv.options``): none for a dataset that is not CSV, where giving
+    some is a mistake worth saying."""
+    if fmt != "csv":
+        if given:
+            raise ValueError(f"csv= is for a CSV dataset, and '{name}' is {fmt}")
+        return {}
+    return _csv.options(declared.get("csv"), given)
+
+
 class _Checked:
     """What a check "writes" to: nothing. Staging only counts the empty values, which the checker judges."""
 
@@ -242,7 +255,7 @@ class _Checked:
         pass
 
 
-def check(frame, name, contract=None):
+def check(frame, name, contract=None, csv=None):
     """``invaract.check``: ``frame`` judged as a write of the output ``name`` would be, then nothing written."""
     if contract is None and _current is not None:
         # inside a run: the run's own contract, as the job named it
@@ -250,7 +263,7 @@ def check(frame, name, contract=None):
     with Run(contract, f"invaract.check('{name}')", checking=True) as run:
         if run.mode != "enforce":
             raise CheckNotRun("invaract.check needs a contract: name one, or set INVARACT_CONTRACT")
-        run.write(frame, name, None, None, None)
+        run.write(frame, name, None, None, None, csv=csv)
 
 
 @contextlib.contextmanager

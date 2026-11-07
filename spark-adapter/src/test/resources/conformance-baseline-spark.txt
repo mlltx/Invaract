@@ -32,6 +32,9 @@ output-save-mode-mismatch
 partitioned-output-matches
 partitioned-output-written-unpartitioned
 partition-overwrite-mode-mismatch
+csv-options-match
+csv-output-options-mismatch
+csv-input-options-mismatch
 nested-type-matches
 nested-type-mismatch
 required-filter-column-present

@@ -143,6 +143,26 @@ object Scenarios {
       |        - name: total
       |          type: long
       |          required: true""".stripMargin
+  /** The orders read as a CSV file and the report written as one, each with the CSV options `inputCsv` and `outputCsv`
+    * declare (a YAML mapping): the CSV option scenarios. */
+  private def csvContract(inputCsv: String, outputCsv: String): Contract =
+    contract(
+      inputs = s"""  - name: orders
+                  |    location: in/orders
+                  |    format: csv
+                  |    csv: $inputCsv
+                  |    schema:
+                  |      fields:
+                  |$ordersContractFields""".stripMargin,
+      outputExtras = s"    format: csv\n    csv: $outputCsv"
+    )
+
+  /** The CSV option scenarios' job: it reads the orders with the options `read` and writes the report with `written`. */
+  private def csvJob(read: Map[String, String], written: Map[String, String]): ScenarioJob =
+    job(inputs = List(orders.copy(csvOptions = read)), output = ScenarioOutput("out/report", format = "csv", csvOptions = written))
+
+  private val semicolonsWithHeader = Map("delimiter" -> ";", "header" -> "true")
+
   private def labelled(output: ScenarioOutput) =
     job(columns = List(OutColumn("id", FromInput(0, "id")), OutColumn("label", FromInput(0, "label")), OutColumn("total", NonNullLong(1))), output = output)
 
@@ -489,6 +509,30 @@ object Scenarios {
       Set(Capability.CheckPartitioning),
       contract(outputFields = partitionedFields, outputExtras = "    partitionOverwriteMode: dynamic"),
       labelled(ScenarioOutput("out/report", partitionBy = List("label"))), defaults, Expectation.Reject(Set(ViolationType.OutputPartitioningMismatch))
+    ),
+    Scenario(
+      "csv-options-match",
+      "CSV files read and written with the options the contract declares are allowed",
+      "The contract says the orders file is separated by semicolons with a header line, and the report by pipes; the job reads and writes them that way. Invaract lets it through.",
+      Set(Capability.CheckCsvOptions),
+      csvContract("{ delimiter: \";\", header: true }", "{ delimiter: \"|\" }"), csvJob(semicolonsWithHeader, Map("delimiter" -> "|")), defaults,
+      Expectation.Pass
+    ),
+    Scenario(
+      "csv-output-options-mismatch",
+      "a CSV output written with another delimiter than the contract declares is blocked",
+      "The contract says the report is separated by semicolons, which the teams loading it rely on, but the job writes commas. Invaract stops it.",
+      Set(Capability.CheckCsvOptions),
+      csvContract("{ delimiter: \";\" }", "{ delimiter: \";\" }"), csvJob(Map("delimiter" -> ";"), Map("delimiter" -> ",")), defaults,
+      Expectation.Reject(Set(ViolationType.OutputCsvOptionsMismatch))
+    ),
+    Scenario(
+      "csv-input-options-mismatch",
+      "a CSV input read as if its first line named the columns, when the contract says it does not, is blocked",
+      "The contract says the orders file has no header line, but the job reads its first line as column names and silently drops the first order. Invaract stops it.",
+      Set(Capability.CheckCsvOptions),
+      csvContract("{ delimiter: \";\", header: false }", "{ delimiter: \"|\" }"), csvJob(semicolonsWithHeader, Map("delimiter" -> "|")), defaults,
+      Expectation.Reject(Set(ViolationType.InputCsvOptionsMismatch))
     ),
     Scenario(
       "nested-type-matches",

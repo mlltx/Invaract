@@ -147,6 +147,7 @@ object ContractCompatibility {
           diffCatalog(s"$kind.$n.catalog", prevDs.catalog, nextDs.catalog) ++
           diffPartitionKeys(s"$kind.$n.schema", prevDs.partitionKeys, nextDs.partitionKeys) ++
           diffOptionalConstraint(s"$kind.$n.partitionOverwriteMode", "partitionOverwriteMode", prevDs.partitionOverwriteMode, nextDs.partitionOverwriteMode) ++
+          diffCsv(s"$kind.$n.csv", prevDs.csv, nextDs.csv) ++
           diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
       }
     )
@@ -204,6 +205,14 @@ object ContractCompatibility {
         List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"'$fieldName' changed from '$p' to '$n'"))
       case _ => Nil
     }
+
+  /** Each CSV option follows `diffOptionalConstraint`'s philosophy: declaring one, or changing it, can turn a valid read or
+    * write invalid (BREAKING); dropping one only loosens what is checked. */
+  private def diffCsv(path: String, previous: Option[CsvOptions], next: Option[CsvOptions]): List[CompatibilityChange] = {
+    val before = previous.fold(Map.empty[String, String])(_.declared.toMap)
+    val after = next.fold(Map.empty[String, String])(_.declared.toMap)
+    CsvOptions.Names.flatMap(name => diffOptionalConstraint(s"$path.$name", name, before.get(name), after.get(name)))
+  }
 
   /** The partition keys, in order, follow `diffOptionalConstraint`'s philosophy: a write is checked against them only when
     * some are declared, so declaring them, or changing them or their order, can turn a valid write invalid (BREAKING);

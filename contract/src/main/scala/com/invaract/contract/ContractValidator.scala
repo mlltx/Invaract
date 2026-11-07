@@ -264,7 +264,38 @@ object ContractValidator {
     }
 
     issues ++= validatePartitioning(path, dataset)
+    dataset.csv.foreach(csv => issues ++= validateCsv(s"$path.csv", dataset.format, csv))
 
+    issues.result()
+  }
+
+  /** A dataset's `csv:` options: one character for a quote or an escape (and a delimiter that is not empty), a character set
+    * the JVM knows, and date and timestamp patterns `DateTimeFormatter` accepts. On a dataset whose format is not CSV they have
+    * no effect, which is worth a warning. */
+  private def validateCsv(path: String, format: Option[String], csv: CsvOptions): List[ValidationIssue] = {
+    val issues = List.newBuilder[ValidationIssue]
+    format.filterNot(_.trim.equalsIgnoreCase("csv")).foreach { f =>
+      issues += ValidationIssue(ValidationSeverity.Warning, path, s"Declares CSV options on a dataset whose format is '$f', where they have no effect")
+    }
+    csv.delimiter.foreach { d =>
+      if (d.isEmpty) issues += ValidationIssue(ValidationSeverity.Error, s"$path.delimiter", "A delimiter cannot be empty")
+      else if (CsvText.character(d).isEmpty)
+        issues += ValidationIssue(ValidationSeverity.Warning, s"$path.delimiter",
+          s"A delimiter of more than one character ('$d') is read by Spark but not by every engine (the Python package takes one)")
+    }
+    List("quote" -> csv.quote, "escape" -> csv.escape).foreach { case (name, value) =>
+      value.filter(v => CsvText.character(v).isEmpty).foreach { v =>
+        issues += ValidationIssue(ValidationSeverity.Error, s"$path.$name", s"A $name is one character, not '$v'")
+      }
+    }
+    csv.encoding.filterNot(CsvText.knownEncoding).foreach { e =>
+      issues += ValidationIssue(ValidationSeverity.Error, s"$path.encoding", s"Unknown encoding '$e' (a character set name: UTF-8, ISO-8859-1, windows-1252, ...)")
+    }
+    List("dateFormat" -> csv.dateFormat, "timestampFormat" -> csv.timestampFormat).foreach { case (name, value) =>
+      value.flatMap(CsvText.patternError).foreach { why =>
+        issues += ValidationIssue(ValidationSeverity.Error, s"$path.$name", s"Not a date-time pattern Spark reads ($why)")
+      }
+    }
     issues.result()
   }
 

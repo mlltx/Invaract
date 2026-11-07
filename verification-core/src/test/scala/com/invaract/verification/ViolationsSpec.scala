@@ -64,6 +64,8 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.runtimeDataQuality("amount", "range gte 0", 2, List("-1"), Some("gold/out")) -> "LCEA",
     Violations.outputPartitioningMismatch("region, day", "none", "gold/out") -> "LEA",
     Violations.outputPartitionOverwriteMismatch("static", "dynamic", "gold/out") -> "LEA",
+    Violations.csvOptionsMismatch(SchemaChecker.Side.Input, "header false", "header true", "raw/in.csv") -> "LEA",
+    Violations.csvOptionsMismatch(SchemaChecker.Side.Output, "delimiter ';'", "delimiter ','", "gold/out") -> "LEA",
     Violations.roleConsistency("cal", "raw.cal", DatasetType.Control, "detail") -> "L",
     Violations.invalidContract("c@1.0.0", "outputs", "empty") -> "",
     Violations.unresolvableCustomRuleType("c@1.0.0", "t", "x.Y", "boom") -> "",

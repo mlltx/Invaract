@@ -62,6 +62,10 @@ def output(location, fmt, mode, run_id, layout=FLAT):
 
 def writer(path, fmt, schema, filesystem=None):
     """A writer of ``fmt`` (``parquet`` or ``csv``) at ``path``, on ``filesystem`` (pyarrow's) or the local one."""
+    if fmt == "csv" and getattr(fmt, "options", None):
+        from . import _csv
+
+        return _csv.Writer(open(path, "wb") if filesystem is None else filesystem.open_output_stream(path), schema, fmt.options)
     if fmt == "csv":
         import pyarrow.csv as csv
 
@@ -116,17 +120,46 @@ def _stage_partitioned(base, prefix, fmt, schema, batches, required, keys, files
     target = _frames.with_required(schema, required)
     partitioning = ds.partitioning(pa.schema([target.field(k) for k in keys]), flavor="hive")
     written = [0]
+    # pyarrow's dataset writer lays out the folders; a format it writes only one way (CSV with options) is written to a
+    # local scratch folder as Arrow files first, then each file copied into the format by ``writer``
+    direct = not getattr(fmt, "options", None)
+    into, into_fs, kind = (base, filesystem, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
 
     def write(batch):
         written[0] += 1
-        ds.write_dataset(pa.Table.from_batches([batch]), base, format=fmt, partitioning=partitioning, filesystem=filesystem,
+        ds.write_dataset(pa.Table.from_batches([batch]), into, format=kind, partitioning=partitioning, filesystem=into_fs,
                          basename_template=f"{prefix}-{written[0]:05d}-{{i}}.{fmt}", existing_data_behavior="overwrite_or_ignore")
 
     try:
-        return _frames.take(schema, target, batches, required, write)
+        nulls = _frames.take(schema, target, batches, required, write)
+        if not direct:
+            _convert(into, base, fmt, filesystem)
+        return nulls
     except BaseException:
         remove_prefixed(base, prefix)
         raise
+    finally:
+        if not direct:
+            _remove(into)
+
+
+def _convert(scratch, base, fmt, filesystem):
+    """Each Arrow file under the local folder ``scratch`` written as ``fmt`` at the same place under ``base``."""
+    import pyarrow as pa
+
+    for rel in _local_files(scratch):
+        destination = posixpath.join(base, rel) if filesystem is not None else os.path.join(base, *rel.split("/"))
+        if filesystem is None:
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+        else:
+            filesystem.create_dir(posixpath.dirname(destination), recursive=True)
+        with pa.ipc.open_file(os.path.join(scratch, *rel.split("/"))) as reader:
+            out = writer(destination, fmt, reader.schema, filesystem)
+            try:
+                for i in range(reader.num_record_batches):
+                    out.write_batch(reader.get_batch(i))
+            finally:
+                out.close()
 
 
 def _leaves(files):

@@ -24,6 +24,9 @@ output-save-mode-mismatch
 partitioned-output-matches
 partitioned-output-written-unpartitioned
 partition-overwrite-mode-mismatch
+csv-options-match
+csv-output-options-mismatch
+csv-input-options-mismatch
 output-type-mismatch
 required-filter-column-missing
 required-filter-column-present

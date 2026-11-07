@@ -80,6 +80,13 @@ capabilities:
       columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new
       files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does
       not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.
+  check.csvOptions:
+    status: supported
+    summary: "CSV files are read and written with the contract's CSV options, and a job that reads or writes one with others (csv=) is refused."
+    note: >-
+      The package reads and writes a CSV dataset with the options its contract declares (a job may give its own with
+      csv=, as a migrating job says how it read the file), and reports the options it used; the checker compares them
+      with the declared ones.
   check.catalogRegistration:
     status: partial
     summary: "Iceberg and PostgreSQL tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met."

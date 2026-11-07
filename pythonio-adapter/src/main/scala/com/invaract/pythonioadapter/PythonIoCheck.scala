@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalField, L
 import com.invaract.ir
 import com.invaract.ir.{CatalogIdentity, DatasetRef, UnknownPlan}
 import com.invaract.verification.{
-  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, ContractInference, ContractViolationException, DataCheckResult, DryRunReporting, DryRunSelfCheck,
+  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, CsvOptionsChecker, ContractInference, ContractViolationException, DataCheckResult, DryRunReporting, DryRunSelfCheck,
   InferredWrite, LocationMatching, RuntimeDataQuality, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult,
   VerificationSetup, Violations
 }
@@ -74,6 +74,8 @@ private[pythonioadapter] final class Run {
   private var reads = Vector.empty[(String, LogicalSchema)]
   /** The catalog each location read is registered in, where it is a catalog table. */
   private var readCatalogs = Map.empty[String, CatalogIdentity]
+  // the CSV options each read was made with, by location (`check.csvOptions`)
+  private var readOptions = Map.empty[String, Map[String, String]]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
   private var drafts = Vector.empty[(String, Option[Contract])]
@@ -157,13 +159,15 @@ private[pythonioadapter] final class Run {
         case Some(input) if !LocationMatching.matches(input.location, location) => List(Violations.undeclaredInput(location))
         case Some(input) =>
           SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true) ++
-            input.catalog.toList.flatMap(CatalogChecker.check(_, r.catalog, location, SchemaChecker.Side.Input))
+            input.catalog.toList.flatMap(CatalogChecker.check(_, r.catalog, location, SchemaChecker.Side.Input)) ++
+            CsvOptionsChecker.findings(input, r.csv, SchemaChecker.Side.Input, location)
         case None => List(Violations.undeclaredInput(r.name))
       }
       if (violations.nonEmpty) reject(c, VerificationResult.of(s"${c.id}@${c.version}", violations), ir.Read(DatasetRef(location), catalog = r.catalog), run)
     }
     reads = reads.filterNot(_._1 == location) :+ (location -> schema)
     readCatalogs = r.catalog.fold(readCatalogs - location)(registered => readCatalogs + (location -> registered))
+    readOptions = if (r.csv.isEmpty) readOptions - location else readOptions + (location -> r.csv)
     Map("ok" -> true)
   }
 
@@ -184,7 +188,7 @@ private[pythonioadapter] final class Run {
         // no data yet, so no empty values: everything else is judged, and only a refusal is published
         contract.foreach { c =>
           val result = VerificationPipeline.evaluateWrite(
-            c, checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L))))).copy(partitioning = Some(w.partitioning)), run.options, PythonIoCapabilities.declared
+            c, checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L)))), w.csv).copy(partitioning = Some(w.partitioning)), run.options, PythonIoCapabilities.declared
           )
           if (!result.passed) reject(c, result, plan, run)
         }
@@ -202,7 +206,7 @@ private[pythonioadapter] final class Run {
     run.contract match {
       case Some(c) =>
         val found = dataChecks(c, w.name, s, run.options)
-        val checked = checkedWrite(plan, schema).copy(dataChecks = found, partitioning = Some(w.partitioning))
+        val checked = checkedWrite(plan, schema, w.csv).copy(dataChecks = found, partitioning = Some(w.partitioning))
         VerificationPipeline.verifyWrite(c, checked, run.options, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
       case None => infer(location, w, plan, schema, run)
     }
@@ -262,8 +266,13 @@ private[pythonioadapter] final class Run {
       w.catalog
     )
 
-  private def checkedWrite(plan: ir.Write, schema: LogicalSchema): CheckedWrite =
-    CheckedWrite(plan, reads.toList, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty)
+  private def checkedWrite(plan: ir.Write, schema: LogicalSchema, csv: Map[String, String]): CheckedWrite =
+    CheckedWrite(plan, reads.toList, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty,
+      formatOptions = formatOptions(plan.dataset.location, csv))
+
+  /** The CSV options of every read so far, and of the write to `location` (`check.csvOptions`). */
+  private def formatOptions(location: String, csv: Map[String, String]): Map[String, Map[String, String]] =
+    if (csv.isEmpty) readOptions else readOptions + (location -> csv)
 
   private def reject(c: Contract, result: VerificationResult, plan: ir.Plan, run: Opened): Nothing =
     VerificationPipeline.reject(c, result, plan, run.sink, run.job.runId, Some(run.job))
@@ -272,7 +281,7 @@ private[pythonioadapter] final class Run {
   private def infer(location: String, w: Request.Write, plan: ir.Write, schema: LogicalSchema, run: Opened): Unit = {
     val outcome =
       try {
-        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning)), reads.toList, plan)
+        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning), formatOptions(location, w.csv)), reads.toList, plan)
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads.toList, schema, run.options, caseSensitive = true, Set.empty)
         DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck))
         InferenceStatus.Inferred -> Some(draft)
@@ -337,7 +346,8 @@ private[pythonioadapter] object Run {
     Map("name" -> d.name, "location" -> d.location, "fields" -> d.schema.fields.map(f => Map("name" -> f.name, "type" -> f.fieldType, "required" -> f.required))) ++
       d.format.map("format" -> _) ++
       d.saveMode.map("saveMode" -> _) ++
-      (if (d.partitionKeys.isEmpty) Map.empty else Map("partitionBy" -> d.partitionKeys, "partitionOverwriteMode" -> d.effectivePartitionOverwriteMode))
+      (if (d.partitionKeys.isEmpty) Map.empty else Map("partitionBy" -> d.partitionKeys, "partitionOverwriteMode" -> d.effectivePartitionOverwriteMode)) ++
+      d.csv.map(_.declared).filter(_.nonEmpty).map(o => "csv" -> o.toMap)
 
   def refused(e: ContractViolationException): Map[String, Any] =
     Map("ok" -> false, "status" -> "refused", "violations" -> e.result.violations.map(_.violationType), "explanation" -> e.getMessage)

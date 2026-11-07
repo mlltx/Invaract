@@ -76,6 +76,7 @@ backing is not allowed.
 | `check.format` | partial | `output-format-matches`, `output-format-mismatch` |
 | `check.saveMode` | partial | `output-save-mode-matches`, `output-save-mode-mismatch` (written as BigQuery writes to Beam's in-memory BigQuery); BeamCheckSpec for the refusal of a declared save mode on a write that states none |
 | `check.partitioning` | unsupported | the partitioning scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: a file write's destinations are computed by the pipeline's own code, which the graph does not describe |
+| `check.csvOptions` | unsupported | the CSV option scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: a TextIO file's delimiter and quoting are the pipeline's own code, and CsvIO's format is not handed to the check |
 | `check.catalogRegistration` | partial | `catalog-required-output-unregistered` (a file write), `catalog-required-output-registered` (a BigQuery table); BeamIOSpec for a BigQuery read's catalog identity |
 | `check.runtimeDataQuality` | unsupported | `runtime-data-quality-passes`, `runtime-data-quality-violation-blocks` conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: the pipeline is checked before it runs, when no element exists |
 | `rules.dml` | not-applicable | not applicable: no row-level DML |

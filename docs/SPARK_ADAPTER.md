@@ -417,6 +417,13 @@ declared unsupported here, so a contract that declares partition keys is refused
 partitioning, `spark.sql.sources.partitionOverwriteMode`); handing it to the
 pipeline as `CheckedWrite.partitioning` is the follow-up ROADMAP lists.
 
+**CSV options are not checked yet.** `check.csvOptions` (a dataset's declared `csv:` options,
+`INPUT_CSV_OPTIONS_MISMATCH`/`OUTPUT_CSV_OPTIONS_MISMATCH`) is declared unsupported here too, so a
+contract that declares them is refused. A CSV read's `HadoopFsRelation.options` and a write's
+`InsertIntoHadoopFsRelationCommand.options` carry them (`sep`, `header`, `encoding`, ...), under the
+names the contract uses; handing them to the pipeline as `CheckedWrite.formatOptions`, by location, is
+the follow-up ROADMAP lists.
+
 **Not the runtime check.** `VerificationOptions.runtimeDataQuality`
 (`spark.invaract.runtimeDataQuality`, capability `check.runtimeDataQuality`)
 holds the *rows* a write puts in an output to the same constraints, which

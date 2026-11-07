@@ -27,7 +27,8 @@ private[pythonioadapter] object Request {
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
     * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `catalog` is the
     * catalog the dataset is registered in, when it is a catalog table (an Iceberg table names its catalog and namespace). */
-  final case class Read(name: String, location: Option[String], schema: List[Column], catalog: Option[CatalogIdentity] = None) extends Request
+  final case class Read(name: String, location: Option[String], schema: List[Column], catalog: Option[CatalogIdentity] = None,
+      csv: Map[String, String] = Map.empty) extends Request
 
   /** A table the job hands to `invaract.write`, described before any of it is staged: the output's name, the format and save
     * mode the package writes, and the table's columns. `unverifiable` says why the package could not describe the table (it
@@ -41,7 +42,8 @@ private[pythonioadapter] object Request {
       schema: List[Column],
       unverifiable: Option[String],
       catalog: Option[CatalogIdentity] = None,
-      partitioning: WritePartitioning = WritePartitioning(Nil, PartitionOverwriteModes.Static)
+      partitioning: WritePartitioning = WritePartitioning(Nil, PartitionOverwriteModes.Static),
+      csv: Map[String, String] = Map.empty
   ) extends Request
 
   /** A table the package has finished staging, after its `write` passed: how many empty values each column turned out to hold,
@@ -107,7 +109,7 @@ private[pythonioadapter] object Requests {
       name <- text(m, "name").toRight("a read must name the input it reads")
       schema <- columns(m.get("schema"), s"the read of '$name'")
       registered <- catalog(m.get("catalog"), s"the read of '$name'")
-    } yield Request.Read(name, text(m, "location"), schema, registered)
+    } yield Request.Read(name, text(m, "location"), schema, registered, strings(m, "csv"))
 
   private def write(m: Map[String, AnyRef]): Either[String, Request] =
     for {
@@ -117,7 +119,7 @@ private[pythonioadapter] object Requests {
       partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'")
       mode <- overwriteMode(text(m, "partitionOverwriteMode"), name)
     } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered,
-      WritePartitioning(partitionBy, mode))
+      WritePartitioning(partitionBy, mode), strings(m, "csv"))
 
   private def names(value: Option[AnyRef], what: String): Either[String, List[String]] = value match {
     case None => Right(Nil)

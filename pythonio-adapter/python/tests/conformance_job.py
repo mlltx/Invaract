@@ -102,7 +102,15 @@ def make_input(dataset):
     table = pa.Table.from_arrays(columns, schema=schema)
     os.makedirs(dataset["location"], exist_ok=True)
     # the data an earlier job wrote, made before the run: deliberately not through invaract
-    if dataset["format"] == "csv":
+    if dataset["format"] == "csv" and dataset.get("csv"):
+        # laid out with the options the job reads it with: the file a team that reads it that way has
+        from invaract import _csv
+
+        out = _csv.Writer(open(os.path.join(dataset["location"], "part-0.csv"), "wb"), table.schema, _csv.options({}, dataset["csv"]))  # invaract: allow
+        for batch in table.to_batches():
+            out.write_batch(batch)
+        out.close()
+    elif dataset["format"] == "csv":
         csv.write_csv(table, os.path.join(dataset["location"], "part-0.csv"))  # invaract: allow
     else:
         pq.write_table(table, os.path.join(dataset["location"], "part-0.parquet"))  # invaract: allow
@@ -153,14 +161,15 @@ def main(job):
     for dataset in job["inputs"] + [e["input"] for e in job["extraWrites"]]:
         make_input(dataset)
     with invaract.run(name=job["scenario"]):
-        tables = [invaract.read(i["name"], as_="arrow") for i in job["inputs"]]
+        tables = [invaract.read(i["name"], as_="arrow", csv=i.get("csv")) for i in job["inputs"]]
         output = job["output"]
         if job["untranslatableWrite"]:
             # a table the package cannot describe: no Arrow stream
             invaract.write({"rows": tables[0].num_rows}, output["name"])
         else:
             invaract.write(transform(job, tables), output["name"], format=output["format"], save_mode=output["saveMode"],
-                           partition_by=output.get("partitionBy", []), partition_overwrite=output.get("partitionOverwriteMode", "static"))
+                           partition_by=output.get("partitionBy", []), partition_overwrite=output.get("partitionOverwriteMode", "static"),
+                           csv=output.get("csv"))
         read = {i["location"]: t for i, t in zip(job["inputs"], tables)}
         for extra in job["extraWrites"]:
             source = extra["input"]

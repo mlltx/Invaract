@@ -142,10 +142,12 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
     def input(i: ScenarioInput) =
       Map("name" -> nameOf(contract.inputs, i.location), "location" -> i.location,
         "format" -> contract.inputs.find(_.location == i.location).flatMap(_.format).getOrElse("parquet"), "fields" -> fields(i.schema)) ++
-        (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows))
+        (if (i.rows.isEmpty) Map.empty else Map("rows" -> i.rows)) ++
+        (if (i.csvOptions.isEmpty) Map.empty else Map("csv" -> i.csvOptions))
     def output(o: ScenarioOutput) =
       Map("name" -> nameOf(contract.outputs, o.location), "format" -> (if (o.registeredAs.isDefined) "iceberg" else o.format), "saveMode" -> o.saveMode,
-        "partitionBy" -> o.partitionBy, "partitionOverwriteMode" -> o.partitionOverwriteMode)
+        "partitionBy" -> o.partitionBy, "partitionOverwriteMode" -> o.partitionOverwriteMode) ++
+        (if (o.csvOptions.isEmpty) Map.empty else Map("csv" -> o.csvOptions))
     def source(s: ColumnSource): Map[String, Any] = s match {
       case ColumnSource.FromInput(i, c)    => Map("kind" -> "FromInput", "input" -> i, "column" -> c)
       case ColumnSource.CastInput(i, c, t) => Map("kind" -> "CastInput", "input" -> i, "column" -> c, "to" -> typeJson(t))

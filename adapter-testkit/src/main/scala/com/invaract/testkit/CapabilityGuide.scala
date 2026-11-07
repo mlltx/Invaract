@@ -139,6 +139,11 @@ object CapabilityGuide {
         "Checks that an output the contract says is partitioned (one folder or table partition per value of its partition keys) is written that way, by those keys in that order, and that an overwrite replaces partitions as the contract says: all of them, or only those written.",
         guide = "/guides/partitioning-outputs/"
       ),
+      CheckCsvOptions -> e(
+        "CSV files are read and written as declared",
+        "Checks that a CSV dataset is read and written with the options its contract declares: the delimiter, whether the first line names the columns, the character set, the quote and escape characters, the text an empty value is written as, and the date formats.",
+        guide = "/guides/csv-options/"
+      ),
       CheckRuntimeDataQuality -> e(
         "Written values meet their constraints",
         "Checks every row a job writes against the constraints its contract declares for the output's columns (a range, a set of allowed values, a length, a comparison with another column), before the output is published. Turned on with the `runtimeDataQuality` setting.",

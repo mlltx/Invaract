@@ -36,6 +36,9 @@ capabilities:
   check.partitioning:
     status: unsupported
     note: The toy engine writes no partitions.
+  check.csvOptions:
+    status: unsupported
+    note: The toy engine reads and writes no CSV.
   check.catalogRegistration:
     status: unsupported
     note: The toy engine has no catalogs.

@@ -43,6 +43,9 @@ capabilities:
   check.partitioning:
     status: supported
     note: A scenario's write states the columns it partitions by and its overwrite mode.
+  check.csvOptions:
+    status: supported
+    note: A scenario's reads and writes state the CSV options they use.
   check.catalogRegistration:
     status: supported
     note: A write can carry a catalog identity (a table name), which is all the registration check needs.

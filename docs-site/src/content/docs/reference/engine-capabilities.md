@@ -35,9 +35,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (53) | ✅ | ✅ | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (56) | ✅ | ✅ | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✖ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (54) | ✅ | ✅ | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (57) | ✅ | ✅ | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ✖ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | — | ✅ |
@@ -54,6 +54,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ✅ | ✅ |
 | `check.partitioning` | An output's declared partitioning is checked: its partition keys, in order, and, for an overwrite, its partitionOverwriteMode (OUTPUT_PARTITIONING_MISMATCH). *(blocks if unsupported)* | verified (3) | ✖ | ✖ | ◐ | ✖ |
+| `check.csvOptions` | A dataset's declared CSV options (delimiter, header, encoding, quote, escape, nullValue, dateFormat, timestampFormat) are checked against the options its reads and writes use (INPUT_CSV_OPTIONS_MISMATCH, OUTPUT_CSV_OPTIONS_MISMATCH). *(blocks if unsupported)* | verified (3) | ✖ | ✖ | ✅ | ✖ |
 | `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ◐ | ◐ | ◐ | ✅ |
 | `check.runtimeDataQuality` | With runtimeDataQuality on, the values a write puts in each output field are checked against the field's declared constraints (equals, oneOf, range, length, fieldRange) before the write is published (RUNTIME_DATA_QUALITY_VIOLATION). *(blocks if unsupported)* | verified (2) | ✖ | ✖ | ◐ | ✖ |
 
@@ -124,14 +125,14 @@ Attested:
 
 ## Conformance results
 
-The suite has 60 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 63 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 49 | 60 |
-| `beam-python` | 49 | 60 |
-| `pythonio` | 47 | 60 |
-| `spark` | 60 | 60 |
+| `beam` | 52 | 63 |
+| `beam-python` | 52 | 63 |
+| `pythonio` | 50 | 63 |
+| `spark` | 63 | 63 |
 
 ## Notes
 
@@ -150,6 +151,7 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
 - `check.saveMode` — partial: BigQueryIO writes state one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File, Kafka, JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.partitioning` — unsupported: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
+- `check.csvOptions` — unsupported: A TextIO file's delimiter and quoting are the pipeline's own code, which the graph does not describe; CsvIO's format is not handed to the check.
 - `check.catalogRegistration` — partial: A BigQueryIO table is registered in the bigquery catalog under its project, dataset and table, and is checked as such (on the read side too). File, Kafka and JDBC datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
 - `check.runtimeDataQuality` — unsupported: The check runs on the pipeline graph before submission, when no element has been computed yet.
 - `rules.dml` — not-applicable: There is no row-level DML in Beam.
@@ -181,6 +183,7 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — partial: The format is the sink the write uses (parquet, avro, tfrecord, text). A text write cannot tell csv from json from plain text.
 - `check.saveMode` — partial: A BigQuery write states one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.partitioning` — unsupported: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
+- `check.csvOptions` — unsupported: A text file's delimiter and quoting are the pipeline's own code, which the graph does not describe.
 - `check.catalogRegistration` — partial: A BigQuery table is registered in the bigquery catalog under its project, dataset and table (on the read side too). File and Pub/Sub datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
 - `check.runtimeDataQuality` — unsupported: The check runs on the pipeline graph before submission, when no element has been computed yet.
 - `rules.dml` — not-applicable: There is no row-level DML in Beam.
@@ -212,6 +215,7 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 - `check.format` — supported: The package writes the format itself (Parquet, CSV, Delta, Iceberg, or jdbc for a PostgreSQL table) and says which.
 - `check.saveMode` — supported: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
 - `check.partitioning` — partial: The package writes Hive-style folders (Parquet, CSV) or the table's own partitioning (Delta, Iceberg) and reports the columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new files and removes the replaced partitions' old ones, which needs deltalake's RemoveAction; a release without it does not check the write (and writes nothing) rather than do it in pieces. A table already partitioned otherwise is not written.
+- `check.csvOptions` — supported: The package reads and writes a CSV dataset with the options its contract declares (a job may give its own with csv=, as a migrating job says how it read the file), and reports the options it used; the checker compares them with the declared ones.
 - `check.catalogRegistration` — partial: An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials). A PostgreSQL table is in the jdbc catalog under its database, schema and table. Files and Delta tables are addressed by path, so a contract requiring a registration sees them as unregistered.
 - `check.runtimeDataQuality` — partial: The package evaluates each constraint (equals, oneOf, range, length, fieldRange) on the data it stages and reports how many rows broke it; a run with any is refused and publishes nothing. Only top-level fields are checked.
 - `rules.dml` — not-applicable: No row-level MERGE, UPDATE or DELETE exists to judge.
@@ -246,6 +250,7 @@ The suite has 60 scenarios. For each adapter, the scenarios it is held to confor
 - `check.schema` — supported: Column names follow spark.sql.caseSensitive.
 - `check.nestedTypes` — supported: array, map and struct are compared structurally, ignoring nullability inside a container.
 - `check.partitioning` — unsupported: Spark's write commands do carry their partition columns (partitionBy) and the overwrite mode (spark.sql.sources.partitionOverwriteMode), but the adapter does not hand them to the check yet. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
+- `check.csvOptions` — unsupported: Spark's CSV reads and writes do carry their options (sep, header, encoding, quote, escape, nullValue, dateFormat, timestampFormat), but the adapter does not hand them to the check yet. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `check.catalogRegistration` — supported: Hive, Delta and Iceberg catalog registrations are recognized. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `check.runtimeDataQuality` — unsupported: The check rule judges the write's plan before any row is computed; checking values would mean a check inside the write itself. Use staticDataQuality, which proves constraints from the plan, instead. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `rules.dml` — partial: Fully verified for Delta and for Iceberg copy-on-write. Iceberg merge-on-read UPDATE cannot have its changed columns extracted, so allowed_update_columns on it fails closed (RULE_UNVERIFIABLE_DML) rather than passing. ([details](https://github.com/mlltx/Invaract/blob/main/docs/connectors/iceberg.md))

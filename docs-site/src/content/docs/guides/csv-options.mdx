@@ -1,0 +1,112 @@
+---
+title: Read and Write CSV as Declared
+description: Declare how a CSV dataset's text is laid out (delimiter, header, encoding, quoting, empty values, dates) so every job reads and writes it the same way.
+sidebar:
+  order: 11.6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A CSV file says nothing about itself: a reader has to know that its values are separated by
+semicolons, that its first line is data and not column names, that it is in Latin-1, that
+`NA` means a missing value, and that `03/11/2026` is the 3rd of November. Get one of those
+wrong and the job usually doesn't fail. It reads the wrong data: a file that is all one column,
+a lost first row, mangled accents, `NA` as a word, dates that don't parse. A contract can
+declare the layout, and every read and write of the dataset is then held to it.
+
+<Aside type="note" title="Which engines check it">
+Python jobs that read and write through the `invaract` package are checked, and the package
+reads and writes with the declared options itself. Spark and Beam don't check CSV options yet,
+so they refuse a contract that declares them (`UNSUPPORTED_CONTRACT_FEATURE`) rather than let a
+read or write use other ones unseen. See [What Each Engine Checks](/reference/what-each-engine-checks/).
+</Aside>
+
+## Declare the layout
+
+Add a `csv:` block to the dataset. The option names, and what each one means, are Spark's own
+CSV options, so one contract reads the same on every engine:
+
+```yaml
+inputs:
+  - name: orders
+    location: in/orders.csv
+    format: csv
+    csv: { delimiter: ";", header: false, encoding: ISO-8859-1, nullValue: NA, dateFormat: dd/MM/yyyy }
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: city, type: string }
+        - { name: day, type: date }
+outputs:
+  - name: report
+    location: out/report
+    format: csv
+    csv: { delimiter: "|", header: true, dateFormat: dd/MM/yyyy, nullValue: "-" }
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: city, type: string }
+        - { name: day, type: date }
+```
+
+| Option | Meaning |
+|---|---|
+| `delimiter` | The character between values (`sep`, Spark's other name for it, is accepted too). `"\t"` is a tab. |
+| `header` | Whether the first line names the columns (`true`) or is already data (`false`). Without a header, the columns are the contract's fields, in order. |
+| `encoding` | The character set: `UTF-8`, `ISO-8859-1` (also `latin1`), `windows-1252`, ... |
+| `quote` | The character values are quoted with. |
+| `escape` | The character that escapes a quote inside a value. |
+| `nullValue` | The text a missing value is written as, and read as: `NA`, `\N`, `-`. |
+| `dateFormat`, `timestampFormat` | How dates and timestamps are written, as Java `DateTimeFormatter` patterns: `dd/MM/yyyy`, `yyyy-MM-dd'T'HH:mm:ss`. |
+
+Only the options you declare are checked; one you leave out is the engine's own default. An
+option the block doesn't know is a parse error, so a misspelt one fails loudly instead of
+silently leaving the default in force. The validator also checks that a quote or escape is one
+character, the encoding is a character set it knows, and each date pattern is valid.
+
+## What Python jobs do with it
+
+The `invaract` package reads and writes a CSV dataset with its declared options; the job does
+nothing. Reading the input above (real output), `NA` is a missing value and the day is a date:
+
+```python
+>>> invaract.read("orders").to_dict("records")
+[{'id': 1, 'city': 'Köln', 'day': datetime.date(2026, 11, 3)}, {'id': 2, 'city': nan, 'day': datetime.date(2026, 11, 4)}]
+```
+
+and writing it back as the report gives:
+
+```
+id|city|day
+1|Köln|03/11/2026
+2|-|04/11/2026
+```
+
+A job can give options itself with `csv=`, which a job with no contract yet uses to say how it
+reads a file (see the dry-run section of [Use Invaract with Python](/guides/using-invaract-with-python/#start-from-a-job-with-no-contract);
+the draft contract then declares them). Under a contract, options that disagree with the
+declared ones are refused. Writing the report with commas instead of pipes:
+
+```python
+invaract.write(df, "report", csv={"delimiter": ","})
+```
+
+```
+Why it violates the contract (1 violation):
+  1. [OUTPUT_CSV_OPTIONS_MISMATCH] contract declares the output CSV options delimiter '|' but the write uses delimiter ','
+```
+
+The same goes for a read (`INPUT_CSV_OPTIONS_MISMATCH`), and nothing the run wrote is published.
+
+Values are compared by meaning, not spelling: `"\t"` is a tab, `latin1` is `ISO-8859-1`, and
+`TRUE` is `true`. A date or timestamp pattern can use years, months (also as names), days,
+hours, minutes, seconds, AM/PM, weekday names and zone offsets, plus quoted text; fractions of a
+second and week numbers can't be read or written by the Python package, which stops the run
+(`CheckNotRun`) rather than misread them. A timestamp read without a zone in its pattern is taken
+as UTC.
+
+## Related
+
+- [Contract format: dataset fields](/reference/contract-format/#dataset-fields-inputs--outputs)
+- [Violation types](/reference/violation-types/)
+- [Use Invaract with Python](/guides/using-invaract-with-python/)
