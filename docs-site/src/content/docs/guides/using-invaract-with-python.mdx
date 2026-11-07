@@ -19,8 +19,7 @@ does between a read and a write, so the transformation-shape rules (`required_fi
 `required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
 with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **files** (Parquet, CSV, JSON lines, ORC,
 Avro, Feather and Excel) on local and mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL and SQLite tables** (see
-[Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
-are not tested yet). The full
+[Files, tables and object storage](#files-tables-and-object-storage)). The full
 list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
@@ -463,7 +462,7 @@ How an output is published when the job returns depends on where it lives:
 |---|---|---|
 | Files, local or mounted file system | in a hidden folder beside the location | renamed into place: all at once |
 | Files, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
-| Files, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
+| Files, object storage (`s3://`, `gs://`, `az://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
 | Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
 | PostgreSQL table | in a temporary table, in the run's own transaction | one transaction: all at once |
 | SQLite table | in a database file of its own, on the job's local disk | one transaction: all at once |
@@ -528,12 +527,24 @@ outputs:
     format: iceberg
     catalog: { required: true, technology: iceberg, catalogName: lake, namespace: [sales], table: report }
   ```
-- **Object storage**: credentials and endpoints come from the usual sources (`AWS_*` environment variables, `~/.aws`, an
-  instance role; `GOOGLE_APPLICATION_CREDENTIALS`; `AZURE_STORAGE_*`); Invaract has no settings of its own for them. A
-  Delta output on object storage is staged on the job's local disk and uploaded when the job returns, just before its
-  commit, so a refused run never writes to the bucket.
-- Invaract tests object storage on S3. `gs://` and `abfss://` locations, and HDFS, go through the same libraries
-  (pyarrow, delta-rs, pyiceberg) and the same code, but are not tested against a real service yet.
+- **Credentials and endpoints** come from each service's usual sources; Invaract has no settings of its own for them:
+  - **S3**: `AWS_*` environment variables, `~/.aws`, an instance role.
+  - **Google Cloud Storage**: `GOOGLE_APPLICATION_CREDENTIALS`, or the machine's own Google credentials.
+    `STORAGE_EMULATOR_HOST` points files at an emulator, as it does every Google client library.
+  - **Azure**: a location is `az://<container>/<path>` with `AZURE_STORAGE_ACCOUNT_NAME` set, or
+    `abfss://<container>@<account>.dfs.core.windows.net/<path>`. `AZURE_STORAGE_ACCOUNT_KEY` gives the account's key;
+    without one, Azure's default credential is used (a managed identity, `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`/
+    `AZURE_TENANT_ID`, the Azure CLI's login). These are the variables delta-rs reads too, so one set serves files and
+    Delta tables. Azure needs pyarrow 16 or later.
+  - **HDFS**: Hadoop's client libraries where the job runs (above).
+- A Delta output anywhere but the local file system (object storage or HDFS) is staged on the job's local disk and
+  uploaded when the job returns, just before its commit, so a refused run never writes to the store.
+- An **Iceberg warehouse on Azure** is written `abfss://<container>@<account>.dfs.core.windows.net/<path>`, not `az://`, as
+  pyiceberg names Azure; pyiceberg reaches it through `adlfs` (`pip install "pyiceberg[adlfs]"`), configured with its
+  `adls.*` catalog properties.
+- **Tested end to end** on every push, against S3 (moto), Google Cloud Storage (fake-gcs-server), Azure (Azurite) and a
+  single-node HDFS cluster: plain files, partitioned outputs and Delta and Iceberg tables. The one combination not tested is a
+  Delta table on Google Cloud Storage, which no emulator can serve.
 
 ### PostgreSQL tables
 

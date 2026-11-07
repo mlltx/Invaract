@@ -76,8 +76,8 @@ def delta_dataset(location):
 
 class DeltaOutput:
     """A Delta table output. Its Parquet files are staged where no reader sees them: in the table's own folder when it is local
-    (no commit names them yet), on local disk when the table is on object storage (uploaded at publish, so a refused run never
-    touches the bucket: deleting there leaves "folder" markers behind). Publishing commits them, once."""
+    (no commit names them yet), on local disk when the table is anywhere else, object storage or HDFS (uploaded at publish,
+    so a refused run never touches the store: deleting there leaves "folder" markers behind). Publishing commits them, once."""
 
     def __init__(self, location, mode, run_id, layout=_files.FLAT):
         self.target = _storage.uri(location)
@@ -97,7 +97,8 @@ class DeltaOutput:
                     raise CheckNotRun("Invaract overwrites a Delta table's partitions dynamically in one commit, which needs a "
                                       "deltalake release with deltalake.transaction.RemoveAction: upgrade deltalake")
         self._fs, self._root = _storage.filesystem(location)
-        self._remote = _storage.on_object_storage(self.target)
+        # anywhere but the local file system (object storage, HDFS): staged on local disk, copied up at publish
+        self._remote = _storage.scheme(self.target) not in (None, "file")
         self._staging = tempfile.mkdtemp(prefix=f"invaract-{run_id}-") if self._remote else self._root
         self._actions = []
         self._schema = None

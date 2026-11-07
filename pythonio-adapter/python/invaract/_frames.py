@@ -211,4 +211,5 @@ def _file_dataset(location, fmt, fields, partition_by, csv=None):
         raise ValueError(f"invaract cannot read format {fmt!r}: it reads {', '.join(_formats.FORMATS)}, delta, iceberg and jdbc")
     partitioning = (ds.partitioning(pa.schema([(k, types.get(k) or pa.string()) for k in partition_by]), flavor="hive")
                     if partition_by else "hive")
-    return ds.dataset(_storage.uri(location), format=file_format, partitioning=partitioning), finish
+    filesystem, path = _storage.filesystem(location)
+    return ds.dataset(path, format=file_format, partitioning=partitioning, filesystem=filesystem), finish
