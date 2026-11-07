@@ -181,6 +181,10 @@ def test_the_other_file_formats_are_written_and_read_back(store, fmt):
 
 # ---- tables --------------------------------------------------------------------------------------------------------------
 
+# Not on GCS: no emulator serves both pyarrow and delta-rs there. Upstream fake-gcs-server answers delta-rs's XML API
+# upload with "invalid uploadType"; arrow-rs's fork, which takes it, fails pyarrow's resumable uploads. So Delta on GCS is
+# not verified here (docs/PYTHONIO_ADAPTER.md's ledger says so).
+@pytest.mark.parametrize("store", ["azure", "hdfs"], indirect=True)
 def test_a_delta_output_is_committed_only_when_the_run_passes_and_reads_back(store):
     pytest.importorskip("deltalake")
     location = f"{store.root}/delta/report"
@@ -213,7 +217,12 @@ def test_an_iceberg_output_with_its_warehouse_on_the_store(store, monkeypatch, t
     if store.name == "azure":
         # pyiceberg knows Azure as abfs[s]://<container>@<account>.dfs.core.windows.net, not az://
         warehouse = f"abfs://{store.base.split('/')[0]}@{AZURITE_ACCOUNT}.dfs.core.windows.net/warehouse"
-        authority = os.environ["AZURITE_BLOB_STORAGE_URL"].split("://")[1]
+        endpoint = os.environ["AZURITE_BLOB_STORAGE_URL"]
+        authority = endpoint.split("://")[1]
+        # pyiceberg reaches abfs:// through adlfs, which takes Azurite as a connection string
+        monkeypatch.setenv("PYICEBERG_CATALOG__LAKE__ADLS__CONNECTION_STRING",
+                           f"DefaultEndpointsProtocol=http;AccountName={AZURITE_ACCOUNT};AccountKey={AZURITE_KEY};"
+                           f"BlobEndpoint={endpoint}/{AZURITE_ACCOUNT};")
         for key, value in {"ACCOUNT_NAME": AZURITE_ACCOUNT, "ACCOUNT_KEY": AZURITE_KEY, "BLOB_STORAGE_AUTHORITY": authority,
                            "BLOB_STORAGE_SCHEME": "http", "DFS_STORAGE_AUTHORITY": authority, "DFS_STORAGE_SCHEME": "http"}.items():
             monkeypatch.setenv(f"PYICEBERG_CATALOG__LAKE__ADLS__{key}", value)
