@@ -53,7 +53,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ✖ No | ◐ Partly |
-| [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ✖ No | ✖ No | ✖ No | ✅ Yes |
+| [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ✖ No | ✖ No | ◐ Partly | ✅ Yes |
 | [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 | [Written values meet their constraints](#written-values-meet-their-constraints) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 
@@ -186,6 +186,7 @@ Everything not listed here is checked in full.
 - [Streaming writes](#streaming-writes): Streaming writes are checked for file and Delta Lake streams; a connector without a streaming sink of its own cannot be written to as a stream at all.
 - [Writes land where the contract says](#writes-land-where-the-contract-says): Locations are matched by path. A CREATE TABLE AS SELECT into a new Hive table, and ClickHouse tables, have known gaps in how their location is worked out.
 - [Every promised output is written](#every-promised-output-is-written): A declared output the job never writes is found only when the job ends, after its other writes have happened. It is reported then, and with `spark.invaract.failOnMissingOutput=true` the job also exits with a failure.
+- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): CSV reads and writes are checked against the contract's CSV options, Spark's own default standing for each option the job leaves unset. A streaming CSV sink's options are not checked.
 - [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete): Checked in full for Delta Lake and Iceberg copy-on-write tables. On an Iceberg merge-on-read table, an `allowed_update_columns` rule cannot be checked, so the UPDATE is refused rather than let through.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): A user-defined function is a black box: an output column it computes is traced only to the columns passed into it.
 - [Sees through checkpoints and caches](#sees-through-checkpoints-and-caches): A checkpoint or cache made after Invaract was installed is seen through. One made before, or one Spark has dropped from its cache, hides what is behind it.
@@ -193,7 +194,6 @@ Everything not listed here is checked in full.
 **Not checked**
 
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A contract's partition keys are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
-- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): A contract's CSV options are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Spark is checked from its plan, before a write runs, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 
 ### Python (invaract package)

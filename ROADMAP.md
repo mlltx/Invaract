@@ -4052,8 +4052,9 @@ Extend verification engine to support multiple execution engines.
         notes for missing values in required columns, `period` and `timedelta`
   - [x] CSV options in the contract (`csv:` on a dataset, Spark's option names; capability `check.csvOptions`): the Python
         package reads and writes with them and reports what it used; refusals `INPUT_CSV_OPTIONS_MISMATCH`,
-        `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Spark and Beam declare it unsupported for now
-  - [ ] Spark: hand a CSV read's and write's options to `check.csvOptions`
+        `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Beam declares it unsupported for now; Spark checks it (below)
+  - [x] Spark: hand a CSV read's and write's options to `check.csvOptions` (`CsvOptionsSupport`; Spark's defaults stand
+        for options a job leaves unset; a streaming CSV sink's options are not reported, so the capability is `partial`)
   - [x] JSON lines (`json`), ORC, Avro (`invaract[avro]`), Feather and Excel (`invaract[excel]`) inputs and outputs, laid out
         as Spark lays them out and partitioned Hive-style like Parquet; `excel` and `feather` added to the canonical formats;
         a location's extension names its format when nothing else does

@@ -452,8 +452,7 @@ shared evaluation (`CheckedWrite.formatOptions`, by location), and which a dry r
 CSV options, with dates and timestamps in a declared pattern read as text and parsed with `strptime` (Java patterns are
 translated; fractions of a second and week numbers are refused); writing, when any option is declared, goes through Python's
 `csv` module over Arrow's text for each value (pyarrow's writer cannot set a quote, an escape, an encoding or a null marker),
-and with none declared stays pyarrow's. Spark and Beam declare the capability unsupported for now: Spark's CSV relations
-carry the options, which the adapter does not hand over yet. A partitioned CSV output with options is laid out by pyarrow's
+and with none declared stays pyarrow's. Beam declares the capability unsupported for now; Spark checks it since (docs/SPARK_ADAPTER.md, "CSV options"). A partitioned CSV output with options is laid out by pyarrow's
 dataset writer as Arrow files in a local scratch folder, then each file copied into place through the CSV writer (pyarrow's
 dataset writer writes CSV only its own way).
 

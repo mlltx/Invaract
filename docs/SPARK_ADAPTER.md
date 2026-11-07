@@ -417,12 +417,22 @@ declared unsupported here, so a contract that declares partition keys is refused
 partitioning, `spark.sql.sources.partitionOverwriteMode`); handing it to the
 pipeline as `CheckedWrite.partitioning` is the follow-up ROADMAP lists.
 
-**CSV options are not checked yet.** `check.csvOptions` (a dataset's declared `csv:` options,
-`INPUT_CSV_OPTIONS_MISMATCH`/`OUTPUT_CSV_OPTIONS_MISMATCH`) is declared unsupported here too, so a
-contract that declares them is refused. A CSV read's `HadoopFsRelation.options` and a write's
-`InsertIntoHadoopFsRelationCommand.options` carry them (`sep`, `header`, `encoding`, ...), under the
-names the contract uses; handing them to the pipeline as `CheckedWrite.formatOptions`, by location, is
-the follow-up ROADMAP lists.
+**CSV options.** `check.csvOptions` (a dataset's declared `csv:` options,
+`INPUT_CSV_OPTIONS_MISMATCH`/`OUTPUT_CSV_OPTIONS_MISMATCH`) is declared `partial`.
+`CsvOptionsSupport` hands the pipeline, as `CheckedWrite.formatOptions` by location, the options of each
+CSV read (`HadoopFsRelation.options`, by path or through a `USING csv` table, and a streaming file
+source's `DataSource.options`) and of each CSV write (`InsertIntoHadoopFsRelationCommand.options`, for a
+write to a path or into an existing table, and `CreateDataSourceTableAsSelectCommand`'s
+`table.storage.properties`). Each is under the contract's name (`sep` is `delimiter`, `charset` is
+`encoding`, the spelling Spark's own `CSVOptions` reads first winning), and every option the job left
+unset is reported as Spark's default (`SparkDefaults`: comma, no header, UTF-8, `"`, `\`, an empty
+string for a missing value, `yyyy-MM-dd`, Spark's default timestamp pattern). Defaults matter: a
+contract declaring `header: true` against a job that never set `header` is a real mismatch, since Spark
+then reads the header line as data. A dry run's draft declares the options the job set and `header`,
+whose default differs between engines (pyarrow reads a header line by default; Spark does not). Not
+covered: a streaming CSV sink (`FileStreamSink` keeps its options in a constructor parameter that is not
+a field), whose options are therefore not compared. Tests: `SparkCsvOptionsSpec` (a real session), and
+the `csv-*` conformance scenarios.
 
 **Not the runtime check.** `VerificationOptions.runtimeDataQuality`
 (`spark.invaract.runtimeDataQuality`, capability `check.runtimeDataQuality`)
