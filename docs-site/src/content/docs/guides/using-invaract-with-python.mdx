@@ -135,7 +135,8 @@ program, so **Java 11 or later** must be installed there (`JAVA_HOME`, or `java`
 3. Replace each read and write with the dataset's name. `invaract.read(name)` returns a pandas DataFrame; pass
    `as_="polars"`, `"polars-lazy"` or `"arrow"` for another kind. Only the columns the contract lists are read, and a CSV
    input's columns are read as the contract's types. `invaract.write(frame, name)` takes a pandas, Polars or DuckDB
-   frame, a Polars LazyFrame, or a pyarrow Table or RecordBatchReader; a pandas frame's row index is not written. The
+   frame, a Polars LazyFrame, or a pyarrow Table or RecordBatchReader. A pandas frame is written as the contract declares
+   it wherever that changes no value (see [pandas frames](#pandas-frames)). The
    decorators `@invaract.reads(...)` and `@invaract.writes(...)` do the same for a function's arguments and its result:
 
    ```python
@@ -194,6 +195,71 @@ How to correct it:
 The exception is `invaract.ContractViolation`, and the exit status 1 lets a scheduler tell a refused run from a crash.
 If the check could not be made at all (no checker for the platform, a contract that cannot be read, a format the package
 cannot write), the exception is `invaract.CheckNotRun`, the exit status is 2, and nothing is published either.
+
+## pandas frames
+
+pandas cannot hold some of the types a contract declares: an integer column with a missing value is `float64`, a date is
+a `datetime64` at midnight, a decimal is an `object` column of `Decimal` values of whatever precision they happen to have,
+and a column with no values has no type. So Invaract writes each column of a pandas frame as the type the contract
+declares for it, **when no value changes**:
+
+| pandas holds | the contract declares | written as declared when |
+|---|---|---|
+| `float64` (integers with a missing value) | `long`, `integer`, `short`, `byte` | every value is a whole number that fits |
+| `int64` | `integer`, `short`, `byte` | every value fits |
+| `int64`, `float32` | `double`, `float` | every value is exact in it |
+| `datetime64` | `date` | every value is at midnight |
+| a time zone other than UTC | `timestamp` | always: the same moments, in UTC |
+| `Decimal` values, `float64`, `int64` | `decimal(p,s)` | every value fits `p` and `s` exactly (a float, as the nearest float to a decimal: `19.99`, not `0.1 + 0.2`) |
+| `category` | the type of its values | as for those values |
+| no values at all (a column of `None`, an empty frame) | any type | always |
+
+Otherwise the column is written as pandas holds it, and the write is refused as a type mismatch, as it would be anyway.
+Values of another kind are never converted (numbers and text, true/false and numbers), and a time zone is never added or
+dropped: datetimes without a zone are not a moment in UTC until the job says so.
+
+**Index keys are columns.** A named index level the contract declares as a column is written as that column, so a
+`groupby` result is written with its keys, without `reset_index()`. Any other index is pandas' bookkeeping and is not
+written.
+
+This job counts orders a day per region; `day` is a `datetime64`, `revenue` a `float64` sum, and both keys are in the
+index:
+
+```python
+orders["day"] = orders["ordered_at"].dt.normalize()
+daily = orders.groupby(["day", "region"]).agg(
+    orders=("amount", "size"), revenue=("amount", "sum"), first_at=("ordered_at", "min"))
+invaract.write(daily, "daily")
+```
+
+Against a contract declaring `day: date`, `region: string`, `orders: long`, `revenue: decimal(12,2)` and
+`first_at: timestamp`, the write is refused, and the explanation ends with what pandas has to do with it:
+
+```
+Why it violates the contract (1 violation):
+  1. [OUTPUT_FIELD_TYPE_MISMATCH] field 'first_at' declares type 'timestamp' but the actual OUTPUT schema has type 'timestamp_ntz'
+
+How to correct it:
+  1. Cast 'first_at' to 'timestamp' in the transformation, or update the contract to declare 'timestamp_ntz' if the new type is intentional.
+
+In pandas:
+  - 'first_at' (datetime64[us] in pandas) is not written as timestamp: its datetimes have no time zone, and the contract's type is a moment in UTC: say which zone they are in, for example df['first_at'].dt.tz_localize('UTC'), or declare the field timestamp_ntz
+```
+
+With `daily["first_at"] = daily["first_at"].dt.tz_localize("UTC")` before the write, it passes, and the file written has
+the contract's types: `day: date32`, `region: string`, `orders: int64`, `revenue: decimal128(12, 2)`,
+`first_at: timestamp[us, tz=UTC]`.
+
+A column pandas holds as `object` with values of more than one kind (text and numbers) cannot be one column of a file:
+the write raises a `TypeError` naming the column, before anything is checked or staged.
+
+**Reading.** `invaract.read(name)` returns pandas' default dtypes, in which an integer column with a missing value is
+`float64`; written back, it is written as the integer the contract declares. To keep it an integer in the job, pass
+`dtype_backend`, as pandas' own readers take it: `"numpy_nullable"` gives `Int64`, `boolean` and `string` columns,
+`"pyarrow"` gives `ArrowDtype` columns. `@invaract.reads(..., dtype_backend=...)` takes it too.
+
+Frames of other libraries (Polars, DuckDB, pyarrow) hold the declared types themselves, so they are written as they are:
+a Polars `Float64` column against a `long` declaration is refused.
 
 ## Start from a job with no contract
 
