@@ -228,6 +228,8 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A Parquet or CSV output on object storage, each save mode; a refused run | ✅ covered: copied into place at publish, `_SUCCESS` last; a refused run never writes to the bucket | `test_a_plain_output_on_object_storage_*`, `test_object_storage_*`, `test_a_refused_run_never_writes_a_plain_output_to_object_storage` |
 | A Parquet or CSV output on HDFS, each save mode; a refused run | ✅ covered through pyarrow's file-system interface (a local file system stands in for HDFS) | `test_an_hdfs_*`, `test_a_refused_run_leaves_hdfs_as_it_was` |
 | A Parquet or CSV output on a file system Invaract does not know (`ftp://`, ...) | 🚫 fails closed: `CheckNotRun`, nothing written anywhere | `test_a_location_on_a_file_system_invaract_does_not_know_is_refused_not_written_locally` |
+| A SQLite output, each save mode; a refused or failed run; a write of no rows | ✅ covered: staged in a file of its own, one transaction at publish; a refused or failed run leaves the database as it was and creates none | `tests/test_sqlite.py` |
+| A read of a SQLite input, its declared columns typed as declared, whole or in chunks; a missing database or table | ✅ covered; 🚫 a missing one fails, and is not created (opened read-only) | `tests/test_sqlite.py` |
 | A table format whose library is not installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_table_format_whose_library_is_missing_is_not_checked` |
 | An input or output whose contract declares a `catalog:` requirement | ✅ covered for Iceberg (catalog, namespace and table checked); 🚫 fails closed for files and Delta tables (`MISSING_*_CATALOG_REGISTRATION`) | the `catalog-*` and `input-catalog-mismatch-refused` cases; `test_tables.py`'s catalog tests |
 | Google Cloud Storage, Azure and a real HDFS cluster | ❓ not investigated: the same libraries' code paths, with no emulator or cluster in CI yet | none |
@@ -470,6 +472,20 @@ or nested column, and more rows than a sheet holds, are refused. A partitioned o
 does not write goes through the same scratch folder as CSV with options. With neither a contract nor `format=` to say it,
 a location's extension names the format (`.jsonl`, `.xlsx`, ...), for writes as for reads. fastavro and openpyxl are
 optional (`invaract[avro]`, `invaract[excel]`); a run that needs one without it is not checked.
+
+**SQLite tables (2026-11-06).** The user chose SQLite as the second database (Snowflake and BigQuery need accounts CI does
+not have). Read and written through ADBC's SQLite driver (`invaract[sqlite]`), format `jdbc` as for PostgreSQL, the
+location SQLAlchemy's form (`sqlite:///<relative path>/<table>`, `sqlite:////<absolute path>/<table>`), which pandas users
+already write for `to_sql`. Staging differs from PostgreSQL's: SQLite locks the whole database for a writer, and a temporary
+table lives in the connection that made it, so an output is staged in a private database file on local disk instead, and
+publishing attaches that file to the target and moves the rows in one `BEGIN IMMEDIATE` transaction (Python's own `sqlite3`
+runs it, for `ATTACH`, which cannot run inside a transaction, and explicit transaction control). The target is not touched,
+locked or even created before the run passed. SQLite's storage classes hold no dates, timestamps or decimals, and the driver
+refuses decimals and drops a timestamp's zone, so the package writes those as text (decimals exactly, a zoned timestamp in
+UTC with `Z`), declares each new column with an affinity that keeps what was written (`TEXT`, not `DECIMAL`, whose numeric
+affinity would turn `12.30` into a real), and a read casts each declared column back. Reads open the file read-only, so a
+missing database is an error, not an empty file left behind. The catalog identity is the `jdbc` catalog, the file's name
+without its extension, `main`, and the table.
 
 What was built:
 

@@ -26,7 +26,7 @@ capabilities:
     note: >-
       Reads go through invaract.read by the input's declared name, so the checker knows each one exactly: Parquet, CSV,
       JSON lines, ORC, Avro, Feather and Excel files (local, HDFS, object storage), Delta and Iceberg tables, and
-      PostgreSQL tables (format jdbc).
+      PostgreSQL and SQLite tables (format jdbc).
   read.streaming:
     status: unsupported
     summary: Python jobs read whole datasets; reading a stream is not checked.
@@ -72,13 +72,13 @@ capabilities:
     status: supported
     note: >-
       The package writes the format itself (parquet, csv, json, orc, avro, feather, excel, delta, iceberg, or jdbc for a
-      PostgreSQL table) and says which.
+      PostgreSQL or SQLite table) and says which.
   check.saveMode:
     status: supported
     note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.
   check.partitioning:
     status: partial
-    summary: "Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake; a PostgreSQL table is not written partitioned."
+    summary: "Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake; a PostgreSQL or SQLite table is not written partitioned."
     note: >-
       The package writes Hive-style folders (every file format) or the table's own partitioning (Delta, Iceberg) and reports the
       columns and overwrite mode it used. A dynamic overwrite of an existing Delta table is one commit that adds the new
@@ -93,11 +93,12 @@ capabilities:
       with the declared ones.
   check.catalogRegistration:
     status: partial
-    summary: "Iceberg and PostgreSQL tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met."
+    summary: "Iceberg, PostgreSQL and SQLite tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met."
     note: >-
       An Iceberg dataset's location names its catalog, namespace and table, and the package sends them with each read and
       write (technology iceberg; the catalog service's own address is not sent, since a catalog URI can hold credentials).
-      A PostgreSQL table is in the jdbc catalog under its database, schema and table. Files and Delta tables are addressed
+      A PostgreSQL table is in the jdbc catalog under its database, schema and table; a SQLite table under its file's name
+      (without its extension), main and the table. Files and Delta tables are addressed
       by path, so a contract requiring a registration sees them as unregistered.
   check.runtimeDataQuality:
     status: partial
