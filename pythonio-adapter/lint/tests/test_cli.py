@@ -93,6 +93,13 @@ def test_a_file_that_cannot_be_parsed_is_reported_and_the_rest_still_checked(tmp
     assert "a_broken.py: cannot be checked" in err
 
 
+def test_a_file_in_the_encoding_it_declares_is_read_as_python_reads_it(tmp_path, capsys):
+    (tmp_path / "job.py").write_bytes("# -*- coding: latin-1 -*-\nimport pandas as pd\npd.read_csv('données.csv')\n".encode("latin-1"))
+    status, lines, err = run(capsys, str(tmp_path))
+    assert (status, err.splitlines()[0]) == (1, "1 read(s) or write(s) outside invaract")
+    assert len(lines) == 1 and "job.py:3:1: IVR001" in lines[0]
+
+
 def test_a_clean_folder_exits_0_and_says_nothing(tmp_path, capsys):
     write(tmp_path, {"job.py": "import invaract\ninvaract.read('orders')\n"})
     assert run(capsys, str(tmp_path)) == (0, [], "")

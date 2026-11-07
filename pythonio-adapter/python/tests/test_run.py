@@ -476,6 +476,41 @@ def test_a_checker_that_stops_without_answering(monkeypatch):
     assert "stopped" in str(not_run.value) and "'open'" in str(not_run.value)
 
 
+def test_a_checker_whose_reply_is_not_json_is_not_checked(monkeypatch):
+    # it reads the request before answering, so the package is never writing to a checker that has already gone
+    monkeypatch.setenv("INVARACT_CHECKER", "sh -c 'read request; echo not-a-reply'")
+    with pytest.raises(invaract.CheckNotRun, match="answered 'open' with 'not-a-reply', which is not a reply"):
+        with invaract.run("contract.yaml"):
+            pass
+
+
+def test_an_output_that_cannot_be_discarded_leaves_neither_the_others_nor_the_checker_behind(monkeypatch):
+    from invaract import _checker, _files, _run
+
+    write_contract(outputs=output(name="first", location="data/out/first") + output(name="second", location="data/out/second"))
+    discard, close, closed = _files.RenamedOutput.discard, _checker.Checker.close, []
+
+    def failing(out):
+        if out.target.endswith("first"):
+            raise OSError("cannot discard first")
+        discard(out)
+
+    def closing(checker):
+        closed.append(checker)
+        close(checker)
+
+    monkeypatch.setattr(_files.RenamedOutput, "discard", failing)
+    monkeypatch.setattr(_checker.Checker, "close", closing)
+    with pytest.raises(OSError, match="cannot discard first"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "first")
+            invaract.write(REPORT, "second")
+            raise RuntimeError("the job failed")
+    assert published("data/out/second") == ([], []), "the second output is discarded although the first could not be"
+    assert len(closed) == 1, "the checker is closed"
+    assert _run._current is None, "the run is over, so the process can start another"
+
+
 def test_a_missing_contract_or_no_contract_at_all_is_not_checked():
     with pytest.raises(invaract.CheckNotRun) as not_run:
         with invaract.run("no-such-contract.yaml"):

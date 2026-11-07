@@ -9,7 +9,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import invaract
-from invaract import _frames
+from invaract import _datasets, _frames, _types
 from conftest import output, write_contract
 
 ROWS = {"region": ["north", "south", "east"], "total": [10, 20, 30]}
@@ -51,8 +51,8 @@ def test_every_kind_of_table_is_written(kind, make):
 def test_a_polars_lazyframe_is_described_before_it_runs_and_runs_batch_by_batch():
     pl = pytest.importorskip("polars")
     frame = pl.LazyFrame(ROWS)
-    schema, batches = _frames.stream(frame)
-    assert schema.names == ["region", "total"]
+    schema, batches, notes = _frames.stream(frame)
+    assert notes == [] and schema.names == ["region", "total"]
     assert sum(b.num_rows for b in batches) == 3
 
 
@@ -98,12 +98,12 @@ def test_the_checker_is_told_each_columns_pyarrow_type_name_flag_and_empty_value
     ("array<string>", None), ("struct<a:int>", None),
 ])
 def test_a_csv_column_is_read_as_the_contracts_type(contract_type, arrow):
-    assert _frames.arrow_type(contract_type) == arrow
+    assert _types.scalar(contract_type) == arrow
 
 
 def test_a_format_that_cannot_be_read_is_an_error():
     with pytest.raises(ValueError, match="it reads parquet, csv, json, orc, avro, feather, excel, delta, iceberg and jdbc"):
-        _frames.read_table("anywhere", "text", [])
+        _datasets.read_table("anywhere", "text", [])
 
 
 def test_a_pandas_frames_row_index_is_not_written():

@@ -163,4 +163,3 @@ def test_how_options_are_merged_and_spelt():
     with pytest.raises(invaract.CheckNotRun, match="one-character delimiter"):
         _csv.character({"delimiter": "||"}, "delimiter")
     assert _csv.header({}) and not _csv.header({"header": "False"})
-    assert _csv.Format({"delimiter": ";"}) == "csv" and _csv.Format({"delimiter": ";"}).options == {"delimiter": ";"}

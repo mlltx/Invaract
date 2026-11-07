@@ -17,17 +17,15 @@ than see half done), the staged rows inserted, and committed. A refused or faile
 table. ``error`` refuses a table that holds rows; ``ignore`` publishes nothing to one that does. A Postgres table is not
 written partitioned.
 """
-import re
 import urllib.parse
 
 import pyarrow as pa
 
-from . import _files, _frames
+from . import _frames, _jdbc, _optional, _outputs, _types
+from ._jdbc import FORMAT, quote as _quote
 from .errors import CheckNotRun
 
 SCHEMES = frozenset({"postgresql", "postgres"})
-FORMAT = "jdbc"
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
 def is_postgres(location):
@@ -46,7 +44,7 @@ def parse(location):
     schema, _, table = identifier.rpartition(".")
     schema = schema or "public"
     for name in (schema, table):
-        if not _IDENTIFIER.match(name):
+        if not _jdbc.IDENTIFIER.match(name):
             raise CheckNotRun(f"Invaract names PostgreSQL schemas and tables as plain identifiers, not {name!r} (in {location!r})")
     server = urllib.parse.urlunsplit(("postgresql", parts.netloc, f"/{database}", parts.query, ""))
     return server, database, schema, table
@@ -64,16 +62,8 @@ def catalog_of(location):
     return {"technology": "jdbc", "catalogName": database, "namespace": [schema], "table": table}
 
 
-def _quote(name):
-    return '"' + name.replace('"', '""') + '"'
-
-
 def _connect(server):
-    try:
-        import adbc_driver_postgresql.dbapi as dbapi
-    except ImportError as e:
-        raise CheckNotRun('Invaract needs the adbc-driver-postgresql package to read or write PostgreSQL tables: '
-                          'pip install "invaract[postgres]"') from e
+    dbapi = _optional.require("adbc_driver_postgresql.dbapi", "postgres", "PostgreSQL tables", package="adbc-driver-postgresql")
     return dbapi.connect(server)
 
 
@@ -90,69 +80,58 @@ def _has_rows(cursor, schema, table):
 def read(location, fields):
     """The table at ``location``: the columns the contract lists (all of them when it lists none), each cast to the
     contract's type where it declares one (the driver gives some types, ``numeric`` among them, as text)."""
-    server, columns, query = _select(location, fields)
+    server, query = _select(location, fields)
     with _connect(server) as conn, conn.cursor() as cursor:
-        cursor.execute(query(columns))
-        data = cursor.fetch_arrow_table()
-    return _typed(data, fields)
+        cursor.execute(query())
+        return typed(cursor.fetch_arrow_table(), fields)
 
 
 def batches(location, fields):
-    """``(schema, batches)`` of the table at ``location``, as ``_frames.read_batches`` gives them: ``batches(columns)`` runs
+    """``(schema, batches)`` of the table at ``location``, as ``_datasets.read_batches`` gives them: ``batches(columns)`` runs
     the query afresh and yields its record batches, typed as ``read`` types them, as the server sends them."""
-    server, columns, query = _select(location, fields)
+    server, query = _select(location, fields)
     with _connect(server) as conn, conn.cursor() as cursor:
-        cursor.execute(query(columns) + " WHERE false")
-        schema = _typed(cursor.fetch_arrow_table(), fields).schema
-
-    def read(only=None):
-        conn = _connect(server)
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(query(list(only if only is not None else columns)))
-                reader = cursor.fetch_record_batch()
-                try:
-                    for batch in reader:
-                        yield _typed(pa.Table.from_batches([batch]), fields).to_batches()[0] if batch.num_rows else batch
-                finally:
-                    reader.close()
-        finally:
-            conn.close()
-
-    return schema, read
+        cursor.execute(query() + " WHERE false")
+        schema = typed(cursor.fetch_arrow_table(), fields).schema
+    return schema, _jdbc.stream(lambda: _connect(server), query, lambda batch: typed(batch, fields))
 
 
 def _select(location, fields):
-    """``(server, columns, query)``: the columns of the table at ``location`` to read (those the contract lists, all of them
-    when it lists none), and the query that selects given ones."""
+    """``(server, query)``: ``query(columns)`` selects ``columns`` from the table at ``location`` (by default, those the
+    contract lists that the table has, or all of them when it lists none)."""
     server, _, schema, table = parse(location)
-    declared = [f["name"] for f in fields]
     with _connect(server) as conn, conn.cursor() as cursor:
         if not _exists(cursor, schema, table):
             raise FileNotFoundError(f"there is no PostgreSQL table {schema}.{table} in {location}")
         cursor.execute(f"SELECT * FROM {_quote(schema)}.{_quote(table)} WHERE false")
         present = [d[0] for d in cursor.description]
+    declared = [f["name"] for f in fields]
     columns = [c for c in declared if c in present] if declared else present
-    return server, columns, lambda selected: f"SELECT {', '.join(_quote(c) for c in selected)} FROM {_quote(schema)}.{_quote(table)}"
+
+    def query(selected=None):
+        return f"SELECT {', '.join(_quote(c) for c in (columns if selected is None else selected))} FROM {_quote(schema)}.{_quote(table)}"
+
+    return server, query
 
 
-def _typed(data, fields):
-    """``data`` with each column the contract types cast to that type."""
-    types = {f["name"]: _frames.arrow_type(f["type"]) for f in fields}
-    return pa.table({c: data[c].cast(types[c]) if types.get(c) is not None and data[c].type != types[c] else data[c]
-                     for c in data.column_names})
+def typed(data, fields):
+    """``data`` (a table or a record batch) with each column the contract types cast to that type."""
+    types = _types.scalars(fields)
+    names = data.schema.names
+    return type(data).from_arrays([_cast(data.column(i), types.get(name)) for i, name in enumerate(names)], names=names)
 
 
-class PostgresOutput:
+def _cast(column, t):
+    return column.cast(t) if t is not None and column.type != t else column
+
+
+class PostgresOutput(_outputs.Output):
     """One output's connection and open transaction: staged into a temporary table, moved into place at publish."""
 
-    def __init__(self, location, mode, run_id, layout=_files.FLAT):
+    def __init__(self, location, mode, run_id, layout=_outputs.FLAT):
         if layout.keys:
             raise CheckNotRun(f"Invaract does not write a PostgreSQL table partitioned ({layout.describe()}): {location}")
-        self.target = str(location)
-        self.mode = mode
-        self.run_id = run_id
-        self.layout = layout
+        super().__init__(str(location), mode, layout)
         server, _, self.schema, self.table = parse(location)
         self._staging = f"invaract_{run_id}_{self.table}"[:63]
         self._conn = _connect(server)
@@ -203,9 +182,6 @@ class PostgresOutput:
         self._conn.commit()
         self._close()
 
-    def forget_previous(self):
-        pass
-
     def discard(self):
         """Rolls back the run's transaction: nothing staged reaches the table, and the temporary table goes with the session."""
         if self._conn is not None:
@@ -218,3 +194,8 @@ class PostgresOutput:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+
+def output(location, mode, run_id, layout=_outputs.FLAT):
+    """The output that writes the table at ``location`` (``_datasets.output``)."""
+    return PostgresOutput(location, mode, run_id, layout)

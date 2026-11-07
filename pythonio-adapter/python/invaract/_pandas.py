@@ -19,12 +19,11 @@ index is pandas' bookkeeping and is not written.
 """
 import datetime
 import decimal
-import re
 
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from . import _frames
+from . import _types
 
 #: ``dtype_backend`` values ``invaract.read`` takes, as pandas' own readers do.
 DTYPE_BACKENDS = ("numpy_nullable", "pyarrow")
@@ -64,29 +63,18 @@ def to_arrow(frame, fields=(), dry_run=False):
             notes.append(f"'{name}' holds {table.column(i).null_count} missing value(s) (NaN, None, NaT or pd.NA in pandas), and "
                          f"the contract requires a value in every row: fill them (df['{name}'].fillna(...)) or drop those rows "
                          f"(df.dropna(subset=['{name}']))")
-        target = arrow_target(field["type"])
+        dtype_note = _kind_note(dtype)
+        target = _types.of(field["type"])
         if target is None:
-            if _kind_note(dtype):
-                notes.append(f"'{name}' ({dtype} in pandas) is not written as {field['type']}: {_kind_note(dtype)}".replace("{name}", name))
+            if dtype_note:
+                notes.append(_unwritten(name, dtype, field, dtype_note))
             continue
         column, note = conform(table.column(i), target)
         if note:
-            notes.append(f"'{name}' ({dtype} in pandas) is not written as {field['type']}: {_kind_note(dtype) or note}"
-                         .replace("{name}", name))
+            notes.append(_unwritten(name, dtype, field, dtype_note or note))
         elif column is not table.column(i):
             table = table.set_column(i, table.schema.field(i).with_type(column.type), column)
     return table, notes
-
-
-def arrow_target(contract_type):
-    """The Arrow type a pandas column is written as for the contract's ``contract_type``: a scalar's as ``_frames.arrow_type``
-    gives it, and ``array<T>``, ``map<K,V>`` and ``struct<name:T,...>`` built of those; ``None`` for a type with no one Arrow
-    form (``interval``, a vendor type)."""
-    try:
-        target, rest = _parse_type(contract_type.strip())
-    except ValueError:
-        return None
-    return target if not rest.strip() else None
 
 
 def conform(column, target):
@@ -169,50 +157,14 @@ def _conform_nested(column, target):
     return column, f"its values are not all {target}; convert them in the job"
 
 
-def _parse_type(text):
-    """``(arrow type, the text after it)`` for the contract type at the start of ``text``; ``ValueError`` if there is none."""
-    match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*", text)
-    if not match:
-        raise ValueError(text)
-    keyword, rest = match.group(1).lower(), text[match.end():]
-    if keyword == "array":
-        element, rest = _parse_type(_expect(rest, "<"))
-        return pa.list_(element), _expect(rest, ">")
-    if keyword == "map":
-        key, rest = _parse_type(_expect(rest, "<"))
-        value, rest = _parse_type(_expect(rest, ","))
-        return pa.map_(key, value), _expect(rest, ">")
-    if keyword == "struct":
-        rest, members = _expect(rest, "<"), []
-        while True:
-            # a member's name, `quoted` when it holds anything but letters, digits and _, then ':' or a space
-            name = re.match(r"\s*(?:`([^`]+)`|([A-Za-z0-9_]+))\s*:?\s*", rest)
-            if not name:
-                raise ValueError(text)
-            member, rest = _parse_type(rest[name.end():])
-            members.append(pa.field(name.group(1) or name.group(2), member))
-            rest = rest.lstrip()
-            if rest.startswith(","):
-                rest = rest[1:]
-                continue
-            return pa.struct(members), _expect(rest, ">")
-    params = re.match(r"\s*\([^)]*\)", rest)
-    scalar = keyword + (params.group(0).strip() if params else "")
-    target = _frames.arrow_type(scalar)
-    if target is None:
-        raise ValueError(text)
-    return target, rest[params.end():] if params else rest
-
-
-def _expect(text, token):
-    text = text.lstrip()
-    if not text.startswith(token):
-        raise ValueError(text)
-    return text[len(token):]
+def _unwritten(name, dtype, field, why):
+    """The note on a column not written as declared: ``why``, with ``{name}`` the column's name."""
+    return f"'{name}' ({dtype} in pandas) is not written as {field['type']}: {why}".replace("{name}", name)
 
 
 def _kind_note(dtype):
-    """What to say of a pandas dtype no contract type is written from, in place of the general note."""
+    """What to say of a pandas dtype no contract type is written from, in place of the general note (``{name}`` the
+    column's name)."""
     name = str(dtype)
     if name.startswith("period"):
         return ("a pandas period is a span of time, not a date or a moment: convert it in the job, for example "

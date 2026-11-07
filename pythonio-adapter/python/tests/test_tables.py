@@ -47,7 +47,7 @@ ICEBERG = "lake.sales.report"
     ("hdfs://namenode/report", "hdfs", False), ("lake.sales.report", None, False),
 ])
 def test_where_a_location_lives(location, scheme, remote):
-    assert (_storage.scheme(location), _storage.on_object_storage(location)) == (scheme, remote)
+    assert (_storage.scheme(location), _storage.scheme(location) in _storage.OBJECT_STORAGE) == (scheme, remote)
 
 
 def test_a_location_as_the_libraries_take_it(tmp_path):
@@ -580,9 +580,9 @@ def registered(text, catalog):
     (None, "iceberg", None),
 ])
 def test_the_catalog_a_dataset_is_registered_in(location, fmt, expected):
-    from invaract import _tables
+    from invaract import _datasets
 
-    assert _tables.catalog_of(location, fmt) == expected
+    assert _datasets.catalog_of(location, fmt) == expected
 
 
 def test_an_iceberg_output_in_the_catalog_the_contract_requires_is_published(catalog):

@@ -34,8 +34,10 @@ finished and every answer was yes.
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
-| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
-| `python/invaract/_storage.py`, `_files.py`, `_tables.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (renamed into place locally and on HDFS, copied with `_SUCCESS` last on object storage); Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6) |
+| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `check`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
+| `python/invaract/_datasets.py`, `_outputs.py` | a dataset by its location and format: how it is read, the catalog it is registered in, and the output that writes it (`_datasets`); what every output is to a run, staged and then published or discarded, and its partition layout (`_outputs`) |
+| `python/invaract/_storage.py`, `_files.py`, `_csv.py`, `_formats.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (`RenamedOutput`, renamed into place locally and on HDFS; `CopiedOutput`, copied with `_SUCCESS` last on object storage); CSV options, and the JSON, ORC, Avro, Feather and Excel formats |
+| `python/invaract/_tables.py`, `_jdbc.py`, `_postgres.py`, `_sqlite.py` | Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6); database tables (`jdbc`), PostgreSQL and SQLite, staged in a temporary table or file and moved into place in one transaction |
 | `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar); `test_tables.py` needs the `delta` and `iceberg` extras and moto, and runs strictly in CI (`INVARACT_TEST_TABLES=true`) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
@@ -508,9 +510,9 @@ What was built:
 
 - `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
   Reads of Parquet and CSV go through pyarrow's own file systems, HDFS included.
-- `_files`: plain-file outputs. `LocalFileOutput` is milestone 2's, unchanged; `HadoopFileOutput` does the same on HDFS
-  through pyarrow's file system (staged beside the location, `move` into place); `ObjectStorageFileOutput` stages on local
-  disk and copies at publish, `_SUCCESS` last. Any other URI scheme is refused.
+- `_files`: plain-file outputs. `RenamedOutput` is milestone 2's local output, and does the same on HDFS through pyarrow's
+  file system (staged beside the location, `move` into place); `CopiedOutput` stages on local disk and copies at publish,
+  `_SUCCESS` last. Any other URI scheme is refused.
 - `_tables.DeltaOutput`: each write is a Parquet file staged uncommitted, in the table's folder when it is local, on local
   disk when it is on object storage (uploaded at publish); publishing commits them all in one transaction, creating the
   table if needed. `ignore` and `error` look at whether the table holds files.
@@ -562,8 +564,9 @@ What was built:
   in October 2025), so the package requires 3.10, the oldest CI can test.
 - The design placed the lint at `python/invaract_lint/`, beside the package. A second package needs its own `pyproject.toml`
   and root, so it is `lint/` instead.
-- Run over the package's own code, the lint finds exactly the package's three pyarrow reads and writes (`_frames.read_table`,
-  `_run._writer`). That is a check that it catches real I/O; the package is not a job, so it is not marked.
+- Run over the package's own code, the lint finds the package's own reads and writes: the pyarrow, fastavro, openpyxl and
+  SQLite calls through which it does a job's I/O. That is a check that it catches real I/O; the package is not a job, so
+  they are not marked.
 - Both conformance specs record their results as `target/conformance/<adapter>.json`, and both are the adapter `pythonio`, so
   the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry

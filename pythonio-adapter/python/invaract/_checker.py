@@ -71,7 +71,10 @@ class Checker:
             line = ""
         if not line:
             raise CheckNotRun(f"Invaract's checker stopped (exit status {self._process.wait()}) before answering '{request['op']}'.")
-        return json.loads(line)
+        try:
+            return json.loads(line)
+        except ValueError as e:
+            raise CheckNotRun(f"Invaract's checker answered '{request['op']}' with {line.strip()[:200]!r}, which is not a reply") from e
 
     def close(self):
         """Lets the checker deliver its events and stop."""

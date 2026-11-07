@@ -74,7 +74,7 @@ private[pythonioadapter] final class Run {
   private var reads = Vector.empty[(String, LogicalSchema)]
   /** The catalog each location read is registered in, where it is a catalog table. */
   private var readCatalogs = Map.empty[String, CatalogIdentity]
-  // the CSV options each read was made with, by location (`check.csvOptions`)
+  /** The CSV options each read was made with, by location (`check.csvOptions`). */
   private var readOptions = Map.empty[String, Map[String, String]]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
@@ -332,7 +332,7 @@ private[pythonioadapter] object Run {
   /** What the package needs from the contract: where each dataset is, and what each output must look like; with
     * `runtimeDataQuality` on, also each output's data checks (`RuntimeDataQuality.checks`), which the package evaluates on the
     * data it stages and reports, in the same order, with `written`. */
-  def describe(c: Contract, options: VerificationOptions = VerificationOptions()): Map[String, Any] =
+  def describe(c: Contract, options: VerificationOptions): Map[String, Any] =
     Map(
       "id" -> c.id,
       "version" -> c.version,
