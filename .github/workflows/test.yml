@@ -2030,11 +2030,14 @@ jobs:
         with:
           node-version: '20'
 
+      # The web UI's runtime dependencies only (`--omit dev`): what it ships with, as the other SBOMs list what the
+      # jars depend on. The dev tools also fail `npm sbom`'s tree validation outright: eslint 10 is newer than the
+      # eslint plugins eslint-config-next pulls in declare support for (ESBOMPROBLEMS), though `eslint .` runs fine.
       - name: Generate SBOM for web
         working-directory: web
         run: |
           npm ci
-          npm sbom --sbom-format cyclonedx > sbom.json
+          npm sbom --sbom-format cyclonedx --omit dev > sbom.json
 
       - name: Upload SBOMs
         uses: actions/upload-artifact@v7
