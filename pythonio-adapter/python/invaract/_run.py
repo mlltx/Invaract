@@ -13,14 +13,14 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _csv, _files, _frames, _pandas, _postgres, _tables
+from . import _checks, _csv, _files, _formats, _frames, _pandas, _postgres, _tables
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
 
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
 #: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
-FILE_FORMATS = ("parquet", "csv")
+FILE_FORMATS = _formats.FORMATS
 #: Databases (``_postgres``): staged in a temporary table, moved into place in one transaction.
 FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS + (_postgres.FORMAT,)
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
@@ -154,7 +154,7 @@ class Run:
             raise CheckNotRun(f"Invaract could not describe the table handed to invaract.write('{name}')")
         schema, batches = described
         where = location if self.dry_run else declared.get("location")
-        fmt = fmt or declared.get("format") or (_postgres.FORMAT if _postgres.is_postgres(where) else DEFAULT_FORMAT)
+        fmt = fmt or declared.get("format") or (_format_of(where) if where is not None else DEFAULT_FORMAT)
         mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
         layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
@@ -304,7 +304,7 @@ def _with_location(request, location):
 def _format_of(location):
     if _postgres.is_postgres(location):
         return _postgres.FORMAT
-    return "csv" if os.fspath(location).lower().endswith(".csv") else DEFAULT_FORMAT
+    return _formats.by_extension(os.fspath(location)) or DEFAULT_FORMAT
 
 
 def _script_name():

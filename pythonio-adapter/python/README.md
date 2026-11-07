@@ -33,7 +33,8 @@ program, which needs Java 11 or later (`JAVA_HOME`, or `java` on the `PATH`). `I
 own instead: a native program, or `java -jar invaract-pythonio-checker-<version>.jar`. A source checkout carries none, so
 it needs `INVARACT_CHECKER` (`cd pythonio-adapter && sbt assembly` builds the jar).
 
-**Formats and storage.** Parquet and CSV files on local and mounted file systems and HDFS (renamed into place) and on
+**Formats and storage.** Files in Parquet, CSV, JSON lines, ORC, Avro (`pip install "invaract[avro]"`), Feather and Excel
+(`"invaract[excel]"`) on local and mounted file systems and HDFS (renamed into place) and on
 object storage (copied into place with `_SUCCESS` written last, as Spark does); Delta Lake and Iceberg tables
 (`pip install "invaract[delta]"`, `"invaract[iceberg]"`), each output committed in one transaction when the run passes and
 created if it does not exist. An Iceberg location is `<catalog>.<namespace>.<table>`, with the catalog configured as

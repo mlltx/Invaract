@@ -17,6 +17,9 @@ polars = ["polars>=1.0"]
 # Delta Lake and Iceberg tables (milestone 6); an Iceberg catalog's own extra comes from pyiceberg (pyiceberg[glue], ...)
 delta = ["deltalake>=1.0"]
 iceberg = ["pyiceberg[pyarrow]>=0.9"]
+# Avro and Excel files (the other formats need only pyarrow)
+avro = ["fastavro>=1.9"]
+excel = ["openpyxl>=3.1"]
 # PostgreSQL tables, through ADBC (bulk COPY in and Arrow out)
 postgres = ["adbc-driver-postgresql>=1.2", "adbc-driver-manager>=1.2"]
 

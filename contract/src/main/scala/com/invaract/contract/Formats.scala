@@ -20,6 +20,12 @@ object Formats {
   val Json = "json"
   val Text = "text"
 
+  /** An Excel workbook (`.xlsx`): the name the spark-excel data source registers. */
+  val Excel = "excel"
+
+  /** Arrow's own file format (Feather version 2), which pandas' `to_feather` and Polars' `write_ipc` write. */
+  val Feather = "feather"
+
   // Table formats.
   val Delta = "delta"
   val Iceberg = "iceberg"
@@ -34,7 +40,7 @@ object Formats {
   val BigQuery = "bigquery"
   val Kafka = "kafka"
 
-  val All: Set[String] = Set(Parquet, Orc, Avro, Csv, Json, Text, Table, Delta, Iceberg, Hudi, Hive, Jdbc, BigQuery, Kafka)
+  val All: Set[String] = Set(Parquet, Orc, Avro, Csv, Json, Text, Excel, Feather, Table, Delta, Iceberg, Hudi, Hive, Jdbc, BigQuery, Kafka)
 
   /** Whether `format` is one of the canonical names (case-insensitively, as the check compares). */
   def isCanonical(format: String): Boolean = All.contains(format.trim.toLowerCase)

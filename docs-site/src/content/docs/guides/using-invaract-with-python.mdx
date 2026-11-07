@@ -17,8 +17,8 @@ Invaract checks what a Python job reads and writes: which datasets, where, in wh
 columns and types (including that a required column holds no empty value). It cannot read what your own Python code
 does between a read and a write, so the transformation-shape rules (`required_filter_columns`, `required_join_columns`,
 `required_group_by`, `forbid_cross_join`), custom rules, static data-quality proofs and role consistency are refused
-with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **Parquet and CSV files** on local and
-mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL tables** (see
+with `UNSUPPORTED_CONTRACT_FEATURE` rather than checked. It reads and writes **files** (Parquet, CSV, JSON lines, ORC,
+Avro, Feather and Excel) on local and mounted file systems, HDFS and object storage, **Delta Lake and Iceberg tables**, and **PostgreSQL tables** (see
 [Files, tables and object storage](#files-tables-and-object-storage); Google Cloud Storage, Azure and a real HDFS cluster
 are not tested yet). The full
 list, in plain words, is in [What Each Engine Checks](/reference/what-each-engine-checks/).
@@ -53,7 +53,8 @@ contract, where events go, which policy applies (see [The settings](#the-setting
 pip install "invaract[pandas]"      # or invaract[polars], or plain invaract for pyarrow alone
 ```
 
-Add `delta`, `iceberg` or `postgres` for Delta Lake, Iceberg or PostgreSQL tables: `pip install "invaract[pandas,delta]"`.
+Add `delta`, `iceberg` or `postgres` for Delta Lake, Iceberg or PostgreSQL tables, and `avro` or `excel` for Avro files
+or Excel workbooks: `pip install "invaract[pandas,delta]"`.
 
 It needs Python 3.10 or later and pyarrow 15 or later (installed with it); for pandas, 2.2 or later, and for Polars, 1.0
 or later.
@@ -417,9 +418,11 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 
 ## Formats, save modes and locations
 
-- **Formats**: Parquet, CSV, Delta Lake (`delta`), Iceberg (`iceberg`) and PostgreSQL tables (`jdbc`), for reading and
-  writing. A write uses the format the contract declares for the output; otherwise `jdbc` for a `postgresql://` location
-  and Parquet for any other.
+- **Formats**: for reading and writing, files in `parquet`, `csv`, `json`, `orc`, `avro`, `feather` and `excel`, and
+  Delta Lake (`delta`), Iceberg (`iceberg`) and PostgreSQL tables (`jdbc`). A read or write uses the format the contract
+  declares for the dataset; otherwise the one the location's extension names (`.json`, `.jsonl`, `.orc`, `.avro`,
+  `.feather`, `.xlsx`, `.csv`), `jdbc` for a `postgresql://` location, and Parquet for any other. See the
+  [file formats](#file-formats) below.
 - **CSV layout**: a CSV dataset is read and written with its contract's `csv:` options (delimiter, header, encoding,
   quote, escape, the text for a missing value, date formats); `invaract.read(..., csv={...})` and
   `invaract.write(..., csv={...})` give them for a job with no contract yet. See
@@ -427,7 +430,7 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 - **Save modes**: `overwrite` replaces what is at the location, `append` adds to what is there, `error` refuses the write
   if the location already holds data, and `ignore` publishes nothing if it does. A write uses the save mode the contract
   declares, or `overwrite`.
-- **Locations** of Parquet and CSV outputs are folders on a local or mounted file system, on HDFS (`hdfs://`) or on object
+- **Locations** of file outputs are folders on a local or mounted file system, on HDFS (`hdfs://`) or on object
   storage (`s3://`, `gs://`, `abfss://`). How they are published depends on which; see below.
 - **Required columns**: a column the contract marks `required: true` must hold no empty value; the file or table written
   then states the column as not null.
@@ -436,15 +439,31 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
   its `partitionOverwriteMode` says. `invaract.write(..., partition_by=[...], partition_overwrite="dynamic")` says it in the
   job; a write laid out otherwise than the contract declares is refused. See [Partition Outputs](/guides/partitioning-outputs/).
 
+### File formats
+
+Each format has the name Spark gives it, so one contract means the same thing for a Python job and a Spark job:
+
+| Format | What it is | Read and written |
+|---|---|---|
+| `parquet` | Parquet | with the types the files hold |
+| `csv` | comma-separated text, or as the contract's `csv:` options say | as the contract types each column |
+| `json` | JSON lines: one object per line, as Spark's `json` source writes | as the contract types each column; an empty value is left out of its line, dates are `yyyy-MM-dd`, timestamps ISO 8601, decimals numbers |
+| `orc` | ORC | with the types the files hold (pyarrow has no ORC support on Windows) |
+| `avro` | Avro, needs `invaract[avro]` | with the types the files hold: an optional column is a union with `null`; dates, timestamps and decimals are Avro's logical types; the record is named `topLevelRecord`, as Spark names it |
+| `feather` | Arrow's own file format, which pandas' `to_feather` writes | with the types the files hold |
+| `excel` | `.xlsx` workbooks, needs `invaract[excel]` | the first sheet, its first row naming the columns, as the contract types each column; a timestamp with a time zone is written in UTC, as a cell holds none, and a binary or nested column is refused |
+
+Every format is written partitioned the same way, Hive-style (`region=north/`).
+
 ## Files, tables and object storage
 
 How an output is published when the job returns depends on where it lives:
 
 | Output | Staged during the run | Published when the job returns |
 |---|---|---|
-| Parquet or CSV, local or mounted file system | in a hidden folder beside the location | renamed into place: all at once |
-| Parquet or CSV, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
-| Parquet or CSV, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
+| Files, local or mounted file system | in a hidden folder beside the location | renamed into place: all at once |
+| Files, HDFS (`hdfs://`, `viewfs://`) | in a hidden folder beside the location, on HDFS | renamed into place: all at once |
+| Files, object storage (`s3://`, `gs://`, `abfss://`) | on the job's local disk | copied into place, `_SUCCESS` written last (see below) |
 | Delta Lake or Iceberg table, anywhere | uncommitted | one commit: all at once |
 | PostgreSQL table | in a temporary table, in the run's own transaction | one transaction: all at once |
 

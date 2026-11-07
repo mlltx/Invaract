@@ -141,7 +141,7 @@ rather than by investigating someone else's code.
 | 2 | What is knowable at that point: reads, writes, schema, plan, parameters? | Every read and write by its declared name, each write's format, save mode and Arrow schema (with null counts), the read inputs' schemas. Not the transformation: the job's own code is opaque (`UnknownPlan`) | design section 4; sink records survey, probes 12 to 14 |
 | 3 | How could a platform attach this to a job it does not own (the engine's own configuration surface)? | Settings are `INVARACT_*` environment variables, forwarded to `open` by their neutral names; adopting the package is a one-time code change by design (`config.zeroCodeInstall` unsupported) | `PythonIoConfigSource`; the `location-refs`, `org-policy-*` and `notifications*` cases |
 | 4 | How are datasets named, and how do they convert to the canonical `/`-separated location? | By the contract's own names; the location is the contract's, resolved through `INVARACT_LOCATION_MAP` for `ref://`. A name the contract does not declare stands for itself and lands on no declared output | `PythonIoCheck.write`; the `undeclared-output-refused` case |
-| 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet`, `csv`, `delta` and `iceberg`, written by the package itself; the `iceberg` catalog technology for Iceberg tables (milestone 6 and after) | design decision 4 |
+| 5 | Which formats and catalog technologies does it have, and what are their canonical names? | `parquet`, `csv`, `json`, `orc`, `avro`, `feather`, `excel`, `delta`, `iceberg` and `jdbc`, written by the package itself (`excel` and `feather` added to `Formats` for it, "File formats (2026-11-06)"); the `iceberg` catalog technology for Iceberg tables (milestone 6 and after) | design decision 4 |
 | 6 | What are its write dispositions, and their defaults per operation? | All four of `SaveModes`, from the contract: `overwrite` (the folder replaced at publish), `append` (files named after the run added), `error` (refused if the output holds data), `ignore` (nothing published if it does). With none declared, `overwrite`, as the pandas and Polars calls it replaces do | `invaract/_run.py`; `test_run.py`'s save-mode tests |
 | 7 | How do its types map to `LogicalType` (including the ones with no equivalent)? | The package sends each column's Arrow type as pyarrow names it; the checker maps it with the shared `ArrowSchemas` (verification-core), keeps a type with no equivalent as itself, and refuses a request whose type is not an Arrow type name ("Type mapping" below) | `Requests.columns`; `ArrowSchemasSpec`; the `arrow-type-*` and `protocol-misuse` cases |
 | 8 | What does nullability mean, per field and per table kind? | A column is not nullable when the written data has no empty value (counted batch by batch and sent with `written`), and the file is written `not null` (design decision 3); with no count, Arrow's flag stands | design decision 3; the `required-column-*` cases |
@@ -218,7 +218,9 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | Each save mode, against an output that holds data and one that does not | ✅ covered | `test_run.py`'s save-mode tests |
 | A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
 | A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
-| An output format the package cannot write (`orc`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
+| A write or read in JSON lines, ORC, Avro, Feather or Excel, partitioned or not | ✅ covered: the same staging and publishing as Parquet | `tests/test_formats.py` |
+| An Avro or Excel dataset without fastavro or openpyxl installed | 🚫 fails closed: `CheckNotRun` naming the extra | `test_a_format_whose_library_is_missing_says_which_extra_to_install` |
+| An output format the package cannot write (`text`, ...) | 🚫 fails closed: not checked, nothing written | `test_a_format_the_package_cannot_write_yet_is_not_checked_rather_than_written_wrongly` |
 | A Delta output, local or on S3: created, overwrite, append, error, ignore; a refused or failed run | ✅ covered: one commit at publish, the table created if missing; a refused or failed run leaves the table as it was and no file of its own | `test_tables.py`'s Delta tests |
 | An Iceberg output: created with its namespace, each save mode, a refused or failed run | ✅ covered: one transaction at publish | `test_tables.py`'s Iceberg tests |
 | A read of a Delta or Iceberg input, its declared columns only | ✅ covered | `test_a_delta_input_*`, `test_an_iceberg_input_*` |
@@ -265,7 +267,7 @@ Milestone 2 (design section 12) is the `invaract` package, in `python/invaract`,
 - **Publishing.** When the job returns and `finish` says to publish, each staged output is moved into place by a rename, per
   its save mode, with the previous version moved aside until every output is in place. A job that fails, or that catches a
   refusal and carries on, publishes nothing.
-- **Reading.** Parquet or CSV, a file or a folder. Only the columns the contract lists are read, and CSV columns are read as the
+- **Reading.** Parquet or CSV (and, later, the formats of "File formats (2026-11-06)"), a file or a folder. Only the columns the contract lists are read, and CSV columns are read as the
   contract's types.
 - **Settings** are the `INVARACT_*` variables named in `invaract/_settings.py`, forwarded by their neutral names.
   `PythonIoSettingsSpec` holds that list to the checker's. `INVARACT_CHECKER` names the checker program; it is the package's
@@ -449,7 +451,25 @@ CSV options, with dates and timestamps in a declared pattern read as text and pa
 translated; fractions of a second and week numbers are refused); writing, when any option is declared, goes through Python's
 `csv` module over Arrow's text for each value (pyarrow's writer cannot set a quote, an escape, an encoding or a null marker),
 and with none declared stays pyarrow's. Spark and Beam declare the capability unsupported for now: Spark's CSV relations
-carry the options, which the adapter does not hand over yet.
+carry the options, which the adapter does not hand over yet. A partitioned CSV output with options is laid out by pyarrow's
+dataset writer as Arrow files in a local scratch folder, then each file copied into place through the CSV writer (pyarrow's
+dataset writer writes CSV only its own way).
+
+**File formats (2026-11-06).** The user asked for every format a pandas job commonly reads and writes, so the package now
+reads and writes `json` (JSON lines, Spark's `json`), `orc`, `avro`, `feather` and `excel` (`_formats`), each under the name
+Spark gives it; `excel` (the spark-excel source's name) and `feather` (no Spark source) joined `Formats`, so a contract naming
+them draws no warning. ORC and Feather go through pyarrow's datasets, as Parquet does. JSON, Avro and Excel are read file by
+file (`_formats.Files`): the files are listed, and their Hive partition keys parsed, by a pyarrow dataset that never opens
+them, and each file is read by its own reader: JSON by `pyarrow.json` with the contract's types (a date as text, then cast,
+since pyarrow reads a JSON date only as a number of days), Avro by fastavro with the writer's schema mapped onto Arrow, Excel
+by openpyxl with each cell converted to the contract's type (Excel stores numbers as floats, so a decimal goes through its
+shortest text). Writing follows Spark's layout: JSON lines with empty values left out, ISO dates and timestamps, decimals as
+numbers and binary as base64; Avro records named `topLevelRecord`, an optional column a union with `null`, dates,
+timestamps and decimals as logical types. Excel cannot hold a time zone, so a timestamp with one is written in UTC; a binary
+or nested column, and more rows than a sheet holds, are refused. A partitioned output in a format pyarrow's dataset writer
+does not write goes through the same scratch folder as CSV with options. With neither a contract nor `format=` to say it,
+a location's extension names the format (`.jsonl`, `.xlsx`, ...), for writes as for reads. fastavro and openpyxl are
+optional (`invaract[avro]`, `invaract[excel]`); a run that needs one without it is not checked.
 
 What was built:
 

@@ -25,7 +25,7 @@ class FormatsTest extends AnyFunSuite {
 
   test("the canonical formats are exactly the documented set, all lower-case") {
     assert(
-      Formats.All == Set("parquet", "orc", "avro", "csv", "json", "text", "table", "delta", "iceberg", "hudi", "hive", "jdbc", "bigquery", "kafka")
+      Formats.All == Set("parquet", "orc", "avro", "csv", "json", "text", "excel", "feather", "table", "delta", "iceberg", "hudi", "hive", "jdbc", "bigquery", "kafka")
     )
     assert(Formats.All.forall(f => f == f.toLowerCase))
     assert(Formats.Parquet == "parquet" && Formats.BigQuery == "bigquery" && Formats.Delta == "delta")

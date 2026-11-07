@@ -88,7 +88,7 @@ or format it doesn't recognize:
 
 ```
 WARN AttachSetup$: Invaract: contract orders@1.0.0: [Warning] outputs[0].schema.fields[0].nulable: Unknown key 'nulable' is ignored. Did you mean 'nullable'?
-WARN AttachSetup$: Invaract: contract orders@1.0.0: [Warning] outputs[0].format: format 'parqet' is not one of the canonical formats (avro, bigquery, csv, delta, hive, hudi, iceberg, jdbc, json, kafka, orc, parquet, table, text); it can only match an adapter that reports exactly this string, so the same contract may fail on another engine. Did you mean 'parquet'?
+WARN AttachSetup$: Invaract: contract orders@1.0.0: [Warning] outputs[0].format: format 'parqet' is not one of the canonical formats (avro, bigquery, csv, delta, excel, feather, hive, hudi, iceberg, jdbc, json, kafka, orc, parquet, table, text); it can only match an adapter that reports exactly this string, so the same contract may fail on another engine. Did you mean 'parquet'?
 ```
 
 Search the job's log for `Invaract: contract` to find them. A contract fetched from a
