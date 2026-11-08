@@ -253,12 +253,13 @@ private[beamadapter] object BeamIO {
     * (`csvReadOptions` adds the read's). `dateFormat` and `timestampFormat` are not part of a CSV format, so neither is
     * reported (`BeamCheck.refusal`). */
   def csvOptions(step: BeamStep): Option[Map[String, String]] = {
-    def format(t: AnyRef): AnyRef = step.simpleName match {
-      case "AutoValue_CsvIO_Write" => Reflection.call(t, "getCSVFormat")
-      case _                       => Reflection.field(Reflection.call(t, "getConfigBuilder"), "csvFormat")
+    // how each CsvIO step holds its format, and whether it writes
+    val held: Option[(AnyRef => AnyRef, Boolean)] = step.simpleName match {
+      case "AutoValue_CsvIO_Write" => Some((t => Reflection.call(t, "getCSVFormat"), true))
+      case "AutoValue_CsvIOParse"  => Some((t => Reflection.field(Reflection.call(t, "getConfigBuilder"), "csvFormat"), false))
+      case _                       => None
     }
-    if (step.simpleName != "AutoValue_CsvIO_Write" && step.simpleName != "AutoValue_CsvIOParse") None
-    else step.transform.flatMap(t => Try(csvFormatOptions(format(t), writes = step.simpleName == "AutoValue_CsvIO_Write")).toOption)
+    for { (format, writes) <- held; t <- step.transform; options <- Try(csvFormatOptions(format(t), writes)).toOption } yield options
   }
 
   /** The CSV options a text read whose lines go straight to the `CsvIO` parse `parser` is made with: the parse's, and `header`,

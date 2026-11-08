@@ -542,6 +542,23 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     def bare(className: String) = BeamStep("S", className, Nil, Nil, Map.empty, Nil)
     assert(BeamIO.csvOptions(bare("org.apache.beam.sdk.io.csv.AutoValue_CsvIO_Write")).isEmpty, "no transform to read the format of")
     assert(BeamIO.csvOptions(bare("org.apache.beam.sdk.io.TextIO$Write")).isEmpty)
+    // a step of another kind that has a transform states none either, even one that holds a CSV format
+    val csv = pipeline
+    parsedJson(csv).apply("Csv", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
+    val write = BeamGraph.of(csv).flatMap(_.withDescendants).find(_.simpleName == "AutoValue_CsvIO_Write").get
+    assert(BeamIO.csvOptions(write).isDefined, "the step itself states them")
+    assert(BeamIO.csvOptions(write.copy(className = "org.apache.beam.sdk.io.TextIO$Write")).isEmpty)
+  }
+
+  test("a parse's own options say nothing of a header: the lines it is handed may or may not have had one skipped") {
+    val format = CSVFormat.DEFAULT.withHeader("id", "amount").withSkipHeaderRecord(true)
+    assert(!BeamIO.csvFormatOptions(format, writes = false).contains("header"))
+    assert(BeamIO.csvFormatOptions(format, writes = true)("header") == "false")
+    // the parse step itself (CsvIO refuses a parse format that skips a header record, so its format never says to)
+    val p = pipeline
+    csvRows(p, 0, CSVFormat.DEFAULT.withHeader("id", "amount").withAllowDuplicateHeaderNames(false)).apply("Out", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
+    val parse = BeamGraph.of(p).flatMap(_.withDescendants).find(_.simpleName == "AutoValue_CsvIOParse").get
+    assert(BeamIO.csvOptions(parse).exists(o => o("delimiter") == "," && !o.contains("header")))
   }
 
   test("a CsvIO write with another delimiter than the output declares is refused before the pipeline runs (the guide's example)") {
@@ -584,7 +601,7 @@ class BeamTextFormatsSpec extends AnyFunSuite {
          |""".stripMargin)
     val stated = Map("delimiter" -> ",", "header" -> "true")
     def write(format: String, written: Map[String, String], readFormat: String = "csv", read: Map[String, String] = Map.empty) =
-      TranslatedWrite("/data/out/csv/part", Some(format), com.invaract.ir.Write(com.invaract.ir.DatasetRef("/data/out/csv/part"), com.invaract.ir.UnknownPlan("x", "X")),
+      TranslatedWrite("/data/out/csv/part", Option(format), com.invaract.ir.Write(com.invaract.ir.DatasetRef("/data/out/csv/part"), com.invaract.ir.UnknownPlan("x", "X")),
         Some(LogicalSchema(Nil)), Nil, readLocations = List("/data/in/orders"), readFormats = Map("/data/in/orders" -> readFormat),
         formatOptions = (if (written.isEmpty) Map.empty else Map("/data/out/csv/part" -> written)) ++ (if (read.isEmpty) Map.empty else Map("/data/in/orders" -> read)))
     val options = com.invaract.verification.VerificationOptions()
@@ -596,6 +613,8 @@ class BeamTextFormatsSpec extends AnyFunSuite {
       _.contains("does not state the CSV options delimiter, header")))
     // a write in another format is left to the format check; so is an output that declares no CSV options
     assert(BeamCheck.refusal(contract("    csv: { delimiter: \";\" }"), write("parquet", Map.empty), options).isEmpty)
+    // a write whose format is unknown could be CSV, so it is held to the declared options too
+    assert(BeamCheck.unstatedCsvOptions(contract("    csv: { delimiter: \";\" }"), write(null, Map.empty)).exists(_.contains("delimiter")))
     assert(BeamCheck.refusal(contract(""), write("text", Map.empty), options).isEmpty)
     // an input read by a write: declared options a read does not state refuse it, unless it is read in another format
     val input = "    csv: { header: false }"
