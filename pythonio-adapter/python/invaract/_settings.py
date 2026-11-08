@@ -31,6 +31,7 @@ SETTINGS = {
     "runtimeDataQuality": "true: check every row a job writes against its outputs' declared constraints before publishing.",
     "jobId": "The job's stable identity across runs, named by every event (job.jobId).",
     "jobAttributes": "Facts about this run every event carries (job.attributes): comma-separated key=value pairs, team=orders,dag=daily.",
+    "contractMetadata": "Facts about the contract a dry run drafts, in every draft's extensions: comma-separated key=value pairs, owner=orders-team.",
 }
 
 #: The command that runs the checker, split as a shell would: the native program, or ``java -jar <checker jar>``. The

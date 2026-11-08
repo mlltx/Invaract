@@ -429,4 +429,25 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
       "'spark.invaract.jobAttributes' must be comma-separated key=value pairs ('a', 'b' given more than once), not 'b=1,a=1,b=2,a=2'.")
     assert(refused("a=1,a=1").contains("('a' given more than once)"))
   }
+
+  // contractMetadata: what a dry run writes into the contracts it drafts
+
+  test("contractMetadata: key=value pairs, read as jobAttributes are; unset or blank is none") {
+    assert(VerificationSetup.contractMetadata(config(InvaractConf.ContractMetadata -> " owner = orders-team, source=erp,query=a=b")) ==
+      Map("owner" -> "orders-team", "source" -> "erp", "query" -> "a=b"))
+    assert(VerificationSetup.contractMetadata(ConfigSource.empty).isEmpty)
+    assert(VerificationSetup.contractMetadata(config(InvaractConf.ContractMetadata -> " , ")).isEmpty)
+    // it is its own setting: neither reads the other
+    assert(VerificationSetup.contractMetadata(config(InvaractConf.JobAttributes -> "team=orders")).isEmpty)
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.ContractMetadata -> "owner=x")).attributes.isEmpty)
+  }
+
+  test("contractMetadata: malformed pairs are refused, naming the setting as the engine spells it") {
+    def refused(raw: String) = intercept[IllegalArgumentException] {
+      VerificationSetup.contractMetadata(ConfigSource.prefixed("spark.invaract.")(Map("spark.invaract.contractMetadata" -> raw).get))
+    }.getMessage
+    assert(refused("owner=a,source") ==
+      "'spark.invaract.contractMetadata' must be comma-separated key=value pairs ('source' is not key=value), not 'owner=a,source'.")
+    assert(refused("owner=a,owner=b").contains("('owner' given more than once)"))
+  }
 }

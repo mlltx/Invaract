@@ -1,10 +1,13 @@
 # Static Data Quality Contract Verification — Design
 
-**Status: proposal, not implemented.** This document answers the ten questions the
-brief poses, proposes a domain model and analysis approach, defines the MVP scope,
-and gives representative test cases. No production code accompanies it. It should be
-read, argued with, and revised before any of it is built — the same role
-`SEMANTIC_LINEAGE_FINGERPRINTING.md` played for that capability before it existed.
+**Status: implemented.** `StaticDataQualityVerifier` (verification-core) implements
+this design, opt-in via the `staticDataQuality` setting on Spark (the only adapter that
+declares `analysis.staticDataQuality` supported), including nested struct fields and a
+real `spark-submit` proof in `./dev/regression`; see ROADMAP.md's "Static data-quality"
+sub-phases for what shipped in each pass and what remains. The document below is the
+original proposal (the ten questions the brief posed, the domain model, the MVP scope and
+the test cases), kept as the design's record, the same role
+`SEMANTIC_LINEAGE_FINGERPRINTING.md` plays for that capability.
 
 ## 0. One-paragraph summary
 

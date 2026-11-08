@@ -49,10 +49,18 @@ object VerificationSetup {
     )
 
   /** The `jobAttributes` setting as a map: `team=orders, dag=orders_daily` is `team -> orders`, `dag -> orders_daily`. */
-  private[verification] def jobAttributes(config: ConfigSource): Map[String, String] =
-    config.get(InvaractConf.JobAttributes).fold(Map.empty[String, String]) { raw =>
+  private[verification] def jobAttributes(config: ConfigSource): Map[String, String] = keyValuePairs(config, InvaractConf.JobAttributes)
+
+  /** What the platform says of the contract a dry run drafts (`contractMetadata`), as a map: every draft carries it in its
+    * `extensions`, and every dry-run event in its `metadata`. Refused, naming the setting, when malformed. */
+  def contractMetadata(config: ConfigSource): Map[String, String] = keyValuePairs(config, InvaractConf.ContractMetadata)
+
+  /** The setting `name` read as comma-separated `key=value` pairs, trimmed; a value may hold `=` or be empty. An entry that is
+    * not `key=value`, or a key given twice, is refused with the setting as the engine spells it, rather than half read. */
+  private def keyValuePairs(config: ConfigSource, name: String): Map[String, String] =
+    config.get(name).fold(Map.empty[String, String]) { raw =>
       def malformed(why: String) =
-        new IllegalArgumentException(s"'${config.describe(InvaractConf.JobAttributes)}' must be comma-separated key=value pairs ($why), not '$raw'.")
+        new IllegalArgumentException(s"'${config.describe(name)}' must be comma-separated key=value pairs ($why), not '$raw'.")
       val pairs = splitCommaSeparated(raw).map { entry =>
         entry.split("=", 2) match {
           case Array(key, value) if key.trim.nonEmpty => key.trim -> value.trim

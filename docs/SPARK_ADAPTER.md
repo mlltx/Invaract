@@ -409,13 +409,29 @@ NotStaticallyVerifiable}`. Only `Violated` becomes a real `Violation`
 on their own; the load-bearing principle is that an *absence* of proof
 must never look like a failure to a caller only checking `passed`.
 
-**Partitioning is not checked yet.** `check.partitioning` (an output's declared
-partition keys and `partitionOverwriteMode`, `OUTPUT_PARTITIONING_MISMATCH`) is
-declared unsupported here, so a contract that declares partition keys is refused
-(`UNSUPPORTED_CONTRACT_FEATURE`). Spark's write commands carry what it needs
-(`InsertIntoHadoopFsRelationCommand.partitionColumns`, Delta's and Iceberg's
-partitioning, `spark.sql.sources.partitionOverwriteMode`); handing it to the
-pipeline as `CheckedWrite.partitioning` is the follow-up ROADMAP lists.
+**Partitioning.** `check.partitioning` (an output's declared partition keys and
+`partitionOverwriteMode`, `OUTPUT_PARTITIONING_MISMATCH`) is declared `partial`. Each
+write shape in `WriteCommandSupport` sets `WriteCommandInfo.partitioning`, handed to the
+pipeline as `CheckedWrite.partitioning` (and to a dry run's `InferredWrite`), only where
+Spark states both the columns and what an overwrite replaces (`PartitioningSupport`):
+`InsertIntoHadoopFsRelationCommand` (its `partitionColumns`, and Spark's own dynamic rule,
+recomputed from public API because the command's `dynamicPartitionOverwrite` is
+`private[sql]`: the `partitionOverwriteMode` option, else `SQLConf.partitionOverwriteMode`,
+dynamic when some partition column is not fixed by `staticPartitions`); a converted Hive
+insert takes this path, and Spark puts `partitionOverwriteMode=dynamic` on the converted
+relation's options, so it reports dynamic, which `HiveConnectorSpec` confirms against the
+data a real overwrite leaves; `CreateDataSourceTableAsSelectCommand` (the new table's
+`partitionColumnNames`, static); `SaveIntoDataSourceCommand` only when the job gave
+`.partitionBy(...)` (`__partition_columns`; the overwrite mode as for a file write); and
+the V2 writes, from `Table.partitioning()` (or a CTAS/RTAS's own `partitioning`) when every
+transform is an identity on one column (`OverwritePartitionsDynamic` dynamic, the rest
+static). Everything else (streaming, an unconverted `InsertIntoHiveTable`, Hive CTAS, a
+`.save(path)` with no `.partitionBy`, a derived transform, row-level DML) leaves it `None`,
+and `ContractEnforcementRule.verifyOrThrow` refuses such a write onto an output that
+declares partition keys with `UNVERIFIABLE_WRITE` (`PartitioningSupport.refusal`, after
+the contract is held to be valid) rather than let the core's both-sides-known rule pass it
+unchecked. Tests: `SparkPartitioningSpec` (file source, V1 tables, Delta), and the
+`check.partitioning` tests in `IcebergConnectorSpec` and `HiveConnectorSpec`.
 
 **CSV options.** `check.csvOptions` (a dataset's declared `csv:` options,
 `INPUT_CSV_OPTIONS_MISMATCH`/`OUTPUT_CSV_OPTIONS_MISMATCH`) is declared `partial`.
@@ -1433,7 +1449,9 @@ itself. Metadata is allowlist-by-prefix on purpose - the whole `SparkConf`
 holds credentials. The merged contract's id is the job id (else the app
 name), sanitized for `ContractValidator`'s id rule.
 
-**Contract metadata versus run metadata.** `spark.invaract.contract.metadata.<key>` is
+**Contract metadata versus run metadata.** Every `key=value` pair in the engine-neutral
+`spark.invaract.contractMetadata` (`VerificationSetup.contractMetadata`), and every
+`spark.invaract.contract.metadata.<key>` (which wins for a key set both ways), is
 attached to every inferred draft's `extensions` (`DryRunReporter.reportInferred` tags the
 draft before it is rendered, self-checked or merged, so all three see one contract) and
 echoed as each event's `metadata`; `ContractInference.infer` itself still returns

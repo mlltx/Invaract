@@ -1,10 +1,14 @@
 # Contract Registry — Design
 
-**Status:** Design only, not yet implemented. This document is the
-reviewable spec both the `registry-client` module (this repo) and the
-`invaract-registry` server (a separate repo — see §2 for why) are built
-against, the same role `docs/SEMANTIC_LINEAGE_FINGERPRINTING.md` played
-for `fingerprint/` before it existed. Treat every "MUST"/"returns"/status
+**Status:** Implemented. `registry-client` (this repo:
+`ContractRegistryClient`, `HttpContractRegistryClient`), `registry://<id>@<version>`
+resolution on every adapter (`ContractReference`, through `AttachSetup`), and the
+`invaract-registry` server (a separate repo — see §2 for why) are built to this
+document, and `./dev/registry-demo` proves the path end to end against a real Spark
+job. What remains open is listed in ROADMAP.md's Phase 3 (impact analysis, and a
+registry-side consumer of the cross-contract policies, §9). This document stays the
+reviewable spec both sides are held to, the same role
+`docs/SEMANTIC_LINEAGE_FINGERPRINTING.md` played for `fingerprint/` before it existed. Treat every "MUST"/"returns"/status
 code below as the contract an implementation has to satisfy, not a
 suggestion either side is free to drift from.
 
@@ -32,9 +36,9 @@ that calls the logic `contract` already has.
 
 ## 1. Why a registry
 
-`ROADMAP.md`'s Phase 3 ("Contract Registry & Governance") names this as
-unbuilt future scope: registry design, version management, compatibility
-checking, impact analysis, governance policies. Today every contract is a
+`ROADMAP.md`'s Phase 3 ("Contract Registry & Governance") named this as
+future scope when this was written: registry design, version management, compatibility
+checking, impact analysis, governance policies (the first three are now built). Today every contract is a
 standalone YAML file (`ContractParser.parseFile`); nothing in Invaract
 knows about every contract an organization has at once. Two concrete
 capabilities are explicitly named as blocked on that not existing, in

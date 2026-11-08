@@ -126,7 +126,7 @@ private[pythonioadapter] final class Run {
       AttachSetup.select(config) match {
         case AttachPlan.DryRun(_) if o.check => notChecked("a check needs a contract to judge the frame against")
         case AttachPlan.DryRun(sink) =>
-          state = Opened(None, VerificationOptions(), sink.map(new RunTally(_)), job)
+          state = Opened(None, VerificationOptions(), sink.map(new RunTally(_)), job, VerificationSetup.contractMetadata(config))
           Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> DryRunMode)
         case AttachPlan.Enforce(contract, sink) =>
           val located = VerificationSetup.resolveContractLocations(contract, config)
@@ -202,7 +202,9 @@ private[pythonioadapter] final class Run {
         VerificationPipeline.rejectUnverifiableWrite(c, unverifiable(w.name, why), plan, run.sink, run.job.runId, Some(run.job))
       case (Some(why), None) =>
         drafts :+= InferenceStatus.SkippedUnrecognized -> None
-        DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.SkippedUnrecognized, Some(s"the write of '${w.name}': $why"), Some(location), None, None)
+        DryRunReporting.inference(
+          run.sink, logger, run.job, InferenceStatus.SkippedUnrecognized, Some(s"the write of '${w.name}': $why"), Some(location), None, None, run.contractMetadata
+        )
         notChecked(s"the write of '${w.name}' cannot be described: $why")
       case (None, contract) =>
         // no data yet, so no empty values: everything else is judged, and only a refusal is published
@@ -243,7 +245,7 @@ private[pythonioadapter] final class Run {
       run.contract match {
         // a job that failed publishes nothing, so there is nothing to hold its outputs to
         case Some(c) => if (f.completed) VerificationPipeline.requireOutputsWritten(c, written.toList, JobPlan, run.sink, run.job.runId, Some(run.job))
-        case None    => DryRunReporting.summary(run.sink, logger, run.job, drafts)
+        case None    => DryRunReporting.summary(run.sink, logger, run.job, drafts, run.contractMetadata)
       }
     } catch {
       case NonFatal(e) =>
@@ -373,13 +375,21 @@ private[pythonioadapter] final class Run {
   private def infer(location: String, w: Request.Write, plan: ir.Write, schema: LogicalSchema, run: Opened): Unit = {
     val outcome =
       try {
-        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning), formatOptions(location, w.csv), readFormats), reads, plan)
+        val draft = DryRunReporting.tagged(
+          ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning), formatOptions(location, w.csv), readFormats), reads, plan),
+          run.contractMetadata
+        )
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads, schema, run.options, caseSensitive = true, Set.empty)
-        DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck))
+        DryRunReporting.inference(
+          run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck), run.contractMetadata
+        )
         InferenceStatus.Inferred -> Some(draft)
       } catch {
         case NonFatal(e) =>
-          DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(location), None, None)
+          DryRunReporting.inference(
+            run.sink, logger, run.job, InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(location), None, None,
+            run.contractMetadata
+          )
           InferenceStatus.InferenceError -> None
       }
     drafts :+= outcome
@@ -398,7 +408,14 @@ private[pythonioadapter] object Run {
   sealed trait State
   case object NotOpen extends State
   case object Finished extends State
-  final case class Opened(contract: Option[Contract], options: VerificationOptions, sink: Option[RunTally], job: JobInfo) extends State
+  /** An open run; `contractMetadata` is what a dry run writes into its drafts (`VerificationSetup.contractMetadata`). */
+  final case class Opened(
+      contract: Option[Contract],
+      options: VerificationOptions,
+      sink: Option[RunTally],
+      job: JobInfo,
+      contractMetadata: Map[String, String] = Map.empty
+  ) extends State
   final case class Publishing(run: Opened) extends State
 
   /** A location the run has read: its columns as read, the format it was read in, the catalog it is registered in (a catalog

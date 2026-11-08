@@ -53,8 +53,8 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [The output's file format matches](#the-outputs-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [Inputs are read in their declared format](#inputs-are-read-in-their-declared-format) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
-| [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ✖ No | ◐ Partly |
-| [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ✖ No | ✖ No | ◐ Partly | ✅ Yes |
+| [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ◐ Partly | ◐ Partly |
+| [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ◐ Partly | ✖ No | ◐ Partly | ✅ Yes |
 | [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 | [Written values meet their constraints](#written-values-meet-their-constraints) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 
@@ -117,6 +117,7 @@ Everything not listed here is checked in full.
 - [The output's file format matches](#the-outputs-file-format-matches): The format comes from the IO the pipeline uses. A text write cannot tell CSV from JSON or plain text.
 - [Inputs are read in their declared format](#inputs-are-read-in-their-declared-format): The format comes from the IO the pipeline reads with. A text read cannot tell CSV from JSON or plain text.
 - [The save mode matches](#the-save-mode-matches): Only BigQuery writes state a save mode. A contract that declares one for a file, Kafka, JDBC or Pub/Sub write has that write refused.
+- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): CsvIO writes and the reads CsvIO parses are checked against the contract's CSV options. Any other text read or write, and a date or timestamp pattern, states none, so a contract that declares one for it is refused.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): BigQuery tables are checked against the `bigquery` catalog. Files, Kafka, JDBC and Pub/Sub have no catalog in Beam, so a requirement on them is never met.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): Checked where the pipeline uses Beam's schema transforms (`Filter`, `Group`, `Join`, `CoGroup`) or Beam SQL's GROUP BY and JOIN. A filter, grouping or join written as code is a black box: it does not satisfy a rule, and under `forbid_cross_join` a step that combines collections in code is refused.
 - [Turn it on without changing the job](#turn-it-on-without-changing-the-job): Turned on with `--runner` and the `--invaract...` options on the job's command line. A job that sets its runner in its own code bypasses it.
@@ -126,7 +127,6 @@ Everything not listed here is checked in full.
 **Not checked**
 
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A pipeline's writes state no partition columns, so a contract that declares partition keys is refused. Refused if your contract relies on it.
-- [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): A pipeline is checked before it is submitted, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 - [Your own rule types](#your-own-rule-types): Custom rule types judge row-level changes, and Beam has none. Refused if your contract relies on it.
 - [Proves value constraints](#proves-value-constraints): Beam steps are Java code Invaract cannot look inside, so it cannot prove what a column will contain. Refused if you turn on `staticDataQuality`.
@@ -189,6 +189,7 @@ Everything not listed here is checked in full.
 - [Streaming writes](#streaming-writes): Streaming writes are checked for file and Delta Lake streams; a connector without a streaming sink of its own cannot be written to as a stream at all.
 - [Writes land where the contract says](#writes-land-where-the-contract-says): Locations are matched by path. A CREATE TABLE AS SELECT into a new Hive table, and ClickHouse tables, have known gaps in how their location is worked out.
 - [Every promised output is written](#every-promised-output-is-written): A declared output the job never writes is found only when the job ends, after its other writes have happened. It is reported then, and with `spark.invaract.failOnMissingOutput=true` the job also exits with a failure.
+- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Partition keys and the overwrite mode are checked for file-source writes, new data source tables, Delta writes given partitionBy and V2 table writes. A write whose partitioning Spark does not state is refused when its output declares partition keys.
 - [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared): CSV reads and writes are checked against the contract's CSV options, Spark's own default standing for each option the job leaves unset. A streaming CSV sink's options are not checked.
 - [Rules for MERGE, UPDATE and DELETE](#rules-for-merge-update-and-delete): Checked in full for Delta Lake and Iceberg copy-on-write tables. On an Iceberg merge-on-read table, an `allowed_update_columns` rule cannot be checked, so the UPDATE is refused rather than let through.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): A user-defined function is a black box: an output column it computes is traced only to the columns passed into it.
@@ -196,7 +197,6 @@ Everything not listed here is checked in full.
 
 **Not checked**
 
-- [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): A contract's partition keys are not checked on Spark yet, so a contract that declares them is refused. Refused if your contract relies on it.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Spark is checked from its plan, before a write runs, so the values it writes are never seen. Refused if you turn on `runtimeDataQuality` and an output's columns declare constraints.
 
 ### Python (invaract package)

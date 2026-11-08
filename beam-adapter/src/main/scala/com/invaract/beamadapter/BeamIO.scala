@@ -62,7 +62,8 @@ private[beamadapter] object IoWrite {
       format: Option[String],
       saveMode: Option[String] = None,
       catalog: Option[CatalogIdentity] = None,
-      schema: Option[LogicalSchema] = None
+      schema: Option[LogicalSchema] = None,
+      csvOptions: Option[Map[String, String]] = None
   ) extends IoWrite
 
   final case class Unverifiable(why: String) extends IoWrite
@@ -243,6 +244,47 @@ private[beamadapter] object BeamIO {
     case _                                                           => None
   }
 
+  /** The CSV options a `CsvIO` step writes or parses with (`check.csvOptions`), under the contract's names, read from the Commons
+    * CSV format it holds: a write (`CsvIO.writeRows`, `CsvIO.write`) and a parse (`CsvIO.parseRows`, `CsvIO.parse`). `None` for any
+    * other step, and when the format cannot be read (the adapter has no compile-time dependency on CsvIO, so it is read by
+    * reflection, D2). Lines are UTF-8 both ways (TextIO's). A missing quote or escape character is reported as none (''), a
+    * missing null string as the empty text a null is written as. A write reports `header`: whether it writes a header line,
+    * which it does unless its format skips the header record; a parse does not, since it parses whatever lines it is handed
+    * (`csvReadOptions` adds the read's). `dateFormat` and `timestampFormat` are not part of a CSV format, so neither is
+    * reported (`BeamCheck.refusal`). */
+  def csvOptions(step: BeamStep): Option[Map[String, String]] = {
+    def format(t: AnyRef): AnyRef = step.simpleName match {
+      case "AutoValue_CsvIO_Write" => Reflection.call(t, "getCSVFormat")
+      case _                       => Reflection.field(Reflection.call(t, "getConfigBuilder"), "csvFormat")
+    }
+    if (step.simpleName != "AutoValue_CsvIO_Write" && step.simpleName != "AutoValue_CsvIOParse") None
+    else step.transform.flatMap(t => Try(csvFormatOptions(format(t), writes = step.simpleName == "AutoValue_CsvIO_Write")).toOption)
+  }
+
+  /** The CSV options a text read whose lines go straight to the `CsvIO` parse `parser` is made with: the parse's, and `header`,
+    * whether the read skips a first line (`TextIO.read().withSkipHeaderLines(n)`, read by reflection); `None` when either
+    * cannot be read. */
+  def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]] = {
+    val skipped = read.withDescendants.iterator.flatMap(_.transform).filter(_.getClass.getSimpleName == "AutoValue_TextIO_Read")
+      .map(t => Try(Reflection.call(t, "getSkipHeaderLines").asInstanceOf[Int]).toOption).collectFirst { case Some(lines) => lines > 0 }
+    for { options <- csvOptions(parser); header <- skipped } yield options + ("header" -> header.toString)
+  }
+
+  /** A Commons CSV format's options, as `csvOptions` describes them. */
+  private[beamadapter] def csvFormatOptions(format: AnyRef, writes: Boolean): Map[String, String] = {
+    def text(name: String): String = Option(Reflection.call(format, name)).fold("")(_.toString)
+    // getDelimiterString is Commons CSV 1.9's; earlier releases have only the one-character getDelimiter
+    val delimiter = Try(text("getDelimiterString")).getOrElse(text("getDelimiter"))
+    val header = if (writes) Map("header" -> (!Reflection.call(format, "getSkipHeaderRecord").asInstanceOf[Boolean]).toString) else Map.empty
+    Map(
+      "delimiter" -> delimiter,
+      "encoding"  -> "UTF-8",
+      "quote"     -> text("getQuoteCharacter"),
+      "escape"    -> text("getEscapeCharacter"),
+      "nullValue" -> text("getNullString")
+    ) ++ header
+  }
+
   /** Steps that turn rows into lines of text in a known format (`ToJson`): the columns and format a text write of their output has. */
   def textFormatterFormat(step: BeamStep): Option[String] = step.simpleName match {
     case "ToJson" => Some(Formats.Json)
@@ -325,7 +367,8 @@ private[beamadapter] object BeamIO {
     def prefixed(format: String, what: String): IoWrite = prefix match {
       case None                              => IoWrite.Unverifiable(s"$what write whose file prefix is not published")
       case Some(p) if isRuntimeParameter(p)  => IoWrite.templateParameter(all.flatMap(runtimeParameter).headOption.getOrElse(p))
-      case Some(p)                           => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema)
+      case Some(p)                           =>
+        IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema, csvOptions = csvOptions(unit))
     }
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")

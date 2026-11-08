@@ -1,0 +1,6 @@
+{"ok": false, "reason": "IllegalArgumentException: 'INVARACT_CONTRACT_METADATA' must be comma-separated key=value pairs ('source' is not key=value), not 'owner=orders-team,source'.", "status": "not-checked"}
+{"mode": "dry-run", "ok": true, "protocol": 1}
+{"ok": true}
+{"ok": true}
+{"ok": true, "publish": true}
+{"ok": true}

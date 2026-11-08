@@ -112,11 +112,17 @@ object InvaractConf {
     * `team=orders,dag=orders_daily`. A value cannot hold a comma. */
   val JobAttributes = "jobAttributes"
 
+  // What a dry run writes into the contract it drafts (`VerificationSetup.contractMetadata`).
+  /** Facts about the *contract* a dry run drafts (owner, team, source system), put in every draft's `extensions` and echoed as
+    * each dry-run event's `metadata`: comma-separated `key=value` pairs, such as `owner=orders-team,source=erp`. Unlike
+    * `jobAttributes`, which describe one run, these persist in the contract once a draft is adopted. */
+  val ContractMetadata = "contractMetadata"
+
   /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
     Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, LocationUrl, LocationTokenEnv, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
     RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps,
-    JobId, JobAttributes
+    JobId, JobAttributes, ContractMetadata
   )
 }

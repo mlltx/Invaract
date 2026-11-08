@@ -96,6 +96,18 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     assertCase("dry-run-infers")
     assertCase("dry-run-unverifiable-write")
   }
+
+  test(ContractMetadata) {
+    val events = assertCase("dry-run-contract-metadata").eventObjects
+    def metadata(e: java.util.Map[String, AnyRef]) = e.get("metadata").asInstanceOf[java.util.Map[String, AnyRef]].asScala.toMap
+    val expected = Map[String, AnyRef]("owner" -> "orders-team", "source" -> "erp")
+    val List(inference, summary) = events.filter(e => Set("CONTRACT_INFERENCE", "DRY_RUN_SUMMARY")(String.valueOf(e.get("eventType"))))
+    assert(metadata(inference) == expected && metadata(summary) == expected)
+    // the draft and the merged contract both carry it as their extensions, written into the YAML a reviewer adopts
+    List(inference.get("contractYaml"), summary.get("mergedContractYaml")).foreach { yaml =>
+      assert(String.valueOf(yaml).contains("owner: orders-team") && String.valueOf(yaml).contains("source: erp"), yaml)
+    }
+  }
 }
 
 object PythonIoProtocolCasesSpec {
@@ -112,6 +124,8 @@ object PythonIoProtocolCasesSpec {
     "job summaries: every run that opened ends with one JOB_SUMMARY, counting its validation events by verdict, their violations, and its writes"
   val JobIdentity =
     "job identity: INVARACT_JOB_ID and INVARACT_JOB_ATTRIBUTES name the job in every event; malformed attributes are not checked"
+  val ContractMetadata =
+    "contract metadata: INVARACT_CONTRACT_METADATA goes into every dry-run draft's extensions and every dry-run event's metadata; malformed pairs are not checked"
   val DryRunInference =
     "dry-run inference: with INVARACT_DRY_RUN=true every write is let through, gets a draft contract, and the drafts are merged at the end"
 

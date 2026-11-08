@@ -83,7 +83,14 @@ private[invaract] object DryRunSelfCheck {
   * the application. */
 private[invaract] object DryRunReporting {
 
-  /** One write's outcome: `status` an `InferenceStatus`, `yaml` the draft, `selfCheck` its `DryRunSelfCheck`. */
+  /** `draft` carrying what the platform says of the contract (`VerificationSetup.contractMetadata`) in its `extensions`, a key
+    * set there taking the place of the draft's own: done before the draft is written, self-checked or merged, so all three are
+    * the same contract. */
+  def tagged(draft: Contract, metadata: Map[String, String]): Contract =
+    draft.copy(extensions = draft.extensions ++ metadata)
+
+  /** One write's outcome: `status` an `InferenceStatus`, `yaml` the draft, `selfCheck` its `DryRunSelfCheck`, `metadata` the
+    * contract metadata every dry-run event echoes. */
   def inference(
       sink: Option[NotificationSink],
       logger: Logger,
@@ -92,24 +99,31 @@ private[invaract] object DryRunReporting {
       reason: Option[String],
       location: Option[String],
       yaml: Option[String],
-      selfCheck: Option[(String, List[Violation], List[String])]
+      selfCheck: Option[(String, List[Violation], List[String])],
+      metadata: Map[String, String] = Map.empty
   ): Unit =
     sink match {
       case Some(s) =>
         s.publish(
           ContractInferenceEvent(
             status, reason, location, yaml, selfCheck.map(_._1), selfCheck.fold(List.empty[Violation])(_._2), selfCheck.fold(List.empty[String])(_._3),
-            None, job, System.currentTimeMillis(), Map.empty
+            None, job, System.currentTimeMillis(), metadata
           )
         )
       case None =>
         logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
     }
 
-  /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred. */
-  def summary(sink: Option[NotificationSink], logger: Logger, job: JobInfo, outcomes: Seq[(String, Option[Contract])]): Unit = {
+  /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred; `metadata` as for `inference`. */
+  def summary(
+      sink: Option[NotificationSink],
+      logger: Logger,
+      job: JobInfo,
+      outcomes: Seq[(String, Option[Contract])],
+      metadata: Map[String, String] = Map.empty
+  ): Unit = {
     val counts = outcomes.groupBy(_._1).map { case (status, all) => status -> all.size.toLong }
-    val summary = DryRunSummary.event(counts, outcomes.flatMap(_._2).toList, job, System.currentTimeMillis(), Map.empty)
+    val summary = DryRunSummary.event(counts, outcomes.flatMap(_._2).toList, job, System.currentTimeMillis(), metadata)
     sink match {
       case Some(s) => s.publish(summary)
       case None =>

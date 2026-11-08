@@ -15,10 +15,12 @@ A contract can declare the layout, and Invaract then refuses a write that would 
 - a write with no partitions at all;
 - an overwrite that would replace more, or less, than the contract says.
 
-<Aside type="note" title="Python jobs">
+<Aside type="note" title="Which engines check it">
 Python jobs that write through the `invaract` package are checked, and the package writes the layout itself.
-Spark and Beam don't check partitioning yet, so they refuse a contract that declares partition keys (`UNSUPPORTED_CONTRACT_FEATURE`)
-rather than let a write break the layout unseen. See [What Each Engine Checks](/reference/what-each-engine-checks/).
+Spark jobs are checked too, for the writes where Spark says how it partitions them ([below](#write-it-from-spark));
+any other Spark write to a partitioned output is refused as unverifiable. Beam doesn't check partitioning yet, so it
+refuses a contract that declares partition keys (`UNSUPPORTED_CONTRACT_FEATURE`) rather than let a write break the layout
+unseen. See [What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
 ## Declare the partition keys
@@ -109,6 +111,40 @@ is not checked and nothing is written; partitioning by a column the table lacks 
 A PostgreSQL table is not written partitioned: a write with partition columns is not checked and
 nothing is written. Partitioning a PostgreSQL table is part of the table's own definition, which
 the run does not create.
+
+## Write it from Spark
+
+A Spark job lays out its output itself, with `.partitionBy(...)` or its table's `PARTITIONED BY`, and
+Invaract holds that to the contract. For the contract above (keys `day`, then `region`), this write is
+let through:
+
+```scala
+revenue.write.mode("overwrite").option("partitionOverwriteMode", "dynamic").partitionBy("day", "region").parquet("data/out/revenue")
+```
+
+while `.partitionBy("region")` is refused before anything is written, with a message like
+*contract declares the output partitioned by day, region but the write partitions by region*.
+
+What an overwrite replaces is decided as Spark decides it: the write's own `partitionOverwriteMode`
+option, else the session's `spark.sql.sources.partitionOverwriteMode` (`static` unless you set it).
+An `INSERT OVERWRITE ... PARTITION (day = '2026-11-04', region = 'north')` that names every key is a
+`static` overwrite of that one partition. An insert into a Hive table that Spark converts to its own
+Parquet or ORC writer is always `dynamic`, as Hive tables are, whatever the setting.
+
+Spark says how a write is partitioned for these writes:
+
+| Write | Partition keys | Overwrite |
+|---|---|---|
+| `.partitionBy(...).parquet(path)` (or `.csv`, `.json`, `.orc`, `.format(...).save(path)` through Spark's file source), and an insert into an existing data source table | the write's | as above |
+| `.partitionBy(...).saveAsTable(...)` creating a new data source table | the table's | the table is written whole |
+| A Delta `.format("delta").partitionBy(...).save(path)` | the write's | the option, else the setting |
+| `.writeTo(table)` and SQL into a Delta or Iceberg table partitioned by plain columns | the table's | `overwritePartitions()` (or `INSERT OVERWRITE` with the dynamic setting) is `dynamic`; any other overwrite is `static` |
+
+Any other write to an output that declares partition keys is refused with `UNVERIFIABLE_WRITE` rather
+than let through unchecked: a streaming write, an insert into a Hive table Spark doesn't convert
+(a `TEXTFILE` table, say), a Delta `.save(path)` with no `.partitionBy(...)` (an append that keeps the
+table's own partitioning; add `.partitionBy(...)` to say it), and a table partitioned by a derived
+value such as `days(ts)` or `bucket(4, id)`, which a contract's keys (columns) cannot name.
 
 ## Related
 

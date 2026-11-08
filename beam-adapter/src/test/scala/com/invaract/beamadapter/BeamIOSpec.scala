@@ -496,5 +496,114 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     assert(!BeamIO.isFileWrite(bare("org.apache.beam.sdk.io.WriteFiles")))
   }
 
+  // --- check.csvOptions: what a CsvIO write or parse states ---
+
+  private def csvRows(p: Pipeline, skipHeaderLines: Int, format: CSVFormat) =
+    p.apply("Lines", TextIO.read().from("/data/in/orders/*.csv").withSkipHeaderLines(skipHeaderLines)).apply("Parse", CsvIO.parseRows(rows, format)).getOutput
+
+  test("a CsvIO write states its delimiter, quote, escape, null text and header; lines are UTF-8") {
+    val p = pipeline
+    parsedJson(p).apply("Csv", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount").withDelimiter(';')))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.formatOptions == Map(w.location -> Map(
+      "delimiter" -> ";", "encoding" -> "UTF-8", "quote" -> "\"", "escape" -> "", "nullValue" -> "", "header" -> "true"
+    )), "Commons CSV's default has no escape character, and writes a null as nothing")
+    // a format that writes no header line, quotes with ', escapes with \\ and writes nulls as NULL says so
+    val q = pipeline
+    parsedJson(q).apply("Csv", CsvIO.writeRows("/data/out/csv/part",
+      CSVFormat.DEFAULT.withHeader("id", "amount").withSkipHeaderRecord(true).withQuote('\'').withEscape('\\').withNullString("NULL")))
+    val Seq(v) = BeamTranslator.translate(q).writes
+    assert(v.formatOptions(v.location) == Map(
+      "delimiter" -> ",", "encoding" -> "UTF-8", "quote" -> "'", "escape" -> "\\", "nullValue" -> "NULL", "header" -> "false"
+    ))
+    // and one that does not quote at all states no quote character
+    val n = pipeline
+    parsedJson(n).apply("Csv", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount").withQuote(null)))
+    assert(BeamTranslator.translate(n).writes.head.formatOptions.values.head("quote") == "")
+  }
+
+  test("a read CsvIO parses states the parse's options, and a header when the text read skips a first line") {
+    def options(skip: Int) = {
+      val p = pipeline
+      csvRows(p, skip, CSVFormat.DEFAULT.withHeader("id", "amount").withDelimiter('|').withAllowDuplicateHeaderNames(false))
+        .apply("Out", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
+      BeamTranslator.translate(p).writes.head.formatOptions
+    }
+    val parsed = Map("delimiter" -> "|", "encoding" -> "UTF-8", "quote" -> "\"", "escape" -> "", "nullValue" -> "")
+    assert(options(1)("/data/in/orders") == parsed + ("header" -> "true"))
+    assert(options(0)("/data/in/orders") == parsed + ("header" -> "false"))
+    assert(options(2)("/data/in/orders")("header") == "true", "any number of lines skipped is a header")
+  }
+
+  test("a plain text write, and a text read no CsvIO parse reads, state no CSV options") {
+    val p = pipeline
+    p.apply("Lines", TextIO.read().from("/data/in/orders/*.csv")).apply("Raw", TextIO.write().to("/data/out/raw"))
+    assert(BeamTranslator.translate(p).writes.head.formatOptions.isEmpty)
+    def bare(className: String) = BeamStep("S", className, Nil, Nil, Map.empty, Nil)
+    assert(BeamIO.csvOptions(bare("org.apache.beam.sdk.io.csv.AutoValue_CsvIO_Write")).isEmpty, "no transform to read the format of")
+    assert(BeamIO.csvOptions(bare("org.apache.beam.sdk.io.TextIO$Write")).isEmpty)
+  }
+
+  test("a CsvIO write with another delimiter than the output declares is refused before the pipeline runs (the guide's example)") {
+    val contract = com.invaract.contract.ContractParser.parse(
+      """id: orders_report
+        |version: "1.0.0"
+        |outputs:
+        |  - name: report
+        |    location: /data/out/report
+        |    format: csv
+        |    csv: { delimiter: ";", header: true }
+        |    schema: { fields: [ { name: id, type: long }, { name: amount, type: long } ] }
+        |""".stripMargin)
+    def job(format: CSVFormat) = {
+      val p = pipeline
+      parsedJson(p).apply("Csv", CsvIO.writeRows("/data/out/report", format.withHeader("id", "amount")))
+      p
+    }
+    InvaractBeam.enforce(contract).verify(job(CSVFormat.DEFAULT.withDelimiter(';')))
+    val ex = intercept[com.invaract.verification.ContractViolationException](InvaractBeam.enforce(contract).verify(job(CSVFormat.DEFAULT)))
+    assert(ex.result.violations.map(_.message) == List("contract declares the output CSV options delimiter ';' but the write uses delimiter ','"))
+  }
+
+  test("refusal: a declared CSV option no step states refuses the write; one every step states, or a non-CSV write, does not") {
+    def contract(outputCsv: String, inputCsv: String = "", outputFormat: String = "csv") = com.invaract.contract.ContractParser.parse(
+      s"""id: csv
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: /data/in/orders
+         |    format: csv
+         |$inputCsv
+         |    schema: { fields: [ { name: id, type: long } ] }
+         |outputs:
+         |  - name: report
+         |    location: /data/out/csv/part
+         |    format: $outputFormat
+         |$outputCsv
+         |    schema: { fields: [ { name: id, type: long } ] }
+         |""".stripMargin)
+    val stated = Map("delimiter" -> ",", "header" -> "true")
+    def write(format: String, written: Map[String, String], readFormat: String = "csv", read: Map[String, String] = Map.empty) =
+      TranslatedWrite("/data/out/csv/part", Some(format), com.invaract.ir.Write(com.invaract.ir.DatasetRef("/data/out/csv/part"), com.invaract.ir.UnknownPlan("x", "X")),
+        Some(LogicalSchema(Nil)), Nil, readLocations = List("/data/in/orders"), readFormats = Map("/data/in/orders" -> readFormat),
+        formatOptions = (if (written.isEmpty) Map.empty else Map("/data/out/csv/part" -> written)) ++ (if (read.isEmpty) Map.empty else Map("/data/in/orders" -> read)))
+    val options = com.invaract.verification.VerificationOptions()
+    // the output: every declared option stated passes on; one not stated (a date pattern, or a TextIO write's) is refused
+    assert(BeamCheck.refusal(contract("    csv: { delimiter: \",\", header: true }"), write("csv", stated), options).isEmpty)
+    assert(BeamCheck.refusal(contract("    csv: { dateFormat: dd/MM/yyyy }"), write("csv", stated), options).exists(r =>
+      r.contains("does not state the CSV options dateFormat") && r.contains("/data/out/csv/part")))
+    assert(BeamCheck.refusal(contract("    csv: { delimiter: \";\", header: true }"), write("text", Map.empty), options).exists(
+      _.contains("does not state the CSV options delimiter, header")))
+    // a write in another format is left to the format check; so is an output that declares no CSV options
+    assert(BeamCheck.refusal(contract("    csv: { delimiter: \";\" }"), write("parquet", Map.empty), options).isEmpty)
+    assert(BeamCheck.refusal(contract(""), write("text", Map.empty), options).isEmpty)
+    // an input read by a write: declared options a read does not state refuse it, unless it is read in another format
+    val input = "    csv: { header: false }"
+    assert(BeamCheck.refusal(contract("", input), write("csv", stated, read = Map("header" -> "false")), options).isEmpty)
+    assert(BeamCheck.refusal(contract("", input), write("csv", stated, readFormat = "text"), options).exists(r =>
+      r.contains("a read of /data/in/orders") && r.contains("CSV options header")))
+    assert(BeamCheck.refusal(contract("", input), write("csv", stated, readFormat = "parquet"), options).isEmpty)
+  }
+
   private def withoutDrive(location: String): String = location.replaceFirst("^[A-Za-z]:(?=/)", "")
 }

@@ -177,6 +177,8 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
   override def fileWrite(unit: BeamStep): IoWrite = IoWrite.Unverifiable(s"${unit.name}: not a file write")
   override def textParserFormat(step: BeamStep): Option[String] = None
   override def textFormatterFormat(step: BeamStep): Option[String] = None
+  override def csvOptions(step: BeamStep): Option[Map[String, String]] = None
+  override def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]] = None
   override def recognisesShape(step: BeamStep): Boolean = false
   override def shape(step: BeamStep): Option[SchemaShape] = None
 

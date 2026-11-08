@@ -413,6 +413,10 @@ Spark's `JobInfo` is `DryRunReporter.jobInfoOf(session)`: `engine = "spark"`, `j
 `attributes` from `spark.invaract.jobAttributes` and `spark.invaract.job.metadata.<key>` (the per-key setting wins);
 Beam's identifies its job in `BeamFrontEnd` (`--invaractJobId`, `--invaract_job_id`, ...), the Python I/O checker at
 `open` (`INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES`).
+A dry run's drafts are tagged the same way by a third neutral setting, `contractMetadata` (`key=value,...`, read by
+`VerificationSetup.contractMetadata`): `DryRunReporting.tagged` puts it in each draft's `extensions` before the draft is
+written, self-checked or merged, and `DryRunReporting.inference`/`summary` echo it as each dry-run event's `metadata`. Spark
+also reads its older per-key `spark.invaract.contract.metadata.<key>`, which wins for a key set both ways.
 
 **A sink that needs an engine's storage library lives in that engine's adapter.** The core has
 no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a

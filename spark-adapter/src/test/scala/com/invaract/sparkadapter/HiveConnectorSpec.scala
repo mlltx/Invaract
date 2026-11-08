@@ -2068,4 +2068,47 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // uncaught Windows-only failure across all 12 external-table/catalog
   // tests that call this, confirmed via a real Windows CI run, not assumed.
   private def extScratchDir(name: String): String = scratchDir.resolve(s"external_$name").toString.replace('\\', '/')
+
+  // --- check.partitioning (docs/SPARK_ADAPTER.md, "Partitioning") ---
+
+  private def partitionedContract(location: String) =
+    s"""id: hive_partitioning
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: $location
+       |    partitionOverwriteMode: dynamic
+       |    schema:
+       |      fields:
+       |        - { name: id, type: long }
+       |        - { name: value, type: long }
+       |        - { name: region, type: long, partitioned: true, partitionKeyPosition: 1 }
+       |""".stripMargin
+
+  test("check.partitioning: an INSERT OVERWRITE into a partitioned Hive table Spark converts is dynamic, as Spark writes it") {
+    spark.sql("SET hive.exec.dynamic.partition.mode=nonstrict")
+    spark.sql("CREATE TABLE hive_part_conv (id BIGINT, value BIGINT) PARTITIONED BY (region BIGINT) STORED AS PARQUET")
+    spark.sql("INSERT INTO hive_part_conv PARTITION (region) VALUES (1, 10, 1), (2, 20, 2)")
+    // the session setting says static, and Spark still keeps the partition this overwrite does not write: a Hive table is
+    // always overwritten dynamically, which Spark puts on the converted relation's options
+    assert(spark.conf.get("spark.sql.sources.partitionOverwriteMode").equalsIgnoreCase("static"))
+    withContract(partitionedContract(tableLocation("hive_part_conv"))) {
+      spark.sql("INSERT OVERWRITE TABLE hive_part_conv PARTITION (region) SELECT 3L, 30L, 1L")
+    }
+    val insert = capturedPlans.reverseIterator.find(_.getClass.getSimpleName == "InsertIntoHadoopFsRelationCommand").get
+    assert(WriteCommandSupport.combined(insert).partitioning.contains(com.invaract.verification.WritePartitioning(List("region"), "dynamic")))
+    assert(spark.table("hive_part_conv").orderBy("region").collect().map(r => (r.getLong(0), r.getLong(2))).toList == List((3L, 1L), (2L, 2L)))
+  }
+
+  test("check.partitioning: a Hive serde insert Spark does not convert states no partitioning, so a partitioned output refuses it") {
+    spark.sql("SET hive.exec.dynamic.partition.mode=nonstrict")
+    spark.sql("CREATE TABLE hive_part_text (id BIGINT, value BIGINT) PARTITIONED BY (region BIGINT) STORED AS TEXTFILE")
+    val ex = intercept[com.invaract.verification.ContractViolationException] {
+      withContract(partitionedContract(tableLocation("hive_part_text"))) {
+        spark.sql("INSERT INTO hive_part_text PARTITION (region) SELECT 1L, 10L, 1L")
+      }
+    }
+    val List(v) = ex.result.violations
+    assert(v.violationType == com.invaract.verification.ViolationType.UnverifiableWrite && v.message.contains("InsertIntoHiveTable"))
+  }
 }

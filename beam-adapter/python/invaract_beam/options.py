@@ -30,6 +30,7 @@ SETTINGS = {
     "trusted_steps": "Comma-separated names of steps the platform trusts not to move governed data (* for any run of characters).",
     "job_id": "The job's stable identity across runs, named by every event (job.jobId), where the job name may change per run.",
     "job_attributes": "Facts about this run every event carries (job.attributes): comma-separated key=value pairs, team=orders,dag=daily.",
+    "contract_metadata": "Facts about the contract a dry run drafts, in every draft's extensions: comma-separated key=value pairs, owner=orders-team.",
 }
 
 

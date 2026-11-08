@@ -29,7 +29,8 @@ private[beamadapter] final case class TranslatedWrite(
     opaqueCombines: List[String] = Nil,
     unreadableShapes: List[String] = Nil,
     readLocations: List[String] = Nil,
-    readFormats: Map[String, String] = Map.empty
+    readFormats: Map[String, String] = Map.empty,
+    formatOptions: Map[String, Map[String, String]] = Map.empty
 ) {
 
   /** Every located read this write depends on, with its columns where the pipeline states them and none where it does not (a
@@ -282,9 +283,17 @@ private[beamadapter] object BeamTranslator {
         others.collect { case o if !io.recognisesShape(o.step) && !io.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step) }.distinct,
         others.collect { case o if io.shape(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }.distinct,
         above.collect { case r: ReadNode => r }.flatMap(_.locations).distinct,
-        readFormats(above)
+        readFormats(above),
+        // the CSV options a CsvIO parse of a read, and a CsvIO write, use (check.csvOptions)
+        readCsvOptions(above) ++ written.csvOptions.map(written.location -> _)
       )
     }
+
+    /** The CSV options of each located read in `above` whose lines go straight to a `CsvIO` parse, by location. */
+    private def readCsvOptions(above: List[Node]): Map[String, Map[String, String]] =
+      above.collect { case r: ReadNode => r }.flatMap { r =>
+        parser(r).flatMap(p => io.csvReadOptions(r.step, p.step)).toList.flatMap(options => r.locations.map(_ -> options))
+      }.toMap
 
     /** The format of each located read in `above`, by location, where the IO says: the read's own, or, for a text read parsed
       * straight away into rows, the parser's (`JsonToRow` is json, `CsvIO.parseRows` csv); for the folders a file reader reads,

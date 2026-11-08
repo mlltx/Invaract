@@ -2505,7 +2505,7 @@ contract-format change.
 
 ---
 
-#### Sub-phase: Semantic lineage fingerprinting (design complete, implementation not started)
+#### Sub-phase: Semantic lineage fingerprinting (done)
 
 The transformation IR (Phase 1b) is precise enough to represent business
 logic independently of Spark's plan representation; this sub-phase designs
@@ -2649,12 +2649,11 @@ is detected even when the output schema stays identical.
       `sbt stryker` for `fingerprint` was previously a manual, not
       CI-enforced, step (see CLAUDE.md's Mutation Testing Requirement) —
       it no longer is.
-- [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
-      Central publishing (Sonatype/PGP) — still deferred per
-      `fingerprint/build.sbt`'s own "FOLLOW-UP" comment: this is the one
-      remaining piece from the item above, now that MiMa/mutation-testing
-      CI wiring is done. No previous release exists yet to sign or publish
-      against.
+- [x] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
+      Central publishing (Sonatype/PGP): `fingerprint/build.sbt` carries the
+      same sonatype/pgp settings, `modules.json` marks it `published`, and
+      `release.yml` publishes it with the other engine modules
+      (spark-adapter's POM depends on it; docs/RELEASING.md).
 - [x] **`SparkPlanAdapter` translation-layer fix for colliding self-join
       default aliases (confirmed false negative) — closed.** An unaliased
       DataFrame-API self-join of the same catalog table used to get both
@@ -3172,7 +3171,9 @@ that does reach every check regardless of outcome.
       `contractVerification.dataQuality` shows the honest `"captured": false` shape.
       Web UI screenshotted against a real `./dev/report` run, confirming the new
       section renders.
-- [ ] **Known remaining gaps** (flagged, not fixed in this sub-phase): struct/nested
+- [x] **Known remaining gaps** (flagged here, both since closed: the nested-field gap by
+      "Static data-quality — nested struct field recursion" and the end-to-end gap by
+      "Static data-quality — real spark-submit proof via ./dev/regression", below): struct/nested
       `Field.properties` constraints are declarable on the contract model but
       `StaticDataQualityVerifier.verify` only walks `output.schema.fields` at the top
       level — a nested field's `constraints` are silently never checked, no
@@ -3771,7 +3772,9 @@ first written: one field's value compared against *another field on the same row
       page) and `web && npx tsc --noEmit`/`npm run build` (Next.js,
       including the new `roleConformance` UI section) both genuinely ran
       and succeeded — real, not assumed.
-- [ ] **Not run in this environment**: `sbt compile`/`test`, scoped Stryker
+- [x] **Since run** (2026-11-08: `contract`'s 595 tests pass locally, and CI's test,
+      mutation, `api-compatibility`, `coverage-gating` and `docker-regression` jobs run
+      every one of the checks below on each change). Originally **not run in this environment**: `sbt compile`/`test`, scoped Stryker
       mutation testing, `mimaReportBinaryIssues`, coverage gating, and
       `./dev/test`/`./dev/regression` could not be executed here — the
       sandbox's network policy blocks the Scala/sbt toolchain outright
@@ -3843,7 +3846,8 @@ first written: one field's value compared against *another field on the same row
       Stryker bar is scoped to those three modules only; `contract` still
       gets ordinary coverage gating and the same MiMa treatment as every
       other module).
-- [ ] **Phase 6 not run in this environment**: same toolchain blocker as
+- [x] **Phase 6 since run** (2026-11-08: `contract`'s 595 tests, `TypeGuaranteeValidatorTest`
+      and `CrossContractValidatorTest` included, pass locally and in CI). Originally **not run in this environment**: same toolchain blocker as
       above — `sbt test`/`mimaReportBinaryIssues`/coverage gating for
       `contract` have not been executed here, so none of Phase 6's new
       code has been compiled or run for real yet.
@@ -4041,7 +4045,11 @@ Extend verification engine to support multiple execution engines.
         `partitioned`/`partitionKeyPosition`, with `partitionOverwriteMode` static or dynamic): written Hive-style for Parquet
         and CSV (local, HDFS, object storage), as partition columns for Delta and identity partitions for Iceberg, static and
         dynamic overwrites; partitioned inputs read with their keys typed as declared. Spark and Beam declare it unsupported
-  - [ ] Spark: hand a write's partition columns and overwrite mode to `check.partitioning`
+  - [x] Spark: hand a write's partition columns and overwrite mode to `check.partitioning` (`PartitioningSupport`, `partial`):
+        file-source writes and inserts (Spark's own dynamic-overwrite rule; a converted Hive insert is dynamic), new data source
+        tables, Delta `.save(path)` given `.partitionBy`, and V2 writes into tables partitioned by plain columns
+        (`overwritePartitions` dynamic); any other write onto an output that declares partition keys is refused as
+        `UNVERIFIABLE_WRITE` rather than passed unchecked. The kit's three partitioning scenarios now run on Spark
   - [x] PostgreSQL outputs and inputs, through ADBC (`invaract[postgres]`, adbc 1.2 or later): location
         `postgresql://host/<database>/<schema>.<table>`, format `jdbc`, registered in the `jdbc` catalog; an output is staged
         in a session-temporary table and published in one transaction (created, `TRUNCATE`d for overwrite, inserted,
@@ -4056,9 +4064,14 @@ Extend verification engine to support multiple execution engines.
         notes for missing values in required columns, `period` and `timedelta`
   - [x] CSV options in the contract (`csv:` on a dataset, Spark's option names; capability `check.csvOptions`): the Python
         package reads and writes with them and reports what it used; refusals `INPUT_CSV_OPTIONS_MISMATCH`,
-        `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Beam declares it unsupported for now; Spark checks it (below)
+        `OUTPUT_CSV_OPTIONS_MISMATCH`; dry runs draft them. Spark checks it (below); so does Beam Java (below)
   - [x] Spark: hand a CSV read's and write's options to `check.csvOptions` (`CsvOptionsSupport`; Spark's defaults stand
         for options a job leaves unset; a streaming CSV sink's options are not reported, so the capability is `partial`)
+  - [x] Beam Java: hand a `CsvIO` write's and parse's options to `check.csvOptions` (`partial`): the Commons CSV format each
+        holds (delimiter, quote, escape, null text; a write's header unless it skips the header record, a read's when its
+        `TextIO.read()` skips a first line); a declared option no step states (a plain TextIO file, a date or timestamp
+        pattern) refuses the write as unverifiable. The kit's three CSV scenarios run for real on Beam Java. Beam Python
+        still declares it unsupported
   - [x] JSON lines (`json`), ORC, Avro (`invaract[avro]`), Feather and Excel (`invaract[excel]`) inputs and outputs, laid out
         as Spark lays them out and partitioned Hive-style like Parquet; `excel` and `feather` added to the canonical formats;
         a location's extension names its format when nothing else does
@@ -4088,6 +4101,11 @@ Extend verification engine to support multiple execution engines.
       `VerificationSetup.identify` and spelled by each adapter (`spark.invaract.jobId`/`jobAttributes`, `--invaractJobId`,
       `--invaract_job_id`, `INVARACT_JOB_ID`, ...), so a sink groups any job's runs by `job.jobId` and the platform's
       `job.attributes`, which were Spark's alone
+- [x] A dry run's contract metadata on every engine: the neutral setting `contractMetadata` (`key=value,...`, read by
+      `VerificationSetup.contractMetadata`) goes into every draft's `extensions` and every dry-run event's `metadata`, spelled
+      by each adapter (`spark.invaract.contractMetadata`, `--invaractContractMetadata`, `--invaract_contract_metadata`,
+      `INVARACT_CONTRACT_METADATA`), which was Spark's alone (`spark.invaract.contract.metadata.<key>`, still read, and winning
+      for a key set both ways)
 - [x] `ref://` locations from a location service on every engine: `HttpLocationResolver` in verification-core
       (`GET <url>/locations/<id>` answering `{"location": ...}`, an optional bearer token read from the environment
       variable `locationTokenEnv` names, fail-closed), built by `VerificationSetup.resolveContractLocations` from the
@@ -4157,7 +4175,10 @@ Enable AI-ready verified metadata and platform integrations.
 ### Scope (Future)
 
 - [ ] Verified lineage API
-- [ ] Machine-readable verification results
+- [x] Machine-readable verification results: every event a check publishes (validation, write,
+      inference, summaries) is JSON held to a published, versioned JSON Schema
+      (`schemas/notification/v1/event.schema.json`, served by the docs site), which the engine's
+      tests and the docs build validate every event against; `VerificationResult` in code
 - [ ] OpenLineage integration
 - [ ] AI agent interfaces
 - [ ] Platform connectors (catalogues, lineage systems)

@@ -11,6 +11,8 @@ import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.extensions.avro.coders.AvroGenericCoder
 import com.google.api.services.bigquery.model.{TableFieldSchema, TableRow, TableSchema}
 import org.apache.beam.sdk.io.{FileIO, TextIO}
+import org.apache.beam.sdk.io.csv.CsvIO
+import org.apache.commons.csv.CSVFormat
 import org.apache.beam.sdk.io.gcp.bigquery.{BigQueryIO, BigQueryServices}
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.{CreateDisposition, WriteDisposition}
 import org.apache.beam.sdk.io.parquet.ParquetIO
@@ -59,6 +61,8 @@ private[beamadapter] object BeamScenarioJobs {
     require(job.rowChange.isEmpty && !job.boundary, "this adapter's jobs are read-transform-writes")
     val schemas = job.inputs.map(i => avro(s"in_${i.location.replace('/', '_')}", i.schema))
     val reads: List[PCollection[GenericRecord]] = job.inputs.zip(schemas).zipWithIndex.map { case ((input, schema), i) =>
+      if (input.csvOptions.nonEmpty) readCsv(pipeline, root, input, schema, i)
+      else {
       materialize(root, input, schema)
       val pattern = root.resolve(input.location).toString + "/*.parquet"
       if (job.streaming)
@@ -71,6 +75,7 @@ private[beamadapter] object BeamScenarioJobs {
         pipeline
           .apply(s"Read$i", ParquetIO.read(schema).from(pattern))
           .asInstanceOf[PCollection[GenericRecord]]
+      }
     }
 
     if (job.untranslatableWrite) {
@@ -118,6 +123,23 @@ private[beamadapter] object BeamScenarioJobs {
   }
 
   // --- reading ---
+
+  /** A CSV input as a team's Beam job reads one: its lines with `TextIO`, skipping a header line when it has one, parsed into
+    * rows by `CsvIO.parseRows` with the input's delimiter, then as records of `schema`. The file is materialized empty but for
+    * the header line, written the same way. */
+  private def readCsv(pipeline: Pipeline, root: NioPath, input: ScenarioInput, schema: Schema, i: Int): PCollection[GenericRecord] = {
+    val header = input.csvOptions.get("header").exists(_.toBoolean)
+    val delimiter = input.csvOptions.getOrElse("delimiter", ",").head
+    val names = input.schema.fields.map(_.name)
+    val dir = root.resolve(input.location)
+    Files.createDirectories(dir)
+    Files.write(dir.resolve("part-0.csv"), (if (header) names.mkString(delimiter.toString) + "\n" else "").getBytes("UTF-8"))
+    val lines = pipeline.apply(s"Read$i", TextIO.read().from(dir.toString + "/*.csv").withSkipHeaderLines(if (header) 1 else 0))
+    val parsed = lines.apply(s"Parse$i", CsvIO.parseRows(AvroUtils.toBeamSchema(schema), CSVFormat.DEFAULT.withDelimiter(delimiter).withHeader(names: _*).withAllowDuplicateHeaderNames(false)))
+    parsed.getOutput
+      .apply(s"AsRecords$i", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(AvroUtils.getRowToGenericRecordFunction(schema)))
+      .setCoder(AvroGenericCoder.of(schema))
+  }
 
   /** An empty Parquet file of `schema` at the input's location, so a read of the folder finds a dataset. */
   private def materialize(root: NioPath, input: ScenarioInput, schema: Schema): Unit = materialize(root.resolve(input.location), schema, Nil)
@@ -214,6 +236,11 @@ private[beamadapter] object BeamScenarioJobs {
     job.output.format match {
       case "parquet" =>
         data.apply("Write", sharded(FileIO.write[GenericRecord]().via(ParquetIO.sink(out)).to(destination).withSuffix(".parquet")))
+      case "csv" if job.output.csvOptions.nonEmpty =>
+        // written as a team writes CSV with Beam's own CSV writer, which states its options: with the output's delimiter
+        val format = CSVFormat.DEFAULT.withDelimiter(job.output.csvOptions.getOrElse("delimiter", ",").head).withAllowDuplicateHeaderNames(false)
+        // a CsvIO (TextIO) write is located by the file prefix it is given, which is the output's location here
+        data.setCoder(AvroUtils.schemaCoder(out)).apply("Write", CsvIO.write[GenericRecord](destination, format))
       case "csv" =>
         data.apply("Write", sharded(FileIO.write[GenericRecord]().via(Contextful.fn[GenericRecord, String](new CsvFn), TextIO.sink()).to(destination).withSuffix(".csv")))
       case other => throw new IllegalArgumentException(s"this adapter's jobs write parquet or csv, not '$other'")

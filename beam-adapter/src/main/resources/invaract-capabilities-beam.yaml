@@ -90,9 +90,15 @@ capabilities:
     summary: A pipeline's writes state no partition columns, so a contract that declares partition keys is refused.
     note: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
   check.csvOptions:
-    status: unsupported
-    summary: A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused.
-    note: A TextIO file's delimiter and quoting are the pipeline's own code, which the graph does not describe; CsvIO's format is not handed to the check.
+    status: partial
+    summary: "CsvIO writes and the reads CsvIO parses are checked against the contract's CSV options. Any other text read or write, and a date or timestamp pattern, states none, so a contract that declares one for it is refused."
+    note: >-
+      A CsvIO write (writeRows, write) states its delimiter, quote, escape, null text and header (written unless its
+      format skips the header record). A CsvIO parse (parseRows, parse) of the lines a text read yields states the same,
+      its header being whether that read skips a first line (withSkipHeaderLines). Lines are UTF-8 both ways. A plain
+      TextIO file's delimiter and quoting are the pipeline's own code, which the graph does not describe, and a CSV format
+      has no date or timestamp pattern, so a write or read whose declared dataset names an option nothing states is
+      refused as unverifiable rather than passed unchecked.
   check.catalogRegistration:
     status: partial
     summary: "BigQuery tables are checked against the `bigquery` catalog. Files, Kafka, JDBC and Pub/Sub have no catalog in Beam, so a requirement on them is never met."

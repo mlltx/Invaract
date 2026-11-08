@@ -3,7 +3,9 @@
 
 package com.invaract.sparkadapter
 
+import com.invaract.contract.PartitionOverwriteModes
 import com.invaract.ir.CatalogIdentity
+import com.invaract.verification.WritePartitioning
 
 import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable => SparkCatalogTable}
@@ -106,7 +108,14 @@ private[sparkadapter] case class WriteCommandInfo(
   // the same convention `schema: List[WriteFieldInfo]` (not
   // `Option[List[...]]`) already uses elsewhere on this same
   // `WriteEvent`.
-  partitionColumns: List[String] = Nil
+  partitionColumns: List[String] = Nil,
+  // How the write lays out its data as `check.partitioning` judges it: the
+  // columns it partitions by and what an overwrite replaces. Unlike
+  // `partitionColumns` above, `None` means "Spark does not say" - set only
+  // for the shapes `PartitioningSupport`'s doc lists, where both are
+  // stated; `Some(WritePartitioning(Nil, _))` is a write known to be
+  // unpartitioned.
+  partitioning: Option[WritePartitioning] = None
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -162,7 +171,8 @@ private[sparkadapter] object WriteCommandSupport {
         // ParquetConnectorSpec's own "partitionBy columns are present"
         // feature-surface test already relies on being part of
         // `query.output` without extracting it separately until now.
-        partitionColumns = cmd.partitionColumns.map(_.name).toList
+        partitionColumns = cmd.partitionColumns.map(_.name).toList,
+        partitioning = Some(PartitioningSupport.fileWrite(cmd.partitionColumns.map(_.name).toList, cmd.options, cmd.staticPartitions.size))
       )
   }
 
@@ -211,7 +221,13 @@ private[sparkadapter] object WriteCommandSupport {
         // mechanism that encoded it, rather than hand-parsing the JSON.
         partitionColumns = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY)
           .map(DataSourceUtils.decodePartitioningColumns(_).toList)
-          .getOrElse(Nil)
+          .getOrElse(Nil),
+        // Only a write given `.partitionBy(...)` says how it is partitioned: with
+        // none, an append to an existing Delta table keeps the table's own
+        // partitioning, which this command does not carry.
+        partitioning = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY).map { encoded =>
+          WritePartitioning(DataSourceUtils.decodePartitioningColumns(encoded).toList, PartitioningSupport.configuredMode(cmd.options))
+        }
       )
   }
 
@@ -268,7 +284,9 @@ private[sparkadapter] object WriteCommandSupport {
         // real throwaway probe, since deleted) that a
         // `.partitionBy("part").saveAsTable(...)` new V1 table's resolved
         // `cmd.table` already carries exactly `Seq(part)` here.
-        partitionColumns = cmd.table.partitionColumnNames.toList
+        partitionColumns = cmd.table.partitionColumnNames.toList,
+        // a new table is written whole: nothing of it exists for an overwrite to keep
+        partitioning = Some(WritePartitioning(cmd.table.partitionColumnNames.toList, PartitionOverwriteModes.Static))
       )
   }
 
@@ -464,7 +482,8 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
-        partitionColumns = partitionColumnsOf(cmd.table)
+        partitionColumns = partitionColumnsOf(cmd.table),
+        partitioning = partitioningOf(cmd.table, PartitionOverwriteModes.Static)
       )
   }
 
@@ -491,7 +510,9 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
-        partitionColumns = partitionColumnsOf(cmd.table)
+        partitionColumns = partitionColumnsOf(cmd.table),
+        // replaces what its condition matches (the whole table for a plain overwrite), whichever partitions the rows land in
+        partitioning = partitioningOf(cmd.table, PartitionOverwriteModes.Static)
       )
   }
 
@@ -525,7 +546,10 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
-        partitionColumns = partitionColumnsOf(cmd.table)
+        partitionColumns = partitionColumnsOf(cmd.table),
+        // replaces only the partitions the query's rows land in: Spark's dynamic overwrite, also what an
+        // `INSERT OVERWRITE` into a V2 table plans when spark.sql.sources.partitionOverwriteMode is dynamic
+        partitioning = partitioningOf(cmd.table, PartitionOverwriteModes.Dynamic)
       )
   }
 
@@ -567,7 +591,9 @@ private[sparkadapter] object WriteCommandSupport {
         // `v2CreateOrReplaceLocation` above can't yet trust for a staged
         // table). See `partitionColumnsOf`'s own doc for the `.describe()`
         // rendering.
-        partitionColumns = cmd.partitioning.toList.map(_.describe())
+        partitionColumns = cmd.partitioning.toList.map(_.describe()),
+        // the table is replaced whole
+        partitioning = PartitioningSupport.identityColumns(cmd.partitioning).map(WritePartitioning(_, PartitionOverwriteModes.Static))
       )
   }
 
@@ -602,7 +628,8 @@ private[sparkadapter] object WriteCommandSupport {
         catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
         // Same direct `partitioning: Seq[Transform]` field as
         // ReplaceTableAsSelect above - see that case's own comment.
-        partitionColumns = cmd.partitioning.toList.map(_.describe())
+        partitionColumns = cmd.partitioning.toList.map(_.describe()),
+        partitioning = PartitioningSupport.identityColumns(cmd.partitioning).map(WritePartitioning(_, PartitionOverwriteModes.Static))
       )
   }
 
@@ -794,6 +821,16 @@ private[sparkadapter] object WriteCommandSupport {
       case v2: DataSourceV2Relation if !v2.table.isInstanceOf[StagedTable] =>
         v2.table.partitioning().toList.map(_.describe())
       case _ => Nil
+    }
+
+  /** `WriteCommandInfo.partitioning` for a V2 write into `table` that replaces as `overwriteMode` says: the table's
+    * partition columns when it is partitioned by plain columns only (`PartitioningSupport.identityColumns`), and `None`
+    * for a derived transform, a `StagedTable` or anything not a resolved `DataSourceV2Relation`, as `partitionColumnsOf`. */
+  private def partitioningOf(table: NamedRelation, overwriteMode: String): Option[WritePartitioning] =
+    table match {
+      case v2: DataSourceV2Relation if !v2.table.isInstanceOf[StagedTable] =>
+        PartitioningSupport.identityColumns(v2.table.partitioning().toSeq).map(WritePartitioning(_, overwriteMode))
+      case _ => None
     }
 
   /** A resolved write target can legitimately have fields the write's own

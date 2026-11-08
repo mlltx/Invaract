@@ -521,6 +521,14 @@ object ContractEnforcementRule {
         // plain read/transformation the moment an invalid contract was merely
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
+        // An output that declares partition keys, written by a shape whose partitioning Spark does not report, is refused
+        // as unverifiable rather than passed unchecked (`PartitioningSupport`); the contract is held to be valid first, so
+        // an invalid one is still reported as such.
+        val partitioning = WriteCommandSupport.combined.lift(plan).flatMap(_.partitioning)
+        PartitioningSupport.refusal(contract, w, partitioning, plan.getClass.getSimpleName).foreach { operation =>
+          VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
+          VerificationPipeline.rejectUnverifiableWrite(contract, operation, translated.plan, sink, applicationId, job)
+        }
         VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
         // Passed: if this creates a data-source table, the insert Spark runs next fills it (see `TableCreations`).
         plan match {
@@ -600,7 +608,9 @@ object ContractEnforcementRule {
       // the CSV options each CSV read and write used, Spark's defaults filled in (check.csvOptions)
       formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList),
       // the format each read was made in (check.inputFormat)
-      inputFormats = collectInputFormats(plan, writeInfo.map(_.query))
+      inputFormats = collectInputFormats(plan, writeInfo.map(_.query)),
+      // the partition columns and overwrite mode, where Spark states them (check.partitioning)
+      partitioning = writeInfo.flatMap(_.partitioning)
     )
   }
 
@@ -690,7 +700,8 @@ object ContractEnforcementRule {
                 writeInfo.saveMode,
                 SparkSchemas.toLogicalSchema(writeInfo.outputSchema),
                 formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query)),
-                inputFormats = collectInputFormats(plan, Some(writeInfo.query))
+                inputFormats = collectInputFormats(plan, Some(writeInfo.query)),
+                partitioning = writeInfo.partitioning
               ),
               inputSchemas,
               translated.plan
