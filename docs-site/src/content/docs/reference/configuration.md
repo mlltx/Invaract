@@ -68,8 +68,9 @@ every read names the input it reads. A declared output the job never wrote is re
 | Setting | Spark | Beam Java | Beam Python | Python | What it does | Guide |
 |---|---|---|---|---|---|---|
 | Notification config | `spark.invaract.notifyConfig` | `--invaractNotifyConfig` | `--invaract_notify_config` | `INVARACT_NOTIFY_CONFIG` | A `.properties` file naming where validation events are sent. | [Configure a notification sink](/guides/notification-sinks/) |
-| Job id | `spark.invaract.jobId` | — | — | — | A stable name for the job in every event (`job.jobId`). On Beam, events name the job by the pipeline's own `--jobName` / `--job_name`; for a Python job, by its entry point (`module.function`). | [Dry-run mode](/guides/dry-run-mode/) |
-| Job metadata | `spark.invaract.job.metadata.<key>` | — | — | — | Free-form `key=value` pairs copied into every event's `job.attributes` (a team, an orchestrator's run id). | [Dry-run mode](/guides/dry-run-mode/) |
+| Job id | `spark.invaract.jobId` | `--invaractJobId` | `--invaract_job_id` | `INVARACT_JOB_ID` | A stable name for the job across its runs, in every event (`job.jobId`). Set it: the engine's own name for a run (Spark's app name, Beam's `--jobName`) often changes from run to run under a scheduler. | [Configure a notification sink](/guides/notification-sinks/) |
+| Job attributes | `spark.invaract.jobAttributes` | `--invaractJobAttributes` | `--invaract_job_attributes` | `INVARACT_JOB_ATTRIBUTES` | Facts about this run, copied into every event's `job.attributes`: comma-separated `key=value` pairs, such as `team=orders,dag=orders_daily` (a value cannot hold a comma). Pairs that are not `key=value`, or a key given twice, are refused when the job starts. | [Configure a notification sink](/guides/notification-sinks/) |
+| Job metadata | `spark.invaract.job.metadata.<key>` | — | — | — | One attribute per setting, the same as a `jobAttributes` pair; for a key set both ways, this one wins. | [Dry-run mode](/guides/dry-run-mode/) |
 | Contract metadata | `spark.invaract.contract.metadata.<key>` | — | — | — | Free-form `key=value` pairs written into a dry-run draft's `extensions` (an owner, a source system). | [Dry-run mode](/guides/dry-run-mode/) |
 
 ## Beam-only settings

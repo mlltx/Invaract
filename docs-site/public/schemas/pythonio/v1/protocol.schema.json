@@ -215,7 +215,9 @@
         "computeFingerprint": { "type": "string" },
         "staticDataQuality": { "type": "string" },
         "roleConsistency": { "type": "string" },
-        "runtimeDataQuality": { "type": "string", "description": "`true`: the OpenReply gives each output's data checks, and each WrittenRequest reports what they found." }
+        "runtimeDataQuality": { "type": "string", "description": "`true`: the OpenReply gives each output's data checks, and each WrittenRequest reports what they found." },
+        "jobId": { "type": "string", "description": "The job's stable identity across runs: every event's `job.jobId`." },
+        "jobAttributes": { "type": "string", "description": "Facts about this run every event carries (`job.attributes`): comma-separated `key=value` pairs. Malformed pairs are answered not-checked." }
       }
     },
     "Job": {

@@ -75,6 +75,14 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractTrustedSteps: String
   def setInvaractTrustedSteps(value: String): Unit
 
+  @Description("The job's stable identity across runs, named by every event (job.jobId), where --jobName may change from run to run.")
+  def getInvaractJobId: String
+  def setInvaractJobId(value: String): Unit
+
+  @Description("Facts about this run every event carries (job.attributes): comma-separated key=value pairs, such as team=orders,dag=orders_daily.")
+  def getInvaractJobAttributes: String
+  def setInvaractJobAttributes(value: String): Unit
+
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
   def setInvaractDelegate(value: String): Unit
@@ -126,6 +134,8 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.RoleConsistency        => options.getInvaractRoleConsistency
       case InvaractConf.RuntimeDataQuality     => options.getInvaractRuntimeDataQuality
       case InvaractConf.TrustedSteps           => options.getInvaractTrustedSteps
+      case InvaractConf.JobId                  => options.getInvaractJobId
+      case InvaractConf.JobAttributes          => options.getInvaractJobAttributes
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 

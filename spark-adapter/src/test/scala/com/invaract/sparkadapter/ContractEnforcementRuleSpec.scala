@@ -4280,6 +4280,22 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.runId == job.runId)
   }
 
+  test("job: spark.invaract.jobAttributes adds the platform's facts to every event; a per-key job.metadata setting wins") {
+    val plan = capturedWritePlan("job_attributes.parquet")
+    val outputPath = scratchDir.resolve("job_attributes.parquet").toString
+    val sink = new TestNotificationSink
+    spark.conf.set("spark.invaract.jobAttributes", "team=orders, dag=orders_daily")
+    spark.conf.set(DryRunReporter.JobMetadataConfPrefix + "team", "data-eng")
+    try {
+      val rule = ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", outputPath)), VerificationOptions(), sink)
+      rule(spark)(plan)
+    } finally {
+      spark.conf.unset("spark.invaract.jobAttributes")
+      spark.conf.unset(DryRunReporter.JobMetadataConfPrefix + "team")
+    }
+    assert(validationEventsOf(sink).last.job.map(_.attributes) == Some(Map("team" -> "data-eng", "dag" -> "orders_daily")))
+  }
+
   test("job: a rejected write's FAILED event names the job as well") {
     val plan = capturedWritePlan("job_fail.parquet")
     val outputPath = scratchDir.resolve("job_fail.parquet").toString

@@ -406,9 +406,13 @@ events from more than one engine tell them apart, and group one job's events acr
 publishes events passes its `JobInfo` to the pipeline (the `job` parameter above) and to any `WriteEvent` it
 builds itself. The conformance kit holds it to that: an adapter that declares `reporting.notifications` must
 publish validation events whose `job.engine` is its own name (the `adapter:` in its capability declaration),
-and `BrokenAdapterSpec` proves the kit fails an adapter that names none or another engine. Spark's `JobInfo` is
-`DryRunReporter.jobInfoOf(session)`: `engine = "spark"`, `jobId` from `spark.invaract.jobId`, and
-`attributes` from `spark.invaract.job.metadata.<key>`.
+and `BrokenAdapterSpec` proves the kit fails an adapter that names none or another engine. The platform's part of
+the `JobInfo` is two neutral settings, `jobId` and `jobAttributes` (`key=value,...`), which an adapter lays over what it
+found of the job with `VerificationSetup.identify(job, config)`: a malformed `jobAttributes` is refused, naming the setting.
+Spark's `JobInfo` is `DryRunReporter.jobInfoOf(session)`: `engine = "spark"`, `jobId` from `spark.invaract.jobId`, and
+`attributes` from `spark.invaract.jobAttributes` and `spark.invaract.job.metadata.<key>` (the per-key setting wins);
+Beam's identifies its job in `BeamFrontEnd` (`--invaractJobId`, `--invaract_job_id`, ...), the Python I/O checker at
+`open` (`INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES`).
 
 **A sink that needs an engine's storage library lives in that engine's adapter.** The core has
 no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a

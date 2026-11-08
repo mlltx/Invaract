@@ -20,6 +20,8 @@ import com.invaract.verification.notification.{JobInfo, NotificationSink}
   *   3. `enforceOrgPolicy`: organizational policy layers - rejecting a contract
   *      that doesn't satisfy platform-wide rules, injecting required rules, and
   *      raising the verification-option floor.
+  *   4. `identify`: the job's identity and the platform's facts about the run,
+  *      laid over what the adapter knows of the job, for every event it publishes.
   *
   * This is what makes each capability attachable purely through the engine's
   * own configuration surface against a job whose source a platform doesn't own
@@ -33,6 +35,32 @@ object VerificationSetup {
   /** The steps `config` says the platform trusts (`InvaractConf.TrustedSteps`): what an adapter does not refuse as an
     * unverifiable step that ends the job. */
   def trustedSteps(config: ConfigSource): TrustedSteps = TrustedSteps.from(config)
+
+  /** `job` (what the adapter knows of the job: its engine, its run, its name) as every event names it, with what the platform
+    * says of it in `config`: its stable identity across runs (`jobId`, in place of any the adapter found), and its facts about
+    * this run (`jobAttributes`; an attribute the adapter already has, from a more specific setting of its own, keeps its
+    * value). A malformed `jobAttributes` is refused, naming the setting, rather than half read. */
+  def identify(job: JobInfo, config: ConfigSource): JobInfo =
+    job.copy(
+      jobId = config.get(InvaractConf.JobId).map(_.trim).filter(_.nonEmpty).orElse(job.jobId),
+      attributes = jobAttributes(config) ++ job.attributes
+    )
+
+  /** The `jobAttributes` setting as a map: `team=orders, dag=orders_daily` is `team -> orders`, `dag -> orders_daily`. */
+  private[verification] def jobAttributes(config: ConfigSource): Map[String, String] =
+    config.get(InvaractConf.JobAttributes).fold(Map.empty[String, String]) { raw =>
+      def malformed(why: String) =
+        new IllegalArgumentException(s"'${config.describe(InvaractConf.JobAttributes)}' must be comma-separated key=value pairs ($why), not '$raw'.")
+      val pairs = splitCommaSeparated(raw).map { entry =>
+        entry.split("=", 2) match {
+          case Array(key, value) if key.trim.nonEmpty => key.trim -> value.trim
+          case _                                      => throw malformed(s"'$entry' is not key=value")
+        }
+      }
+      val repeated = pairs.groupBy(_._1).collect { case (key, all) if all.size > 1 => key }.toList.sorted
+      if (repeated.nonEmpty) throw malformed(s"${repeated.mkString("'", "', '", "'")} given more than once")
+      pairs.toMap
+    }
 
   /** `ref://<id>` locations in `contract`, resolved from the `.properties` file `locationMap` names. A contract with
     * no `ref://` locations is completely unaffected, set or not; one that does declare a reference fails immediately,

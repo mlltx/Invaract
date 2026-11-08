@@ -20,16 +20,19 @@ private[beamadapter] final case class BeamFrontEnd(
 ) {
 
   /** The check the settings in `config` describe: enforcement of the contract named there, or dry-run mode. Organizational policy
-    * is enforced here, once, eagerly - before any pipeline is looked at. */
+    * is enforced here, once, eagerly - before any pipeline is looked at. The job is named in its events as `config` says
+    * (`VerificationSetup.identify`). */
   def check(config: ConfigSource, job: JobInfo): BeamCheck =
     AttachSetup.select(config) match {
       case AttachPlan.Enforce(contract, sink) => enforcing(contract, VerificationOptions(), sink, config, job)
-      case AttachPlan.DryRun(sink)            => new BeamCheck(None, VerificationOptions(), sink, job, capabilities, VerificationSetup.trustedSteps(config), advice)
+      case AttachPlan.DryRun(sink) =>
+        new BeamCheck(None, VerificationOptions(), sink, VerificationSetup.identify(job, config), capabilities, VerificationSetup.trustedSteps(config), advice)
     }
 
   /** Enforcement of `contract` under `options`, resolving `ref://` locations, overlaying the settings in `config` and applying
     * organizational policy exactly as every adapter does (`VerificationSetup`). */
-  def enforcing(contract: Contract, options: VerificationOptions, sink: Option[NotificationSink], config: ConfigSource, job: JobInfo): BeamCheck = {
+  def enforcing(contract: Contract, options: VerificationOptions, sink: Option[NotificationSink], config: ConfigSource, given: JobInfo): BeamCheck = {
+    val job = VerificationSetup.identify(given, config)
     val located = VerificationSetup.resolveContractLocations(contract, config)
     val resolved = VerificationSetup.resolveVerificationOptions(options, config)
     val (governed, governedOptions) = VerificationSetup.enforceOrgPolicy(located, resolved, config, sink, job.runId, Some(job))

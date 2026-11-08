@@ -98,10 +98,19 @@ object InvaractConf {
   /** Class name of the registry client to load, overriding the default. */
   val RegistryClientClass = "registryClientClass"
 
+  // Who the events come from (`VerificationSetup.identify`): set by the platform that runs the job, on every engine.
+  /** The job's stable identity across runs (every event's `job.jobId`), where the engine's own name for a run (Spark's
+    * application name, Beam's job name) can change from run to run under a scheduler. */
+  val JobId = "jobId"
+  /** Facts the platform attaches to every event of this run (`job.attributes`): comma-separated `key=value` pairs, such as
+    * `team=orders,dag=orders_daily`. A value cannot hold a comma. */
+  val JobAttributes = "jobAttributes"
+
   /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
     Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
-    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps
+    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps,
+    JobId, JobAttributes
   )
 }

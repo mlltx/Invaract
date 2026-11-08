@@ -485,6 +485,28 @@ def test_the_events_name_the_engine_the_job_python_and_its_libraries(monkeypatch
     assert job["engineDetails"]["pyarrow"] == pa.__version__ and job["engineDetails"]["pandas"] == pd.__version__
 
 
+def test_a_platform_names_the_job_and_its_run_in_every_event_from_the_environment(monkeypatch):
+    report_contract()
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_JOB_ID", "orders_nightly")
+    monkeypatch.setenv("INVARACT_JOB_ATTRIBUTES", "team=orders,dag=orders_daily")
+    with invaract.run("contract.yaml", name="orders_job.main"):
+        invaract.write(REPORT, "report")
+    jobs = [e["job"] for e in events()]
+    assert [e["eventType"] for e in events()] == ["CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY"]
+    assert all((j["jobId"], j["name"], j["attributes"]) == ("orders_nightly", "orders_job.main", {"team": "orders", "dag": "orders_daily"})
+               for j in jobs)
+
+
+def test_malformed_job_attributes_are_not_checked_and_name_the_variable(monkeypatch):
+    report_contract()
+    monkeypatch.setenv("INVARACT_JOB_ATTRIBUTES", "team=orders,dag")
+    with pytest.raises(invaract.CheckNotRun, match="INVARACT_JOB_ATTRIBUTES.*'dag' is not key=value"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert published() == ([], [])
+
+
 def test_the_events_list_each_installed_data_library_whether_or_not_the_job_has_imported_it_yet(monkeypatch):
     import importlib.metadata
     import sys

@@ -122,7 +122,7 @@ private[pythonioadapter] final class Run {
     else if (unknown.nonEmpty) notChecked(s"unknown setting(s): ${unknown.mkString(", ")}")
     else {
       val config = new PythonIoConfigSource(o.settings)
-      val job = jobInfo(o.job)
+      val job = VerificationSetup.identify(jobInfo(o.job), config)
       AttachSetup.select(config) match {
         case AttachPlan.DryRun(_) if o.check => notChecked("a check needs a contract to judge the frame against")
         case AttachPlan.DryRun(sink) =>

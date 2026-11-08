@@ -407,6 +407,7 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_CONTRACT` | The contract to enforce: a file path, or `registry://<id>@<version>` ([Use a Contract Registry](/guides/using-a-contract-registry/)). Overrides the one `@invaract.job` names. |
 | `INVARACT_DRY_RUN=true` | Infer a contract from the job's writes instead of enforcing one ([above](#start-from-a-job-with-no-contract)). |
 | `INVARACT_NOTIFY_CONFIG` | Where the run's events go: each check, each output published, and the run's summary ([Events from a Python job](/guides/notification-sinks/#events-from-a-python-job)). |
+| `INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
 | `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
 | `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `INVARACT_REJECT_UNDECLARED_FIELDS=true` | Refuse an output column the contract does not declare. |

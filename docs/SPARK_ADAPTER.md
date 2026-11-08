@@ -1424,8 +1424,9 @@ winning.
 
 **Job identity.** `JobInfo` carries the application id, app name, Spark
 version, master, deploy mode, user and start time, plus `jobId`
-(`spark.invaract.jobId`) and `attributes` (every
-`spark.invaract.job.metadata.<key>`, prefix stripped). `jobId` exists because
+(`spark.invaract.jobId`) and `attributes` (every `key=value` pair in the engine-neutral
+`spark.invaract.jobAttributes`, and every `spark.invaract.job.metadata.<key>`, prefix stripped,
+which wins for a key set both ways; `VerificationSetup.identify`). `jobId` exists because
 `spark.app.name` is often unique per run under a scheduler, so cannot say
 "the same job as last night"; the fingerprint identifies the transformation
 itself. Metadata is allowlist-by-prefix on purpose - the whole `SparkConf`

@@ -4080,6 +4080,10 @@ Extend verification engine to support multiple execution engines.
         Iceberg snapshot its commit made) and a `JOB_SUMMARY` for every run, through a new `published` request; a publish
         that fails part way puts back the outputs a rename published, and an output whose commit cannot be undone keeps its
         `WRITE` event; documented in the notification sinks guide, "Events from a Python job"
+- [x] A job's identity on every engine: the neutral settings `jobId` and `jobAttributes` (`key=value,...`), read by
+      `VerificationSetup.identify` and spelled by each adapter (`spark.invaract.jobId`/`jobAttributes`, `--invaractJobId`,
+      `--invaract_job_id`, `INVARACT_JOB_ID`, ...), so a sink groups any job's runs by `job.jobId` and the platform's
+      `job.attributes`, which were Spark's alone
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

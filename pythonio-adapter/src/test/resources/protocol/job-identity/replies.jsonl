@@ -1,0 +1,6 @@
+{"ok": false, "reason": "IllegalArgumentException: 'INVARACT_JOB_ATTRIBUTES' must be comma-separated key=value pairs ('dag' is not key=value), not 'team=orders,dag'.", "status": "not-checked"}
+{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": true}
+{"ok": true}
+{"ok": true, "publish": true}
+{"ok": true}

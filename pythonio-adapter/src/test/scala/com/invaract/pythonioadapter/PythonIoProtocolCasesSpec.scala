@@ -80,6 +80,17 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     assert(summary("published-misuse") == List(0, 1, 0, 0))
   }
 
+  test(JobIdentity) {
+    val events = assertCase("job-identity").eventObjects
+    assert(events.map(e => String.valueOf(e.get("eventType"))) == List("CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY"))
+    events.foreach { e =>
+      val job = e.get("job").asInstanceOf[java.util.Map[String, AnyRef]]
+      val attributes = job.get("attributes").asInstanceOf[java.util.Map[String, AnyRef]]
+      assert(job.get("jobId") == "orders_nightly" && job.get("name") == "orders_job.main" && job.get("runId") == "run-1")
+      assert(attributes.size == 2 && attributes.get("team") == "orders" && attributes.get("dag") == "orders_daily")
+    }
+  }
+
   test(DryRunInference) {
     // every write is let through and gets a draft contract (events.txt: INFERRED, self-check PASSED); the drafts are merged
     assertCase("dry-run-infers")
@@ -99,6 +110,8 @@ object PythonIoProtocolCasesSpec {
     "write events: after a finish that says to publish, each output the package published gets one WRITE event, and the run ends with a JOB_SUMMARY"
   val JobSummaries =
     "job summaries: every run that opened ends with one JOB_SUMMARY, counting its validation events by verdict, their violations, and its writes"
+  val JobIdentity =
+    "job identity: INVARACT_JOB_ID and INVARACT_JOB_ATTRIBUTES name the job in every event; malformed attributes are not checked"
   val DryRunInference =
     "dry-run inference: with INVARACT_DRY_RUN=true every write is let through, gets a draft contract, and the drafts are merged at the end"
 

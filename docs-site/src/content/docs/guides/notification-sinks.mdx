@@ -275,9 +275,13 @@ events across runs. It is the same object the [dry-run events](/guides/dry-run-m
 carry: `engine` (`"spark"`) and `engineVersion`; `jobId`, the job's stable identity across runs,
 from `spark.invaract.jobId` (absent if you didn't set it — set it, because Spark's own app name
 is often different on every run under a scheduler); `runId`, `name` and `user`; `engineDetails`
-(for Spark, `master` and `deployMode`); and `attributes`, one entry for every
-`spark.invaract.job.metadata.<key>=<value>` you set, with the prefix stripped. Nothing else from your
-Spark configuration is sent. On a `JobSummaryEvent` it is the job of the events being summarized.
+(for Spark, `master` and `deployMode`); and `attributes`, one entry for every `key=value` pair in
+`spark.invaract.jobAttributes` and every `spark.invaract.job.metadata.<key>=<value>` you set (prefix
+stripped; for a key set both ways, the per-key setting wins). Nothing else from your Spark
+configuration is sent. On a `JobSummaryEvent` it is the job of the events being summarized. Every engine
+takes the same two settings in its own spelling: `--invaractJobId` and `--invaractJobAttributes` on
+Beam Java, `--invaract_job_id` and `--invaract_job_attributes` on Beam Python, and `INVARACT_JOB_ID`
+and `INVARACT_JOB_ATTRIBUTES` for a Python job ([Configuration Settings](/reference/configuration/#reporting)).
 
 `fingerprints` on `ContractValidationEvent` is `null` unless you've opted into
 [semantic lineage fingerprinting](/guides/fingerprinting-transformations/) — a separate,
@@ -464,8 +468,9 @@ What each field holds for a Python job:
   the ADBC drivers). `job.name` is the job's entry point, `<module>.<function>` (`main.main` for a function in `main.py`
   run as a script; `with invaract.run()`, the script's name), or the `name=` given to `@invaract.job` or
   `invaract.run`. `runId` is the run's own id, which also names the files it writes (`part-<runId>-00001.parquet`).
-  `job.jobId` and `job.attributes` are Spark's alone (`spark.invaract.jobId`, `spark.invaract.job.metadata.*`): a
-  Python job has no setting for them yet, so a sink tells a Python job's runs apart by `job.name`.
+  `job.jobId` is what `INVARACT_JOB_ID` says (the job's stable identity across runs; absent if it is not set), and
+  `job.attributes` the `key=value` pairs of `INVARACT_JOB_ATTRIBUTES`, such as
+  `INVARACT_JOB_ATTRIBUTES=team=orders,dag=orders_daily`: what a platform sets in the job's environment.
 
 The `JOB_SUMMARY` that ends the same run counts its two checks and two writes:
 

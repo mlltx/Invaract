@@ -316,4 +316,46 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     VerificationSetup.enforceOrgPolicy(plainContract, VerificationOptions(), config(InvaractConf.OrgPolicy -> policy), Some(sink), None, Some(job))
     assert(validationEvents(sink).map(e => e.status -> e.job) == List("PASSED" -> Some(job)))
   }
+
+  // identify: the job as every event names it
+
+  private val adapterJob = JobInfo(engine = Some("pythonio"), name = Some("orders_job.main"), jobId = Some("from-the-engine"), attributes = Map("trigger" -> "cron"))
+
+  test("identify: with neither setting, the job is as the adapter found it") {
+    assert(VerificationSetup.identify(adapterJob, ConfigSource.empty) == adapterJob)
+    assert(VerificationSetup.identify(JobInfo(), ConfigSource.empty) == JobInfo())
+  }
+
+  test("identify: jobId names the job across runs, in place of any the adapter found; a blank one changes nothing") {
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "  orders_nightly ")).jobId == Some("orders_nightly"))
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobId -> "orders_nightly")).jobId == Some("orders_nightly"))
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "   ")).jobId == Some("from-the-engine"))
+    // nothing else about the job changes
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "x")).copy(jobId = adapterJob.jobId) == adapterJob)
+  }
+
+  test("identify: jobAttributes are key=value pairs, trimmed; a value may hold '=' or be empty") {
+    val attributes = VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> " team = orders, dag=orders_daily ,query=a=b,empty=")).attributes
+    assert(attributes == Map("team" -> "orders", "dag" -> "orders_daily", "query" -> "a=b", "empty" -> ""))
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> " , ")).attributes.isEmpty)
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> "")).attributes.isEmpty)
+  }
+
+  test("identify: an attribute the adapter already has keeps its value; the others are added") {
+    val attributes = VerificationSetup.identify(adapterJob, config(InvaractConf.JobAttributes -> "trigger=manual,team=orders")).attributes
+    assert(attributes == Map("trigger" -> "cron", "team" -> "orders"))
+  }
+
+  test("identify: malformed jobAttributes are refused, naming the setting as the engine spells it, the entry and the whole value") {
+    def refused(raw: String) = intercept[IllegalArgumentException] {
+      VerificationSetup.identify(JobInfo(), ConfigSource.prefixed("spark.invaract.")(Map("spark.invaract.jobAttributes" -> raw).get))
+    }.getMessage
+    assert(refused("team=orders,dag") ==
+      "'spark.invaract.jobAttributes' must be comma-separated key=value pairs ('dag' is not key=value), not 'team=orders,dag'.")
+    assert(refused("=orders").contains("('=orders' is not key=value)"))
+    assert(refused(" =orders").contains("('=orders' is not key=value)"), "entries are trimmed before they are read")
+    assert(refused("b=1,a=1,b=2,a=2") ==
+      "'spark.invaract.jobAttributes' must be comma-separated key=value pairs ('a', 'b' given more than once), not 'b=1,a=1,b=2,a=2'.")
+    assert(refused("a=1,a=1").contains("('a' given more than once)"))
+  }
 }

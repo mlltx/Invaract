@@ -147,6 +147,29 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(check.enforces)
   }
 
+  test("--invaractJobId and --invaractJobAttributes name the job in every event, as a platform sets them on the command line") {
+    val options = PipelineOptionsFactory.fromArgs("--jobName=orders-1107", "--invaractJobId=orders_nightly", "--invaractJobAttributes=team=orders,dag=orders_daily")
+      .as(classOf[InvaractBeamOptions])
+    val config = new BeamConfigSource(options)
+    val capture = new Capture
+    val p = pipeline
+    ordersToParquet(p)
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture), config = config, job = InvaractBeam.jobInfoOf(options)).verify(p)
+    val Seq(job) = capture.events.collect { case v: ContractValidationEvent => v.job.getOrElse(fail("no job")) }
+    assert((job.name, job.jobId, job.attributes) == ((Some("orders-1107"), Some("orders_nightly"), Map("team" -> "orders", "dag" -> "orders_daily"))))
+    // in dry-run mode too, which builds its check without a contract: its events go to the sink the settings name
+    val dir = java.nio.file.Files.createTempDirectory("invaract-beam-job")
+    val events = dir.resolve("events.jsonl")
+    val notify = java.nio.file.Files.write(dir.resolve("notify.properties"),
+      s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${events.toString.replace("\\", "/")}\n".getBytes("UTF-8"))
+    val dryRun = com.invaract.verification.ConfigSource.fromMap(Map("dryRun" -> "true", "notifyConfig" -> notify.toString, "jobId" -> "orders_nightly"))
+    val drafted = pipeline
+    ordersToParquet(drafted, "/data/out/anywhere")
+    BeamFrontEnd.Java.check(dryRun, InvaractBeam.jobInfoOf(options)).verify(drafted)
+    val written = new String(java.nio.file.Files.readAllBytes(events), "UTF-8")
+    assert(written.contains("\"CONTRACT_INFERENCE\"") && written.contains("\"jobId\": \"orders_nightly\""))
+  }
+
   // --- dry-run mode ---
 
   test("dry-run mode infers a draft contract from each write it can describe, and enforces nothing") {
