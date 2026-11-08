@@ -86,7 +86,7 @@ private[pythonioadapter] final class Run {
   private var readFormats = Map.empty[String, String]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
-  /** Each output staged, by name: its first staged write, and where it lands. */
+  /** Each output staged, by name: its first staged write, each column nullable if any write of it was, and where it lands. */
   private var staged = Map.empty[String, (Request.Write, String)]
   private var drafts = Vector.empty[(String, Option[Contract])]
 
@@ -102,17 +102,17 @@ private[pythonioadapter] final class Run {
     }
 
   private def respond(request: Request): Map[String, Any] = (request, state) match {
-    case (_, Finished)                    => notChecked("the run has already finished")
+    case (_, Finished)                           => notChecked("the run has already finished")
     case (p: Request.Published, Publishing(run)) => published(p, run)
-    case (_, Publishing(_))               => notChecked("the run has finished: only what was published may follow")
-    case (_: Request.Published, _)        => notChecked("published follows a finish that said to publish")
-    case (o: Request.Open, NotOpen)       => open(o)
-    case (_, NotOpen)                     => notChecked("the run must be opened first")
-    case (_: Request.Open, _: Opened)     => notChecked("the run is already open")
-    case (r: Request.Read, run: Opened)   => read(r, run)
-    case (w: Request.Write, run: Opened)  => write(w, run)
-    case (w: Request.Written, run: Opened) => stage(w, run)
-    case (f: Request.Finish, run: Opened) => finish(f, run)
+    case (_, Publishing(_))                      => notChecked("the run has finished: only what was published may follow")
+    case (_: Request.Published, _)               => notChecked("published follows a finish that said to publish")
+    case (o: Request.Open, NotOpen)              => open(o)
+    case (_, NotOpen)                            => notChecked("the run must be opened first")
+    case (_: Request.Open, _: Opened)            => notChecked("the run is already open")
+    case (r: Request.Read, run: Opened)          => read(r, run)
+    case (w: Request.Write, run: Opened)         => write(w, run)
+    case (w: Request.Written, run: Opened)       => stage(w, run)
+    case (f: Request.Finish, run: Opened)        => finish(f, run)
   }
 
   private def open(o: Request.Open): Map[String, Any] = {
@@ -232,7 +232,7 @@ private[pythonioadapter] final class Run {
       case None => infer(location, w, plan, schema, run)
     }
     written :+= location
-    if (!staged.contains(s.name)) staged += s.name -> ((w, location))
+    staged += s.name -> staged.get(s.name).fold((w, location)) { case (first, at) => (first.copy(schema = nullableInEither(first.schema, w.schema)), at) }
     Map("ok" -> true)
   }
 
@@ -259,8 +259,10 @@ private[pythonioadapter] final class Run {
   private def published(p: Request.Published, run: Opened): Map[String, Any] = {
     state = Finished
     try {
-      val unknown = p.outputs.map(_.name).filterNot(staged.contains)
+      val names = p.outputs.map(_.name)
+      val unknown = names.filterNot(staged.contains)
       if (unknown.nonEmpty) throw new IllegalArgumentException(s"the package published ${unknown.mkString("'", "', '", "'")}, which this run did not stage")
+      if (names.distinct.size != names.size) throw new IllegalArgumentException("the package must name each output it published once")
       p.outputs.foreach(o => run.sink.foreach(_.publish(writeEvent(o, run))))
       Map("ok" -> true)
     } finally end(run)
@@ -279,11 +281,19 @@ private[pythonioadapter] final class Run {
     flush(run)
   }
 
+  /** `first`'s columns, each nullable if it is in `first` or in `later` (another write of the same output). */
+  private def nullableInEither(first: List[Column], later: List[Column]): List[Column] = {
+    val nullable = later.filter(_.nullable).map(_.name).toSet
+    first.map(c => c.copy(nullable = c.nullable || nullable(c.name)))
+  }
+
   /** A published output as its `WriteEvent`: what the run checked of its first staged write (location, format, save mode,
-    * columns as written, catalog, partition columns) and what the package says it put in place. */
+    * columns as written, a column nullable if any write's was, catalog, partition columns) and what the package says it put
+    * in place. */
   private def writeEvent(o: Request.PublishedOutput, run: Opened): WriteEvent = {
     val (w, location) = staged(o.name)
-    val required = run.contract.flatMap(_.outputs.find(_.name == o.name)).toList.flatMap(_.schema.fields).filter(_.required).map(_.name).toSet
+    val declared = run.contract.flatMap(_.outputs.find(_.name == o.name))
+    val required = declared.toList.flatMap(_.schema.fields).filter(_.required).map(_.name).toSet
     WriteEvent(
       contract = run.contract.map(c => s"${c.id}@${c.version}"),
       location = location,
@@ -302,7 +312,7 @@ private[pythonioadapter] final class Run {
       icebergSnapshotId = o.icebergSnapshotId,
       catalog = w.catalog.map(CatalogInfo.from),
       partitionColumns = w.partitioning.columns,
-      datasetType = run.contract.flatMap(_.outputs.find(_.name == o.name)).flatMap(_.datasetType),
+      datasetType = declared.flatMap(_.datasetType),
       job = Some(run.job)
     )
   }

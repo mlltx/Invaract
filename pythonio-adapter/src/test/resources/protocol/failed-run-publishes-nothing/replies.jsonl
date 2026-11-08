@@ -4,3 +4,4 @@
 {"ok": true}
 {"ok": true}
 {"ok": true, "publish": false}
+{"ok": false, "reason": "the run has already finished", "status": "not-checked"}

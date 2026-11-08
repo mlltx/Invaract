@@ -263,6 +263,15 @@ def _convert(scratch, base, fmt, csv, files):
                 out.close()
 
 
+def _folders(files):
+    """Every folder that holds ``files`` (relative paths), and every folder above it: ``""`` (the top) for all of them."""
+    found = {""}
+    for f in files:
+        parts = posixpath.dirname(f).split("/") if posixpath.dirname(f) else []
+        found.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+    return found
+
+
 def _leaves(files):
     """The partition folders (relative, ``/``-separated) that hold ``files`` (relative paths); ``""`` for files at the top."""
     return sorted({posixpath.dirname(f) for f in files})
@@ -314,8 +323,9 @@ class RenamedOutput(_FileOutput):
         self.path = path
         self.previous = files.path.join(parent, f".{base}.invaract-previous-{run_id}")
         self._files = files
-        #: how the last publish changed the location, for ``restore``: ``("folder",)``, ``("files", added)`` or
-        #: ``("partitions", leaves)``; ``None`` before a publish, or when it put nothing in place
+        #: how the last publish changed the location, for ``restore``: ``("folder",)``, ``("files", added, made)`` (the files
+        #: an append added, and the folders it made for them) or ``("partitions", leaves)``; ``None`` before a publish, or
+        #: when it put nothing in place
         self._done = None
 
     def has_data(self):
@@ -334,15 +344,17 @@ class RenamedOutput(_FileOutput):
             for rel in staged:
                 if files.exists(files.join(self.path, rel)):
                     raise FileExistsError(f"Invaract will not replace {files.join(self.path, rel)} when appending")
+            # the folders the append makes (the output's own, a partition's), deepest first, so a restore removes them too
+            made = sorted((d for d in _folders(staged) if not files.exists(files.join(self.path, d) if d else self.path)), reverse=True)
             added = []
             try:
                 for rel in staged:
                     files.move(files.join(self.staging, rel), files.join(self.path, rel))
                     added.append(rel)
             except BaseException:
-                self._remove_added(added)
+                self._remove_added(added, made)
                 raise
-            self._done = ("files", added)
+            self._done = ("files", added, made)
             self.discard()
         elif self.mode == "overwrite" and self.layout.dynamic:
             leaves = _leaves(staged)
@@ -367,7 +379,7 @@ class RenamedOutput(_FileOutput):
         if done is None:
             return True
         if done[0] == "files":
-            self._remove_added(done[1])
+            self._remove_added(done[1], done[2])
         elif done[0] == "partitions":
             for leaf in reversed(done[1]):
                 destination, aside = files.join(self.path, leaf), files.join(self.previous, leaf)
@@ -381,9 +393,13 @@ class RenamedOutput(_FileOutput):
                 files.move(self.previous, self.path)
         return True
 
-    def _remove_added(self, added):
+    def _remove_added(self, added, made):
+        """Removes the files an append added, then the folders it made for them (deepest first)."""
+        files = self._files
         for rel in reversed(added):
-            self._files.remove(self._files.join(self.path, rel))
+            files.remove(files.join(self.path, rel))
+        for folder in made:
+            files.remove(files.join(self.path, folder) if folder else self.path)
 
     def _replace_partitions(self, leaves):
         """A dynamic overwrite: each partition folder the run wrote takes the place of the one there (moved aside to

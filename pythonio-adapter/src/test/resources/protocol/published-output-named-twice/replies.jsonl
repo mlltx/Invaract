@@ -1,0 +1,5 @@
+{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": true}
+{"ok": true}
+{"ok": true, "publish": true}
+{"ok": false, "reason": "IllegalArgumentException: the package must name each output it published once", "status": "not-checked"}

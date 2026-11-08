@@ -137,6 +137,13 @@ and, if no other engine names it, a word with the contract's format list.
 **Add a database.** A module beside `_postgres` and `_sqlite` with the functions `_jdbc`'s docstring lists, named in
 `_datasets._database`, an extra for its driver, and a `test_<database>.py` that runs against a real server in CI.
 
+**Add a kind of output** (a new table format, a new store). Subclass `_outputs.Output`: `stage` writes where no reader
+sees it and returns each column's empty values (`_frames.take` does the counting); `publish` puts it in place in one step
+as far as the storage allows and returns `_outputs.Published` (or `None` when it put nothing there); `discard` deletes what
+is staged; `restore` undoes a publish only if the storage really can (leave the default `False` otherwise: the run then
+reports the output as published, which is the truth). Return it from `_datasets.output`, and test it in a run that fails
+part way through publishing (`tests/test_run.py`'s `_failing_publish`).
+
 **Add a kind of storage.** `_storage.filesystem` gives pyarrow's file system for a location's scheme; a scheme with no
 rename publishes plain files by copying (`_files.output` decides which). Delta and Iceberg reach storage through their
 own libraries, with each library's standard settings: never add an Invaract setting for a credential.

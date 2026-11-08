@@ -60,13 +60,24 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
       report.get("contract") == "orders_report@1.0.0" && report.get("saveMode") == "overwrite" && report.get("format") == "parquet")
     // the columns as staged: a required column that held no empty value is written not-null
     val columns = report.get("schema").asInstanceOf[java.util.List[java.util.Map[String, AnyRef]]].asScala.map(c => (c.get("name"), c.get("type"), c.get("nullable")))
-    assert(columns == List(("region", "string", false), ("total", "long", false)))
+    // a column nullable in any write of the output is nullable in its event: `note` is not in the first write, and is in the second
+    assert(columns == List(("region", "string", false), ("total", "long", false), ("note", "string", true)))
     val catalog = snapshot.get("catalog").asInstanceOf[java.util.Map[String, AnyRef]]
     assert(snapshot.get("icebergSnapshotId") == 3051729675574597004L && snapshot.get("fileCount") == null &&
       (catalog.get("technology"), catalog.get("catalogName"), catalog.get("namespace").toString, catalog.get("table")) == (("iceberg", "lake", "[sales]", "snapshot")))
     assert(report.get("metadata").asInstanceOf[java.util.Map[String, AnyRef]].get("owner") == "orders-team")
     assert((summary.get("totalWrites"), summary.get("checksPassed"), summary.get("checksFailed"), summary.get("totalViolations")) == ((2, 3, 0, 0)))
     events.foreach(e => assert(e.get("job").asInstanceOf[java.util.Map[String, AnyRef]].get("engine") == PythonIoCheck.Engine))
+  }
+
+  test(JobSummaries) {
+    def summary(name: String) = assertCase(name).eventObjects.filter(e => String.valueOf(e.get("eventType")) == "JOB_SUMMARY") match {
+      case List(only) => List("totalWrites", "checksPassed", "checksFailed", "totalViolations").map(only.get(_))
+      case other      => fail(s"$name: ${other.size} summaries")
+    }
+    // one write checked and passed, one refused with a single violation; a refused run publishes nothing
+    assert(summary("notifications") == List(0, 1, 1, 1))
+    assert(summary("published-misuse") == List(0, 1, 0, 0))
   }
 
   test(DryRunInference) {
@@ -86,6 +97,8 @@ object PythonIoProtocolCasesSpec {
     "contract registry: INVARACT_CONTRACT naming a registry:// reference is fetched from INVARACT_REGISTRY_URL's registry and enforced"
   val WriteEvents =
     "write events: after a finish that says to publish, each output the package published gets one WRITE event, and the run ends with a JOB_SUMMARY"
+  val JobSummaries =
+    "job summaries: every run that opened ends with one JOB_SUMMARY, counting its validation events by verdict, their violations, and its writes"
   val DryRunInference =
     "dry-run inference: with INVARACT_DRY_RUN=true every write is let through, gets a draft contract, and the drafts are merged at the end"
 

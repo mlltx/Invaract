@@ -137,3 +137,24 @@ def test_an_output_that_did_not_exist_before_the_run_is_removed_by_a_restore(fil
 
 def test_an_output_whose_storage_cannot_undo_a_publish_stays_published():
     assert _outputs.Output("somewhere", "overwrite", _outputs.FLAT).restore() is False
+
+
+def test_restoring_an_append_removes_the_folders_it_made(files):
+    write(renamed(files, "overwrite", layout=DYNAMIC))
+    before = sorted(os.walk("out"))
+    out = renamed(files, "append", layout=DYNAMIC, run_id="run2")
+    more = pa.table({"region": ["north", "east"], "total": pa.array([30, 40], pa.int64())})
+    out.stage(more.schema, iter(more.to_batches()), set())
+    out.publish()
+    assert os.path.isdir(os.path.join("out", "region=east"))
+    out.restore()
+    # region=north/ held files before the append and keeps them; region=east/ was made by it, and is gone
+    assert sorted(os.walk("out")) == before
+
+
+def test_restoring_an_append_to_an_output_that_did_not_exist_removes_it(files):
+    out = renamed(files, "append", layout=DYNAMIC)
+    out.stage(ROWS.schema, iter(ROWS.to_batches()), set())
+    out.publish()
+    out.restore()
+    assert not os.path.exists("out") and contents()[1] == []

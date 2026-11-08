@@ -12,6 +12,7 @@ outputs:
       fields:
         - { name: region, type: string, required: true, partitioned: true, partitionKeyPosition: 1 }
         - { name: total,  type: long,   required: true }
+        - { name: note,   type: string }
   - name: snapshot
     type: DATA_ASSET
     location: lake.sales.snapshot

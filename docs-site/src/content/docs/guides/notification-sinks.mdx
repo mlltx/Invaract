@@ -451,7 +451,7 @@ in place. This is a `WRITE` event from the repository's example job (`pythonio-a
 What each field holds for a Python job:
 
 - `schema` is the output's columns as written: a column the contract declares required is not nullable, any other is as
-  the table handed to `invaract.write` says. Each type is the contract's name for it (`long`, `string`, `array`,
+  the table handed to `invaract.write` says (nullable if it was in any of the run's writes of the output). Each type is the contract's name for it (`long`, `string`, `array`,
   `decimal(10,2)`).
 - `rowCount` is every row the run staged for the output. `fileCount` and `bytesWritten` are the files put in place (plain
   files) or added by the commit (Delta, Iceberg), and `null` for a database table. `deltaVersion` is the Delta table's

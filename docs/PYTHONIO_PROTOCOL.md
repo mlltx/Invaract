@@ -126,7 +126,8 @@ publish is not listed: `ignore` on an output that holds data, or an output put b
 rename; a table's commit, a copy to object storage or a database's transaction cannot be put back, and stays listed).
 
 The checker publishes a `WRITE` event for each output listed, built from what it checked of the output's first staged
-write (location, format, save mode, columns as written, catalog, partition columns) and what `published` says; then the
+write (location, format, save mode, catalog, partition columns), its columns as written (a required column not nullable,
+any other nullable if any write of the output said so), and what `published` says; then the
 run's `JOB_SUMMARY` (its validation events by verdict, their violations, and its writes), and delivers the run's events.
 A name the run did not stage is answered not-checked; the run ends either way. After `published`, every request is
 answered not-checked.

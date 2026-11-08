@@ -4076,6 +4076,10 @@ Extend verification engine to support multiple execution engines.
         checker from different releases stop the run instead of misreading each other; every request built in one module
         (`_protocol`); the reference docs/PYTHONIO_PROTOCOL.md, the contributor guide docs/PYTHONIO_PACKAGE.md, a typed
         public interface (`py.typed`) and the user reference "Python Package API"
+  - [x] A Python job's events: a `WRITE` event for each output it publishes (rows, files, bytes, the Delta version or
+        Iceberg snapshot its commit made) and a `JOB_SUMMARY` for every run, through a new `published` request; a publish
+        that fails part way puts back the outputs a rename published, and an output whose commit cannot be undone keeps its
+        `WRITE` event; documented in the notification sinks guide, "Events from a Python job"
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

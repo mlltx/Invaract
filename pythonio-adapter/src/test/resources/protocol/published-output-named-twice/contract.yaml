@@ -1,0 +1,10 @@
+id: orders_report
+version: "1.0.0"
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: data/out/report
+    format: parquet
+    schema:
+      fields:
+        - { name: total, type: long, required: true }

@@ -4,3 +4,4 @@
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}
 {"op": "written", "name": "report", "nulls": {"region": 0, "total": 0, "lines": 7}}
 {"op": "finish", "completed": false}
+{"op": "published", "outputs": []}
