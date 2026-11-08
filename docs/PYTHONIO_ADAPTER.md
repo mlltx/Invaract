@@ -47,7 +47,7 @@ finished and every answer was yes.
 ### The protocol
 
 One JSON request per line from the package, one reply per line from the checker: `open`, then the job's `read`s and
-`write`/`written` pairs, then `finish`. **docs/PYTHONIO_PROTOCOL.md** is its reference: each message, what the checker
+`write`/`written` pairs, then `finish`, and `published` once the outputs are in place. **docs/PYTHONIO_PROTOCOL.md** is its reference: each message, what the checker
 does with it, how versions work, and how to change it. Every message is described by the JSON Schema
 `docs-site/public/schemas/pythonio/v1/protocol.schema.json`, and the recorded cases (`src/test/resources/protocol`), the
 package's every request and reply in its tests, and the docs build all hold to it. How the package itself is laid out,
@@ -163,7 +163,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `config.zeroCodeInstall` | unsupported | the note: a one-time code change by design (decision 1) |
 | `config.locationRefs` | supported | attested: `PythonIoProtocolCasesSpec` (the `location-refs` case) |
 | `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only) |
-| `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases |
+| `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases. A `WRITE` event for each output published and a `JOB_SUMMARY` for each run (2026-11-08): the `published-write-events` and `published-misuse` cases, and the package's tests of Delta, Iceberg and plain-file outputs and of a publish that fails part way |
 | `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |
 
@@ -568,6 +568,17 @@ What was built:
   refuses one it does not know.
 - After an overwrite, a Delta table keeps the replaced files for time travel until it is vacuumed; "nothing left behind"
   means no file that no commit ever named.
+- The declaration claimed `reporting.notifications` ("validation and write events"), and the design promised that "the
+  run's event records exactly what was published", but a Python job published no `WRITE` event and no summary, and the
+  declaration's note named a setting that does not exist (`INVARACT_NOTIFICATION_CONFIG` for `INVARACT_NOTIFY_CONFIG`).
+  Found reviewing what the adapter publishes (2026-11-08): the `published` request now reports what each output put in
+  place, and the checker publishes its `WRITE` event and the run's `JOB_SUMMARY`.
+- A plain-file output moved what it replaced aside "for rollback", but nothing rolled back: when a later output failed to
+  publish, the earlier ones stayed replaced and their previous versions were left beside them. `Output.restore` now puts
+  a renamed output back; a commit or a copy that cannot be undone stays published, and its `WRITE` event says so.
+- Events named a job run as `python main.py` `__main__.main`, listed only the libraries imported when the run opened
+  (pandas was usually missing: the package imports it at the first read), and described an output's columns by the
+  nulls this run's data held rather than as the file declares them. Each fixed with the write events.
 
 ## Unverified items
 

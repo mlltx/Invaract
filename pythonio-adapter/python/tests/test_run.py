@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import invaract
-from conftest import events, notify_to_file, output, write_contract
+from conftest import event_of, events, notify_to_file, output, write_contract
 
 REPORT = pd.DataFrame({"region": ["north", "south"], "total": [10, 20]})
 
@@ -325,7 +325,7 @@ def test_a_dry_runs_draft_declares_the_format_each_input_was_read_in(monkeypatch
     with invaract.run(name="orders_job.main"):
         invaract.read("orders", location="data/in/orders")
         invaract.write(REPORT, "report", location="data/out/report")
-    assert "location: data/in/orders\n  format: parquet\n" in events()[-1]["mergedContractYaml"]
+    assert "location: data/in/orders\n  format: parquet\n" in event_of("DRY_RUN_SUMMARY")["mergedContractYaml"]
 
 
 def test_a_format_or_save_mode_that_disagrees_with_the_contract_is_refused():
@@ -451,9 +451,12 @@ def test_a_dry_run_reads_and_writes_where_the_job_says_and_infers_a_contract(mon
     assert orders.column_names == ["order_id", "region", "extra"], "with no contract, every column"
     assert pq.read_table("data/out/report").num_rows == 2
     kinds = [e["eventType"] for e in events()]
-    assert kinds == ["CONTRACT_INFERENCE", "DRY_RUN_SUMMARY"]
-    summary = events()[-1]
+    assert kinds == ["CONTRACT_INFERENCE", "DRY_RUN_SUMMARY", "WRITE", "JOB_SUMMARY"]
+    summary = event_of("DRY_RUN_SUMMARY")
     assert "data/out/report" in summary["mergedContractYaml"] and "data/in/orders" in summary["mergedContractYaml"]
+    # what a dry run really writes is still a write: it has no contract to name
+    written = event_of("WRITE")
+    assert (written["contract"], written["location"], written["rowCount"], written["fileCount"]) == (None, "data/out/report", 2, 1)
 
 
 def test_a_dry_run_read_or_write_with_no_location_is_not_checked(monkeypatch):
@@ -482,13 +485,49 @@ def test_the_events_name_the_engine_the_job_python_and_its_libraries(monkeypatch
     assert job["engineDetails"]["pyarrow"] == pa.__version__ and job["engineDetails"]["pandas"] == pd.__version__
 
 
+def test_the_events_list_each_installed_data_library_whether_or_not_the_job_has_imported_it_yet(monkeypatch):
+    import importlib.metadata
+    import sys
+
+    from invaract import _run
+
+    report_contract()
+    notify_to_file(monkeypatch)
+    monkeypatch.delitem(sys.modules, "polars", raising=False)
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    details = events()[0]["job"]["engineDetails"]
+    installed = {}
+    for library in _run.LIBRARIES:
+        try:
+            installed[library] = importlib.metadata.version(library)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    assert details == installed and {"pyarrow", "pandas"} <= set(details)
+
+
+def test_a_jobs_name_is_its_function_s_module_and_name_or_for_a_script_the_script_s(monkeypatch):
+    from invaract import _run
+
+    def main():
+        pass
+
+    assert _run._function_name(main) == f"{__name__}.test_a_jobs_name_is_its_function_s_module_and_name_or_for_a_script_the_script_s.<locals>.main"
+    main.__module__ = "__main__"
+    monkeypatch.setattr(_run, "_script_name", lambda: "main.py")
+    assert _run._function_name(main).startswith("main.test_a_jobs_name")
+    # python -m orders_job.main: the module's own name, which a dot does not end
+    monkeypatch.setattr(_run, "_script_name", lambda: "orders_job.main")
+    assert _run._function_name(main).startswith("orders_job.main.test_a_jobs_name")
+
+
 def test_the_checker_is_closed_and_its_events_delivered_even_when_the_job_fails(monkeypatch):
     report_contract()
     notify_to_file(monkeypatch)
     with pytest.raises(invaract.ContractViolation):
         with invaract.run("contract.yaml"):
             invaract.write(REPORT.astype({"total": str}), "report")
-    assert [e["status"] for e in events()] == ["FAILED"]
+    assert [(e["eventType"], e.get("status")) for e in events()] == [("CONTRACT_VALIDATION", "FAILED"), ("JOB_SUMMARY", None)]
 
 
 # a run that cannot be checked raises CheckNotRun, and publishes nothing
@@ -544,6 +583,78 @@ def test_a_checker_from_another_release_is_not_checked_against(monkeypatch, repl
             pass
     assert f"speaks protocol version {speaks}, and this package version 1" in str(not_run.value)
     assert "(sh checker.sh)" in str(not_run.value) and "from the same release" in str(not_run.value)
+
+
+def _failing_publish(monkeypatch, failing="audit"):
+    """Makes publishing the output at ``data/out/<failing>`` fail, as a full disk would."""
+    from invaract import _files
+
+    publish = _files.RenamedOutput.publish
+
+    def fails(out):
+        if out.target.endswith(failing):
+            raise OSError("no space left on device")
+        return publish(out)
+
+    monkeypatch.setattr(_files.RenamedOutput, "publish", fails)
+
+
+def two_outputs():
+    existing()
+    write_contract(outputs=output() + output(name="audit", location="data/out/audit"))
+
+
+def test_a_publish_that_fails_part_way_puts_back_what_it_had_published(monkeypatch):
+    two_outputs()
+    notify_to_file(monkeypatch)
+    _failing_publish(monkeypatch)
+    with pytest.raises(OSError, match="no space left on device"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT, "audit")
+    # the report, published first, is as it was before the run, and nothing is left beside either output
+    assert published() == (["old.parquet"], []) and published("data/out/audit") == ([], [])
+    assert [e["eventType"] for e in events()] == ["CONTRACT_VALIDATION", "CONTRACT_VALIDATION", "JOB_SUMMARY"]
+    assert event_of("JOB_SUMMARY")["totalWrites"] == 0
+
+
+def test_an_output_whose_storage_cannot_undo_a_publish_stays_published_and_its_write_event_says_so(monkeypatch):
+    from invaract import _files
+
+    two_outputs()
+    notify_to_file(monkeypatch)
+    _failing_publish(monkeypatch)
+    # as a Delta or Iceberg commit, a copy to object storage or a database transaction is: done once made
+    monkeypatch.setattr(_files.RenamedOutput, "restore", lambda out: False)
+    with pytest.raises(OSError, match="no space left on device"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT, "audit")
+    files, _ = published()
+    assert files != ["old.parquet"] and pq.read_table("data/out/report").num_rows == len(REPORT)
+    written = event_of("WRITE")
+    assert (written["location"], written["rowCount"], written["fileCount"]) == ("data/out/report", len(REPORT), 1)
+    assert event_of("JOB_SUMMARY")["totalWrites"] == 1
+
+
+def test_a_passing_run_publishes_a_write_event_for_each_output_and_a_summary(monkeypatch):
+    two_outputs()
+    notify_to_file(monkeypatch)
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "audit")
+    kinds = [e["eventType"] for e in events()]
+    assert kinds == ["CONTRACT_VALIDATION"] * 3 + ["WRITE", "WRITE", "JOB_SUMMARY"]
+    report, audit = [e for e in events() if e["eventType"] == "WRITE"]
+    # one event per output, however many writes staged it, in the order first written
+    assert (report["location"], report["rowCount"], report["fileCount"], audit["location"], audit["rowCount"]) == (
+        "data/out/report", 2 * len(REPORT), 2, "data/out/audit", len(REPORT))
+    assert report["bytesWritten"] == sum(os.path.getsize(os.path.join("data/out/report", f)) for f in os.listdir("data/out/report"))
+    assert report["runId"] == run.run_id and report["job"]["engine"] == "pythonio" and report["durationMs"] >= 0
+    assert [(f["name"], f["type"], f["nullable"]) for f in report["schema"]] == [("region", "string", False), ("total", "long", False)]
+    summary = event_of("JOB_SUMMARY")
+    assert (summary["totalWrites"], summary["checksPassed"], summary["checksFailed"], summary["totalViolations"]) == (2, 3, 0, 0)
 
 
 def test_an_output_that_cannot_be_discarded_leaves_neither_the_others_nor_the_checker_behind(monkeypatch):

@@ -126,7 +126,7 @@ def test_every_recorded_reply_is_one_the_schema_allows(case):
     replies = _json_lines(os.path.join(CASES, case, "replies.jsonl"))
     for i, (request, reply) in enumerate(zip(requests, replies), 1):
         op = request.get("op") if isinstance(request, dict) else None
-        if op in ("open", "read", "write", "written", "finish"):
+        if op in ("open", "read", "write", "written", "finish", "published"):
             assert reply_errors(op, reply) == [], f"{case}: reply {i}"
         else:
             # a request with no op the checker knows can only be answered not-checked

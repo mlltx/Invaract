@@ -1,6 +1,6 @@
 ---
 title: Configure a Notification Sink
-description: Publish an event every time Invaract checks or completes a write, to a destination of your choosing.
+description: Publish an event every time Invaract checks or completes a write, on Spark, Beam or a Python job, to a destination of your choosing.
 sidebar:
   order: 8
 ---
@@ -62,6 +62,10 @@ On Apache Beam, the same file attaches with `--invaractNotifyConfig=/path/to/not
 `ContractValidationEvent` for every check, before anything runs, but no `WriteEvent` or
 `JOB_SUMMARY`: it has no after-the-fact listener to see a write complete. In dry-run mode it
 publishes `CONTRACT_INFERENCE` and `DRY_RUN_SUMMARY`, as Spark does.
+
+A Python job (one that reads and writes through the [`invaract` package](/guides/using-invaract-with-python/)) takes the
+same file from its environment: `INVARACT_NOTIFY_CONFIG=/path/to/notify.properties`. It publishes every event type; see
+[Events from a Python job](#events-from-a-python-job).
 
 `InvaractSparkSessionExtension` builds the sink from `notify.properties` itself, passes it
 to `forContract` for `ContractValidationEvent`s, **and** registers a `SparkAdapterListener`
@@ -384,6 +388,93 @@ error), so `operation` is the field that tells them apart:
 {"...": "...", "saveMode": null, "operation": "delete"}
 ```
 
+## Events from a Python job
+
+A Python job publishes, for each run:
+
+| When | Event |
+|---|---|
+| A read or write is refused (each is checked as it is made, a write before anything is staged) | `CONTRACT_VALIDATION`, `FAILED` |
+| A write has been staged and checked, its empty values and (with `INVARACT_RUNTIME_DATA_QUALITY`) its values included | `CONTRACT_VALIDATION`, `PASSED` or `FAILED` |
+| The run has passed and an output has been put in place | `WRITE`, one per output |
+| The run has ended, whether it passed, was refused or failed (a contract refused as the run opens, before any of the job's code runs, publishes only its `CONTRACT_VALIDATION`) | `JOB_SUMMARY` |
+| In a dry run: each staged write, then the job's merged draft | `CONTRACT_INFERENCE`, then `DRY_RUN_SUMMARY` (and the `WRITE` events and `JOB_SUMMARY` above) |
+
+A `WRITE` event means the data is in place: it is published after every output of the run has been published, never for
+a run that was refused, and never for an output left as it was (`ignore` on an output that already holds data). An output
+written several times in one run gets one `WRITE` event, whose `rowCount` counts every row of every write. If publishing
+fails part way, the outputs already put in place by a rename (files on a local or mounted file system, or on HDFS) are put
+back as they were and get no event; an output whose storage cannot undo a publish (a Delta or Iceberg commit, files copied
+to object storage, a database transaction) stays published and gets its `WRITE` event, so the events always say what is
+in place. This is a `WRITE` event from the repository's example job (`pythonio-adapter/python/examples/orders_job`), run as
+`python main.py`:
+
+```json
+{
+  "eventType": "WRITE",
+  "contract": "orders_report@1.0.0",
+  "location": "data/out/report",
+  "format": "parquet",
+  "saveMode": "overwrite",
+  "schema": [
+    { "name": "region", "type": "string", "nullable": false },
+    { "name": "total", "type": "long", "nullable": false }
+  ],
+  "rowCount": 3,
+  "fileCount": 1,
+  "bytesWritten": 1702,
+  "durationMs": 1,
+  "deltaVersion": null,
+  "icebergSnapshotId": null,
+  "partitionColumns": [],
+  "catalog": null,
+  "datasetType": "DATA_ASSET",
+  "operation": null,
+  "metadata": {},
+  "runId": "e870109a6b5e41c1",
+  "job": {
+    "engine": "pythonio",
+    "engineVersion": "3.11.17",
+    "name": "main.main",
+    "runId": "e870109a6b5e41c1",
+    "user": "root",
+    "startTimeMs": 1794126524813,
+    "engineDetails": { "pyarrow": "26.0.0", "pandas": "3.1.0", "polars": "2.1.0", "duckdb": "2.0.0", "fastavro": "1.13.1", "openpyxl": "3.1.5" },
+    "attributes": {}
+  },
+  "eventId": "2ca09183a0e62b314623ee81df7e10ac631936434cbc56118a5282a0d5d7ae51",
+  "timestamp": 1794126525273,
+  "schemaVersion": 1
+}
+```
+
+What each field holds for a Python job:
+
+- `schema` is the output's columns as written: a column the contract declares required is not nullable, any other is as
+  the table handed to `invaract.write` says. Each type is the contract's name for it (`long`, `string`, `array`,
+  `decimal(10,2)`).
+- `rowCount` is every row the run staged for the output. `fileCount` and `bytesWritten` are the files put in place (plain
+  files) or added by the commit (Delta, Iceberg), and `null` for a database table. `deltaVersion` is the Delta table's
+  version after the commit; `icebergSnapshotId` the id of the snapshot the Iceberg commit made. `durationMs` is how long
+  staging and publishing the output took.
+- `catalog` is the catalog an Iceberg or database table is registered in (`technology` `iceberg` or `jdbc`), as the
+  contract's `catalog:` requirement names one; `null` for files and Delta tables.
+- `job.engine` is `pythonio`, `job.engineVersion` the Python version, and `job.engineDetails` the installed version of
+  each data library the package can use (pyarrow, pandas, Polars, DuckDB, deltalake, pyiceberg, fastavro, openpyxl and
+  the ADBC drivers). `job.name` is the job's entry point, `<module>.<function>` (`main.main` for a function in `main.py`
+  run as a script; `with invaract.run()`, the script's name), or the `name=` given to `@invaract.job` or
+  `invaract.run`. `runId` is the run's own id, which also names the files it writes (`part-<runId>-00001.parquet`).
+  `job.jobId` and `job.attributes` are Spark's alone (`spark.invaract.jobId`, `spark.invaract.job.metadata.*`): a
+  Python job has no setting for them yet, so a sink tells a Python job's runs apart by `job.name`.
+
+The `JOB_SUMMARY` that ends the same run counts its two checks and two writes:
+
+```json
+{"checksFailed": 0, "eventType": "JOB_SUMMARY", "timestamp": 1794126525275, "totalViolations": 0, "job": {"engineDetails": {"fastavro": "1.13.1", "pandas": "3.1.0", "polars": "2.1.0", "pyarrow": "26.0.0", "openpyxl": "3.1.5", "duckdb": "2.0.0"}, "name": "main.main", "startTimeMs": 1794126524813, "attributes": {}, "engineVersion": "3.11.17", "runId": "e870109a6b5e41c1", "user": "root", "engine": "pythonio"}, "eventId": "030c8b8bc503b3fb055cc3b807b5c687e6cbc581127979c33b017e23966b9f58", "totalWrites": 2, "durationMs": 462, "metadata": {}, "schemaVersion": 1, "checksPassed": 2, "runId": "e870109a6b5e41c1"}
+```
+
+`invaract.check` publishes nothing: it is the job author's question, not a run.
+
 ## Fields on every event
 
 Every event, of every type, carries three common fields:
@@ -404,9 +495,10 @@ https://mlltx.github.io/Invaract/schemas/notification/v1/event.schema.json
 
 It is one file (JSON Schema 2020-12). Validate any event against it, or point at a single
 definition, such as `event.schema.json#/$defs/ContractInferenceEvent`, to generate types
-in your language. Real example events, one per event type, sit beside it under
-`schemas/notification/v1/examples/`. Both are checked on every change: the engine's own
-test suite validates every event it sees against the schema, and the docs build validates
+in your language. Real example events, one per event type (and a Python job's `WRITE` event,
+`write-python.json`), sit beside it under `schemas/notification/v1/examples/`. Both are checked on every change: the engine's own
+test suite validates every event it sees against the schema (the Python package's tests
+validate every event a Python job publishes too), and the docs build validates
 the schema and the examples with [Ajv](https://ajv.js.org/).
 
 ### What your endpoint has to do

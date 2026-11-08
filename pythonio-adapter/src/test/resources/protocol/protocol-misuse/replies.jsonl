@@ -1,6 +1,6 @@
 {"ok": false, "reason": "a request must be a JSON object", "status": "not-checked"}
 {"ok": false, "reason": "a request must be a JSON object", "status": "not-checked"}
-{"ok": false, "reason": "unknown op 'launch': expected open, read, write, written or finish", "status": "not-checked"}
+{"ok": false, "reason": "unknown op 'launch': expected open, read, write, written, finish or published", "status": "not-checked"}
 {"ok": false, "reason": "the run must be opened first", "status": "not-checked"}
 {"ok": false, "reason": "a write must name the output it writes", "status": "not-checked"}
 {"contract": {"id": "orders_report", "inputs": [{"fields": [], "format": "parquet", "location": "data/in/orders", "name": "orders"}, {"fields": [], "format": "csv", "location": "data/in/customers.csv", "name": "customers"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}, {"name": "lines", "required": false, "type": "array<struct<sku:string,qty:int>>"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}, {"fields": [{"name": "order_id", "required": true, "type": "long"}, {"name": "status", "required": false, "type": "string"}], "format": "csv", "location": "data/out/audit", "name": "audit"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
@@ -20,5 +20,5 @@
 {"ok": true}
 {"ok": true}
 {"ok": true, "publish": true}
-{"ok": false, "reason": "the run has already finished", "status": "not-checked"}
-{"ok": false, "reason": "the run has already finished", "status": "not-checked"}
+{"ok": false, "reason": "the run has finished: only what was published may follow", "status": "not-checked"}
+{"ok": false, "reason": "the run has finished: only what was published may follow", "status": "not-checked"}

@@ -21,7 +21,7 @@ import urllib.parse
 
 import pyarrow as pa
 
-from . import _frames, _jdbc, _optional, _outputs, _types
+from . import _frames, _jdbc, _optional, _outputs
 from ._jdbc import quote as _quote
 from .errors import CheckNotRun
 
@@ -115,14 +115,9 @@ def _select(location, fields):
 
 
 def typed(data, fields):
-    """``data`` (a table or a record batch) with each column the contract types cast to that type."""
-    types = _types.scalars(fields)
-    names = data.schema.names
-    return type(data).from_arrays([_cast(data.column(i), types.get(name)) for i, name in enumerate(names)], names=names)
-
-
-def _cast(column, t):
-    return column.cast(t) if t is not None and column.type != t else column
+    """``data`` (a table or a record batch) with each column the contract types cast to that type (the driver gives some
+    types, ``numeric`` among them, as text)."""
+    return _jdbc.typed(data, fields, lambda column, t: column.cast(t))
 
 
 class PostgresOutput(_outputs.Output):
@@ -160,7 +155,7 @@ class PostgresOutput(_outputs.Output):
     def publish(self):
         if self._columns is None:
             self.discard()
-            return
+            return None
         target, staging = f"{_quote(self.schema)}.{_quote(self.table)}", f"pg_temp.{_quote(self._staging)}"
         columns = ", ".join(_quote(c) for c in self._columns)
         with self._conn.cursor() as cursor:
@@ -168,7 +163,7 @@ class PostgresOutput(_outputs.Output):
             skip = exists and self.mode == "ignore" and _has_rows(cursor, self.schema, self.table)
         if skip:
             self.discard()
-            return
+            return None
         with self._conn.cursor() as cursor:
             if not exists:
                 cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote(self.schema)}")
@@ -181,6 +176,7 @@ class PostgresOutput(_outputs.Output):
             cursor.execute(f"DROP TABLE {staging}")
         self._conn.commit()
         self._close()
+        return _outputs.Published()
 
     def discard(self):
         """Rolls back the run's transaction: nothing staged reaches the table, and the temporary table goes with the session."""

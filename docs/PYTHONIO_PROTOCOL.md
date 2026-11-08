@@ -9,7 +9,8 @@ or writing another client for the checker. Why the adapter is built this way is 
 **The schema.** Every message is described by one JSON Schema (2020-12),
 [`docs-site/public/schemas/pythonio/v1/protocol.schema.json`](../docs-site/public/schemas/pythonio/v1/protocol.schema.json),
 published at `https://mlltx.github.io/Invaract/schemas/pythonio/v1/protocol.schema.json`. Its `$defs` name each request
-(`OpenRequest`, `ReadRequest`, `WriteRequest`, `UnverifiableWriteRequest`, `WrittenRequest`, `FinishRequest`) and each
+(`OpenRequest`, `ReadRequest`, `WriteRequest`, `UnverifiableWriteRequest`, `WrittenRequest`, `FinishRequest`,
+`PublishedRequest`) and each
 reply (`OpenReply`, `OkReply`, `FinishReply`, `RefusedReply`, `NotCheckedReply`), and every field has a description.
 This document says what the schema cannot: the order of messages, what the checker does with each, and how the protocol
 changes.
@@ -31,7 +32,8 @@ carries any of the data.
 ## A run, message by message
 
 A run is one `open`, then any number of `read`s and `write`/`written` pairs, in the order the job makes them, then one
-`finish`. This is the recorded case `passes` (`pythonio-adapter/src/test/resources/protocol/passes`), a job that reads
+`finish`, and, when `finish`'s reply says to publish, one `published` once the package has put the outputs in place. This
+is the recorded case `passes` (`pythonio-adapter/src/test/resources/protocol/passes`), a job that reads
 two inputs and writes two outputs; `>` is a request, `<` its reply:
 
 ```text
@@ -54,7 +56,8 @@ two inputs and writes two outputs; `>` is a request, `<` its reply:
 ```
 
 (The `open` reply's contract is shortened here. The recorded case is older than the package's `format` on each read,
-which the checker treats as unknown.)
+which the checker treats as unknown, and than `published`, which a package now sends next: the recorded case
+`published-write-events` shows it.)
 
 ### `open`
 
@@ -110,20 +113,56 @@ columns, and is refused (`UNVERIFIABLE_WRITE`).
 
 Sent once, when the job returns (`completed: true`) or raises (`completed: false`). A completed run that never wrote a
 declared output is refused (`MISSING_OUTPUT`). In a dry run, the checker merges the drafts into one for the job and
-publishes it. The reply's `publish` tells the package whether to publish what it staged. After `finish`, every request is
+publishes it. The reply's `publish` tells the package whether to publish what it staged: when it is true the run waits
+for `published`; otherwise (or when `finish` is refused) the run ends here, with its `JOB_SUMMARY`.
+
+### `published`
+
+Sent once, after a `finish` whose reply said to publish, when the package has put the outputs in place. It lists each
+output published, by name, with what the package knows of it: the rows it staged, the files and bytes put in place, the
+Delta version or Iceberg snapshot its commit made, and how long staging and publishing it took. An output it did not
+publish is not listed: `ignore` on an output that holds data, or an output put back after a later one failed to publish
+(the package publishes the outputs in the order first written, and if one fails, puts back those already published by a
+rename; a table's commit, a copy to object storage or a database's transaction cannot be put back, and stays listed).
+
+The checker publishes a `WRITE` event for each output listed, built from what it checked of the output's first staged
+write (location, format, save mode, columns as written, catalog, partition columns) and what `published` says; then the
+run's `JOB_SUMMARY` (its validation events by verdict, their violations, and its writes), and delivers the run's events.
+A name the run did not stage is answered not-checked; the run ends either way. After `published`, every request is
 answered not-checked.
+
+A package interrupted before `finish` or `published` (killed, or a publish that crashed) never sends them: when its
+standard input closes, the checker ends the run itself, with its `JOB_SUMMARY`, and delivers the events.
 
 ## Replies
 
 | Reply | Means | The package |
 |---|---|---|
-| `{"ok": true, ...}` | The request passed. `open`'s reply carries the mode and the contract; `finish`'s, `publish`. | goes on |
+| `{"ok": true, ...}` | The request passed. `open`'s reply carries the protocol version, the mode and the contract; `finish`'s, `publish`. | goes on |
 | `{"ok": false, "status": "refused", "violations": [...], "explanation": "..."}` | The contract refused it. `violations` lists the kinds, `explanation` is Invaract's standard message. | raises `ContractViolation` (exit status 1) |
-| `{"ok": false, "status": "not-checked", "reason": "..."}` | It could not be checked: a malformed request, one out of order (a `write` before `open`, a `written` with no `write`), a contract that cannot be read, an unknown setting, another protocol version. | raises `CheckNotRun` (exit status 2) |
+| `{"ok": false, "status": "not-checked", "reason": "..."}` | It could not be checked: a malformed request, one out of order (a `write` before `open`, a `written` with no `write`, a `published` before `finish`), a contract that cannot be read, an unknown setting, another protocol version. | raises `CheckNotRun` (exit status 2) |
 
 A refusal or a not-checked reply ends the run: the package raises, discards everything staged, sends `finish` with
-`completed: false` so the checker delivers its events, and publishes nothing. A checker that stops, or answers with a
+`completed: false` so the checker delivers its events, and publishes nothing. (A not-checked reply to `published` comes
+after the outputs are in place: the package raises, and the run is over.) A checker that stops, or answers with a
 line that is not JSON, is a `CheckNotRun` too. Nothing is ever published unchecked.
+
+## Events
+
+The checker, not the package, publishes every event, to the sink the `notifyConfig` setting names (the package never
+sees a sink). Which event each request leads to:
+
+| Request | Events |
+|---|---|
+| `open` | `CONTRACT_VALIDATION FAILED` when the contract is refused when the run opens (an organisational policy it breaks, a check this adapter cannot make) |
+| `read`, `write` | `CONTRACT_VALIDATION FAILED` when refused; nothing when they pass |
+| `written` | `CONTRACT_VALIDATION`, `PASSED` or `FAILED`; in a dry run, `CONTRACT_INFERENCE` |
+| `finish` | `CONTRACT_VALIDATION FAILED` for an output never written (`MISSING_OUTPUT`); in a dry run, `DRY_RUN_SUMMARY`; and, when the run ends here, `JOB_SUMMARY` |
+| `published` | `WRITE` for each output listed, then `JOB_SUMMARY` |
+
+Every event is a notification event as `docs-site/public/schemas/notification/v1/event.schema.json` describes it, with
+`job.engine` `pythonio`; the package's tests validate each one a test reads against that schema. What each field of a
+Python job's events holds is in the user guide (docs-site, "Configure a Notification Sink", "Events from a Python job").
 
 ## Columns and types
 
@@ -181,7 +220,8 @@ as it is: each side ignores fields it does not know. A new version gets a new sc
 
 ## Changing the protocol
 
-1. Change the checker's side: `PythonIoRequests.scala` (parsing a request) and `PythonIoCheck.scala` (answering it).
+1. Change the checker's side: `PythonIoRequests.scala` (parsing a request) and `PythonIoCheck.scala` (answering it, and
+   the events it publishes).
 2. Change the package's side: every request is built in `invaract/_protocol.py`, and nowhere else.
 3. Change the schema, and this document where the change is one of order or meaning.
 4. Record a case for it: a directory under `src/test/resources/protocol` with `contract.yaml` and `requests.jsonl`, then

@@ -73,6 +73,9 @@ class LocalFiles:
                 found.append(os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/"))
         return sorted(found)
 
+    def size(self, path):
+        return os.path.getsize(path)
+
     def has_data(self, path):
         """Whether ``path`` holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata
         (``_``)."""
@@ -124,6 +127,9 @@ class ArrowFiles:
     def files(self, root):
         root = root.rstrip("/")
         return sorted(posixpath.relpath(i.path, root) for i in self.listing(root, recursive=True))
+
+    def size(self, path):
+        return self.arrow.get_file_info(path).size
 
     def has_data(self, path):
         import pyarrow.fs as pafs
@@ -290,10 +296,17 @@ class _FileOutput(_outputs.Output):
     def discard(self):
         self._staged_on.remove(self.staging)
 
+    def _staged(self):
+        """``(files, published)``: the files staged (relative to ``staging``), and what publishing them puts in place."""
+        files = self._staged_on.files(self.staging) if self._staged_on.exists(self.staging) else []
+        size = sum(self._staged_on.size(self._staged_on.join(self.staging, rel)) for rel in files)
+        return files, _outputs.Published(files=len(files), bytes=size)
+
 
 class RenamedOutput(_FileOutput):
     """Staged in a hidden folder beside its location (``path`` on ``files``), so that publishing is a rename on the same file
-    system; what a publish replaces is moved aside to ``previous`` until the whole run is published."""
+    system; what a publish replaces is moved aside to ``previous`` until the whole run is published, so that ``restore`` can
+    put it back if a later output fails to publish."""
 
     def __init__(self, target, path, files, fmt, mode, run_id, layout=_outputs.FLAT, csv=None):
         parent, base = files.path.split(path)
@@ -301,26 +314,40 @@ class RenamedOutput(_FileOutput):
         self.path = path
         self.previous = files.path.join(parent, f".{base}.invaract-previous-{run_id}")
         self._files = files
+        #: how the last publish changed the location, for ``restore``: ``("folder",)``, ``("files", added)`` or
+        #: ``("partitions", leaves)``; ``None`` before a publish, or when it put nothing in place
+        self._done = None
 
     def has_data(self):
         return self._files.has_data(self.path)
 
     def publish(self):
         files = self._files
-        if not files.exists(self.staging):
-            return
+        staged, published = self._staged()
+        if not staged:
+            self.discard()
+            return None
+        if self.mode == "ignore" and self.has_data():
+            self.discard()
+            return None
         if self.mode == "append":
-            staged = files.files(self.staging)
             for rel in staged:
                 if files.exists(files.join(self.path, rel)):
                     raise FileExistsError(f"Invaract will not replace {files.join(self.path, rel)} when appending")
-            for rel in staged:
-                files.move(files.join(self.staging, rel), files.join(self.path, rel))
-            self.discard()
-        elif self.mode == "ignore" and self.has_data():
+            added = []
+            try:
+                for rel in staged:
+                    files.move(files.join(self.staging, rel), files.join(self.path, rel))
+                    added.append(rel)
+            except BaseException:
+                self._remove_added(added)
+                raise
+            self._done = ("files", added)
             self.discard()
         elif self.mode == "overwrite" and self.layout.dynamic:
-            self._replace_partitions(_leaves(files.files(self.staging)))
+            leaves = _leaves(staged)
+            self._replace_partitions(leaves)
+            self._done = ("partitions", leaves)
         else:
             if files.exists(self.path):
                 files.move(self.path, self.previous)
@@ -330,6 +357,33 @@ class RenamedOutput(_FileOutput):
                 if files.exists(self.previous):
                     files.move(self.previous, self.path)
                 raise
+            self._done = ("folder",)
+        return published
+
+    def restore(self):
+        """Puts the location back as it was before ``publish``: the files it added removed, or what it replaced (the whole
+        folder, or the partitions written) moved back from ``previous``."""
+        files, done, self._done = self._files, self._done, None
+        if done is None:
+            return True
+        if done[0] == "files":
+            self._remove_added(done[1])
+        elif done[0] == "partitions":
+            for leaf in reversed(done[1]):
+                destination, aside = files.join(self.path, leaf), files.join(self.previous, leaf)
+                files.remove(destination)
+                if files.exists(aside):
+                    files.move(aside, destination)
+            files.remove(self.previous)
+        else:
+            files.remove(self.path)
+            if files.exists(self.previous):
+                files.move(self.previous, self.path)
+        return True
+
+    def _remove_added(self, added):
+        for rel in reversed(added):
+            self._files.remove(self._files.join(self.path, rel))
 
     def _replace_partitions(self, leaves):
         """A dynamic overwrite: each partition folder the run wrote takes the place of the one there (moved aside to
@@ -373,10 +427,10 @@ class CopiedOutput(_FileOutput):
         import pyarrow.fs as pafs
 
         store = self._store
-        staged = self._staged_on.files(self.staging)
+        staged, published = self._staged()
         if not staged or (self.mode == "ignore" and self.has_data()):
             self.discard()
-            return
+            return None
         marker = f"{self.path}/{SUCCESS}"
         uploaded = {f"{self.path}/{rel}" for rel in staged}
         if self.mode == "append":
@@ -403,3 +457,4 @@ class CopiedOutput(_FileOutput):
         with store.output_stream(marker):
             pass
         self.discard()
+        return published

@@ -29,7 +29,9 @@ Decorates a job's entry point: each call of the function is one run. Use it as `
 | `name` | The job's name in the events the run publishes. Default: the function's module and name, such as `orders_job.main`. |
 
 When the function returns, the run publishes what the job wrote. When it raises, nothing is published and the
-exception propagates.
+exception propagates. The outputs are published in the order the job first wrote them; if one fails to publish, those
+already put in place by a rename are put back, and the failure is raised (see
+[Files, tables and object storage](/guides/using-invaract-with-python/#files-tables-and-object-storage)).
 
 ### `invaract.run(contract=None, *, name=None)`
 
@@ -154,6 +156,12 @@ Without a format, the location's extension names one (`.csv`; `.json`, `.jsonl` 
 Install an extra with the package: `pip install "invaract[pandas,delta]"`. The `pandas` and `polars` extras install
 those libraries. How each kind of output is staged and published is in
 [Files, tables and object storage](/guides/using-invaract-with-python/#files-tables-and-object-storage).
+
+## Events
+
+With `INVARACT_NOTIFY_CONFIG` set, a run publishes a `CONTRACT_VALIDATION` event for each check, a `WRITE` event for
+each output it publishes, and a `JOB_SUMMARY` when it ends: see
+[Events from a Python job](/guides/notification-sinks/#events-from-a-python-job). `invaract.check` publishes none.
 
 ## Settings
 

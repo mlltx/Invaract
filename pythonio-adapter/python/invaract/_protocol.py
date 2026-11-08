@@ -8,7 +8,8 @@ One JSON object per line goes to the checker's standard input, and one reply per
 one of them; the package's tests validate every request sent and every reply received against it. A request describes data
 (names, formats, columns and their types, how many empty values each holds); it never carries it.
 
-A run is ``open``, then any number of ``read`` and ``write``/``written`` pairs, then ``finish``.
+A run is ``open``, then any number of ``read`` and ``write``/``written`` pairs, then ``finish``, and, when its reply says
+to publish, ``published`` once the package has put the outputs in place.
 """
 import os
 
@@ -57,6 +58,17 @@ def finish(completed):
     """The end of the run. ``completed`` is false when the job failed: nothing is published, and the checker only delivers
     its events."""
     return {"op": "finish", "completed": completed}
+
+
+def published(outputs):
+    """What the package put in place after a ``finish`` that said to publish: ``outputs`` is ``(name, rows, milliseconds,
+    _outputs.Published)`` for each output published, the time being what staging and publishing it took. The checker
+    publishes a write event for each, then ends the run."""
+    return {"op": "published", "outputs": [
+        _present({"name": name, "rows": rows, "files": p.files, "bytes": p.bytes, "deltaVersion": p.delta_version,
+                  "icebergSnapshotId": p.iceberg_snapshot_id, "durationMs": milliseconds})
+        for name, rows, milliseconds, p in outputs
+    ]}
 
 
 def columns(schema, nulls=None):

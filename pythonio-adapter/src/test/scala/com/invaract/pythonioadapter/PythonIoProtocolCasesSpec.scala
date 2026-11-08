@@ -24,7 +24,8 @@ import scala.collection.JavaConverters._
   * answered line by line, and each reply must equal the one in `replies.jsonl` (compared as JSON, with the directory written
   * back as `${CASE}`). When the case has an `events.txt`, the file sink it configures must have written those event types, in
   * that order, to `events.jsonl`, each as its type and what it concluded (`CONTRACT_VALIDATION FAILED`); when it has an
-  * `http-events.txt`, its HTTP sink must have posted those to `${HTTP}`, a local endpoint the run provides.
+  * `http-events.txt`, its HTTP sink must have posted those, in any order (it delivers asynchronously), to `${HTTP}`, a local
+  * endpoint the run provides.
   */
 class PythonIoProtocolCasesSpec extends AnyFunSuite {
   import PythonIoProtocolCasesSpec._
@@ -49,6 +50,25 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
 
   test(ContractRegistry)(assertCase("registry"))
 
+  test(WriteEvents) {
+    val events = assertCase("published-write-events").eventObjects.filter(e => Set("WRITE", "JOB_SUMMARY")(String.valueOf(e.get("eventType"))))
+    val List(report, snapshot, summary) = events
+    // one event per output, however many writes staged it, with what the package says it put in place
+    assert(report.get("location") == "data/out/report" && report.get("rowCount") == 12 && report.get("fileCount") == 3 &&
+      report.get("bytesWritten") == 4096 && report.get("durationMs") == 41 && report.get("icebergSnapshotId") == null)
+    assert(report.get("partitionColumns").toString == "[region]" && report.get("datasetType") == "DATA_ASSET" &&
+      report.get("contract") == "orders_report@1.0.0" && report.get("saveMode") == "overwrite" && report.get("format") == "parquet")
+    // the columns as staged: a required column that held no empty value is written not-null
+    val columns = report.get("schema").asInstanceOf[java.util.List[java.util.Map[String, AnyRef]]].asScala.map(c => (c.get("name"), c.get("type"), c.get("nullable")))
+    assert(columns == List(("region", "string", false), ("total", "long", false)))
+    val catalog = snapshot.get("catalog").asInstanceOf[java.util.Map[String, AnyRef]]
+    assert(snapshot.get("icebergSnapshotId") == 3051729675574597004L && snapshot.get("fileCount") == null &&
+      (catalog.get("technology"), catalog.get("catalogName"), catalog.get("namespace").toString, catalog.get("table")) == (("iceberg", "lake", "[sales]", "snapshot")))
+    assert(report.get("metadata").asInstanceOf[java.util.Map[String, AnyRef]].get("owner") == "orders-team")
+    assert((summary.get("totalWrites"), summary.get("checksPassed"), summary.get("checksFailed"), summary.get("totalViolations")) == ((2, 3, 0, 0)))
+    events.foreach(e => assert(e.get("job").asInstanceOf[java.util.Map[String, AnyRef]].get("engine") == PythonIoCheck.Engine))
+  }
+
   test(DryRunInference) {
     // every write is let through and gets a draft contract (events.txt: INFERRED, self-check PASSED); the drafts are merged
     assertCase("dry-run-infers")
@@ -64,6 +84,8 @@ object PythonIoProtocolCasesSpec {
     "location refs: a ref:// location is resolved through INVARACT_LOCATION_MAP when the run opens, and the write to it is checked"
   val ContractRegistry =
     "contract registry: INVARACT_CONTRACT naming a registry:// reference is fetched from INVARACT_REGISTRY_URL's registry and enforced"
+  val WriteEvents =
+    "write events: after a finish that says to publish, each output the package published gets one WRITE event, and the run ends with a JOB_SUMMARY"
   val DryRunInference =
     "dry-run inference: with INVARACT_DRY_RUN=true every write is let through, gets a draft contract, and the drafts are merged at the end"
 
@@ -75,8 +97,8 @@ object PythonIoProtocolCasesSpec {
   /** Every case, by name. */
   val cases: List[File] = root.listFiles().filter(_.isDirectory).sortBy(_.getName).toList
 
-  /** What a run of a case did: its replies, and the events its file and HTTP sinks received. */
-  final case class Outcome(replies: List[AnyRef], events: List[String], httpEvents: List[String])
+  /** What a run of a case did: its replies, and the events its file and HTTP sinks received (each file event also whole). */
+  final case class Outcome(replies: List[AnyRef], events: List[String], httpEvents: List[String], eventObjects: List[java.util.Map[String, AnyRef]] = Nil)
 
   private def json(line: String): AnyRef = new Yaml(new SafeConstructor(new LoaderOptions)).load[AnyRef](line)
 
@@ -120,7 +142,9 @@ object PythonIoProtocolCasesSpec {
       val requests = new String(Files.readAllBytes(work.resolve("requests.jsonl")), StandardCharsets.UTF_8)
       PythonIoCheck.serve(new BufferedReader(new StringReader(requests)), new PrintStream(out, true, "UTF-8"))
       val replies = new String(out.toByteArray, StandardCharsets.UTF_8).replace(work.toString, Placeholder)
-      Outcome(replies.split("\n").map(_.trim).filter(_.nonEmpty).map(json).toList, lines(work.resolve("events.jsonl").toFile).map(eventType), posted.asScala.toList)
+      val fileEvents = lines(work.resolve("events.jsonl").toFile)
+      Outcome(replies.split("\n").map(_.trim).filter(_.nonEmpty).map(json).toList, fileEvents.map(eventType), posted.asScala.toList,
+        fileEvents.map(json(_).asInstanceOf[java.util.Map[String, AnyRef]]))
     } finally receiver.stop(0)
   }
 
@@ -132,7 +156,8 @@ object PythonIoProtocolCasesSpec {
     assert(outcome.replies.size == expected.size, s"$name: ${outcome.replies.size} replies, expected ${expected.size}")
     outcome.replies.zip(expected).zipWithIndex.foreach { case ((actual, wanted), i) => assert(actual == wanted, s"$name: reply ${i + 1}") }
     assert(outcome.events == lines(new File(source, "events.txt")), s"$name: events")
-    assert(outcome.httpEvents == lines(new File(source, "http-events.txt")), s"$name: HTTP events")
+    // an HTTP sink delivers asynchronously, so its events arrive in no fixed order
+    assert(outcome.httpEvents.sorted == lines(new File(source, "http-events.txt")).sorted, s"$name: HTTP events")
     outcome
   }
 

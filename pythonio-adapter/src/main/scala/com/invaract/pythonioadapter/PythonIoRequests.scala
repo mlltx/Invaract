@@ -60,6 +60,23 @@ private[pythonioadapter] object Request {
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
+
+  /** What the package put in place, after a `finish` that said to publish: each output it published, by name, with what it
+    * knows of the data (`PublishedOutput`). An output the run staged and did not publish (`ignore` on a dataset that holds
+    * data, or one put back after a later output failed to publish) is not listed. */
+  final case class Published(outputs: List[PublishedOutput]) extends Request
+
+  /** One published output: its rows, files and bytes, the Delta version or Iceberg snapshot its commit made, and how long the
+    * package spent staging and publishing it - each where the package knows it. */
+  final case class PublishedOutput(
+      name: String,
+      rows: Option[Long] = None,
+      files: Option[Long] = None,
+      bytes: Option[Long] = None,
+      deltaVersion: Option[Long] = None,
+      icebergSnapshotId: Option[Long] = None,
+      durationMs: Option[Long] = None
+  )
 }
 
 /** Which job a run belongs to, for the events it publishes. */
@@ -103,8 +120,9 @@ private[pythonioadapter] object Requests {
       case Some("read")    => read(m)
       case Some("write")   => write(m)
       case Some("written") => written(m)
-      case Some("finish")  => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
-      case other           => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written or finish")
+      case Some("finish")    => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
+      case Some("published") => published(m)
+      case other             => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written, finish or published")
     }
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
@@ -171,6 +189,27 @@ private[pythonioadapter] object Requests {
       nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
       checks <- found(m.get("checks"), name)
     } yield Request.Written(name, nulls.toMap, checks)
+
+  private def published(m: Map[String, AnyRef]): Either[String, Request] =
+    m.get("outputs") match {
+      case Some(items: JList[_]) =>
+        traverse(items.asScala.toList) {
+          case o: JMap[_, _] =>
+            val output = asMap(o)
+            for {
+              name <- text(output, "name").toRight("each published output must name the output")
+              counts <- traverse(List("rows", "files", "bytes", "deltaVersion", "icebergSnapshotId", "durationMs")) { key =>
+                traverse(output.get(key).toList)(count(_, s"the $key of published output '$name'")).map(key -> _.headOption)
+              }
+            } yield {
+              val c = counts.toMap
+              Request.PublishedOutput(name, c("rows"), c("files"), c("bytes"), c("deltaVersion"), c("icebergSnapshotId"), c("durationMs"))
+            }
+          case other => Left(s"each published output must be a JSON object, not '$other'")
+        }.map(Request.Published)
+      case None        => Right(Request.Published(Nil))
+      case Some(other) => Left(s"the outputs published must be a list, not '$other'")
+    }
 
   private def found(value: Option[AnyRef], name: String): Either[String, List[Request.Found]] = value match {
     case None => Right(Nil)

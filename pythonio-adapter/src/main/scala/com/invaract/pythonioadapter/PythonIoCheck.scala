@@ -11,7 +11,10 @@ import com.invaract.verification.{
   InferredWrite, LocationMatching, RuntimeDataQuality, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult,
   VerificationSetup, Violations
 }
-import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationJson, NotificationSink}
+import com.invaract.verification.notification.{
+  CatalogInfo, ContractValidationEvent, InferenceStatus, JobInfo, JobSummaryEvent, NotificationEvent, NotificationJson, NotificationSink, WriteEvent,
+  WriteFieldInfo
+}
 import org.slf4j.LoggerFactory
 import java.io.{BufferedReader, InputStreamReader, PrintStream}
 import java.nio.charset.StandardCharsets
@@ -27,6 +30,7 @@ import scala.util.control.NonFatal
   * {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "total", "type": "int64"}]}
   * {"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [{"failed": 0, "examples": []}]}
   * {"op": "finish", "completed": true}
+  * {"op": "published", "outputs": [{"name": "report", "rows": 12, "files": 1, "bytes": 2048, "durationMs": 35}]}
   * }}}
   *
   * Each request gets one reply: `{"ok": true, ...}` (to `open`, with the protocol version the checker speaks); `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`
@@ -35,7 +39,8 @@ import scala.util.control.NonFatal
   * (`VerificationPipeline`), with this adapter's declaration and events naming the engine `pythonio`; this program only turns
   * requests into the plans and schemas they describe. Column types are Arrow's own names, mapped by the shared `ArrowSchemas`.
   * With `dryRun` set there is no contract: reads and writes name their locations, and each staged write gets a draft contract
-  * (`ContractInferenceEvent`), merged into one for the job at `finish`. It is compiled ahead of time into a native program for
+  * (`ContractInferenceEvent`), merged into one for the job at `finish`. After a `finish` that said to publish, `published`
+  * says what the package put in place: each output gets a `WriteEvent`, and every run ends with a `JobSummaryEvent`. It is compiled ahead of time into a native program for
   * the package's wheels, so no Java is needed where jobs run (milestone 0 of the design). Every request and reply is described
   * by the protocol's JSON Schema (docs/PYTHONIO_PROTOCOL.md).
   */
@@ -67,7 +72,7 @@ object PythonIoCheck {
 }
 
 /** One run: its lifecycle (`State`), and, once open, the inputs read, the writes described but not yet staged, the outputs
-  * staged, and in a dry run each write's outcome. */
+  * staged (each output's first staged write, for its `WriteEvent`), and in a dry run each write's outcome. */
 private[pythonioadapter] final class Run {
   import Run._
 
@@ -81,6 +86,8 @@ private[pythonioadapter] final class Run {
   private var readFormats = Map.empty[String, String]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
+  /** Each output staged, by name: its first staged write, and where it lands. */
+  private var staged = Map.empty[String, (Request.Write, String)]
   private var drafts = Vector.empty[(String, Option[Contract])]
 
   def answer(line: String): Map[String, Any] =
@@ -96,12 +103,15 @@ private[pythonioadapter] final class Run {
 
   private def respond(request: Request): Map[String, Any] = (request, state) match {
     case (_, Finished)                    => notChecked("the run has already finished")
+    case (p: Request.Published, Publishing(run)) => published(p, run)
+    case (_, Publishing(_))               => notChecked("the run has finished: only what was published may follow")
+    case (_: Request.Published, _)        => notChecked("published follows a finish that said to publish")
     case (o: Request.Open, NotOpen)       => open(o)
     case (_, NotOpen)                     => notChecked("the run must be opened first")
     case (_: Request.Open, _: Opened)     => notChecked("the run is already open")
     case (r: Request.Read, run: Opened)   => read(r, run)
     case (w: Request.Write, run: Opened)  => write(w, run)
-    case (w: Request.Written, run: Opened) => staged(w, run)
+    case (w: Request.Written, run: Opened) => stage(w, run)
     case (f: Request.Finish, run: Opened) => finish(f, run)
   }
 
@@ -116,7 +126,7 @@ private[pythonioadapter] final class Run {
       AttachSetup.select(config) match {
         case AttachPlan.DryRun(_) if o.check => notChecked("a check needs a contract to judge the frame against")
         case AttachPlan.DryRun(sink) =>
-          state = Opened(None, VerificationOptions(), sink, job)
+          state = Opened(None, VerificationOptions(), sink.map(new RunTally(_)), job)
           Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> DryRunMode)
         case AttachPlan.Enforce(contract, sink) =>
           val located = VerificationSetup.resolveContractLocations(contract, config)
@@ -150,7 +160,7 @@ private[pythonioadapter] final class Run {
   private[pythonioadapter] def start(contract: Contract, options: VerificationOptions, sink: Option[NotificationSink], job: JobInfo): Map[String, Any] = {
     // a contract that asks for something this adapter cannot check is refused before the job's code runs
     PythonIoCapabilities.declared.foreach(VerificationPipeline.requireSupported(contract, options, _, JobPlan, sink, job.runId, Some(job)))
-    state = Opened(Some(contract), options, sink, job)
+    state = Opened(Some(contract), options, sink.map(new RunTally(_)), job)
     Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> EnforceMode, "contract" -> describe(contract, options))
   }
 
@@ -209,7 +219,7 @@ private[pythonioadapter] final class Run {
   }
 
   /** A write the package has staged: the final check, with the empty values each column turned out to hold. */
-  private def staged(s: Request.Written, run: Opened): Map[String, Any] = {
+  private def stage(s: Request.Written, run: Opened): Map[String, Any] = {
     val (w, location) = pending.getOrElse(s.name, throw new IllegalStateException(s"no write of '${s.name}' was described before it was staged"))
     pending -= s.name
     val schema = LogicalSchema(w.schema.map(c => c.field(s.nulls.get(c.name))))
@@ -222,9 +232,12 @@ private[pythonioadapter] final class Run {
       case None => infer(location, w, plan, schema, run)
     }
     written :+= location
+    if (!staged.contains(s.name)) staged += s.name -> ((w, location))
     Map("ok" -> true)
   }
 
+  /** The end of the job. A completed run is held to every declared output having been written; in a dry run, the drafts are
+    * merged. When the reply says to publish, the run waits for `published`; otherwise it ends here. */
   private def finish(f: Request.Finish, run: Opened): Map[String, Any] = {
     state = Finished
     try {
@@ -233,14 +246,65 @@ private[pythonioadapter] final class Run {
         case Some(c) => if (f.completed) VerificationPipeline.requireOutputsWritten(c, written.toList, JobPlan, run.sink, run.job.runId, Some(run.job))
         case None    => DryRunReporting.summary(run.sink, logger, run.job, drafts)
       }
-      Map("ok" -> true, "publish" -> f.completed)
-    } finally flush(run)
+    } catch {
+      case NonFatal(e) =>
+        end(run)
+        throw e
+    }
+    if (f.completed) state = Publishing(run) else end(run)
+    Map("ok" -> true, "publish" -> f.completed)
   }
 
-  /** Delivers the events of a run that ended without a `finish` (the package was interrupted). */
+  /** What the package put in place: a `WriteEvent` for each output, then the run's end. */
+  private def published(p: Request.Published, run: Opened): Map[String, Any] = {
+    state = Finished
+    try {
+      val unknown = p.outputs.map(_.name).filterNot(staged.contains)
+      if (unknown.nonEmpty) throw new IllegalArgumentException(s"the package published ${unknown.mkString("'", "', '", "'")}, which this run did not stage")
+      p.outputs.foreach(o => run.sink.foreach(_.publish(writeEvent(o, run))))
+      Map("ok" -> true)
+    } finally end(run)
+  }
+
+  /** Delivers the events of a run that ended without a `finish` or a `published` (the package was interrupted). */
   def close(): Unit = state match {
-    case run: Opened => flush(run)
-    case _           => ()
+    case run: Opened     => end(run)
+    case Publishing(run) => end(run)
+    case _               => ()
+  }
+
+  /** The run's end: its `JobSummaryEvent`, then every event delivered. */
+  private def end(run: Opened): Unit = {
+    run.sink.foreach(tally => tally.publish(tally.summary(run.job, run.contract.fold(Map.empty[String, Any])(_.extensions))))
+    flush(run)
+  }
+
+  /** A published output as its `WriteEvent`: what the run checked of its first staged write (location, format, save mode,
+    * columns as written, catalog, partition columns) and what the package says it put in place. */
+  private def writeEvent(o: Request.PublishedOutput, run: Opened): WriteEvent = {
+    val (w, location) = staged(o.name)
+    val required = run.contract.flatMap(_.outputs.find(_.name == o.name)).toList.flatMap(_.schema.fields).filter(_.required).map(_.name).toSet
+    WriteEvent(
+      contract = run.contract.map(c => s"${c.id}@${c.version}"),
+      location = location,
+      format = w.format,
+      saveMode = w.saveMode,
+      // as the output is written: a required column not-null, any other as its table's Arrow type says
+      schema = w.schema.map(c => WriteFieldInfo(c.name, c.dataType.typeName, c.nullable && !required(c.name))),
+      timestamp = System.currentTimeMillis(),
+      metadata = run.contract.fold(Map.empty[String, Any])(_.extensions),
+      durationMs = o.durationMs.getOrElse(0L),
+      rowCount = o.rows,
+      bytesWritten = o.bytes,
+      fileCount = o.files,
+      runId = run.job.runId,
+      deltaVersion = o.deltaVersion,
+      icebergSnapshotId = o.icebergSnapshotId,
+      catalog = w.catalog.map(CatalogInfo.from),
+      partitionColumns = w.partitioning.columns,
+      datasetType = run.contract.flatMap(_.outputs.find(_.name == o.name)).flatMap(_.datasetType),
+      job = Some(run.job)
+    )
   }
 
   private def flush(run: Opened): Unit = DryRunReporting.flush(run.sink, logger, PythonIoCheck.FlushTimeoutMs)
@@ -312,11 +376,13 @@ private[pythonioadapter] object Run {
   val EnforceMode = "enforce"
   val DryRunMode = "dry-run"
 
-  /** Where a run is: before `open`, open (enforcing a contract, or a dry run with none), or past `finish`. */
+  /** Where a run is: before `open`; open (enforcing a contract, or a dry run with none); finished and waiting to hear what
+    * the package published; or over. */
   sealed trait State
   case object NotOpen extends State
   case object Finished extends State
-  final case class Opened(contract: Option[Contract], options: VerificationOptions, sink: Option[NotificationSink], job: JobInfo) extends State
+  final case class Opened(contract: Option[Contract], options: VerificationOptions, sink: Option[RunTally], job: JobInfo) extends State
+  final case class Publishing(run: Opened) extends State
 
   /** The whole job, as far as the checker can see it: the team's code, never inside it. */
   val JobPlan: UnknownPlan = UnknownPlan(PythonIoCheck.JobCode, "Python")
@@ -364,4 +430,34 @@ private[pythonioadapter] object Run {
     Map("ok" -> false, "status" -> "refused", "violations" -> e.result.violations.map(_.violationType), "explanation" -> e.getMessage)
 
   def notChecked(reason: String): Map[String, Any] = Map("ok" -> false, "status" -> "not-checked", "reason" -> reason)
+}
+
+/** A run's sink, counting what it delivers for the run's `JobSummaryEvent`: validation events by verdict, with their
+  * violations, and write events. One run, one thread: the package asks one request at a time. */
+private[pythonioadapter] final class RunTally(delegate: NotificationSink) extends NotificationSink {
+  private var passed = 0L
+  private var failed = 0L
+  private var violations = 0L
+  private var writes = 0L
+
+  override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
+
+  override def flush(timeoutMs: Long): Unit = delegate.flush(timeoutMs)
+
+  override def publish(event: NotificationEvent): Unit = {
+    event match {
+      case e: ContractValidationEvent =>
+        if (e.status == "PASSED") passed += 1 else failed += 1
+        violations += e.violations.size
+      case _: WriteEvent => writes += 1
+      case _             => ()
+    }
+    delegate.publish(event)
+  }
+
+  /** The run's summary: what this sink has delivered, over the time since the run opened. */
+  def summary(job: JobInfo, metadata: Map[String, Any]): JobSummaryEvent = {
+    val now = System.currentTimeMillis()
+    JobSummaryEvent(writes, passed, failed, violations, job.startTimeMs.fold(0L)(now - _), now, metadata, job.runId, Some(job))
+  }
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mlltx.github.io/Invaract/schemas/pythonio/v1/protocol.schema.json",
   "title": "Invaract Python I/O checker protocol (version 1)",
-  "description": "Every message the invaract Python package and its checker exchange: one JSON object per line, requests on the checker's standard input and one reply per request on its standard output. A request describes data (names, formats, columns, empty values); it never carries any. A run is `open`, then any number of `read` and `write`/`written` pairs, then `finish`. docs/PYTHONIO_PROTOCOL.md describes each message and the order they come in. The version is `open`'s `protocol` and its reply's: it changes only when a message changes in a way an older package or checker would misread; a new optional field is added here without changing it.",
+  "description": "Every message the invaract Python package and its checker exchange: one JSON object per line, requests on the checker's standard input and one reply per request on its standard output. A request describes data (names, formats, columns, empty values); it never carries any. A run is `open`, then any number of `read` and `write`/`written` pairs, then `finish`, and, when its reply says to publish, `published` once the outputs are in place. docs/PYTHONIO_PROTOCOL.md describes each message and the order they come in. The version is `open`'s `protocol` and its reply's: it changes only when a message changes in a way an older package or checker would misread; a new optional field is added here without changing it.",
   "oneOf": [
     { "$ref": "#/$defs/Request" },
     { "$ref": "#/$defs/Reply" }
@@ -16,7 +16,8 @@
         { "$ref": "#/$defs/WriteRequest" },
         { "$ref": "#/$defs/UnverifiableWriteRequest" },
         { "$ref": "#/$defs/WrittenRequest" },
-        { "$ref": "#/$defs/FinishRequest" }
+        { "$ref": "#/$defs/FinishRequest" },
+        { "$ref": "#/$defs/PublishedRequest" }
       ]
     },
     "Reply": {
@@ -115,6 +116,32 @@
       }
     },
 
+    "PublishedRequest": {
+      "description": "Sent once, after a FinishReply whose `publish` is true, when the package has put the outputs in place: each output it published, with what it knows of the data. An output it staged and did not publish (`ignore` on a dataset that holds data, or one put back after a later output failed to publish) is not listed. The checker publishes a WRITE event for each output listed, then the run's JOB_SUMMARY, and delivers the run's events. Answered by an OkReply, or not-checked for an output the run did not stage.",
+      "type": "object",
+      "required": ["op", "outputs"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "const": "published" },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/PublishedOutput" } }
+      }
+    },
+    "PublishedOutput": {
+      "description": "One output put in place. Every count is what the package knows; one it does not know is left out.",
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Name", "description": "The output's name in the contract." },
+        "rows": { "$ref": "#/$defs/Count", "description": "Every row the run staged for the output: the WRITE event's `rowCount`." },
+        "files": { "$ref": "#/$defs/Count", "description": "The files published (plain files), or added by the commit (Delta, Iceberg): `fileCount`." },
+        "bytes": { "$ref": "#/$defs/Count", "description": "Their size: `bytesWritten`." },
+        "deltaVersion": { "$ref": "#/$defs/Count", "description": "The Delta table's version after the commit." },
+        "icebergSnapshotId": { "$ref": "#/$defs/Count", "description": "The id of the Iceberg snapshot the commit made." },
+        "durationMs": { "$ref": "#/$defs/Count", "description": "How long staging and publishing the output took, in milliseconds: `durationMs`." }
+      }
+    },
+
     "OpenReply": {
       "description": "The run is open.",
       "type": "object",
@@ -141,7 +168,7 @@
       "additionalProperties": false,
       "properties": {
         "ok": { "const": true },
-        "publish": { "type": "boolean", "description": "Whether the package publishes the staged outputs: the FinishRequest's `completed`." }
+        "publish": { "type": "boolean", "description": "Whether the package publishes the staged outputs: the FinishRequest's `completed`. When true, the run waits for a PublishedRequest." }
       }
     },
     "RefusedReply": {

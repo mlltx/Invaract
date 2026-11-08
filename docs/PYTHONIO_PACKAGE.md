@@ -34,7 +34,7 @@ From the top down:
 | `_checks` | Runtime data quality: each output's data checks, evaluated over every batch staged. | |
 | `_types` | The contract's column types as Arrow types, for data the package builds (CSV, JSON, Excel, database columns, pandas conversions). | |
 | `_datasets` | A dataset by its location and format: how it is read, the catalog it is registered in, and which `Output` writes it. The one place that dispatches on format and location. | the modules below |
-| `_outputs` | `Output`, what every kind of output is to a run, and `Layout`, its partitioning. | |
+| `_outputs` | `Output`, what every kind of output is to a run; `Layout`, its partitioning; `Published`, what its publish put in place. | |
 | `_files`, `_formats`, `_csv` | Plain files: staging and publishing them (`RenamedOutput` locally and on HDFS; `CopiedOutput` on object storage, with `_SUCCESS` last); reading and writing JSON lines, ORC, Avro, Feather, Excel; CSV options. | `_storage` |
 | `_storage` | Where a location lives: local, HDFS, S3, GCS, Azure, by its URI. | |
 | `_tables` | Delta Lake and Iceberg tables, staged uncommitted and committed in one commit at publish. | `_storage` |
@@ -63,20 +63,29 @@ column's empty values and stopping at a required column's first one, while `_che
 `_protocol.written`, the verdict on the whole write.
 
 **The run's end** (`Run.__exit__`): if the job returned and nothing was refused, `finish`; if its reply says to publish,
-every output's `publish` in the order first written, then every output's `forget_previous`. Otherwise, and whenever
-anything fails, every output's `discard` and a `finish` with `completed: false`, each step taken even if an earlier one
-fails (`Run._end_unpublished`).
+`Run._publish` calls every output's `publish` in the order first written, then tells the checker what each put in place
+(`_protocol.published`: the rows `Run` counted as they were staged, the time staging and publishing took, and the
+output's own `Published`), and the checker publishes a `WRITE` event for each and the run's `JOB_SUMMARY`; then every
+output's `forget_previous`. If an output fails to publish, those already published are put back where their storage
+allows (`restore`), the checker is told what stays published, and the failure is raised. Otherwise, and whenever anything
+fails before publishing, every output's `discard` and a `finish` with `completed: false`, each step taken even if an
+earlier one fails (`Run._end_unpublished`).
 
 ## Conventions
 
 - **Which error.** `ContractViolation` is raised only from a checker's refusal (`Run._ask`). `CheckNotRun` is for
-  anything that stops the check being made or the write being made as checked. `ValueError` is for a wrong argument,
-  raised before anything is checked. `FileExistsError` is for an `error` save mode meeting data. Every message says what
+  anything that stops the check being made or the write being made as checked. `ValueError` is for a wrong argument
+  (`TypeError` for a frame that cannot be one table: two columns of one name, a column of mixed kinds), raised before
+  anything is checked. `FileExistsError` is for an `error` save mode meeting data. Every message says what
   the job did and what to do about it, in the job's terms (`invaract.write('report')`, not a module name).
 - **An `Output`** (`_outputs.Output`) stages data so no reader sees it (`stage`), makes it the output's data in one step
   as far as the storage allows (`publish`), keeps what it replaced until every output of the run has published
-  (`forget_previous`), and can always be undone before then (`discard`). `stage` returns each column's empty values, and
-  writes a required column not-null (`_frames.with_required`), so readers see the contract's schema.
+  (`forget_previous`), and can always be undone before publishing (`discard`). `stage` returns each column's empty values,
+  and writes a required column not-null (`_frames.with_required`), so readers see the contract's schema. `publish` returns
+  what it put in place (`_outputs.Published`: files, bytes, a Delta version or Iceberg snapshot, each where the storage
+  says) or `None` when it put nothing there, which is what the output's `WRITE` event reports. `restore` undoes a
+  publish where the storage can (a rename, `RenamedOutput`) and says whether it did; the default, for a commit or a copy
+  that cannot be taken back, is `False`.
 - **Staging is named after the run** (`run_id`), so two runs never collide and a crashed run's leftovers are recognisable.
 - **Docstrings** say what a function gives or does, in the terms of the job and the contract, and why where it is not
   obvious; the decisions they cite (decision 3, D5, milestone 6) are in `docs/PYTHON_IO_ADAPTER_DESIGN.md` and

@@ -166,7 +166,10 @@ capabilities:
     note: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
   reporting.notifications:
     status: supported
-    note: Set with INVARACT_NOTIFICATION_CONFIG; the checker delivers a run's events before it ends.
+    note: >-
+      Set with INVARACT_NOTIFY_CONFIG. Every check publishes a CONTRACT_VALIDATION event, every output the run publishes a
+      WRITE event (rows, files, bytes, the Delta version or Iceberg snapshot its commit made), and every run ends with a
+      JOB_SUMMARY; the checker delivers a run's events before it ends.
   reporting.dryRunInference:
     status: supported
     note: >-

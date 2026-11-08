@@ -165,11 +165,12 @@ class DeltaOutput(_outputs.Output):
 
     def publish(self):
         if not self._actions:
-            return
+            return None
         table = _delta_table(self.target)
         if table is not None and self.mode == "ignore" and len(table.file_uris()) > 0:
             self.discard()
-            return
+            return None
+        added = _outputs.Published(files=len(self._actions), bytes=sum(a.size for a in self._actions))
         if self._remote:
             import pyarrow.fs as fs
 
@@ -191,6 +192,7 @@ class DeltaOutput(_outputs.Output):
             table.create_write_transaction(self._actions, "overwrite" if self.mode == "overwrite" else "append", self._schema, partition_by=keys)
         self._actions = []
         self.discard()
+        return added._replace(delta_version=_delta_table(self.target).version())
 
     def discard(self):
         """Deletes what is staged and not committed: the local staging folder, or the files in the table's own folder (a
@@ -311,6 +313,18 @@ def _iceberg_keys(table):
                  else f"{f.transform}({schema.find_column_name(f.source_id)})" for f in table.spec().fields)
 
 
+def _iceberg_published(snapshot):
+    """What an Iceberg commit put in place, as its snapshot says: the data files and bytes it added, and its id."""
+    summary = (snapshot.summary or {}) if snapshot is not None else {}
+
+    def count(key):
+        value = summary.get(key)
+        return int(value) if value is not None else None
+
+    return _outputs.Published(files=count("added-data-files"), bytes=count("added-files-size"),
+                              iceberg_snapshot_id=snapshot.snapshot_id if snapshot is not None else None)
+
+
 class IcebergOutput(_outputs.Output):
     """An Iceberg table output: its batches held until publishing, which writes and commits them in one transaction."""
 
@@ -337,7 +351,7 @@ class IcebergOutput(_outputs.Output):
 
     def publish(self):
         if self._schema is None:
-            return
+            return None
         data = pa.Table.from_batches(self._batches, schema=self._schema)
         catalog, identifier, table = _iceberg_table(self.target)
         if table is None:
@@ -349,7 +363,10 @@ class IcebergOutput(_outputs.Output):
                         spec.add_identity(key)
             transaction.append(data)
             transaction.commit_transaction()
-        elif not (self.mode == "ignore" and _iceberg_has_rows(table)):
+        elif self.mode == "ignore" and _iceberg_has_rows(table):
+            self.discard()
+            return None
+        else:
             with table.transaction() as transaction:
                 if self.mode != "overwrite":
                     transaction.append(data)
@@ -358,6 +375,7 @@ class IcebergOutput(_outputs.Output):
                 else:
                     transaction.overwrite(data)
         self.discard()
+        return _iceberg_published(_iceberg_table(self.target)[2].current_snapshot())
 
     def discard(self):
         self._batches = []

@@ -6,13 +6,13 @@ anything was refused or the job failed, none."""
 import collections
 import contextlib
 import functools
+import importlib.metadata
 import os
 import platform
 import sys
 import threading
+import time
 import uuid
-
-import pyarrow as pa
 
 from . import _checks, _csv, _datasets, _frames, _outputs, _pandas, _protocol
 from ._checker import Checker, command
@@ -20,6 +20,9 @@ from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
 
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
+#: The data libraries whose installed versions every event's ``job.engineDetails`` lists, by the name each is installed as.
+LIBRARIES = ("pyarrow", "pandas", "polars", "duckdb", "deltalake", "pyiceberg", "fastavro", "openpyxl",
+             "adbc-driver-postgresql", "adbc-driver-sqlite")
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
 
@@ -40,6 +43,9 @@ class Run:
         self.contract = None
         self._failure = None
         self._outputs = {}
+        #: each output's rows staged, and seconds spent staging and publishing it, for its write event
+        self._rows = collections.Counter()
+        self._seconds = collections.Counter()
         self._asking = threading.Lock()
         self._checker = None
 
@@ -168,7 +174,9 @@ class Run:
         required = {f["name"] for f in declared.get("fields", []) if f.get("required")}
         # with runtimeDataQuality on, the checker sent this output's data checks: each batch is evaluated as it is staged
         checks = _checks.Evaluation(declared["checks"]) if "checks" in declared else None
-        nulls = out.stage(schema, checks.observe(batches) if checks else batches, required)
+        started = time.monotonic()
+        nulls = out.stage(schema, self._counted(name, checks.observe(batches) if checks else batches), required)
+        self._seconds[name] += time.monotonic() - started
         with _noted(notes):
             self._ask(_protocol.written(name, nulls, checks.results() if checks else None))
 
@@ -219,28 +227,53 @@ class Run:
         self._failure = self._failure or failure
         raise failure
 
+    def _counted(self, name, batches):
+        """``batches``, each one's rows counted toward the output ``name``."""
+        for batch in batches:
+            self._rows[name] += batch.num_rows
+            yield batch
+
     def _declared(self, side, name):
         return next((d for d in (self.contract or {}).get(side, []) if d["name"] == name), {})
 
     def _job(self):
-        libraries = {"pyarrow": pa.__version__}
-        for module in ("pandas", "polars", "duckdb", "deltalake", "pyiceberg"):
-            if module in sys.modules:
-                libraries[module] = str(getattr(sys.modules[module], "__version__", "unknown"))
-        return {"name": self.name, "runId": self.run_id, "pythonVersion": platform.python_version(), "libraries": libraries}
+        """The job, as every event names it (``job``): its name, this run's id, the Python version, and the installed version
+        of each data library it could use (``LIBRARIES``), found without importing any of them."""
+        return {"name": self.name, "runId": self.run_id, "pythonVersion": platform.python_version(), "libraries": _installed()}
 
     # publishing
 
     def _publish(self):
-        """Every staged output moved into place, in the order first written; an ``error`` output that has gained data since it
-        was written stops the publish before anything moves."""
-        for out in self._outputs.values():
-            if out.mode == "error" and out.has_data():
-                raise FileExistsError(f"Invaract published nothing: the save mode of {out.target} is error, and it already holds data")
-        for out in self._outputs.values():
-            out.publish()
+        """Every staged output put in place, in the order first written, and the checker told what each put there. An
+        ``error`` output that has gained data since it was written stops the publish before anything moves. If an output
+        fails to publish, those already published are put back where their storage can undo it (``Output.restore``), the
+        checker is told what stays published, and the failure is raised."""
+        published = {}
+        try:
+            for out in self._outputs.values():
+                if out.mode == "error" and out.has_data():
+                    raise FileExistsError(f"Invaract published nothing: the save mode of {out.target} is error, and it already holds data")
+            for name, out in self._outputs.items():
+                started = time.monotonic()
+                result = out.publish()
+                self._seconds[name] += time.monotonic() - started
+                if result is not None:
+                    published[name] = result
+        except BaseException:
+            for name in reversed(list(published)):
+                if self._outputs[name].restore():
+                    del published[name]
+            with contextlib.suppress(CheckNotRun, ContractViolation):
+                # the publish's own failure is the one to raise
+                self._tell_published(published)
+            raise
+        self._tell_published(published)
         for out in self._outputs.values():
             out.forget_previous()
+
+    def _tell_published(self, published):
+        self._ask(_protocol.published(
+            (name, self._rows[name], round(self._seconds[name] * 1000), result) for name, result in published.items()))
 
 
 #: Where and how one write goes (``Run._target``): its location, format, save mode and partition layout.
@@ -275,7 +308,7 @@ class _Checked(_outputs.Output):
         return _frames.take(schema, _frames.with_required(schema, required), batches, required, lambda batch: None)
 
     def publish(self):
-        pass
+        return None
 
     def discard(self):
         pass
@@ -308,12 +341,32 @@ def _catalog(location, fmt):
     return _datasets.catalog_of(location, fmt) if location is not None else None
 
 
+def _installed():
+    versions = {}
+    for library in LIBRARIES:
+        try:
+            versions[library] = importlib.metadata.version(library)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    return versions
+
+
 def _script_name():
     main = sys.modules.get("__main__")
     spec = getattr(main, "__spec__", None)
     if spec is not None and spec.name:
         return spec.name
     return os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "python"
+
+
+def _function_name(fn):
+    """``fn`` as a job is named: its module and name (``orders_job.main``); a script's own function, whose module is
+    ``__main__``, by the script's name instead (``main.main`` for ``python main.py``)."""
+    module = fn.__module__
+    if module == "__main__":
+        script = _script_name()
+        module = script[:-len(".py")] if script.endswith(".py") else script
+    return f"{module}.{fn.__qualname__}"
 
 
 def _exit_status_on_check_not_run():
@@ -351,7 +404,7 @@ def job(contract=None, *, name=None):
     def decorate(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            with Run(contract, name or f"{fn.__module__}.{fn.__qualname__}"):
+            with Run(contract, name or _function_name(fn)):
                 return fn(*args, **kwargs)
 
         return wrapper

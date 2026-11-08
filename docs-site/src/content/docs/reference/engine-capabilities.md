@@ -236,7 +236,7 @@ The suite has 65 scenarios. For each adapter, the scenarios it is held to confor
 - `config.zeroCodeInstall` — unsupported: Adopting the package is a one-time change to the job's code by design (docs/PYTHON_IO_ADAPTER_DESIGN.md); settings are environment variables, so a platform configures a job without touching it.
 - `config.locationRefs` — supported: Set with INVARACT_LOCATION_MAP, resolved when the run opens.
 - `config.contractRegistry` — supported: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
-- `reporting.notifications` — supported: Set with INVARACT_NOTIFICATION_CONFIG; the checker delivers a run's events before it ends.
+- `reporting.notifications` — supported: Set with INVARACT_NOTIFY_CONFIG. Every check publishes a CONTRACT_VALIDATION event, every output the run publishes a WRITE event (rows, files, bytes, the Delta version or Iceberg snapshot its commit made), and every run ends with a JOB_SUMMARY; the checker delivers a run's events before it ends.
 - `reporting.dryRunInference` — supported: Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
 - `failClosed.unverifiableWrites` — partial: A table invaract.write cannot read as Arrow (it offers no __arrow_c_stream__) is refused as unverifiable, never written unchecked. A write made around the package is invisible to the checker and is not blocked; invaract-lint, run before the job, is the guard against those (docs/PYTHON_IO_ADAPTER_DESIGN.md).
 

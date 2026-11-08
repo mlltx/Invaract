@@ -27,6 +27,14 @@ class Layout(collections.namedtuple("Layout", ["keys", "overwrite"])):
 FLAT = Layout((), "static")
 
 
+class Published(collections.namedtuple("Published", ["files", "bytes", "delta_version", "iceberg_snapshot_id"],
+                                       defaults=(None, None, None, None))):
+    """What one output's publish put in place, as far as its storage says: how many files and bytes, and the Delta version or
+    Iceberg snapshot its commit made (``None`` for what does not apply). The rows are the run's own count."""
+
+    __slots__ = ()
+
+
 class Output:
     """One output of a run: where it is (``target``, as the job's messages name it), its save mode and its layout."""
 
@@ -45,8 +53,15 @@ class Output:
         raise NotImplementedError
 
     def publish(self):
-        """Makes what is staged the output's data, as its save mode says."""
+        """Makes what is staged the output's data, as its save mode says, and returns what it put in place (``Published``),
+        or ``None`` when it put nothing there (nothing staged, or ``ignore`` on an output that holds data)."""
         raise NotImplementedError
+
+    def restore(self):
+        """After a later output of the run failed to publish: puts back what ``publish`` replaced, and returns whether the
+        output is now as it was before the run. An output whose storage cannot undo a publish (a table's commit, files copied
+        to object storage, a database's transaction) stays published, and returns ``False``."""
+        return False
 
     def forget_previous(self):
         """Once every output of the run is published: deletes what a publish kept to put back if a later one failed."""

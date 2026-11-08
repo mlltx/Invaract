@@ -32,7 +32,7 @@ UNCHECKED_ASK = _checker.Checker.ask
 
 #: The replies each request may get, by its ``op``: its own, or a refusal, or not checked.
 REPLIES = {
-    "open": "OpenReply", "read": "OkReply", "write": "OkReply", "written": "OkReply", "finish": "FinishReply",
+    "open": "OpenReply", "read": "OkReply", "write": "OkReply", "written": "OkReply", "finish": "FinishReply", "published": "OkReply",
 }
 
 
@@ -126,6 +126,12 @@ def events(path="events.jsonl"):
         problems = [e.message for e in validator.iter_errors(event)]
         assert not problems, f"an event the checker published breaks {EVENT_SCHEMA}: {problems}\n{event}"
     return written
+
+
+def event_of(kind, path="events.jsonl"):
+    """The one event of type ``kind`` the file sink wrote (``DRY_RUN_SUMMARY``, ``JOB_SUMMARY``)."""
+    (found,) = [e for e in events(path) if e["eventType"] == kind]
+    return found
 
 
 def notify_to_file(monkeypatch, path="events.jsonl"):

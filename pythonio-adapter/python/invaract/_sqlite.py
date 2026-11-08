@@ -30,7 +30,7 @@ import urllib.parse
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from . import _frames, _jdbc, _optional, _outputs, _types
+from . import _frames, _jdbc, _optional, _outputs
 from ._jdbc import quote as _quote
 from .errors import CheckNotRun
 
@@ -112,14 +112,10 @@ def _select(location, fields):
 
 def typed(data, fields):
     """``data`` (a table or a record batch) with each column the contract types cast to that type from what SQLite held."""
-    types = _types.scalars(fields)
-    names = data.schema.names
-    return type(data).from_arrays([_cast(data.column(i), types.get(name)) for i, name in enumerate(names)], names=names)
+    return _jdbc.typed(data, fields, _cast)
 
 
 def _cast(column, t):
-    if t is None or column.type == t:
-        return column
     if pa.types.is_decimal(t) and pa.types.is_floating(column.type):
         # through its shortest text, as a real holds no decimal exactly
         column = column.cast(pa.string())
@@ -209,7 +205,7 @@ class SqliteOutput(_outputs.Output):
 
     def publish(self):
         if self._schema is None:
-            return
+            return None
         target, columns = _quote(self.table), ", ".join(_quote(c) for c in self._schema.names)
         os.makedirs(os.path.dirname(os.path.abspath(self.database)), exist_ok=True)
         conn = sqlite3.connect(self.database, isolation_level=None)
@@ -220,7 +216,7 @@ class SqliteOutput(_outputs.Output):
                 exists = conn.execute("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?", (self.table,)).fetchone()
                 if exists and self.mode == "ignore" and conn.execute(f"SELECT EXISTS (SELECT 1 FROM main.{target})").fetchone()[0]:
                     conn.execute("ROLLBACK")
-                    return
+                    return None
                 if not exists:
                     definitions = ", ".join(f"{_quote(f.name)} {_affinity(f.type)}" + (" NOT NULL" if f.name in self._required else "")
                                             for f in self._schema)
@@ -229,6 +225,7 @@ class SqliteOutput(_outputs.Output):
                     conn.execute(f"DELETE FROM main.{target}")
                 conn.execute(f"INSERT INTO main.{target} ({columns}) SELECT {columns} FROM invaract_staging.{_quote(_STAGED)}")
                 conn.execute("COMMIT")
+                return _outputs.Published()
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
