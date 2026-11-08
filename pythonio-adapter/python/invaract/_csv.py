@@ -129,7 +129,6 @@ class Writer:
 
     def __init__(self, stream, schema, options):
         self._stream = stream
-        self._options = options
         self._text = io.TextIOWrapper(stream, encoding=options.get("encoding", "UTF-8"), newline="")
         quote = character(options, "quote", '"')
         escape = character(options, "escape")
@@ -137,6 +136,8 @@ class Writer:
                                   escapechar=None if escape == quote else escape, doublequote=escape is None or escape == quote,
                                   quoting=_pycsv.QUOTE_MINIMAL, lineterminator="\n")
         self._null = options.get("nullValue", "")
+        self._date = strptime_pattern(options["dateFormat"]) if "dateFormat" in options else None
+        self._timestamp = strptime_pattern(options["timestampFormat"]) if "timestampFormat" in options else None
         if header(options):
             self._csv.writerow(schema.names)
 
@@ -146,10 +147,10 @@ class Writer:
 
     def _text_of(self, column):
         t = column.type
-        if pa.types.is_date(t) and "dateFormat" in self._options:
-            text = pc.strftime(column.cast(pa.timestamp("s")), format=strptime_pattern(self._options["dateFormat"]))
-        elif pa.types.is_timestamp(t) and "timestampFormat" in self._options:
-            text = pc.strftime(column, format=strptime_pattern(self._options["timestampFormat"]))
+        if pa.types.is_date(t) and self._date is not None:
+            text = pc.strftime(column.cast(pa.timestamp("s")), format=self._date)
+        elif pa.types.is_timestamp(t) and self._timestamp is not None:
+            text = pc.strftime(column, format=self._timestamp)
         else:
             text = column.cast(pa.string())
         return [self._null if v is None else v for v in text.to_pylist()]

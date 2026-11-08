@@ -8,6 +8,8 @@ from . import _pandas
 
 #: What ``invaract.read`` can return.
 FRAME_KINDS = ("pandas", "polars", "polars-lazy", "arrow")
+#: A frame library's own conversion to Arrow, for a release older than the Arrow stream (Polars 1.0, DuckDB 1.0).
+_OWN_CONVERSION = {"polars": "to_arrow", "duckdb": "arrow"}
 
 
 def stream(frame, fields=(), dry_run=False):
@@ -28,7 +30,6 @@ def stream(frame, fields=(), dry_run=False):
     if hasattr(frame, "__arrow_c_stream__"):
         reader = pa.RecordBatchReader.from_stream(frame)
         return reader.schema, iter(reader), []
-    # a Polars or DuckDB older than the Arrow stream (Polars 1.0, DuckDB 1.0): the library's own conversion to Arrow
     convert = _OWN_CONVERSION.get(type(frame).__module__.split(".")[0])
     if convert is not None and callable(getattr(frame, convert, None)):
         converted = getattr(frame, convert)()
@@ -38,9 +39,6 @@ def stream(frame, fields=(), dry_run=False):
     return None
 
 
-_OWN_CONVERSION = {"polars": "to_arrow", "duckdb": "arrow"}
-
-
 def _lazy_batches(frame):
     if hasattr(frame, "collect_batches"):
         return frame.collect_batches()
@@ -48,6 +46,7 @@ def _lazy_batches(frame):
 
 
 def null_counts(batch):
+    """How many empty values each column of ``batch`` (a record batch or a table) holds."""
     return {name: batch.column(i).null_count for i, name in enumerate(batch.schema.names)}
 
 

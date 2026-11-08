@@ -7,6 +7,8 @@ Every kind of output (plain files, ``_files``; Delta and Iceberg tables, ``_tabl
 """
 import collections
 
+from .errors import CheckNotRun
+
 
 class Layout(collections.namedtuple("Layout", ["keys", "overwrite"])):
     """How an output lays out its data: the columns it is partitioned by, in order (none: not partitioned), and what an
@@ -25,6 +27,13 @@ class Layout(collections.namedtuple("Layout", ["keys", "overwrite"])):
 
 #: Not partitioned.
 FLAT = Layout((), "static")
+
+
+def require_columns(schema, keys):
+    """``CheckNotRun`` unless ``schema`` has every partition column in ``keys``."""
+    missing = [k for k in keys if k not in schema.names]
+    if missing:
+        raise CheckNotRun(f"Invaract cannot partition by {', '.join(missing)}: the table has no such column")
 
 
 class Published(collections.namedtuple("Published", ["files", "bytes", "delta_version", "iceberg_snapshot_id"],

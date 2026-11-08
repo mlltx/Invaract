@@ -80,38 +80,23 @@ def _has_rows(cursor, schema, table):
 def read(location, fields):
     """The table at ``location``: the columns the contract lists (all of them when it lists none), each cast to the
     contract's type where it declares one (the driver gives some types, ``numeric`` among them, as text)."""
-    server, query = _select(location, fields)
-    with _connect(server) as conn, conn.cursor() as cursor:
-        cursor.execute(query())
-        return typed(cursor.fetch_arrow_table(), fields)
+    return _jdbc.read(*_select(location, fields), lambda data: typed(data, fields))
 
 
 def batches(location, fields):
-    """``(schema, batches)`` of the table at ``location``, as ``_datasets.read_batches`` gives them: ``batches(columns)`` runs
-    the query afresh and yields its record batches, typed as ``read`` types them, as the server sends them."""
-    server, query = _select(location, fields)
-    with _connect(server) as conn, conn.cursor() as cursor:
-        cursor.execute(query() + " WHERE false")
-        schema = typed(cursor.fetch_arrow_table(), fields).schema
-    return schema, _jdbc.stream(lambda: _connect(server), query, lambda batch: typed(batch, fields))
+    """``(schema, batches)`` of the table at ``location``, as ``_datasets.read_batches`` gives them."""
+    return _jdbc.batches(*_select(location, fields), lambda data: typed(data, fields))
 
 
 def _select(location, fields):
-    """``(server, query)``: ``query(columns)`` selects ``columns`` from the table at ``location`` (by default, those the
-    contract lists that the table has, or all of them when it lists none)."""
+    """``(connect, query)`` for the table at ``location`` (``_jdbc.selector``); ``FileNotFoundError`` when there is none."""
     server, _, schema, table = parse(location)
     with _connect(server) as conn, conn.cursor() as cursor:
         if not _exists(cursor, schema, table):
             raise FileNotFoundError(f"there is no PostgreSQL table {schema}.{table} in {location}")
-        cursor.execute(f"SELECT * FROM {_quote(schema)}.{_quote(table)} WHERE false")
+        cursor.execute(f"SELECT * FROM {_quote(schema)}.{_quote(table)} WHERE 1 = 0")
         present = [d[0] for d in cursor.description]
-    declared = [f["name"] for f in fields]
-    columns = [c for c in declared if c in present] if declared else present
-
-    def query(selected=None):
-        return f"SELECT {', '.join(_quote(c) for c in (columns if selected is None else selected))} FROM {_quote(schema)}.{_quote(table)}"
-
-    return server, query
+    return (lambda: _connect(server)), _jdbc.selector(f"{_quote(schema)}.{_quote(table)}", present, fields)
 
 
 def typed(data, fields):
@@ -192,6 +177,5 @@ class PostgresOutput(_outputs.Output):
             self._conn = None
 
 
-def output(location, mode, run_id, layout=_outputs.FLAT):
-    """The output that writes the table at ``location`` (``_datasets.output``)."""
-    return PostgresOutput(location, mode, run_id, layout)
+#: The output that writes the table at a location (``_datasets.output``).
+output = PostgresOutput

@@ -21,6 +21,7 @@ for Delta, the new files added and the old files of the written partitions remov
 older releases, which then refuse a dynamic overwrite rather than do it in pieces); for Iceberg,
 ``dynamic_partition_overwrite``.
 """
+import contextlib
 import json
 import os
 import shutil
@@ -54,11 +55,6 @@ def _delta_table(location):
         return deltalake.DeltaTable(_storage.uri(location))
     except TableNotFoundError:
         return None
-
-
-def read_delta(location, columns):
-    dataset = delta_dataset(location)
-    return dataset.to_table(columns=[c for c in columns if c in dataset.schema.names] if columns else None)
 
 
 def delta_dataset(location):
@@ -103,7 +99,6 @@ class DeltaOutput(_outputs.Output):
 
     def stage(self, schema, batches, required):
         _require("deltalake", "delta")
-        from deltalake.transaction import AddAction
         import pyarrow.fs as fs
         import pyarrow.parquet as pq
 
@@ -112,10 +107,9 @@ class DeltaOutput(_outputs.Output):
         self._schema = target
         if self.layout.keys:
             return self._stage_partitioned(schema, target, batches, required)
-        name = f"part-{self.run_id}-{len(self._actions) + 1:05d}.parquet"
-        path = os.path.join(self._staging, name)
+        name = self._file_name()
         rows = 0
-        writer = pq.ParquetWriter(path, target, filesystem=fs.LocalFileSystem())
+        writer = pq.ParquetWriter(self._staged_path(name), target, filesystem=fs.LocalFileSystem())
         try:
             def write(batch):
                 nonlocal rows
@@ -125,43 +119,45 @@ class DeltaOutput(_outputs.Output):
             nulls = _frames.take(schema, target, batches, required, write)
         finally:
             writer.close()
-        stats = {"numRecords": rows, "minValues": {}, "maxValues": {}, "nullCount": {n: nulls[n] for n in target.names}}
-        self._actions.append(AddAction(name, os.path.getsize(path), {}, int(time.time() * 1000), True, json.dumps(stats)))
+        self._add(name, {}, rows, nulls)
         return nulls
 
     def _stage_partitioned(self, schema, target, batches, required):
         """Each batch split by the partition keys' values, each part written to its own Hive-style folder as a file whose
         Add action carries those values (the keys stay out of the file, as Delta keeps them)."""
-        from deltalake.transaction import AddAction
-        import pyarrow.compute as pc
         import pyarrow.parquet as pq
 
         keys = list(self.layout.keys)
-        missing = [k for k in keys if k not in schema.names]
-        if missing:
-            raise CheckNotRun(f"Invaract cannot partition by {', '.join(missing)}: the table has no such column")
+        _outputs.require_columns(schema, keys)
         data_schema = pa.schema([f for f in target if f.name not in keys], metadata=target.metadata)
 
         def write(batch):
             table = pa.Table.from_batches([batch])
             for values in table.select(keys).group_by(keys).aggregate([]).to_pylist():
-                mask = None
-                for key in keys:
-                    match = pc.is_null(table[key]) if values[key] is None else pc.equal(table[key], pa.scalar(values[key], table.schema.field(key).type))
-                    mask = match if mask is None else pc.and_(mask, match)
-                part = table.filter(mask)
+                data = table.filter(_rows_with(table, values)).drop_columns(keys).cast(data_schema)
                 text = {k: _partition_text(values[k], table.schema.field(k).type) for k in keys}
                 folder = "/".join(f"{k}={NULL_PARTITION if text[k] is None else urllib.parse.quote(text[k], safe='')}" for k in keys)
-                name = f"{folder}/part-{self.run_id}-{len(self._actions) + 1:05d}.parquet"
-                path = os.path.join(self._staging, *name.split("/"))
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                data = part.drop_columns(keys).cast(data_schema)
-                pq.write_table(data, path)
-                stats = {"numRecords": data.num_rows, "minValues": {}, "maxValues": {},
-                         "nullCount": {c: data[c].null_count for c in data.column_names}}
-                self._actions.append(AddAction(name, os.path.getsize(path), text, int(time.time() * 1000), True, json.dumps(stats)))
+                name = f"{folder}/{self._file_name()}"
+                os.makedirs(os.path.dirname(self._staged_path(name)), exist_ok=True)
+                pq.write_table(data, self._staged_path(name))
+                self._add(name, text, data.num_rows, {c: data[c].null_count for c in data.column_names})
 
         return _frames.take(schema, target, batches, required, write)
+
+    def _file_name(self):
+        return f"part-{self.run_id}-{len(self._actions) + 1:05d}.parquet"
+
+    def _staged_path(self, name):
+        """The local path of the staged file ``name`` (relative to the table, ``/``-separated)."""
+        return os.path.join(self._staging, *name.split("/"))
+
+    def _add(self, name, partition_values, rows, nulls):
+        """Records the staged file ``name`` as the Add action that commits it, with the statistics Delta keeps of it."""
+        from deltalake.transaction import AddAction
+
+        stats = {"numRecords": rows, "minValues": {}, "maxValues": {}, "nullCount": dict(nulls)}
+        self._actions.append(AddAction(name, os.path.getsize(self._staged_path(name)), partition_values, int(time.time() * 1000),
+                                       True, json.dumps(stats)))
 
     def publish(self):
         if not self._actions:
@@ -175,7 +171,7 @@ class DeltaOutput(_outputs.Output):
             import pyarrow.fs as fs
 
             for action in self._actions:
-                fs.copy_files(os.path.join(self._staging, action.path), f"{self._root}/{action.path}",
+                fs.copy_files(self._staged_path(action.path), f"{self._root}/{action.path}",
                               source_filesystem=fs.LocalFileSystem(), destination_filesystem=self._fs)
         keys = list(self.layout.keys) or None
         if table is None:
@@ -201,11 +197,21 @@ class DeltaOutput(_outputs.Output):
             shutil.rmtree(self._staging, ignore_errors=True)
         else:
             for action in self._actions:
-                try:
-                    os.remove(os.path.join(self._staging, action.path))
-                except OSError:
-                    pass
+                with contextlib.suppress(OSError):
+                    os.remove(self._staged_path(action.path))
         self._actions = []
+
+
+def _rows_with(table, values):
+    """Which rows of ``table`` hold ``values`` (a partition's value of each key; ``None`` for null)."""
+    import pyarrow.compute as pc
+
+    mask = None
+    for key, value in values.items():
+        column = table[key]
+        match = pc.is_null(column) if value is None else pc.equal(column, pa.scalar(value, column.type))
+        mask = match if mask is None else pc.and_(mask, match)
+    return mask
 
 
 def _partition_text(value, arrow_type):

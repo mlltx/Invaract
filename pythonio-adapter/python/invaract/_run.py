@@ -129,7 +129,7 @@ class Run:
         """``invaract.read``: the input ``name`` described to the checker, then handed over as the frame ``as_`` names."""
         _check_read_arguments(as_, dtype_backend, chunksize)
         declared = self._declared("inputs", name)
-        where = location if self.dry_run else declared.get("location")
+        where = self._where(declared, location)
         if where is None:
             # a name the contract does not declare, or a dry run with nowhere to read: the checker refuses it
             self._ask(_protocol.read(name, location, schema=[]))
@@ -183,7 +183,7 @@ class Run:
     def _target(self, declared, location, fmt, save_mode, partition_by, partition_overwrite):
         """Where and how a write goes: what the job says (``location=``, ``format=``, ...), else what the contract declares,
         else the defaults. It is what the checker is told, so a job that says otherwise than its contract is refused."""
-        where = location if self.dry_run else declared.get("location")
+        where = self._where(declared, location)
         fmt = fmt or declared.get("format") or (_datasets.format_of(where) if where is not None else _datasets.DEFAULT_FORMAT)
         mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         keys = partition_by if partition_by is not None else declared.get("partitionBy", [])
@@ -234,7 +234,13 @@ class Run:
             yield batch
 
     def _declared(self, side, name):
+        """The dataset the contract declares as ``name`` among its ``inputs`` or ``outputs``; ``{}`` when it declares none."""
         return next((d for d in (self.contract or {}).get(side, []) if d["name"] == name), {})
+
+    def _where(self, declared, location):
+        """Where a read or write goes: the job's ``location=`` in a dry run; else the declared dataset's location (the job's
+        own is only reported, so a location that disagrees with the contract is refused, never followed)."""
+        return location if self.dry_run else declared.get("location")
 
     def _job(self):
         """The job, as every event names it (``job``): its name, this run's id, the Python version, and the installed version

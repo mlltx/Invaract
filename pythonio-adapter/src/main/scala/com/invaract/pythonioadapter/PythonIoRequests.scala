@@ -13,8 +13,8 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 /** One request of the protocol the `invaract` Python package speaks to `PythonIoCheck`: a JSON object per line
-  * (docs/PYTHON_IO_ADAPTER_DESIGN.md, section 4; the requests and replies are listed in docs/PYTHONIO_ADAPTER.md). A request
-  * describes data; it never carries it.
+  * (docs/PYTHON_IO_ADAPTER_DESIGN.md, section 4; every request and reply is described in docs/PYTHONIO_PROTOCOL.md). A
+  * request describes data; it never carries it.
   */
 private[pythonioadapter] sealed trait Request
 
@@ -116,10 +116,10 @@ private[pythonioadapter] object Requests {
 
   private def request(m: Map[String, AnyRef]): Either[String, Request] =
     m.get("op") match {
-      case Some("open")    => open(m)
-      case Some("read")    => read(m)
-      case Some("write")   => write(m)
-      case Some("written") => written(m)
+      case Some("open")      => open(m)
+      case Some("read")      => read(m)
+      case Some("write")     => write(m)
+      case Some("written")   => written(m)
       case Some("finish")    => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
       case Some("published") => published(m)
       case other             => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written, finish or published")
@@ -127,7 +127,7 @@ private[pythonioadapter] object Requests {
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
     val job = section(m, "job")
-    m.get("protocol").fold[Either[String, Long]](Right(Version))(count(_, "the protocol version")).map { protocol =>
+    optionalCount(m, "protocol", "the protocol version").map(_.getOrElse(Version)).map { protocol =>
       Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
         check = m.get("check").contains(java.lang.Boolean.TRUE), protocol = protocol)
     }
@@ -145,19 +145,19 @@ private[pythonioadapter] object Requests {
       name <- text(m, "name").toRight("a write must name the output it writes")
       schema <- columns(m.get("schema"), s"the write of '$name'")
       registered <- catalog(m.get("catalog"), s"the write of '$name'")
-      partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'")
+      partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'", "column names")
       mode <- overwriteMode(text(m, "partitionOverwriteMode"), name)
     } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered,
       WritePartitioning(partitionBy, mode), strings(m, "csv"))
 
-  private def names(value: Option[AnyRef], what: String): Either[String, List[String]] = value match {
-    case None => Right(Nil)
-    case Some(items: JList[_]) =>
-      traverse(items.asScala.toList) {
-        case n: String => Right(n)
-        case other     => Left(s"$what must be column names, not '$other'")
-      }
-    case Some(other) => Left(s"$what must be a list of column names, not '$other'")
+  /** A list of names (partition columns, a catalog namespace); `noun` is what they name, for the error. */
+  private def names(value: Option[AnyRef], what: String, noun: String): Either[String, List[String]] = {
+    def not(other: Any) = Left(s"$what must be a list of $noun, not '$other'")
+    value match {
+      case None                  => Right(Nil)
+      case Some(items: JList[_]) => traverse(items.asScala.toList) { case n: String => Right(n); case other => not(other) }
+      case Some(other)           => not(other)
+    }
   }
 
   private def overwriteMode(mode: Option[String], name: String): Either[String, String] =
@@ -172,14 +172,8 @@ private[pythonioadapter] object Requests {
       case None => Right(None)
       case Some(c: JMap[_, _]) =>
         val m = asMap(c)
-        val parts = m.get("namespace") match {
-          case None | Some(_: JList[_]) => Right(list(m.get("namespace")))
-          case Some(other)              => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
-        }
-        parts.flatMap(traverse(_) {
-          case part: String => Right(part)
-          case other        => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
-        }).map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
+        names(m.get("namespace"), s"the catalog namespace of $what", "names")
+          .map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
       case Some(other) => Left(s"the catalog of $what must be a JSON object, not '$other'")
     }
 
@@ -196,14 +190,16 @@ private[pythonioadapter] object Requests {
         traverse(items.asScala.toList) {
           case o: JMap[_, _] =>
             val output = asMap(o)
-            for {
-              name <- text(output, "name").toRight("each published output must name the output")
-              counts <- traverse(List("rows", "files", "bytes", "deltaVersion", "icebergSnapshotId", "durationMs")) { key =>
-                traverse(output.get(key).toList)(count(_, s"the $key of published output '$name'")).map(key -> _.headOption)
-              }
-            } yield {
-              val c = counts.toMap
-              Request.PublishedOutput(name, c("rows"), c("files"), c("bytes"), c("deltaVersion"), c("icebergSnapshotId"), c("durationMs"))
+            text(output, "name").toRight("each published output must name the output").flatMap { name =>
+              def n(key: String) = optionalCount(output, key, s"the $key of published output '$name'")
+              for {
+                rows <- n("rows")
+                files <- n("files")
+                bytes <- n("bytes")
+                deltaVersion <- n("deltaVersion")
+                snapshot <- n("icebergSnapshotId")
+                duration <- n("durationMs")
+              } yield Request.PublishedOutput(name, rows, files, bytes, deltaVersion, snapshot, duration)
             }
           case other => Left(s"each published output must be a JSON object, not '$other'")
         }.map(Request.Published)
@@ -231,6 +227,10 @@ private[pythonioadapter] object Requests {
     case other                                                                         => Left(s"$what must be a count, not '$other'")
   }
 
+  /** The count at `key`, if there is one. */
+  private def optionalCount(m: Map[String, AnyRef], key: String, what: String): Either[String, Option[Long]] =
+    m.get(key).fold[Either[String, Option[Long]]](Right(None))(count(_, what).map(Some(_)))
+
   /** Columns as `{"name": ..., "type": ..., "nullable": ..., "nulls": ...}`, the type as pyarrow names it (`str(field.type)`). */
   private def columns(value: Option[AnyRef], what: String): Either[String, List[Column]] =
     traverse(list(value)) {
@@ -240,8 +240,8 @@ private[pythonioadapter] object Requests {
           name <- text(m, "name").toRight(s"a column of $what has no name")
           typeText <- text(m, "type").toRight(s"column '$name' of $what has no type")
           logical <- ArrowSchemas.dataType(typeText).toRight(s"column '$name' of $what has the type '$typeText', which is not an Arrow type")
-          nulls <- traverse(m.get("nulls").toList)(count(_, s"the empty values of column '$name' of $what"))
-        } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls.headOption)
+          nulls <- optionalCount(m, "nulls", s"the empty values of column '$name' of $what")
+        } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls)
       case _ => Left(s"a column of $what must be a JSON object")
     }
 

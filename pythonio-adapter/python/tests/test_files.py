@@ -128,6 +128,38 @@ def test_a_published_output_is_restored_to_what_it_was_before_the_run(files, mod
     assert contents() == before
 
 
+class FailingMoves:
+    """``files``, whose move number ``fail_at`` (counting from 1) fails, as storage can mid-publish."""
+
+    def __init__(self, files, fail_at):
+        self._files, self._left = files, fail_at
+
+    def __getattr__(self, name):
+        return getattr(self._files, name)
+
+    def move(self, source, destination):
+        self._left -= 1
+        if self._left == 0:
+            raise OSError("the storage failed")
+        self._files.move(source, destination)
+
+
+# each fails after at least one move of its own has been made: the location moved aside (overwrite), the first file
+# appended (append), the first partition replaced and the second moved aside (dynamic overwrite)
+@pytest.mark.parametrize("mode,layout,fail_at", [("overwrite", _outputs.FLAT, 2), ("append", DYNAMIC, 2), ("overwrite", DYNAMIC, 3)])
+def test_a_publish_that_fails_part_way_leaves_the_output_as_it_was(files, mode, layout, fail_at):
+    write(renamed(files, "overwrite", layout=layout))
+    before = contents()
+    out = renamed(FailingMoves(files, fail_at), mode, layout=layout, run_id="run2")
+    more = pa.table({"region": ["north", "east"], "total": pa.array([30, 40], pa.int64())})
+    out.stage(more.schema, iter(more.to_batches()), set())
+    with pytest.raises(OSError, match="the storage failed"):
+        out.publish()
+    out.discard()
+    assert contents() == before
+    assert out.restore() is True and contents() == before, "a publish that did not happen has nothing to put back"
+
+
 def test_an_output_that_did_not_exist_before_the_run_is_removed_by_a_restore(files):
     out = renamed(files, "overwrite")
     out.stage(ROWS.schema, iter(ROWS.to_batches()), set())

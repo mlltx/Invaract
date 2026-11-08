@@ -89,6 +89,10 @@ def _numeric(t):
     return pa.types.is_integer(t) or pa.types.is_floating(t) or pa.types.is_decimal(t)
 
 
+def _is_text(t):
+    return pa.types.is_string(t) or pa.types.is_large_string(t)
+
+
 def _is_number(value):
     return isinstance(value, (int, float, decimal.Decimal)) and not isinstance(value, bool)
 
@@ -97,7 +101,7 @@ def _not_one_of(column, values):
     t = column.type
     if _numeric(t):
         allowed = [v for v in values if _is_number(v)]
-    elif pa.types.is_string(t) or pa.types.is_large_string(t):
+    elif _is_text(t):
         allowed = [v for v in values if isinstance(v, str)]
     elif pa.types.is_boolean(t):
         allowed = [v for v in values if isinstance(v, bool)]
@@ -122,14 +126,16 @@ def _outside(column, bounds):
     mask = pc.is_nan(column) if pa.types.is_floating(column.type) else pa.array([False] * len(column))
     for key, broken_by in _BOUNDS:
         if key in bounds:
-            bound = bounds[key]
-            mask = pc.or_(mask, pc.fill_null(broken_by(column, bound if isinstance(bound, (pa.Array, pa.ChunkedArray)) else pa.scalar(bound)), False))
+            bound = bounds[key] if isinstance(bounds[key], (pa.Array, pa.ChunkedArray)) else pa.scalar(bounds[key])
+            mask = pc.or_(mask, pc.fill_null(broken_by(column, bound), False))
     return pc.and_(pc.is_valid(column), mask)
 
 
 def _wrong_length(column, exact, least, most):
-    t = column.type
-    text = column if (pa.types.is_string(t) or pa.types.is_large_string(t)) else pa.array([None if v is None else _text(v) for v in column.to_pylist()], pa.string())
+    if _is_text(column.type):
+        text = column
+    else:
+        text = pa.array([None if v is None else _text(v) for v in column.to_pylist()], pa.string())
     n = pc.utf8_length(text)
     mask = pa.array([False] * len(column))
     if exact is not None:
