@@ -345,7 +345,7 @@ arguments (<code dir="auto">ContractLocationResolution.resolve(contract, resolve
 called in the job’s own code), as <code dir="auto">com.invaract.verification.location</code>
 first shipped with. <strong>Rejected as the only mechanism</strong>, not removed: it
 remains available for a resolver <code dir="auto">SparkConf</code> can’t express (a mapping
-built at runtime, a future <code dir="auto">HttpLocationResolver</code>’s endpoint/auth), and
+built at runtime, a service <code dir="auto">HttpLocationResolver</code>’s protocol does not fit), and
 composes freely with the conf-driven path — a location already resolved
 to a literal is simply left alone by the conf-driven pass. But it cannot
 be the <em>only</em> mechanism a capability offers, per this ADR.</p>

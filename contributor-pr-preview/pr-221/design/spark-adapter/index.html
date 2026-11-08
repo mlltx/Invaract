@@ -2146,9 +2146,13 @@ resolved literal can never be mistaken for an unresolved reference.</li>
 throwing <code dir="auto">LocationResolutionException</code> on failure) a real id-to-location
 mapping implements. <code dir="auto">StaticMapLocationResolver</code> — built <code dir="auto">fromPropertiesFile</code>
 (the same <code dir="auto">.properties</code> convention <code dir="auto">NotificationConfig</code> already uses) or
-<code dir="auto">fromArgs</code> (<code dir="auto">"id=location"</code> strings) — is the resolver shipped today; an
-<code dir="auto">HttpLocationResolver</code> calling out to a path registry is a planned follow-up
-behind the same trait.</li>
+<code dir="auto">fromArgs</code> (<code dir="auto">"id=location"</code> strings) — and <code dir="auto">HttpLocationResolver</code>, which asks a
+location service (<code dir="auto">GET &#x3C;url>/locations/&#x3C;id></code> answering <code dir="auto">{"location": ...}</code>, an
+optional bearer token read from the environment variable <code dir="auto">locationTokenEnv</code> names)
+are the resolvers shipped. Both live in verification-core, and
+<code dir="auto">VerificationSetup.resolveContractLocations</code> builds them from the neutral settings
+<code dir="auto">locationMap</code>, <code dir="auto">locationUrl</code> and <code dir="auto">locationTokenEnv</code> for every adapter, the map
+asked first.</li>
 <li><code dir="auto">ContractLocationResolution.resolve(contract, resolver)</code> is a pure
 <code dir="auto">Contract => Contract</code> transform — no changes to <code dir="auto">contract</code>’s object model,
 since it’s just <code dir="auto">Dataset.copy(location = ...)</code> wherever <code dir="auto">LocationRef.id</code>
@@ -2177,7 +2181,7 @@ behaves exactly as <code dir="auto">NoOpLocationResolver</code> above describes.
 <li><strong>Explicit, in code</strong> — call <code dir="auto">ContractLocationResolution.resolve</code> yourself,
 with any <code dir="auto">LocationResolver</code>, before passing the contract to <code dir="auto">forContract</code>.
 Needed for a resolver the conf key can’t express (a mapping assembled at
-runtime, a future <code dir="auto">HttpLocationResolver</code>’s endpoint/auth configuration).
+runtime, a service speaking a protocol other than <code dir="auto">HttpLocationResolver</code>’s).
 The two compose freely: a location already resolved to a literal has
 nothing left for <code dir="auto">forContract</code>’s own conf-driven pass to find.</li>
 </ul>

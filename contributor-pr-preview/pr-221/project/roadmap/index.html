@@ -4168,6 +4168,12 @@ that fails part way puts back the outputs a rename published, and an output whos
 <code dir="auto">VerificationSetup.identify</code> and spelled by each adapter (<code dir="auto">spark.invaract.jobId</code>/<code dir="auto">jobAttributes</code>, <code dir="auto">--invaractJobId</code>,
 <code dir="auto">--invaract_job_id</code>, <code dir="auto">INVARACT_JOB_ID</code>, …), so a sink groups any job’s runs by <code dir="auto">job.jobId</code> and the platform’s
 <code dir="auto">job.attributes</code>, which were Spark’s alone</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <code dir="auto">ref://</code> locations from a location service on every engine: <code dir="auto">HttpLocationResolver</code> in verification-core
+(<code dir="auto">GET &#x3C;url>/locations/&#x3C;id></code> answering <code dir="auto">{"location": ...}</code>, an optional bearer token read from the environment
+variable <code dir="auto">locationTokenEnv</code> names, fail-closed), built by <code dir="auto">VerificationSetup.resolveContractLocations</code> from the
+neutral <code dir="auto">locationUrl</code> after the location map, and spelled by each adapter (<code dir="auto">spark.invaract.locationUrl</code>,
+<code dir="auto">--invaractLocationUrl</code>, <code dir="auto">--invaract_location_url</code>, <code dir="auto">INVARACT_LOCATION_URL</code>); tested through a real local service
+on Spark, Beam Java, Beam Python and Python jobs</li>
 <li class="task-list-item"><input type="checkbox" disabled> SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with <code dir="auto">survey-engine-adapter</code></li>
 <li class="task-list-item"><input type="checkbox" disabled> dbt adapter: survey first with <code dir="auto">survey-engine-adapter</code></li>
 </ul>
