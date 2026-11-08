@@ -30,8 +30,8 @@ import urllib.parse
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from . import _frames, _jdbc, _optional, _outputs, _types
-from ._jdbc import FORMAT, quote as _quote
+from . import _frames, _jdbc, _optional, _outputs
+from ._jdbc import quote as _quote
 from .errors import CheckNotRun
 
 SCHEME = "sqlite"
@@ -75,51 +75,38 @@ def _read_only_uri(database):
 def read(location, fields):
     """The table at ``location``: the columns the contract lists (all of them when it lists none), each cast to the
     contract's type where it declares one."""
-    database, query = _select(location, fields)
-    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
-        cursor.execute(query())
-        return typed(cursor.fetch_arrow_table(), fields)
+    return _jdbc.read(*_select(location, fields), lambda data: typed(data, fields))
 
 
 def batches(location, fields):
     """``(schema, batches)`` of the table at ``location``, as ``_datasets.read_batches`` gives them."""
-    database, query = _select(location, fields)
-    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
-        cursor.execute(query() + " WHERE 0")
-        schema = typed(cursor.fetch_arrow_table(), fields).schema
-    return schema, _jdbc.stream(lambda: _connect(_read_only_uri(database)), query, lambda batch: typed(batch, fields))
+    return _jdbc.batches(*_select(location, fields), lambda data: typed(data, fields))
 
 
 def _select(location, fields):
-    """``(database, query)``: ``query(columns)`` selects ``columns`` (by default, those the contract lists that the table
-    has, or all of them when it lists none)."""
+    """``(connect, query)`` for the table at ``location``, opened read-only (``_jdbc.selector``); ``FileNotFoundError``
+    when there is none."""
     database, table = parse(location)
     if not os.path.isfile(database):
         raise FileNotFoundError(f"there is no SQLite database {database} (for {location})")
-    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
+
+    def connect():
+        return _connect(_read_only_uri(database))
+
+    with connect() as conn, conn.cursor() as cursor:
         cursor.execute(f"PRAGMA table_info({_quote(table)})")
         present = [row[1] for row in cursor.fetchall()]
     if not present:
         raise FileNotFoundError(f"there is no SQLite table {table} in {database}")
-    declared = [f["name"] for f in fields]
-    columns = [c for c in declared if c in present] if declared else present
-
-    def query(selected=None):
-        return f"SELECT {', '.join(_quote(c) for c in (columns if selected is None else selected))} FROM {_quote(table)}"
-
-    return database, query
+    return connect, _jdbc.selector(_quote(table), present, fields)
 
 
 def typed(data, fields):
     """``data`` (a table or a record batch) with each column the contract types cast to that type from what SQLite held."""
-    types = _types.scalars(fields)
-    names = data.schema.names
-    return type(data).from_arrays([_cast(data.column(i), types.get(name)) for i, name in enumerate(names)], names=names)
+    return _jdbc.typed(data, fields, _cast)
 
 
 def _cast(column, t):
-    if t is None or column.type == t:
-        return column
     if pa.types.is_decimal(t) and pa.types.is_floating(column.type):
         # through its shortest text, as a real holds no decimal exactly
         column = column.cast(pa.string())
@@ -209,7 +196,7 @@ class SqliteOutput(_outputs.Output):
 
     def publish(self):
         if self._schema is None:
-            return
+            return None
         target, columns = _quote(self.table), ", ".join(_quote(c) for c in self._schema.names)
         os.makedirs(os.path.dirname(os.path.abspath(self.database)), exist_ok=True)
         conn = sqlite3.connect(self.database, isolation_level=None)
@@ -220,7 +207,7 @@ class SqliteOutput(_outputs.Output):
                 exists = conn.execute("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?", (self.table,)).fetchone()
                 if exists and self.mode == "ignore" and conn.execute(f"SELECT EXISTS (SELECT 1 FROM main.{target})").fetchone()[0]:
                     conn.execute("ROLLBACK")
-                    return
+                    return None
                 if not exists:
                     definitions = ", ".join(f"{_quote(f.name)} {_affinity(f.type)}" + (" NOT NULL" if f.name in self._required else "")
                                             for f in self._schema)
@@ -229,6 +216,7 @@ class SqliteOutput(_outputs.Output):
                     conn.execute(f"DELETE FROM main.{target}")
                 conn.execute(f"INSERT INTO main.{target} ({columns}) SELECT {columns} FROM invaract_staging.{_quote(_STAGED)}")
                 conn.execute("COMMIT")
+                return _outputs.Published()
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
@@ -247,6 +235,5 @@ class SqliteOutput(_outputs.Output):
             self._folder = None
 
 
-def output(location, mode, run_id, layout=_outputs.FLAT):
-    """The output that writes the table at ``location`` (``_datasets.output``)."""
-    return SqliteOutput(location, mode, run_id, layout)
+#: The output that writes the table at a location (``_datasets.output``).
+output = SqliteOutput

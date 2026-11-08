@@ -11,18 +11,21 @@ A contract's `location:` is normally a literal path or table name — but a lite
 fragile if the real location changes between environments, or moves over time (a
 partition scheme change, a table rename) and every contract that references it has to be
 edited by hand. `ref://<id>` lets a dataset's location be resolved at job startup instead
-— from a fixed mapping, or (in the future) an HTTP call to a path registry — so the
+— from a mapping file, or by asking your platform's location service over HTTP — so the
 contract itself never needs to change when the underlying location does.
 
 <Aside type="note" title="Every engine">
-`ref://` locations work the same on Spark and on Beam. On Beam, name the map with `--invaractLocationMap` (Java) or `--invaract_location_map` (Python); see [Configuration Settings](/reference/configuration/).
+`ref://` locations work the same on Spark, on Beam and in a plain Python job, resolved by the same code. This page shows
+Spark's settings; on Beam they are `--invaractLocationMap` and `--invaractLocationUrl` (Java), or
+`--invaract_location_map` and `--invaract_location_url` (Python), and in a Python job using the `invaract` package
+`INVARACT_LOCATION_MAP` and `INVARACT_LOCATION_URL`. See [Configuration Settings](/reference/configuration/).
 </Aside>
 
 <Aside type="note" title="No changes to contract or ContractParser">
 `ref://<id>` is just an ordinary, valid `location` string as far as `ContractParser` and
 the JSON Schema are concerned — parsing and validation are unaffected. Resolution happens
-afterward, in `spark-adapter`, and replaces it with a real literal location before
-anything downstream (`StructuralVerifier` and everything else) ever sees it.
+afterward, when the job starts, and replaces it with a real literal location before
+anything downstream ever checks a read or write against it.
 </Aside>
 
 ## Write a location map
@@ -106,12 +109,56 @@ Location resolution is part of `invaract-spark-adapter-0.11.0.jar`, so it needs 
 `com/invaract/verification/location/*.class`.)
 </Aside>
 
+## Or ask a location service
+
+When your platform already knows where each dataset lives — a catalog, a path registry, a
+small internal service — point Invaract at it instead of maintaining a mapping file:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --jars invaract-spark-adapter-0.11.0.jar \
+  --conf spark.invaract.locationUrl=https://locations.corp.internal/v1 \
+  --conf spark.invaract.locationTokenEnv=LOCATIONS_TOKEN \
+  my-real-job.jar
+```
+
+For each `ref://<id>` the contract declares, Invaract asks the service once, when the job
+starts:
+
+```
+GET https://locations.corp.internal/v1/locations/orders-input
+Accept: application/json
+Authorization: Bearer <the value of $LOCATIONS_TOKEN>
+```
+
+and the service answers with the location:
+
+```json
+{"location": "s3://prod-bucket/orders/2026-09-09/"}
+```
+
+Any other fields in the answer are ignored, so an existing service can return more. A
+`404` means the service has no location for that id. The id is percent-encoded in the
+path, a redirect is followed, and each request may take up to 10 seconds.
+
+- **The token is never in the job's configuration.** `locationTokenEnv` names an
+  environment variable on the machine resolving the contract (the Spark driver, the Beam
+  launcher, the Python job), and Invaract reads the token from it. Spark's configuration
+  shows up in the Spark UI and its event logs; an environment variable does not. Leave
+  `locationTokenEnv` unset for a service that needs no token.
+- **A location map and a service can be used together.** Invaract checks the map first,
+  and asks the service only for the ids the map doesn't hold. That lets a platform point
+  one dataset somewhere else for a single run without changing the service.
+- **The answer must be a real location.** An empty location, or one that is itself a
+  `ref://` reference, is refused rather than used.
+
 ## Need a resolver `--conf` can't express?
 
 Call `ContractLocationResolution.resolve` yourself before passing the contract to
-`forContract` when you need something the built-in `spark.invaract.locationMap` mechanism
-doesn't cover — a mapping assembled at runtime, or a resolver reading from somewhere other
-than a `.properties` file. See [Install and Configure Invaract Explicitly in
+`forContract` when you need something the built-in `spark.invaract.locationMap` and
+`spark.invaract.locationUrl` settings don't cover — a mapping assembled at runtime, or a
+service that speaks a different protocol. See [Install and Configure Invaract Explicitly in
 Code](/guides/calling-invaract-explicitly/#resolve-dataset-locations). The two mechanisms
 compose freely — a location that call already resolved to a literal is simply left alone by
 `forContract`'s own conf-driven pass, since there's no `ref://` left in it to find.
@@ -127,11 +174,12 @@ literal string `"ref://..."`, instead of a clear error naming the reference.
 
 ## Unresolvable references fail closed, before the first check runs
 
-If `spark.invaract.locationMap` was never set (and no explicit resolver was called
-either), resolution throws `LocationResolutionException` immediately, saying what to set:
+If neither `spark.invaract.locationMap` nor `spark.invaract.locationUrl` was set (and no
+explicit resolver was called either), resolution throws `LocationResolutionException`
+immediately, saying what to set:
 
 ```
-The contract declares 'ref://orders-input', but no location map is set: set 'spark.invaract.locationMap' to a .properties file with a line 'orders-input=<real location>'.
+The contract declares 'ref://orders-input', but no location map or location service is set: set 'spark.invaract.locationMap' to a .properties file with a line 'orders-input=<real location>', or 'spark.invaract.locationUrl' to a location service.
 ```
 
 If the map is set but has no line for the id, the error names the file and lists the ids it
@@ -143,6 +191,16 @@ The contract declares 'ref://orders-input', but the location map '/etc/invaract/
 
 A `spark.invaract.locationMap` that names a file that isn't there fails the same way, before
 any write: `'spark.invaract.locationMap' names '/etc/invaract/locations.properties', which is not a file that exists.`
+
+A location service that doesn't hold the id, answers with an error, can't be reached or
+doesn't answer in time fails the same way, naming the reference and the exact URL it asked:
+
+```
+The location service could not resolve 'ref://orders-input' (https://locations.corp.internal/v1/locations/orders-input): it has no location for that id
+```
+
+So does a token setting that can't be used:
+`'spark.invaract.locationTokenEnv' names the environment variable 'LOCATIONS_TOKEN', which is not set.`
 
 There's no silent fallback to a stale or placeholder location — a misconfigured job never
 gets far enough to write anything.
@@ -176,10 +234,5 @@ spark-submit \
 See [Direct `spark-submit` invocation](/reference/dev-commands/#direct-spark-submit-invocation)
 for the equivalent command against a literal-only contract, with no `--conf` needed at all.
 
-## What's next
-
-`HttpLocationResolver` — resolving an id via an outbound call to a path registry, rather
-than a fixed local mapping — is a planned follow-up behind the same `LocationResolver`
-trait; nothing above changes once it lands, for either mechanism. See
-[Contract Format](/reference/contract-format/) for the full `location`/`ref://` field
+See [Contract Format](/reference/contract-format/) for the full `location`/`ref://` field
 reference.

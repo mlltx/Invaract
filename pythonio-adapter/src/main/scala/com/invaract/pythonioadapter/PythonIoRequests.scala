@@ -13,16 +13,18 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 /** One request of the protocol the `invaract` Python package speaks to `PythonIoCheck`: a JSON object per line
-  * (docs/PYTHON_IO_ADAPTER_DESIGN.md, section 4; the requests and replies are listed in docs/PYTHONIO_ADAPTER.md). A request
-  * describes data; it never carries it.
+  * (docs/PYTHON_IO_ADAPTER_DESIGN.md, section 4; every request and reply is described in docs/PYTHONIO_PROTOCOL.md). A
+  * request describes data; it never carries it.
   */
 private[pythonioadapter] sealed trait Request
 
 private[pythonioadapter] object Request {
 
   /** Start a run: the Invaract settings by their neutral names (`contract`, `orgPolicy`, ...), and the job's details. `check`
-    * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read. */
-  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false) extends Request
+    * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read.
+    * `protocol` is the protocol version the package speaks (`Requests.Version` when it does not say: a package from before
+    * the version was sent). */
+  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false, protocol: Long = Requests.Version) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
     * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `format` is the
@@ -58,6 +60,23 @@ private[pythonioadapter] object Request {
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
+
+  /** What the package put in place, after a `finish` that said to publish: each output it published, by name, with what it
+    * knows of the data (`PublishedOutput`). An output the run staged and did not publish (`ignore` on a dataset that holds
+    * data, or one put back after a later output failed to publish) is not listed. */
+  final case class Published(outputs: List[PublishedOutput]) extends Request
+
+  /** One published output: its rows, files and bytes, the Delta version or Iceberg snapshot its commit made, and how long the
+    * package spent staging and publishing it - each where the package knows it. */
+  final case class PublishedOutput(
+      name: String,
+      rows: Option[Long] = None,
+      files: Option[Long] = None,
+      bytes: Option[Long] = None,
+      deltaVersion: Option[Long] = None,
+      icebergSnapshotId: Option[Long] = None,
+      durationMs: Option[Long] = None
+  )
 }
 
 /** Which job a run belongs to, for the events it publishes. */
@@ -79,6 +98,11 @@ private[pythonioadapter] final case class Column(name: String, dataType: Logical
 
 private[pythonioadapter] object Requests {
 
+  /** The protocol version this checker speaks: what `open` says and what its reply says back. It changes only when a request
+    * or reply changes in a way an older package or checker would misread (a field removed, renamed or given another meaning);
+    * a new optional field leaves it as it is (docs/PYTHONIO_PROTOCOL.md, "Versions"). */
+  val Version: Long = 1L
+
   /** The request on one line, or why it is not one. */
   def parse(line: String): Either[String, Request] =
     try {
@@ -92,18 +116,21 @@ private[pythonioadapter] object Requests {
 
   private def request(m: Map[String, AnyRef]): Either[String, Request] =
     m.get("op") match {
-      case Some("open")    => open(m)
-      case Some("read")    => read(m)
-      case Some("write")   => write(m)
-      case Some("written") => written(m)
-      case Some("finish")  => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
-      case other           => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written or finish")
+      case Some("open")      => open(m)
+      case Some("read")      => read(m)
+      case Some("write")     => write(m)
+      case Some("written")   => written(m)
+      case Some("finish")    => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
+      case Some("published") => published(m)
+      case other             => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written, finish or published")
     }
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
     val job = section(m, "job")
-    Right(Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
-      check = m.get("check").contains(java.lang.Boolean.TRUE)))
+    optionalCount(m, "protocol", "the protocol version").map(_.getOrElse(Version)).map { protocol =>
+      Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
+        check = m.get("check").contains(java.lang.Boolean.TRUE), protocol = protocol)
+    }
   }
 
   private def read(m: Map[String, AnyRef]): Either[String, Request] =
@@ -118,19 +145,19 @@ private[pythonioadapter] object Requests {
       name <- text(m, "name").toRight("a write must name the output it writes")
       schema <- columns(m.get("schema"), s"the write of '$name'")
       registered <- catalog(m.get("catalog"), s"the write of '$name'")
-      partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'")
+      partitionBy <- names(m.get("partitionBy"), s"the partition columns of the write of '$name'", "column names")
       mode <- overwriteMode(text(m, "partitionOverwriteMode"), name)
     } yield Request.Write(name, text(m, "location"), text(m, "format"), text(m, "saveMode"), schema, text(m, "unverifiable"), registered,
       WritePartitioning(partitionBy, mode), strings(m, "csv"))
 
-  private def names(value: Option[AnyRef], what: String): Either[String, List[String]] = value match {
-    case None => Right(Nil)
-    case Some(items: JList[_]) =>
-      traverse(items.asScala.toList) {
-        case n: String => Right(n)
-        case other     => Left(s"$what must be column names, not '$other'")
-      }
-    case Some(other) => Left(s"$what must be a list of column names, not '$other'")
+  /** A list of names (partition columns, a catalog namespace); `noun` is what they name, for the error. */
+  private def names(value: Option[AnyRef], what: String, noun: String): Either[String, List[String]] = {
+    def not(other: Any) = Left(s"$what must be a list of $noun, not '$other'")
+    value match {
+      case None                  => Right(Nil)
+      case Some(items: JList[_]) => traverse(items.asScala.toList) { case n: String => Right(n); case other => not(other) }
+      case Some(other)           => not(other)
+    }
   }
 
   private def overwriteMode(mode: Option[String], name: String): Either[String, String] =
@@ -145,14 +172,8 @@ private[pythonioadapter] object Requests {
       case None => Right(None)
       case Some(c: JMap[_, _]) =>
         val m = asMap(c)
-        val parts = m.get("namespace") match {
-          case None | Some(_: JList[_]) => Right(list(m.get("namespace")))
-          case Some(other)              => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
-        }
-        parts.flatMap(traverse(_) {
-          case part: String => Right(part)
-          case other        => Left(s"the catalog namespace of $what must be a list of names, not '$other'")
-        }).map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
+        names(m.get("namespace"), s"the catalog namespace of $what", "names")
+          .map(namespace => Some(CatalogIdentity(text(m, "technology"), text(m, "catalogName"), None, namespace, text(m, "table"))))
       case Some(other) => Left(s"the catalog of $what must be a JSON object, not '$other'")
     }
 
@@ -162,6 +183,29 @@ private[pythonioadapter] object Requests {
       nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
       checks <- found(m.get("checks"), name)
     } yield Request.Written(name, nulls.toMap, checks)
+
+  private def published(m: Map[String, AnyRef]): Either[String, Request] =
+    m.get("outputs") match {
+      case Some(items: JList[_]) =>
+        traverse(items.asScala.toList) {
+          case o: JMap[_, _] =>
+            val output = asMap(o)
+            text(output, "name").toRight("each published output must name the output").flatMap { name =>
+              def n(key: String) = optionalCount(output, key, s"the $key of published output '$name'")
+              for {
+                rows <- n("rows")
+                files <- n("files")
+                bytes <- n("bytes")
+                deltaVersion <- n("deltaVersion")
+                snapshot <- n("icebergSnapshotId")
+                duration <- n("durationMs")
+              } yield Request.PublishedOutput(name, rows, files, bytes, deltaVersion, snapshot, duration)
+            }
+          case other => Left(s"each published output must be a JSON object, not '$other'")
+        }.map(Request.Published)
+      case None        => Right(Request.Published(Nil))
+      case Some(other) => Left(s"the outputs published must be a list, not '$other'")
+    }
 
   private def found(value: Option[AnyRef], name: String): Either[String, List[Request.Found]] = value match {
     case None => Right(Nil)
@@ -183,6 +227,10 @@ private[pythonioadapter] object Requests {
     case other                                                                         => Left(s"$what must be a count, not '$other'")
   }
 
+  /** The count at `key`, if there is one. */
+  private def optionalCount(m: Map[String, AnyRef], key: String, what: String): Either[String, Option[Long]] =
+    m.get(key).fold[Either[String, Option[Long]]](Right(None))(count(_, what).map(Some(_)))
+
   /** Columns as `{"name": ..., "type": ..., "nullable": ..., "nulls": ...}`, the type as pyarrow names it (`str(field.type)`). */
   private def columns(value: Option[AnyRef], what: String): Either[String, List[Column]] =
     traverse(list(value)) {
@@ -192,8 +240,8 @@ private[pythonioadapter] object Requests {
           name <- text(m, "name").toRight(s"a column of $what has no name")
           typeText <- text(m, "type").toRight(s"column '$name' of $what has no type")
           logical <- ArrowSchemas.dataType(typeText).toRight(s"column '$name' of $what has the type '$typeText', which is not an Arrow type")
-          nulls <- traverse(m.get("nulls").toList)(count(_, s"the empty values of column '$name' of $what"))
-        } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls.headOption)
+          nulls <- optionalCount(m, "nulls", s"the empty values of column '$name' of $what")
+        } yield Column(name, logical, nullable = !m.get("nullable").contains(java.lang.Boolean.FALSE), nulls)
       case _ => Left(s"a column of $what must be a JSON object")
     }
 

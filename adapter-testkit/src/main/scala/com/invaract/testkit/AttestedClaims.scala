@@ -29,10 +29,6 @@ object AttestedClaims {
       "a contract that breaks an organizational policy is rejected when enforcement is set up, before any job runs; one that satisfies it installs",
     Capability.ConfigZeroCodeInstall ->
       "enforcement is installed on a job through the engine's own configuration alone, with no change to the job's source, and then blocks a violating write",
-    Capability.ConfigLocationRefs ->
-      "a ref://<id> location in a contract is resolved through configuration, and a real write to the resolved location is checked against it",
-    Capability.ConfigContractRegistry ->
-      "a registry://<id>@<version> contract reference is fetched from the registry named in configuration and enforced",
     Capability.ReportingDryRun ->
       "dry-run mode lets a real write through and reports a contract inferred from it",
     Capability.WriteStateChange ->

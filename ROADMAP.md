@@ -3970,7 +3970,11 @@ Extend verification engine to support multiple execution engines.
   - [x] Stage 4: `adapter-testkit` — engine-neutral conformance scenarios (55 today) judged
         against each adapter's own declaration, as real jobs that may make several writes; a
         reference adapter on the SPI; deliberately broken adapters every scenario must catch;
-        per-adapter conformance baselines
+        per-adapter conformance baselines; scenarios that attach the job through configuration alone
+        (a contract from a kit-served registry, `ref://` locations from a location map and a location
+        service, and the stops when either lacks what is asked), so `config.contractRegistry` and
+        `config.locationRefs` are verified on every engine rather than attested, and a check that every
+        neutral setting reaches each adapter through its engine's own configuration (2026-11-08)
   - [x] Stage 5: function canonicalisation — `ir.FunctionCatalog` + per-adapter `FunctionAliases`;
         non-determinism and seed handling read the catalog; Spark's table swept against Spark's own registry
 - [x] Adapter pattern documentation: docs/ADDING_AN_ENGINE_ADAPTER.md (the process), docs/MULTI_ENGINE_ADAPTERS.md
@@ -4070,6 +4074,26 @@ Extend verification engine to support multiple execution engines.
         knows no `az://`), a Delta table on HDFS was staged as a local path, and GCS emulators named by
         `STORAGE_EMULATOR_HOST` were not used. A Delta table on GCS stays unverified: no emulator serves both pyarrow and
         delta-rs
+  - [x] The protocol as a published contract: a JSON Schema for every request and reply
+        (`schemas/pythonio/v1/protocol.schema.json`) that the recorded cases, the package's every request and reply in its
+        tests, and the docs build (Ajv) are all held to; a protocol version on `open` and its reply, so a package and a
+        checker from different releases stop the run instead of misreading each other; every request built in one module
+        (`_protocol`); the reference docs/PYTHONIO_PROTOCOL.md, the contributor guide docs/PYTHONIO_PACKAGE.md, a typed
+        public interface (`py.typed`) and the user reference "Python Package API"
+  - [x] A Python job's events: a `WRITE` event for each output it publishes (rows, files, bytes, the Delta version or
+        Iceberg snapshot its commit made) and a `JOB_SUMMARY` for every run, through a new `published` request; a publish
+        that fails part way puts back the outputs a rename published, and an output whose commit cannot be undone keeps its
+        `WRITE` event; documented in the notification sinks guide, "Events from a Python job"
+- [x] A job's identity on every engine: the neutral settings `jobId` and `jobAttributes` (`key=value,...`), read by
+      `VerificationSetup.identify` and spelled by each adapter (`spark.invaract.jobId`/`jobAttributes`, `--invaractJobId`,
+      `--invaract_job_id`, `INVARACT_JOB_ID`, ...), so a sink groups any job's runs by `job.jobId` and the platform's
+      `job.attributes`, which were Spark's alone
+- [x] `ref://` locations from a location service on every engine: `HttpLocationResolver` in verification-core
+      (`GET <url>/locations/<id>` answering `{"location": ...}`, an optional bearer token read from the environment
+      variable `locationTokenEnv` names, fail-closed), built by `VerificationSetup.resolveContractLocations` from the
+      neutral `locationUrl` after the location map, and spelled by each adapter (`spark.invaract.locationUrl`,
+      `--invaractLocationUrl`, `--invaract_location_url`, `INVARACT_LOCATION_URL`); tested through a real local service
+      on Spark, Beam Java, Beam Python and Python jobs
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

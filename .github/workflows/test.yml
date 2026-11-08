@@ -648,6 +648,17 @@ jobs:
           cd pythonio-adapter
           python3 native/cases.py src/test/resources/protocol --native --max-seconds 1 -- "$PWD/target/native/invaract-pythonio-checker"
 
+      # the conformance scenarios as real Python jobs again, now with the checker the package's wheels carry: a registry
+      # client or a resolver the native build left out (reflection, resources) shows up here, not in a user's job
+      - name: Run the package's conformance scenarios against the native checker
+        shell: bash
+        env:
+          INVARACT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+          INVARACT_CONFORMANCE_STRICT: "true"
+        run: |
+          cd pythonio-adapter
+          INVARACT_TEST_CHECKER="$PWD/target/native/invaract-pythonio-checker" sbt "testOnly *PythonIoPackageConformanceSpec"
+
       - name: Check the native checker's size
         shell: bash
         run: |
@@ -724,7 +735,7 @@ jobs:
 
       - name: Install the frame libraries
         shell: bash
-        run: python -m pip install ${{ matrix.install }} pytest
+        run: python -m pip install ${{ matrix.install }} pytest jsonschema
 
       - name: Run the package's tests against the native checker
         shell: bash
@@ -815,7 +826,7 @@ jobs:
 
       - name: Install the libraries
         shell: bash
-        run: python -m pip install pyarrow pandas deltalake "pyiceberg[pyarrow,sql-sqlite,adlfs]" fastavro pytest
+        run: python -m pip install pyarrow pandas deltalake "pyiceberg[pyarrow,sql-sqlite,adlfs]" fastavro pytest jsonschema
 
       - name: Run the storage tests against the three services
         shell: bash
@@ -1397,8 +1408,8 @@ jobs:
           else
             echo "beam=false" >> "$GITHUB_OUTPUT"
           fi
-          # the native checker: pythonio-adapter and what it is built from
-          PYTHONIO_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit pythonio-adapter .github/workflows/test.yml .github/actions)
+          # the native checker: pythonio-adapter and what it is built from (registry-client is built into it)
+          PYTHONIO_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit registry-client pythonio-adapter .github/workflows/test.yml .github/actions)
           if [ -n "$PYTHONIO_CHANGED" ]; then
             echo "pythonio=true" >> "$GITHUB_OUTPUT"
           else

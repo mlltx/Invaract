@@ -1,4 +1,4 @@
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
 {"op": "read", "name": "orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "read", "name": "customers", "schema": [{"name": "customer_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "dictionary<values=string, indices=int8, ordered=0>", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "large_list<item: struct<sku: large_string, qty: int32>>", "nullable": true}]}

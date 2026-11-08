@@ -1,0 +1,23 @@
+id: orders_report
+version: "1.0.0"
+extensions:
+  owner: orders-team
+outputs:
+  - name: report
+    type: DATA_ASSET
+    location: data/out/report
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true, partitioned: true, partitionKeyPosition: 1 }
+        - { name: total,  type: long,   required: true }
+        - { name: note,   type: string }
+  - name: snapshot
+    type: DATA_ASSET
+    location: lake.sales.snapshot
+    format: iceberg
+    saveMode: append
+    schema:
+      fields:
+        - { name: order_id, type: long, required: true }

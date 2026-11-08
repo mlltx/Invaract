@@ -268,6 +268,42 @@ object ScenarioOutcome {
   ) extends ScenarioOutcome
 }
 
+/** How a scenario's job is attached to Invaract when it is not handed its contract in code: through the engine's own
+  * configuration alone, as a platform attaches a job whose source it does not own (`ConformanceAdapter.attached`). The kit
+  * runs what the attachment needs (a contract registry, a location service, the files a setting names) and gives the adapter
+  * the settings, by their neutral names, that point at them.
+  */
+sealed trait Attachment
+
+object Attachment {
+
+  /** The contract is fetched from a contract registry the kit runs, named `registry://<id>@<version>` with `registryUrl`;
+    * `held = false`: the registry does not hold it. */
+  final case class Registry(held: Boolean = true) extends Attachment
+
+  /** The contract is a file, and its `ref://<id>` locations resolve through a location map (`locationMap`), a `.properties`
+    * file holding `locations` (id to location). */
+  final case class LocationMap(locations: Map[String, String]) extends Attachment
+
+  /** The contract is a file, and its `ref://<id>` locations resolve through a location service the kit runs (`locationUrl`),
+    * which answers for the ids in `locations` and holds no other. */
+  final case class LocationService(locations: Map[String, String]) extends Attachment
+}
+
+/** What an adapter reports of a job it ran attached through configuration (`ConformanceAdapter.attached`). Whether its write
+  * was allowed or blocked is not part of it: the kit reads that from the validation events the run published. */
+sealed trait AttachedRun
+
+object AttachedRun {
+
+  /** The job ran: its writes were checked, and allowed or blocked by the engine's own rejection. */
+  case object Ran extends AttachedRun
+
+  /** Invaract stopped the job before it ran (a contract it could not fetch, a location it could not resolve), and
+    * `message` is what the job was told. */
+  final case class Stopped(message: String) extends AttachedRun
+}
+
 /** What a conforming adapter must do with a scenario. */
 sealed trait Expectation
 
@@ -280,6 +316,10 @@ object Expectation {
 
   /** Rejected, with exactly this set of violation types. */
   final case class Reject(violationTypes: Set[String]) extends Expectation
+
+  /** Invaract stops the job before it runs, telling it why in a message that names each of `mentioning` (only a scenario
+    * with an `Attachment`: what stops it is something its configuration points at). */
+  final case class Stopped(mentioning: Set[String]) extends Expectation
 }
 
 /** What a scenario expects an adapter to report beyond allow or block. Each part is checked only when set;
@@ -321,6 +361,8 @@ final case class Analysis(
   * @param analysis what the scenario expects the adapter to report beyond allow or block (see `Analysis`).
   * @param operations what the job itself needs the engine to do (read, write) - an adapter that
   *   cannot do those cannot run the scenario at all.
+  * @param attach how the job is attached to Invaract through the engine's configuration alone (`Attachment`); `None`, the
+  *   adapter is handed the contract and options in code (`ConformanceAdapter.run`).
   */
 final case class Scenario(
     id: String,
@@ -333,7 +375,16 @@ final case class Scenario(
     expect: Expectation,
     expectNonDeterministic: Option[Set[String]] = None,
     analysis: Analysis = Analysis(),
-    operations: Set[Capability] = Set(Capability.ReadBatch, Capability.WriteBatch)
+    operations: Set[Capability] = Set(Capability.ReadBatch, Capability.WriteBatch),
+    attach: Option[Attachment] = None
 ) {
   require(userStory.trim.nonEmpty, s"scenario '$id' needs a userStory: what it means for the team whose job it is")
+  require(
+    attach.isEmpty || (options == VerificationOptions() && expectNonDeterministic.isEmpty && analysis == Analysis()),
+    s"scenario '$id' is attached through configuration, which gives the adapter no options in code and reports only a verdict"
+  )
+  require(
+    attach.isDefined || !expect.isInstanceOf[Expectation.Stopped],
+    s"scenario '$id': only a job attached through configuration can be stopped by what its configuration points at"
+  )
 }

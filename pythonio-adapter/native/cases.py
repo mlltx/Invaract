@@ -5,7 +5,7 @@
 
 Each case is a directory holding `requests.jsonl` (one request per line), `replies.jsonl` (the reply expected for each), the
 files the requests name, and optionally `events.txt` (the events a file sink must have written to `events.jsonl`, in order, each
-as its type and what it concluded: `CONTRACT_VALIDATION FAILED`) and `http-events.txt` (the same for the events an HTTP sink
+as its type and what it concluded: `CONTRACT_VALIDATION FAILED`) and `http-events.txt` (the same, in any order, for the events an HTTP sink
 must have posted to `${HTTP}`, a local endpoint the run provides). A case is copied to a fresh directory first, and `${CASE}` in any of its files becomes that directory, so the
 requests can name the case's own files whatever runs them. COMMAND runs once per case in that directory, with the requests on
 its standard input: `java -jar invaract-pythonio-checker.jar`, or the native program built from it.
@@ -105,6 +105,8 @@ def run_case(name, source, command, record, max_seconds):
         problems.append(f"exited with {result.returncode}: {result.stderr.strip()[-2000:]}")
     replies = result.stdout.replace(work, PLACEHOLDER)
     events = event_types(work)
+    # an HTTP sink delivers asynchronously, so its events arrive in no fixed order: they are compared, and recorded, sorted
+    posted = sorted(receiver.received)
     expected_events_path = os.path.join(source, "events.txt")
     expected_http_path = os.path.join(source, "http-events.txt")
     if record:
@@ -113,9 +115,9 @@ def run_case(name, source, command, record, max_seconds):
         if events:
             with open(expected_events_path, "w", encoding="utf-8") as f:
                 f.write("".join(e + "\n" for e in events))
-        if receiver.received:
+        if posted:
             with open(expected_http_path, "w", encoding="utf-8") as f:
-                f.write("".join(e + "\n" for e in receiver.received))
+                f.write("".join(e + "\n" for e in posted))
     else:
         with open(os.path.join(source, "replies.jsonl"), encoding="utf-8") as f:
             expected = json_lines(f.read())
@@ -125,11 +127,13 @@ def run_case(name, source, command, record, max_seconds):
         for i, (a, e) in enumerate(zip(actual, expected), start=1):
             if a != e:
                 problems.append(f"reply {i}:\n    got      {json.dumps(a, sort_keys=True)}\n    expected {json.dumps(e, sort_keys=True)}")
-        for label, got, path in (("events", events, expected_events_path), ("HTTP events", receiver.received, expected_http_path)):
+        for label, got, path in (("events", events, expected_events_path), ("HTTP events", posted, expected_http_path)):
             wanted = []
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
                     wanted = [line.strip() for line in f if line.strip()]
+            if path == expected_http_path:
+                wanted = sorted(wanted)
             if got != wanted:
                 problems.append(f"{label} {got}, expected {wanted}")
     if max_seconds is not None and elapsed > max_seconds:

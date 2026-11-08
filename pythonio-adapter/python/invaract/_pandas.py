@@ -53,15 +53,14 @@ def to_arrow(frame, fields=(), dry_run=False):
     for i, name in enumerate(table.column_names):
         dtype = frame.dtypes.iloc[i]
         if dry_run and dtype == object and pa.types.is_decimal(table.schema.field(i).type):
-            column = table.column(i)
-            table = table.set_column(i, table.schema.field(i).with_type(pa.decimal128(38, column.type.scale)),
-                                     column.cast(pa.decimal128(38, column.type.scale)))
+            table = _set(table, i, table.column(i).cast(pa.decimal128(38, table.schema.field(i).type.scale)))
         field = declared.get(name)
         if field is None:
             continue
-        if field.get("required") and table.column(i).null_count:
-            notes.append(f"'{name}' holds {table.column(i).null_count} missing value(s) (NaN, None, NaT or pd.NA in pandas), and "
-                         f"the contract requires a value in every row: fill them (df['{name}'].fillna(...)) or drop those rows "
+        missing = table.column(i).null_count
+        if field.get("required") and missing:
+            notes.append(f"'{name}' holds {missing} missing value(s) (NaN, None, NaT or pd.NA in pandas), and the contract "
+                         f"requires a value in every row: fill them (df['{name}'].fillna(...)) or drop those rows "
                          f"(df.dropna(subset=['{name}']))")
         dtype_note = _kind_note(dtype)
         target = _types.of(field["type"])
@@ -73,8 +72,13 @@ def to_arrow(frame, fields=(), dry_run=False):
         if note:
             notes.append(_unwritten(name, dtype, field, dtype_note or note))
         elif column is not table.column(i):
-            table = table.set_column(i, table.schema.field(i).with_type(column.type), column)
+            table = _set(table, i, column)
     return table, notes
+
+
+def _set(table, i, column):
+    """``table`` with its ``i``-th column replaced by ``column``, under the same name."""
+    return table.set_column(i, table.schema.field(i).with_type(column.type), column)
 
 
 def conform(column, target):
@@ -82,15 +86,15 @@ def conform(column, target):
     (``None`` when it already is what the contract declares)."""
     if _matches(column.type, target):
         return column, None
+    if column.null_count == len(column):
+        # nothing to change: missing values, or no rows at all, are missing values of any type
+        return pa.chunked_array([pa.nulls(len(column), target)], target), None
     if _nested(target):
         return _conform_nested(column, target)
     if pa.types.is_dictionary(column.type):
         # a pandas category: its values, which are what is written
         column = column.cast(column.type.value_type)
     source = column.type
-    if column.null_count == len(column):
-        # nothing to change: missing values, or no rows at all, are missing values of any type
-        return pa.chunked_array([pa.nulls(len(column), target)], target), None
     if _kind(source) != _kind(target):
         return column, _UNLIKE.get(_kind(target), "convert it in the job")
     if pa.types.is_timestamp(target) and (_zone(source) is None) != (target.tz is None):
@@ -143,10 +147,8 @@ def _nested(t):
 
 
 def _conform_nested(column, target):
-    """A list, map or struct column as ``target``: when it has no values, or Arrow's checked conversion succeeds and gives
-    every value back as it was (a list of whole numbers held as floats, as pandas holds them beside a missing one)."""
-    if column.null_count == len(column):
-        return pa.chunked_array([pa.nulls(len(column), target)], target), None
+    """A list, map or struct column as ``target``: when Arrow's checked conversion succeeds and gives every value back as it
+    was (a list of whole numbers held as floats, as pandas holds them beside a missing one)."""
     try:
         converted = column.cast(target, safe=True)
         same = converted.cast(column.type).equals(column)
@@ -258,18 +260,16 @@ _AWARE = ("its datetimes have a time zone, and the contract's type has none: df[
 def _changes(source, target, example):
     value = "a value" if example is None else _shown(example)
     if pa.types.is_floating(source) and pa.types.is_integer(target):
-        why = (f"{value} is not a whole number, or is out of range (a whole-number column with missing values is float64 "
-               "in pandas, and is written as an integer as it is); round it in the job if that is intended")
-    elif pa.types.is_integer(target) or pa.types.is_floating(target):
-        why = f"{value} does not fit {target} exactly; declare a wider type, or check the data"
-    elif pa.types.is_decimal(target):
-        why = (f"{value} does not fit {target} exactly; round it to the declared scale in the job "
-               f"(df['{{name}}'].round({target.scale})), or build the column from decimal.Decimal values")
-    elif pa.types.is_date(target):
-        why = f"{value} has a time of day; drop it in the job if that is intended (df['{{name}}'].dt.normalize())"
-    else:
-        why = f"{value} would change as {target}"
-    return why
+        return (f"{value} is not a whole number, or is out of range (a whole-number column with missing values is float64 "
+                "in pandas, and is written as an integer as it is); round it in the job if that is intended")
+    if pa.types.is_integer(target) or pa.types.is_floating(target):
+        return f"{value} does not fit {target} exactly; declare a wider type, or check the data"
+    if pa.types.is_decimal(target):
+        return (f"{value} does not fit {target} exactly; round it to the declared scale in the job "
+                f"(df['{{name}}'].round({target.scale})), or build the column from decimal.Decimal values")
+    if pa.types.is_date(target):
+        return f"{value} has a time of day; drop it in the job if that is intended (df['{{name}}'].dt.normalize())"
+    return f"{value} would change as {target}"
 
 
 def _shown(value):

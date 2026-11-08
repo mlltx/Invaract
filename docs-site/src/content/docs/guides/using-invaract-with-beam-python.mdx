@@ -154,7 +154,9 @@ so a switch is `--invaract_dry_run=true`):
 | `--invaract_contract` | The contract to enforce: a file path, or `registry://<id>@<version>` ([Use a Contract Registry](/guides/using-a-contract-registry/)). |
 | `--invaract_dry_run=true` | Infer a contract from the job's writes instead of enforcing one ([Dry-Run Mode](/guides/dry-run-mode/)). |
 | `--invaract_notify_config` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
+| `--invaract_job_id`, `--invaract_job_attributes` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
 | `--invaract_location_map` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
+| `--invaract_location_url`, `--invaract_location_token_env` | A location service `ref://` locations the map does not hold are asked of, and the name of the variable holding its token ([Or ask a location service](/guides/resolving-dataset-locations/#or-ask-a-location-service)). |
 | `--invaract_org_policy`, `--invaract_org_policy_overlays` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `--invaract_reject_undeclared_inputs=true`, `--invaract_reject_undeclared_fields=true` | Stricter checking of reads and columns. |
 | `--invaract_trusted_steps` | Steps that end the pipeline without a write that a platform trusts (see below). |
@@ -168,7 +170,7 @@ And how the checker is run:
 | `--invaract_check_only=true` | Check the pipeline and hand it to no runner, for a CI build (see below). |
 | `--invaract_checker_jar` | The checker jar. Default: the `INVARACT_BEAM_CHECKER_JAR` environment variable. |
 | `--invaract_java` | The `java` program. Default: `$JAVA_HOME/bin/java`, else `java` on the `PATH`. |
-| `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. |
+| `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. With no checker jar given, a `-cp` here runs the checker from that classpath: how a jar is added beside it, such as the [registry client](/guides/using-a-contract-registry/). |
 
 ## Where locations come from
 

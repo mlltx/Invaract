@@ -138,6 +138,34 @@ class BeamPythonAttachSpec extends AnyFunSuite {
     assert(status == PortableCheck.Refused && out.contains("[OUTPUT_LOCATION_MISMATCH]") && out.contains("data/out/audit"))
   }
 
+  test("location refs: a ref:// location the location service resolves, through --invaract_location_url, is checked against the pipeline") {
+    val root = Files.createTempDirectory("beam-python-attach-")
+    val pipeline = s"--pipeline=${recording(root, "example_job")}"
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml(outputLocation = "ref://report_dir", inputLocation = "ref://orders_dir"))
+    // the service's answer for report_dir is read per request, so one service can answer two ways
+    @volatile var reportDir = "data/out/report"
+    val service = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    service.createContext("/", (exchange: com.sun.net.httpserver.HttpExchange) => {
+      val location = exchange.getRequestURI.getRawPath match {
+        case "/locations/orders_dir" => Some("data/in/orders")
+        case "/locations/report_dir" => Some(reportDir)
+        case _                       => None
+      }
+      val body = location.fold("")(l => s"""{"location": "$l"}""").getBytes("UTF-8")
+      exchange.sendResponseHeaders(if (body.isEmpty) 404 else 200, if (body.isEmpty) -1 else body.length.toLong)
+      if (body.nonEmpty) exchange.getResponseBody.write(body)
+      exchange.close()
+    })
+    service.start()
+    try {
+      val url = s"--invaract_location_url=http://127.0.0.1:${service.getAddress.getPort}"
+      assert(check(pipeline, s"--invaract_contract=$contract", url) == ((PortableCheck.Passed, "")))
+      reportDir = "data/out/audit"
+      val (status, out) = check(pipeline, s"--invaract_contract=$contract", url)
+      assert(status == PortableCheck.Refused && out.contains("[OUTPUT_LOCATION_MISMATCH]") && out.contains("data/out/audit"))
+    } finally service.stop(0)
+  }
+
   test(ContractRegistry) {
     val root = Files.createTempDirectory("beam-python-attach-")
     val registry = List("--invaract_contract=registry://orders_report@1.0.0", "--invaract_registry_url=stub-registry",

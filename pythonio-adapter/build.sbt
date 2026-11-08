@@ -63,6 +63,9 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
   "com.invaract" %% "invaract-ir" % "0.6.0",
   "com.invaract" %% "invaract-verification-core" % "0.4.0",
+  // the default registry client (docs/CONTRACT_REGISTRY.md), built in: a Python job's checker is one program, with no
+  // classpath to add a client to, so INVARACT_CONTRACT=registry://... works only if the checker carries one
+  "com.invaract" %% "invaract-registry-client" % "0.1.0",
   "com.invaract" %% "invaract-adapter-testkit" % "0.4.0" % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   // verification-core's own `provided` dependencies, needed to run its classes here.

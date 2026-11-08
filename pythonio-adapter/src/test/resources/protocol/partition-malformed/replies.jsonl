@@ -1,5 +1,5 @@
-{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "region", "required": false, "type": "string"}, {"name": "total", "required": false, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report", "partitionBy": ["region"], "partitionOverwriteMode": "static"}], "version": "1.0.0"}, "mode": "enforce", "ok": true}
+{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "region", "required": false, "type": "string"}, {"name": "total", "required": false, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report", "partitionBy": ["region"], "partitionOverwriteMode": "static"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
 {"ok": false, "reason": "the partition columns of the write of 'report' must be a list of column names, not 'region'", "status": "not-checked"}
-{"ok": false, "reason": "the partition columns of the write of 'report' must be column names, not '1'", "status": "not-checked"}
+{"ok": false, "reason": "the partition columns of the write of 'report' must be a list of column names, not '1'", "status": "not-checked"}
 {"ok": false, "reason": "the partition overwrite mode of the write of 'report' must be static or dynamic, not 'replace'", "status": "not-checked"}
 {"ok": true, "publish": false}

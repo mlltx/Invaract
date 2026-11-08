@@ -143,15 +143,30 @@ object ContractEnforcementRule {
     * location resolution something a platform or orchestration framework
     * can attach purely via `spark-submit --conf` - no change to the job's
     * own source at all, beyond the one line every Invaract user already
-    * writes to install `forContract` in the first place. A job that wants
-    * a resolver this key can't express (an `HttpLocationResolver`, a
-    * mapping built at runtime) still calls `ContractLocationResolution.resolve`
+    * writes to install `forContract` in the first place. A location service
+    * is attached the same way (`LocationUrlConfKey`). A job that wants
+    * a resolver these keys can't express (a mapping built at runtime)
+    * still calls `ContractLocationResolution.resolve`
     * explicitly before passing its contract to `forContract` - this
     * mechanism and that one compose freely, since a location already
     * resolved to a literal is simply left alone here (`LocationRef.id`
     * finds nothing left to resolve).
     */
   val LocationMapConfKey = "spark.invaract.locationMap"
+
+  /** `spark.invaract.locationUrl` - the base URL of a location service that
+    * `ref://<id>` locations the location map does not hold are asked of
+    * (`HttpLocationResolver`: `GET <url>/locations/<id>`), resolved with
+    * the location map by `resolveContractLocations`.
+    */
+  val LocationUrlConfKey = "spark.invaract.locationUrl"
+
+  /** `spark.invaract.locationTokenEnv` - the name of the environment
+    * variable, on the driver, holding the location service's bearer token:
+    * the name, so the token itself never appears in the job's Spark
+    * configuration (which the Spark UI and event logs show).
+    */
+  val LocationTokenEnvConfKey = "spark.invaract.locationTokenEnv"
 
   /** The resolver `resolveContractLocations` builds when
     * `LocationMapConfKey` isn't set on `session` resolves nothing,

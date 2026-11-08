@@ -81,15 +81,6 @@ def test_an_object_with_no_arrow_stream_has_no_description():
     assert _frames.stream({"region": ["a"]}) is None
 
 
-def test_the_checker_is_told_each_columns_pyarrow_type_name_flag_and_empty_values():
-    schema = pa.schema([pa.field("a", pa.list_(pa.struct([("sku", pa.string())]))), pa.field("b", pa.int64(), nullable=False)])
-    assert _frames.describe(schema) == [
-        {"name": "a", "type": "list<item: struct<sku: string>>", "nullable": True},
-        {"name": "b", "type": "int64", "nullable": False},
-    ]
-    assert _frames.describe(schema, {"a": 2, "b": 0})[0]["nulls"] == 2
-
-
 @pytest.mark.parametrize("contract_type,arrow", [
     ("string", pa.string()), ("long", pa.int64()), ("BIGINT", pa.int64()), ("int", pa.int32()), ("short", pa.int16()),
     ("byte", pa.int8()), ("boolean", pa.bool_()), ("float", pa.float32()), ("double", pa.float64()), ("date", pa.date32()),

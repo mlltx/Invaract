@@ -5,8 +5,8 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ColumnSource, ConformanceAdapter, EnvironmentUnavailable, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome}
-import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ColumnSource, ConformanceAdapter, EnvironmentUnavailable, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, InvaractConf, VerificationOptions}
 import com.invaract.verification.notification.NotificationJson
 import org.yaml.snakeyaml.Yaml
 
@@ -43,19 +43,11 @@ class BeamPythonConformanceAdapter extends ConformanceAdapter {
       val events = root.resolve("events.jsonl")
       val sinkConfig = write(root, "sink.properties",
         s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${slashes(events)}\n")
-      val target = if (job.output.registeredAs.isEmpty && !contract.outputs.exists(_.saveMode.isDefined)) "files" else "bigquery"
-      val delegate = if (target == "bigquery" || job.streaming) "conformance_job.CheckOnlyRunner" else "DirectRunner"
       val flags = List(
-        "--runner=invaract_beam.InvaractRunner",
-        s"--invaract_delegate=$delegate",
-        s"--invaract_java=$javaCommand",
-        s"--invaract_java_options=@${slashes(checkerClasspath)}",
         s"--invaract_contract=${slashes(write(root, "contract.yaml", ContractParser.write(contract)))}",
         s"--invaract_notify_config=${slashes(sinkConfig)}"
-      ) ++ optionFlags(options) ++
-        (if (target == "bigquery") List("--project=conformance", "--temp_location=gs://conformance/tmp") else Nil) ++
-        (if (job.streaming) List("--streaming") else Nil)
-      val (status, output) = python(List(new File("python/tests/conformance_job.py").getAbsolutePath, slashes(write(root, "job.json", jobJson(job, root, target)))) ++ flags)
+      ) ++ optionFlags(options)
+      val (status, output) = launch(root, contract, job, flags)
       val validations = readValidations(events)
       def outcome[A](make: (List[String], Set[String], List[Option[String]]) => A): A =
         make(validations.map(_.status), validations.lastOption.toList.flatMap(_.unverifiableInputs).toSet, validations.map(_.engine))
@@ -69,6 +61,58 @@ class BeamPythonConformanceAdapter extends ConformanceAdapter {
     } finally BeamConformanceAdapter.deleteQuietly(root)
   }
 
+  /** The job launched with the settings alone, as `--invaract_<setting>` flags on its command line. What stopped it is the
+    * message the package raised (`CheckNotRun`), which the job writes apart from the log around it. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    environment.left.foreach(why => throw new EnvironmentUnavailable(why))
+    val root = Files.createTempDirectory("beam-python-conformance-")
+    try {
+      val (status, output) = launch(root, contract, job, settingFlags(settings))
+      status match {
+        case 0 | Refused => Some(AttachedRun.Ran)
+        case NotChecked  => Some(AttachedRun.Stopped(new String(Files.readAllBytes(root.resolve("stopped.txt")), StandardCharsets.UTF_8)))
+        case other       => throw new IllegalStateException(s"the Python job stopped with exit status $other (not a refusal by its contract):\n$output")
+      }
+    } finally BeamConformanceAdapter.deleteQuietly(root)
+  }
+
+  /** Beam Python's users give the checker a classpath (`--invaract_java_options`), or a checker jar they build with the
+    * registry client on it, so the kit names its own client, as they name theirs. */
+  override def bundlesRegistryClient: Boolean = false
+
+  /** The settings as the package hands them to the checker for a job given them as flags (`checker_arguments`, asked of the
+    * package itself), read as the checker reads them: a setting the package drops, or the checker does not know, is lost. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] = {
+    environment.left.foreach(why => throw new EnvironmentUnavailable(why))
+    val (status, output) = python(List(new File("python/tests/conformance_job.py").getAbsolutePath, "--forwarded") ++ settingFlags(settings))
+    require(status == 0, s"the package could not say what it hands its checker (exit status $status):\n$output")
+    val forwarded = output.split("\n").toList.map(_.trim).collect {
+      case arg if arg.startsWith("--" + PythonConfigSource.Prefix) && arg.contains("=") =>
+        val (key, value) = arg.drop(2).span(_ != '=')
+        key.stripPrefix(PythonConfigSource.Prefix) -> value.drop(1)
+    }
+    Some(new PythonConfigSource(forwarded.toMap))
+  }
+
+  override def inapplicableSettings: Map[String, String] =
+    Map(InvaractConf.FailOnMissingOutput -> "Beam sees a pipeline's whole graph before it runs, so a declared output it never writes is refused then")
+
+  /** Runs `job` as a Python Beam pipeline under `InvaractRunner`, with `flags` beside the runner's own; returns its exit status
+    * and what it printed. */
+  private def launch(root: Path, contract: Contract, job: ScenarioJob, flags: List[String]): (Int, String) = {
+    val target = if (job.output.registeredAs.isEmpty && !contract.outputs.exists(_.saveMode.isDefined)) "files" else "bigquery"
+    val delegate = if (target == "bigquery" || job.streaming) "conformance_job.CheckOnlyRunner" else "DirectRunner"
+    val runnerFlags = List(
+      "--runner=invaract_beam.InvaractRunner",
+      s"--invaract_delegate=$delegate",
+      s"--invaract_java=$javaCommand",
+      s"--invaract_java_options=@${slashes(checkerClasspath)}"
+    ) ++
+      (if (target == "bigquery") List("--project=conformance", "--temp_location=gs://conformance/tmp") else Nil) ++
+      (if (job.streaming) List("--streaming") else Nil)
+    python(List(new File("python/tests/conformance_job.py").getAbsolutePath, slashes(write(root, "job.json", jobJson(job, root, target)))) ++ runnerFlags ++ flags)
+  }
+
   /** The functions of a Python pipeline are pickled code, and lineage is declared unsupported, so the kit never asks. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
 }
@@ -77,6 +121,13 @@ private[beamadapter] object BeamPythonConformanceAdapter {
 
   /** What the job script exits with when the contract refuses it (`conformance_job.REFUSED`). */
   val Refused = 10
+
+  /** What the job script exits with when Invaract stopped it before checking it (`conformance_job.NOT_CHECKED`). */
+  val NotChecked = 11
+
+  /** The settings as a Python pipeline's command line spells them: `--invaract_<setting>=<value>`. */
+  def settingFlags(settings: Map[String, String]): List[String] =
+    settings.toList.sortBy(_._1).map { case (name, value) => s"${PythonConfigSource.spelling(name)}=$value" }
 
   final case class Validation(status: String, violationTypes: Set[String], unverifiableInputs: List[String], engine: Option[String])
 

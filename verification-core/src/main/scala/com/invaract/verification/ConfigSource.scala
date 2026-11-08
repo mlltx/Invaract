@@ -69,7 +69,13 @@ object ConfigSource {
   * prefixes them as its engine requires (Spark: `spark.invaract.<name>`).
   */
 object InvaractConf {
+  /** Path of an `id=location` `.properties` file `ref://<id>` locations resolve against (`StaticMapLocationResolver`). */
   val LocationMap = "locationMap"
+  /** Base URL of a location service `ref://<id>` locations not in the location map are asked of (`HttpLocationResolver`). */
+  val LocationUrl = "locationUrl"
+  /** Name of the environment variable holding the location service's bearer token: the name, so the token itself never
+    * appears in a job's configuration. */
+  val LocationTokenEnv = "locationTokenEnv"
   val RejectUndeclaredInputs = "rejectUndeclaredInputs"
   val RejectUndeclaredFields = "rejectUndeclaredFields"
   val ComputeFingerprint = "computeFingerprint"
@@ -98,10 +104,19 @@ object InvaractConf {
   /** Class name of the registry client to load, overriding the default. */
   val RegistryClientClass = "registryClientClass"
 
+  // Who the events come from (`VerificationSetup.identify`): set by the platform that runs the job, on every engine.
+  /** The job's stable identity across runs (every event's `job.jobId`), where the engine's own name for a run (Spark's
+    * application name, Beam's job name) can change from run to run under a scheduler. */
+  val JobId = "jobId"
+  /** Facts the platform attaches to every event of this run (`job.attributes`): comma-separated `key=value` pairs, such as
+    * `team=orders,dag=orders_daily`. A value cannot hold a comma. */
+  val JobAttributes = "jobAttributes"
+
   /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
-    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
-    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps
+    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, LocationUrl, LocationTokenEnv, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
+    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps,
+    JobId, JobAttributes
   )
 }

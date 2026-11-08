@@ -26,10 +26,6 @@ class SparkAttestedClaimsSpec extends AttestedClaimsSpec {
       Attestation("com.invaract.sparkadapter.ContractEnforcementRuleOrgPolicySpec", "enforce mode: a contract violating org policy throws before any plan is ever analyzed"),
     Capability.ConfigZeroCodeInstall ->
       Attestation("com.invaract.sparkadapter.InvaractSparkSessionExtensionSpec", "a write violating its conf-attached contract is aborted before any data is written"),
-    Capability.ConfigLocationRefs ->
-      Attestation("com.invaract.sparkadapter.ContractEnforcementRuleSpec", "forContract end-to-end: a real write against a ref:// output is resolved via spark.invaract.locationMap"),
-    Capability.ConfigContractRegistry ->
-      Attestation("com.invaract.sparkadapter.registry.ContractSourceSpec", "resolve fetches an exact version through the reflectively-loaded client when a real version is named"),
     Capability.ReportingDryRun ->
       Attestation("com.invaract.sparkadapter.InvaractSparkSessionExtensionSpec", "spark.invaract.dryRun=true never blocks a write, with no contract conf set at all"),
     Capability.WriteStateChange ->

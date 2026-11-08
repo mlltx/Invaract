@@ -98,6 +98,7 @@ class ScenarioCatalogueTest extends AnyFunSuite {
       s.expect match {
         case Expectation.Pass          => assert(expected == ScenarioCatalogue.Forecast.Allows, s.id)
         case Expectation.Reject(types) => assert(expected == ScenarioCatalogue.Forecast.Blocks(types), s.id)
+        case Expectation.Stopped(names) => assert(expected == ScenarioCatalogue.Forecast.Stops(names), s.id)
       }
     }
   }

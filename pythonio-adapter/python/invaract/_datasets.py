@@ -46,15 +46,12 @@ def read_table(location, fmt, fields, partition_by=(), csv=None):
     gives its keys as columns: those in ``partition_by`` typed as the contract declares them, any other typed as pyarrow
     infers it from the folder names."""
     fmt = fmt.lower()
-    declared = [f["name"] for f in fields]
     if fmt == _jdbc.FORMAT:
         return _required_database(location).read(location, fields)
-    if fmt == "delta":
-        return _tables.read_delta(location, declared)
     if fmt == "iceberg":
-        return _tables.read_iceberg(location, declared)
-    dataset, finish = _file_dataset(location, fmt, fields, partition_by, csv)
-    return finish(dataset.to_table(columns=_present(declared, dataset.schema.names) or None))
+        return _tables.read_iceberg(location, _names(fields))
+    dataset, finish = _dataset(location, fmt, fields, partition_by, csv)
+    return finish(dataset.to_table(columns=_present(fields, dataset.schema.names) or None))
 
 
 def read_batches(location, fmt, fields, partition_by=(), csv=None):
@@ -62,16 +59,12 @@ def read_batches(location, fmt, fields, partition_by=(), csv=None):
     ``batches(columns)`` reads the dataset afresh and yields its record batches of ``columns`` (by default the columns
     ``schema`` holds) one by one, without holding the whole dataset in memory."""
     fmt = fmt.lower()
-    declared = [f["name"] for f in fields]
     if fmt == _jdbc.FORMAT:
         return _required_database(location).batches(location, fields)
     if fmt == "iceberg":
-        return _tables.iceberg_batches(location, declared)
-    if fmt == "delta":
-        dataset, finish = _tables.delta_dataset(location), _unchanged
-    else:
-        dataset, finish = _file_dataset(location, fmt, fields, partition_by, csv)
-    columns = _present(declared, dataset.schema.names) or dataset.schema.names
+        return _tables.iceberg_batches(location, _names(fields))
+    dataset, finish = _dataset(location, fmt, fields, partition_by, csv)
+    columns = _present(fields, dataset.schema.names) or dataset.schema.names
     schema = finish(pa.schema([dataset.schema.field(c) for c in columns]).empty_table()).schema
 
     def batches(only=None):
@@ -110,20 +103,28 @@ def _required_database(location):
     return database
 
 
-def _present(declared, names):
-    return [n for n in declared if n in names]
+def _names(fields):
+    return [f["name"] for f in fields]
+
+
+def _present(fields, names):
+    """The declared columns the data has, in the contract's order."""
+    return [n for n in _names(fields) if n in names]
 
 
 def _unchanged(data):
     return data
 
 
-def _file_dataset(location, fmt, fields, partition_by, csv=None):
-    """``(dataset, finish)``: a file or folder of files as a pyarrow dataset (a CSV's columns typed as the contract declares
-    them, read with its CSV options), or as ``_formats.Files`` for a format pyarrow's datasets do not read, and what a table
-    or batch read from it still needs (``_csv.read_format``)."""
+def _dataset(location, fmt, fields, partition_by, csv=None):
+    """``(dataset, finish)``: what is at ``location`` as a pyarrow dataset (a Delta table's current version; a file or a
+    folder of files, a CSV's columns typed as the contract declares them, read with its CSV options), or as
+    ``_formats.Files`` for a format pyarrow's datasets do not read, and what a table or batch read from it still needs
+    (``_csv.read_format``)."""
     import pyarrow.dataset as ds
 
+    if fmt == "delta":
+        return _tables.delta_dataset(location), _unchanged
     types = _types.scalars(fields)
     if fmt in _formats.FOREIGN:
         return _formats.Files(location, fmt, fields, types), _unchanged

@@ -157,7 +157,7 @@ object RegistryError {
 **This atomicity guarantee is not optional or v1-only** — it's the
 contract any future backend has to satisfy, the same way `LocationResolver`
 in `spark-adapter` is one trait with swappable implementations
-(`NoOpLocationResolver`, `StaticMapLocationResolver`, a future
+(`NoOpLocationResolver`, `StaticMapLocationResolver`,
 `HttpLocationResolver`). The reference implementation
 (`InMemoryRegistryStore`, in `invaract-registry`) proves the semantics
 with `java.util.concurrent.ConcurrentHashMap.compute` — genuine
@@ -295,6 +295,16 @@ compile-time dependency on `registry-client` — nothing about the existing
 critical path's *behavior* changes, and `registry-client` is not part of
 `./dev/build`'s default module set, the same as `plugin`/`runner`/
 `notification-kafka` today.
+
+**Python jobs (`pythonio-adapter`) are the one exception to "no compile-time
+dependency".** Their checker is a single program (a native image, or one
+`java -jar`), with no classpath a platform could add `HttpContractRegistryClient`
+to, so `pythonio-adapter` depends on `registry-client` and carries the client
+built in: `INVARACT_CONTRACT=registry://...` with `INVARACT_REGISTRY_URL` works
+with nothing installed. The client is still loaded by name through the same
+`ContractReference` path every adapter uses, so `INVARACT_REGISTRY_CLIENT_CLASS`
+can name another one, but only on the JVM checker: the native program can load
+only the classes built into it.
 
 `runner`'s own `DemoJobHarness.scala` (harness code, not the engine)
 reaches `registry://` the exact same way §7 describes for a real job: it

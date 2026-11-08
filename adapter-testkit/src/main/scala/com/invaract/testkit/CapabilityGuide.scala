@@ -224,7 +224,7 @@ object CapabilityGuide {
       ),
       ConfigLocationRefs -> e(
         "Locations resolved when the job starts",
-        "A contract can name a location as `ref://<id>`, resolved from a mapping file when the job starts, so one contract works in every environment.",
+        "A contract can name a location as `ref://<id>`, resolved from a mapping file or a location service when the job starts, so one contract works in every environment.",
         "Contracts must name real locations.",
         "/guides/resolving-dataset-locations/"
       ),

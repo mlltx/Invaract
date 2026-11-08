@@ -6,10 +6,12 @@ package com.invaract.testkit
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Union, UnknownPlan, Write}
 import com.invaract.verification.{
-  AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, RuntimeDataQuality, UnverifiableOperation, VerificationOptions,
-  VerificationPipeline
+  AdapterCapabilities, AttachPlan, AttachSetup, CheckedWrite, ConfigSource, ContractViolationException, MutationClassification, MutationKind, RuntimeDataQuality,
+  UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationSetup
 }
-import com.invaract.verification.notification.JobInfo
+import com.invaract.verification.notification.{JobInfo, NotificationSink}
+
+import scala.util.control.NonFatal
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
   * engine-neutral plan and handing it to `VerificationPipeline`, with no engine at all.
@@ -27,33 +29,74 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
   override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
     val sink = new RecordingSink
     try {
-      if (job.untranslatableWrite)
-        VerificationPipeline.rejectUnverifiableWrite(
-          contract,
-          UnverifiableOperation(
-            "ReferenceTruncate",
-            "'ReferenceTruncate' changes data, but the reference adapter has no translation for it",
-            "The reference adapter translates only the kit's scenario jobs; a scenario that expects this refusal is meant to get it."
-          ),
-          com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
-          Some(sink),
-          None,
-          Some(jobInfo)
-        )
-      // the whole job is known, as on Beam: a declared output it never writes refuses it before its write is checked
-      if (checksOutputsWritten)
-        VerificationPipeline.requireOutputsWritten(contract, job.writtenLocations, ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
-      val checked = checkedWrite(job)
-      VerificationPipeline.verifyWrite(
-        contract, checked.copy(dataChecks = dataChecks(contract, job, options)), options, Some(sink), None, Some(capabilities), Some(jobInfo)
-      )
-      // the job's further writes, in order, each checked as a write of its own
-      if (checksExtraWrites)
-        job.extraWrites.foreach(w => VerificationPipeline.verifyWrite(contract, ReferenceAdapter.copyWrite(w), options, Some(sink), None, Some(capabilities), Some(jobInfo)))
+      check(contract, job, options, sink)
       sink.passed
     } catch {
       case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
     }
+  }
+
+  /** The job attached through configuration alone: the settings read through the shared attach path every adapter uses
+    * (`AttachSetup`, then `VerificationSetup` for locations and options), and the job checked as `run` checks it, its events
+    * going to the sink the settings configure. The reference engine has no configuration of its own, so the settings are its
+    * configuration as they are (`ConfigSource.fromMap`). */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    val config = configured(settings)
+    val setUp =
+      try
+        AttachSetup.select(config) match {
+          case AttachPlan.Enforce(declared, sink) =>
+            Right(Some((VerificationSetup.resolveContractLocations(declared, config), VerificationSetup.resolveVerificationOptions(VerificationOptions(), config), sink)))
+          case AttachPlan.DryRun(_) => Right(None) // dry run: nothing is enforced, and nothing is validated
+        }
+      catch { case NonFatal(e) => Left(Option(e.getMessage).getOrElse(e.getClass.getName)) }
+    Some(setUp match {
+      case Left(message) => AttachedRun.Stopped(message)
+      case Right(enforced) =>
+        enforced.foreach { case (resolved, options, sink) =>
+          val publishing = sink.getOrElse(new RecordingSink)
+          try check(resolved, job, options, publishing)
+          catch { case _: ContractViolationException => () } // blocked: the verdict is in the events
+          finally publishing.flush(10000L)
+        }
+        AttachedRun.Ran
+    })
+  }
+
+  /** The settings as this adapter reads them: the kit's own tests override it to lose one. */
+  protected def configured(settings: Map[String, String]): ConfigSource = ConfigSource.fromMap(settings)
+
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] = Some(configured(settings))
+
+  /** The kit carries no registry client (`registry-client` is not its dependency): a `registry://` contract is fetched with
+    * the kit's own, as the user of an engine that adds the client to the job's classpath fetches it with theirs. */
+  override def bundlesRegistryClient: Boolean = false
+
+  /** Checks `job` against `contract`, publishing to `sink`; a blocked write throws `ContractViolationException`. */
+  private def check(contract: Contract, job: ScenarioJob, options: VerificationOptions, sink: NotificationSink): Unit = {
+    if (job.untranslatableWrite)
+      VerificationPipeline.rejectUnverifiableWrite(
+        contract,
+        UnverifiableOperation(
+          "ReferenceTruncate",
+          "'ReferenceTruncate' changes data, but the reference adapter has no translation for it",
+          "The reference adapter translates only the kit's scenario jobs; a scenario that expects this refusal is meant to get it."
+        ),
+        com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
+        Some(sink),
+        None,
+        Some(jobInfo)
+      )
+    // the whole job is known, as on Beam: a declared output it never writes refuses it before its write is checked
+    if (checksOutputsWritten)
+      VerificationPipeline.requireOutputsWritten(contract, job.writtenLocations, ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
+    val checked = checkedWrite(job)
+    VerificationPipeline.verifyWrite(
+      contract, checked.copy(dataChecks = dataChecks(contract, job, options)), options, Some(sink), None, Some(capabilities), Some(jobInfo)
+    )
+    // the job's further writes, in order, each checked as a write of its own
+    if (checksExtraWrites)
+      job.extraWrites.foreach(w => VerificationPipeline.verifyWrite(contract, ReferenceAdapter.copyWrite(w), options, Some(sink), None, Some(capabilities), Some(jobInfo)))
   }
 
   /** Whether the adapter refuses a job that never writes a declared output (`check.outputsWritten`); the kit's own tests

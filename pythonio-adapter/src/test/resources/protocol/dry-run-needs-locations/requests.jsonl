@@ -1,3 +1,3 @@
-{"op": "open", "settings": {"dryRun": "true"}}
+{"op": "open", "protocol": 1, "settings": {"dryRun": "true"}}
 {"op": "read", "name": "orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "report", "format": "parquet", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}

@@ -5,6 +5,8 @@ package com.invaract.testkit
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import com.invaract.verification.{Capability, CapabilityCategory, InvaractConf, Support}
+
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -72,6 +74,37 @@ trait AdapterConformanceSpec extends AnyFunSuite {
     )
     // A claim on something the kit has no scenario for must at least be one the kit knows it lacks.
     assert(unverified.forall(Scenarios.notCovered.contains))
+  }
+
+  test("settings: every engine-neutral setting set through the engine's own configuration reaches the adapter") {
+    // an adapter that claims no way of being configured (a new one, its declaration all unsupported) has no configuration
+    // for a setting to reach
+    val configuration = Capability.all.filter(_.category == CapabilityCategory.Attachment)
+    if (configuration.forall(c => Set[Support](Support.Unsupported, Support.NotApplicable).contains(adapter.capabilities.supportOf(c))))
+      cancel(s"the adapter claims none of ${configuration.map(_.id).mkString(", ")}, so it takes no configuration")
+    // a setting the engine has no use for is not set at all: an engine may have no way to spell it
+    val values = Settings.distinct -- adapter.inapplicableSettings.keySet
+    val configured =
+      try adapter.configSource(values)
+      catch {
+        case e: EnvironmentUnavailable =>
+          if (strictEnvironment) fail(s"the engine's environment is unavailable, and this run requires it: ${e.reason}")
+          else cancel(s"the engine's environment is unavailable, so nothing was checked: ${e.reason}")
+      }
+    configured match {
+      case None =>
+        fail("the adapter does not say how its engine's configuration reaches the neutral settings: implement ConformanceAdapter.configSource")
+      case Some(config) =>
+        val unknown = adapter.inapplicableSettings.keySet -- InvaractConf.All
+        assert(unknown.isEmpty, s"inapplicableSettings names settings that do not exist: ${unknown.toList.sorted.mkString(", ")}")
+        assert(adapter.inapplicableSettings.values.forall(_.trim.nonEmpty), "each inapplicable setting says why it does not apply")
+        val unreachable = Settings.unreachable(config, values, adapter.inapplicableSettings.keySet)
+        assert(
+          unreachable.isEmpty,
+          "set through the engine's own configuration, these settings never reach the adapter (a platform could not attach them): " +
+            unreachable.map(n => s"$n (${config.describe(n)})").mkString(", ")
+        )
+    }
   }
 
   test("baseline: every scenario on the checked-in baseline still conforms, and every one that conforms is on it") {

@@ -36,10 +36,10 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("a report lists an adapter's unchecked claims as attested (a job cannot check them) or gaps (the kit cannot yet)") {
-    val claims = declaring(Map("config.zeroCodeInstall" -> (("supported", None)), "config.locationRefs" -> (("partial", Some("only maps"))))) 
+    val claims = declaring(Map("config.zeroCodeInstall" -> (("supported", None)), "policy.organizational" -> (("partial", Some("one policy layer")))))
     val report = Conformance.evaluate(new ReferenceAdapter(claims))
-    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
-    assert(report.attestedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
+    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.PolicyOrganizational))
+    assert(report.attestedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.PolicyOrganizational))
     // The kit has no gap today: every capability a job can show is shown by a scenario.
     assert(Scenarios.gaps.isEmpty && report.gapClaims.isEmpty)
   }
@@ -55,7 +55,14 @@ class ConformanceKitSpec extends AnyFunSuite {
     Scenarios.all.foreach { s =>
       // a contract declaring an output the job never writes is what check.outputsWritten is about
       val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, s.job.writtenLocations).nonEmpty
-      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ (if (unwritten) Set(Capability.CheckOutputsWritten) else Set.empty)
+      // a job attached through configuration relies on what its configuration points at
+      val attached: Set[Capability] = s.attach match {
+        case Some(_: Attachment.Registry) => Set(Capability.ConfigContractRegistry)
+        case Some(_)                      => Set(Capability.ConfigLocationRefs)
+        case None                         => Set.empty
+      }
+      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ attached ++
+        (if (unwritten) Set(Capability.CheckOutputsWritten) else Set.empty)
       s.focus.foreach { c =>
         assert(
           relied.contains(c) || s.operations.contains(c) || notDerivable.contains(c),
@@ -63,6 +70,37 @@ class ConformanceKitSpec extends AnyFunSuite {
         )
       }
     }
+  }
+
+  test("the settings check catches a setting the engine never reads, and leaves out only the ones declared inapplicable") {
+    val values = Settings.distinct
+    assert(values.keySet == com.invaract.verification.InvaractConf.All.toSet && values.values.toSet.size == values.size)
+    val reads = com.invaract.verification.ConfigSource.fromMap(values)
+    assert(Settings.unreachable(reads, values, Set.empty) == Nil)
+    val losesTwo = com.invaract.verification.ConfigSource.fromMap(values - "locationUrl" - "jobId")
+    assert(Settings.unreachable(losesTwo, values, Set.empty) == List("locationUrl", "jobId"))
+    assert(Settings.unreachable(losesTwo, values, Set("jobId")) == List("locationUrl"))
+    // a setting read back with another value is not reached either
+    val garbles = com.invaract.verification.ConfigSource.fromMap(values + ("contract" -> "something else"))
+    assert(Settings.unreachable(garbles, values, Set.empty) == List("contract"))
+    // a setting the kit gave no value (one left out as inapplicable) is not reached unless it is declared inapplicable
+    assert(Settings.unreachable(reads, values - "orgPolicy", Set.empty) == List("orgPolicy"))
+  }
+
+  test("a run that wrote no validation events reads as a pass with nothing published, which the notification checks then catch") {
+    val nowhere = java.nio.file.Files.createTempDirectory("invaract-kit-").resolve("events.jsonl")
+    assert(Attached.outcomeOf(nowhere) == ScenarioOutcome.Passed(Nil, eventEngines = Nil))
+  }
+
+  test("an attached scenario takes no options, expectations of analyses or analyses in code, and only one can be stopped") {
+    val attached = Scenarios.all.find(_.attach.isDefined).get
+    val plain = Scenarios.all.find(s => s.attach.isEmpty && s.expect == Expectation.Pass).get
+    assert(attached.copy(id = "copy").attach == attached.attach) // its own shape constructs
+    intercept[IllegalArgumentException](attached.copy(options = com.invaract.verification.VerificationOptions(rejectUndeclaredFields = true)))
+    intercept[IllegalArgumentException](attached.copy(expectNonDeterministic = Some(Set.empty)))
+    intercept[IllegalArgumentException](attached.copy(analysis = Analysis(unverifiableInputs = Some(Set.empty))))
+    intercept[IllegalArgumentException](plain.copy(expect = Expectation.Stopped(Set("x"))))
+    assert(plain.copy(attach = attached.attach, expect = Expectation.Stopped(Set("x"))).attach.isDefined)
   }
 
   // --- the reference adapter: no engine, the SPI only --------------------------------------------
@@ -97,9 +135,16 @@ class ConformanceKitSpec extends AnyFunSuite {
     override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
       outcomeOf(delegate.run(id, contractOf(c), j, o))
     override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = delegate.translation(id, j)
+    // a job attached through configuration is never handed its contract, so tampering with `run` cannot reach it
+    override def attached(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
+      delegate.attached(id, c, j, settings)
+    override def bundlesRegistryClient: Boolean = delegate.bundlesRegistryClient
   }
 
   private def failingIds(adapter: ConformanceAdapter): Set[String] = Conformance.evaluate(adapter).failures.map(_.scenario.id).toSet
+
+  /** The scenarios whose contract is handed to the adapter in code (`run`): the ones a tampered `run` can affect. */
+  private val handed = Scenarios.all.filter(_.attach.isEmpty)
 
   test("an adapter that claims check.format but never checks it is caught on exactly the format scenario that needs it") {
     val liar = new Tampered(reference, contractOf = c => c.copy(outputs = c.outputs.map(_.copy(format = None))))
@@ -131,15 +176,15 @@ class ConformanceKitSpec extends AnyFunSuite {
 
   test("an adapter that lets everything through is caught on every scenario that expects a rejection") {
     val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns, o.dataQuality, o.roles, o.unverifiableInputs))
-    val expectingReject = Scenarios.all.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
+    val expectingReject = handed.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
     assert(failingIds(permissive) == expectingReject)
   }
 
   test("an adapter that blocks everything is caught on every scenario that expects a pass") {
     val paranoid = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Rejected(Set(ViolationType.MissingOutput), o.statuses))
-    val expectingPass = Scenarios.all.filter(_.expect == Expectation.Pass).map(_.id).toSet
-    val expectingOtherReject = Scenarios.all.filter(s => s.expect == Expectation.Reject(Set(ViolationType.MissingOutput))).map(_.id).toSet
-    assert(failingIds(paranoid) == Scenarios.all.map(_.id).toSet -- expectingOtherReject)
+    val expectingPass = handed.filter(_.expect == Expectation.Pass).map(_.id).toSet
+    val expectingOtherReject = handed.filter(s => s.expect == Expectation.Reject(Set(ViolationType.MissingOutput))).map(_.id).toSet
+    assert(failingIds(paranoid) == handed.map(_.id).toSet -- expectingOtherReject)
     assert(expectingPass.subsetOf(failingIds(paranoid)))
   }
 
@@ -148,13 +193,15 @@ class ConformanceKitSpec extends AnyFunSuite {
       case p: ScenarioOutcome.Passed   => p.copy(statuses = Nil)
       case r: ScenarioOutcome.Rejected => r.copy(statuses = Nil)
     })
-    assert(failingIds(silent) == Scenarios.all.map(_.id).toSet)
+    assert(failingIds(silent) == handed.map(_.id).toSet)
   }
 
   test("an adapter that throws instead of reporting a verdict is a divergence, not a crash of the kit") {
     val crashing = new ConformanceAdapter {
       override def capabilities: AdapterCapabilities = reference.capabilities
       override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        throw new IllegalStateException("engine exploded")
+      override def attached(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
         throw new IllegalStateException("engine exploded")
     }
     val report = Conformance.evaluate(crashing)
@@ -297,8 +344,8 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {
-    val claims = declaring(Map("config.contractRegistry" -> (("supported", None))))
-    assert(Conformance.unverifiedClaims(claims) == List(Capability.ConfigContractRegistry))
+    val claims = declaring(Map("config.zeroCodeInstall" -> (("supported", None))))
+    assert(Conformance.unverifiedClaims(claims) == List(Capability.ConfigZeroCodeInstall))
   }
 
   // --- the row-level DML and catalog scenarios must be able to fail too ------------------------
@@ -321,6 +368,9 @@ class ConformanceKitSpec extends AnyFunSuite {
         if (id == "filtered-delete-allowed") ScenarioOutcome.Rejected(Set(ViolationType.RuleUnconditionalDelete), List("FAILED"))
         else reference.run(id, c, j, o)
       override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = reference.translation(id, j)
+      override def attached(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
+        reference.attached(id, c, j, settings)
+      override def bundlesRegistryClient: Boolean = reference.bundlesRegistryClient
     }
     assert(failingIds(rejectsFilteredDelete) == Set("filtered-delete-allowed"))
   }

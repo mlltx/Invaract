@@ -1,0 +1,10 @@
+{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}, {"name": "note", "required": false, "type": "string"}], "format": "parquet", "location": "data/out/report", "name": "report", "partitionBy": ["region"], "partitionOverwriteMode": "static", "saveMode": "overwrite"}, {"fields": [{"name": "order_id", "required": true, "type": "long"}], "format": "iceberg", "location": "lake.sales.snapshot", "name": "snapshot", "saveMode": "append"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true}
+{"ok": true, "publish": true}
+{"ok": true}
+{"ok": false, "reason": "the run has already finished", "status": "not-checked"}

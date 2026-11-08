@@ -65,3 +65,10 @@ streaming-write-is-checked-like-a-batch-write
 streaming-write-to-the-wrong-location
 untranslatable-write-fails-closed
 invalid-contract
+contract-from-registry
+contract-from-registry-enforced
+contract-not-in-registry
+locations-from-map
+locations-from-map-enforced
+locations-from-service
+location-not-in-service

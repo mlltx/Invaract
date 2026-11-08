@@ -4,7 +4,7 @@
 package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, ContractRule, OrgPolicyParseException}
-import com.invaract.verification.location.LocationResolutionException
+import com.invaract.verification.location.{LocationResolutionException, TestLocationService}
 import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, TestNotificationSink}
 
 import org.scalatest.BeforeAndAfterAll
@@ -80,12 +80,83 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
       VerificationSetup.resolveContractLocations(refContract, ConfigSource.empty)
     }
     assert(
-      e.getMessage == "The contract declares 'ref://gold_out', but no location map is set: set 'locationMap' to a .properties file " +
-        "with a line 'gold_out=<real location>'."
+      e.getMessage == "The contract declares 'ref://gold_out', but no location map or location service is set: set 'locationMap' to a " +
+        ".properties file with a line 'gold_out=<real location>', or 'locationUrl' to a location service."
     )
     val spark = ConfigSource.prefixed("spark.invaract.")(_ => None)
-    assert(intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(refContract, spark)).getMessage
-      .contains("set 'spark.invaract.locationMap' to"))
+    val message = intercept[LocationResolutionException](VerificationSetup.resolveContractLocations(refContract, spark)).getMessage
+    assert(message.contains("set 'spark.invaract.locationMap' to") && message.contains("or 'spark.invaract.locationUrl' to"))
+  }
+
+  // the location service (HttpLocationResolver; its own spec holds the protocol)
+
+  private def located(contract: Contract, environment: Map[String, String], entries: (String, String)*): List[String] =
+    VerificationSetup.resolveContractLocations(contract, config(entries: _*), environment.get).outputs.map(_.location)
+
+  private val twoRefs: Contract = ContractParser.parse(
+    """id: setup
+      |version: "1.0.0"
+      |outputs:
+      |  - { name: gold, location: "ref://gold_out" }
+      |  - { name: silver, location: "ref://silver_out" }
+      |""".stripMargin
+  )
+
+  test("resolveContractLocations: locationUrl resolves each ref:// by asking the location service") {
+    val service = TestLocationService.holding("gold_out" -> "s3://lake/gold", "silver_out" -> "s3://lake/silver")
+    try {
+      assert(located(twoRefs, Map.empty, InvaractConf.LocationUrl -> service.url) == List("s3://lake/gold", "s3://lake/silver"))
+      assert(service.paths == Vector("/locations/gold_out", "/locations/silver_out") && service.authorizations.forall(_.isEmpty))
+    } finally service.close()
+  }
+
+  test("resolveContractLocations: the location map is asked first, and an id it holds is never asked of the service") {
+    val service = TestLocationService.holding("gold_out" -> "s3://lake/gold", "silver_out" -> "s3://lake/silver")
+    try {
+      val map = file("override.properties", "gold_out=/local/gold\n")
+      val both = Seq(InvaractConf.LocationMap -> map, InvaractConf.LocationUrl -> service.url)
+      assert(located(twoRefs, Map.empty, both: _*) == List("/local/gold", "s3://lake/silver"))
+      assert(service.paths == Vector("/locations/silver_out"))
+    } finally service.close()
+  }
+
+  test("resolveContractLocations: with a map and a service, an id neither holds fails with the service's reason") {
+    val service = TestLocationService.holding()
+    try {
+      val map = file("unrelated.properties", "bronze_out=/b\n")
+      val e = intercept[LocationResolutionException](
+        located(refContract, Map.empty, InvaractConf.LocationMap -> map, InvaractConf.LocationUrl -> service.url)
+      )
+      assert(e.getMessage == s"The location service could not resolve 'ref://gold_out' (${service.url}/locations/gold_out): it has no location for that id")
+    } finally service.close()
+  }
+
+  test("resolveContractLocations: locationTokenEnv sends the named variable's value as a bearer token, never naming it in config") {
+    val service = TestLocationService.holding("gold_out" -> "/g")
+    try {
+      located(refContract, Map("LOCATIONS_TOKEN" -> " t0ken "), InvaractConf.LocationUrl -> service.url, InvaractConf.LocationTokenEnv -> "LOCATIONS_TOKEN")
+      assert(service.authorizations == Vector(Some("Bearer t0ken")))
+    } finally service.close()
+  }
+
+  test("resolveContractLocations: a token variable that is not set, or a token with no service, is refused even with no ref://") {
+    for (environment <- List(Map.empty[String, String], Map("LOCATIONS_TOKEN" -> "  "))) {
+      val e = intercept[LocationResolutionException](
+        located(plainContract, environment, InvaractConf.LocationUrl -> "http://127.0.0.1:9", InvaractConf.LocationTokenEnv -> "LOCATIONS_TOKEN")
+      )
+      assert(e.getMessage == "'locationTokenEnv' names the environment variable 'LOCATIONS_TOKEN', which is not set.")
+    }
+    val e = intercept[LocationResolutionException](located(plainContract, Map("T" -> "x"), InvaractConf.LocationTokenEnv -> "T"))
+    assert(e.getMessage == "'locationTokenEnv' is set, but 'locationUrl' names no location service to send the token to.")
+  }
+
+  test("resolveContractLocations: a service set for a contract with no ref:// is never asked, and blank settings count as unset") {
+    val service = TestLocationService.holding()
+    try {
+      assert(located(plainContract, Map.empty, InvaractConf.LocationUrl -> service.url) == List("some/output/path"))
+      assert(service.paths.isEmpty)
+      assert(located(plainContract, Map.empty, InvaractConf.LocationUrl -> "  ", InvaractConf.LocationTokenEnv -> " ") == List("some/output/path"))
+    } finally service.close()
   }
 
   test("resolveContractLocations: an id the map does not have names the id, the file, the setting and the ids it does map") {
@@ -315,5 +386,47 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     val sink = new TestNotificationSink
     VerificationSetup.enforceOrgPolicy(plainContract, VerificationOptions(), config(InvaractConf.OrgPolicy -> policy), Some(sink), None, Some(job))
     assert(validationEvents(sink).map(e => e.status -> e.job) == List("PASSED" -> Some(job)))
+  }
+
+  // identify: the job as every event names it
+
+  private val adapterJob = JobInfo(engine = Some("pythonio"), name = Some("orders_job.main"), jobId = Some("from-the-engine"), attributes = Map("trigger" -> "cron"))
+
+  test("identify: with neither setting, the job is as the adapter found it") {
+    assert(VerificationSetup.identify(adapterJob, ConfigSource.empty) == adapterJob)
+    assert(VerificationSetup.identify(JobInfo(), ConfigSource.empty) == JobInfo())
+  }
+
+  test("identify: jobId names the job across runs, in place of any the adapter found; a blank one changes nothing") {
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "  orders_nightly ")).jobId == Some("orders_nightly"))
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobId -> "orders_nightly")).jobId == Some("orders_nightly"))
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "   ")).jobId == Some("from-the-engine"))
+    // nothing else about the job changes
+    assert(VerificationSetup.identify(adapterJob, config(InvaractConf.JobId -> "x")).copy(jobId = adapterJob.jobId) == adapterJob)
+  }
+
+  test("identify: jobAttributes are key=value pairs, trimmed; a value may hold '=' or be empty") {
+    val attributes = VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> " team = orders, dag=orders_daily ,query=a=b,empty=")).attributes
+    assert(attributes == Map("team" -> "orders", "dag" -> "orders_daily", "query" -> "a=b", "empty" -> ""))
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> " , ")).attributes.isEmpty)
+    assert(VerificationSetup.identify(JobInfo(), config(InvaractConf.JobAttributes -> "")).attributes.isEmpty)
+  }
+
+  test("identify: an attribute the adapter already has keeps its value; the others are added") {
+    val attributes = VerificationSetup.identify(adapterJob, config(InvaractConf.JobAttributes -> "trigger=manual,team=orders")).attributes
+    assert(attributes == Map("trigger" -> "cron", "team" -> "orders"))
+  }
+
+  test("identify: malformed jobAttributes are refused, naming the setting as the engine spells it, the entry and the whole value") {
+    def refused(raw: String) = intercept[IllegalArgumentException] {
+      VerificationSetup.identify(JobInfo(), ConfigSource.prefixed("spark.invaract.")(Map("spark.invaract.jobAttributes" -> raw).get))
+    }.getMessage
+    assert(refused("team=orders,dag") ==
+      "'spark.invaract.jobAttributes' must be comma-separated key=value pairs ('dag' is not key=value), not 'team=orders,dag'.")
+    assert(refused("=orders").contains("('=orders' is not key=value)"))
+    assert(refused(" =orders").contains("('=orders' is not key=value)"), "entries are trimmed before they are read")
+    assert(refused("b=1,a=1,b=2,a=2") ==
+      "'spark.invaract.jobAttributes' must be comma-separated key=value pairs ('a', 'b' given more than once), not 'b=1,a=1,b=2,a=2'.")
+    assert(refused("a=1,a=1").contains("('a' given more than once)"))
   }
 }

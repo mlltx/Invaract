@@ -16,7 +16,7 @@ previous version on every new registration, and rejects a registration whose dec
 version bump doesn't match the actual scope of change unless explicitly overridden.
 
 <Aside type="note" title="Every engine">
-A `registry://` contract works the same on Spark and on Beam. On Beam, pass it as `--invaractContract` with `--invaractRegistryUrl` (Java), or `--invaract_contract` with `--invaract_registry_url` (Python); see [Configuration Settings](/reference/configuration/).
+A `registry://` contract works the same on Spark, on Beam and in a plain Python job. On Beam, pass it as `--invaractContract` with `--invaractRegistryUrl` (Java), or `--invaract_contract` with `--invaract_registry_url` (Python). Beam needs `invaract-registry-client-*.jar` beside Invaract, as Spark does: in a Java pipeline, on the launcher's classpath with `invaract-beam-adapter`; in a Python pipeline, on the checker's classpath, given as `--invaract_java_options="-cp invaract-beam-checker-0.1.0.jar:invaract-registry-client-0.1.0.jar"` with neither `--invaract_checker_jar` nor `INVARACT_BEAM_CHECKER_JAR` set (given a checker jar, Java runs that jar alone). In a Python job using the `invaract` package, set `INVARACT_CONTRACT=registry://<id>@<version>` and `INVARACT_REGISTRY_URL` in the job's environment: the package's checker carries the registry client, so there is nothing to install. See [Configuration Settings](/reference/configuration/).
 </Aside>
 
 <Aside type="caution" title="The reference server is closed-source">

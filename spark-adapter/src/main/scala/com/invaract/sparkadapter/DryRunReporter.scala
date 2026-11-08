@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{ContractInference, DryRunSelfCheck, DryRunSummary, StructuralVerifier, VerificationOptions, Violation}
+import com.invaract.verification.{ContractInference, DryRunSelfCheck, DryRunSummary, StructuralVerifier, VerificationOptions, VerificationSetup, Violation}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.mutable
@@ -253,13 +253,16 @@ private[sparkadapter] object DryRunReporter {
 
   /** `spark.invaract.jobId` - the stable identity of this job across runs. Unlike
     * `spark.app.name`, which many schedulers vary per run, it lets a consumer
-    * recognize "this is the same job as last night".
+    * recognize "this is the same job as last night". It is Spark's spelling of the
+    * engine-neutral `jobId` (`InvaractConf.JobId`), read by `VerificationSetup.identify`.
     */
   val JobIdConfKey = "spark.invaract.jobId"
 
-  /** `spark.invaract.job.metadata.<key>=<value>` entries ride along on every dry-run event as
+  /** `spark.invaract.job.metadata.<key>=<value>` entries ride along on every event as
     * `job.attributes`, prefix stripped (DAG id, orchestrator run id, trigger, ...): facts about
     * *this run*, which is why they are not put in the contract (see `ContractMetadataConfPrefix`).
+    * The engine-neutral `spark.invaract.jobAttributes=<key>=<value>,...` (`InvaractConf.JobAttributes`)
+    * adds the same kind of fact; for a key set both ways, this per-key setting wins.
     */
   val JobMetadataConfPrefix = "spark.invaract.job.metadata."
 
@@ -279,16 +282,18 @@ private[sparkadapter] object DryRunReporter {
 
   def jobInfoOf(session: SparkSession): JobInfo = {
     val sc = session.sparkContext
-    JobInfo(
-      runId = Some(sc.applicationId),
-      name = Some(sc.appName),
-      jobId = session.conf.getOption(JobIdConfKey).map(_.trim).filter(_.nonEmpty),
-      engine = Some("spark"),
-      engineVersion = Some(sc.version),
-      engineDetails = Map("master" -> sc.master, "deployMode" -> sc.deployMode),
-      user = Some(sc.sparkUser),
-      startTimeMs = Some(sc.startTime),
-      attributes = withPrefix(session, JobMetadataConfPrefix)
+    VerificationSetup.identify(
+      JobInfo(
+        runId = Some(sc.applicationId),
+        name = Some(sc.appName),
+        engine = Some("spark"),
+        engineVersion = Some(sc.version),
+        engineDetails = Map("master" -> sc.master, "deployMode" -> sc.deployMode),
+        user = Some(sc.sparkUser),
+        startTimeMs = Some(sc.startTime),
+        attributes = withPrefix(session, JobMetadataConfPrefix)
+      ),
+      SparkConfigSource(session)
     )
   }
 

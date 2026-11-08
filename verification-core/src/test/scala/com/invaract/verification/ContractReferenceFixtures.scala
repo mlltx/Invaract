@@ -76,5 +76,11 @@ class WrongReturnRegistryClient {
   def getLatest(contractId: String): String = contractId
 }
 
+/** A client that refuses the URL it is configured with, as a real client can. */
+class RefusingRegistryClient {
+  def configure(registryUrl: String): Unit = throw new IllegalArgumentException(s"'$registryUrl' is not a registry this client can reach")
+  def getLatest(contractId: String): Contract = FakeRegistryClient.contract(contractId)
+}
+
 /** Constructing it counts, so a test can show a class lacking a method is never constructed. */
 class CountingNoMethodsClient { FakeRegistryClient.constructed += 1 }

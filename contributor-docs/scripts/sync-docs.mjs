@@ -146,6 +146,20 @@ const PAGES = [
     order: 10,
   },
   {
+    src: 'docs/PYTHONIO_PROTOCOL.md',
+    slug: 'design/pythonio-protocol',
+    section: 'Design Docs',
+    label: 'Python I/O Checker Protocol',
+    order: 10,
+  },
+  {
+    src: 'docs/PYTHONIO_PACKAGE.md',
+    slug: 'design/pythonio-package',
+    section: 'Design Docs',
+    label: 'Working on the Python Package',
+    order: 10,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

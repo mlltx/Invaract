@@ -23,8 +23,6 @@ class BeamAttestedClaimsSpec extends AttestedClaimsSpec {
   override protected def attestations: Map[Capability, Attestation] = Map(
     Capability.PolicyOrganizational -> attach(BeamAttachSpec.OrganizationalPolicy),
     Capability.ConfigZeroCodeInstall -> attach(BeamAttachSpec.ZeroCodeInstall),
-    Capability.ConfigLocationRefs -> attach(BeamAttachSpec.LocationRefs),
-    Capability.ConfigContractRegistry -> attach(BeamAttachSpec.ContractRegistry),
     Capability.ReportingDryRun -> attach(BeamAttachSpec.DryRunInference)
   )
 }

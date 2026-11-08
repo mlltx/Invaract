@@ -1,3 +1,3 @@
-{"op": "open", "settings": {"dryRun": "true", "notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"dryRun": "true", "notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
 {"op": "write", "name": "report", "location": "data/out/report", "unverifiable": "a pandas Styler offers no __arrow_c_stream__"}
 {"op": "finish", "completed": true}

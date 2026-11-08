@@ -34,7 +34,7 @@ finished and every answer was yes.
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
-| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `check`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
+| `python/invaract` | the Python package (docs/PYTHONIO_PACKAGE.md): `job`, `run`, `read`, `write`, `check`, `reads`, `writes`, typed (`__init__`, `py.typed`); a run's lifecycle, staging and publishing (`_run`); every request it sends the checker (`_protocol`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
 | `python/invaract/_datasets.py`, `_outputs.py` | a dataset by its location and format: how it is read, the catalog it is registered in, and the output that writes it (`_datasets`); what every output is to a run, staged and then published or discarded, and its partition layout (`_outputs`) |
 | `python/invaract/_storage.py`, `_files.py`, `_csv.py`, `_formats.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (`RenamedOutput`, renamed into place locally and on HDFS; `CopiedOutput`, copied with `_SUCCESS` last on object storage); CSV options, and the JSON, ORC, Avro, Feather and Excel formats |
 | `python/invaract/_tables.py`, `_jdbc.py`, `_postgres.py`, `_sqlite.py` | Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6); database tables (`jdbc`), PostgreSQL and SQLite, staged in a temporary table or file and moved into place in one transaction |
@@ -46,48 +46,18 @@ finished and every answer was yes.
 
 ### The protocol
 
-One request per line from the package, one reply per line from the checker, as the recorded cases
-(`src/test/resources/protocol`) hold them. A column is `{"name", "type", "nullable", "nulls"}`: `type` is pyarrow's own name
-for it (`str(field.type)`: `int64`, `large_string`, `list<item: struct<sku: string, qty: int32>>`,
-`dictionary<values=string, indices=int8, ordered=0>`), `nullable` is Arrow's flag, and `nulls` how many empty values the data
-holds, where the data has been seen.
+One JSON request per line from the package, one reply per line from the checker: `open`, then the job's `read`s and
+`write`/`written` pairs, then `finish`, and `published` once the outputs are in place. **docs/PYTHONIO_PROTOCOL.md** is its reference: each message, what the checker
+does with it, how versions work, and how to change it. Every message is described by the JSON Schema
+`docs-site/public/schemas/pythonio/v1/protocol.schema.json`, and the recorded cases (`src/test/resources/protocol`), the
+package's every request and reply in its tests, and the docs build all hold to it. How the package itself is laid out,
+tested and changed is **docs/PYTHONIO_PACKAGE.md**.
 
-| Request | The checker | Reply |
-|---|---|---|
-| `{"op": "open", "settings": {...}, "job": {...}, "check": false}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties); with `"check": true`, a check (`invaract.check`): every declared input counts as read, with its declared columns and catalog, and a dry run is not checked | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
-| `{"op": "read", "name": "orders", "format": "parquet", "schema": [...], "csv": {...}}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the `format` the package reads in against the input's (`INPUT_FORMAT_MISMATCH`), the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read, and its format, for every later write and a dry run's draft. A read with no `schema` is one the package has not made because its `format` disagrees with the contract: it is refused on that, or, if nothing about it disagrees, not checked, so its columns are never taken on trust | `{"ok": true}` |
-| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...], "partitionBy": ["region"], "partitionOverwriteMode": "static"}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses; the layout (`partitionBy`, empty for none; `partitionOverwriteMode`, `static` when absent) against the output's partition keys (`OUTPUT_PARTITIONING_MISMATCH`) | `{"ok": true}` |
-| `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
-| `{"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [...]}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event; with `runtimeDataQuality` on, `checks` holds what the package found for each of the output's data checks, in the order `open` sent them (`{"failed": 2, "examples": ["-3"]}`), and a check with failing rows is refused (`RUNTIME_DATA_QUALITY_VIOLATION`); a package that reports a different number of checks is not checked | `{"ok": true}` |
-| `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
-
-A refusal is `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`. A request the checker cannot check
-(a missing contract file, an unknown setting, a malformed request, a `written` with no `write` before it) gets
-`{"ok": false, "status": "not-checked", "reason": ...}`, which the package treats as a refusal, so nothing is published
-unchecked.
-
-**Why two requests per write.** The columns and their types are known before any data is written, so a write that cannot pass
-is refused before the job spends time staging it. Whether a required column holds an empty value is known only once the data
-has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so Arrow's flag
-cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a refusal; the
-`written` check is the verdict on the whole write.
-
-**`catalog`.** A read or write of a catalog table also carries the catalog it is registered in:
-`"catalog": {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}`, which the package
-sends for an Iceberg dataset (its location, `<catalog>.<namespace>.<table>`, names them), and as
-`{"technology": "jdbc", "catalogName": <database>, "namespace": [<schema>], "table": <table>}` for a PostgreSQL table. The checker puts it on the plan's
-read or write, where the contract's `catalog:` requirement is checked as on every engine (`catalog-*` cases). Files and Delta
-tables, named by their path, carry none, so a requirement on them is never met. The catalog service's own address is not sent,
-since a catalog URI can hold credentials.
-
-**`location` with a contract in force.** A job migrated from a dry run may still say where it reads and writes
-(`location=`). The checker then checks that location like any other, so an argument left behind cannot point a read or a write
-somewhere the contract does not declare (`location-given-agrees`, `read-location-disagrees-refused`,
-`write-location-disagrees-refused`).
-
-**Dry-run mode** (`INVARACT_DRY_RUN=true`). There is no contract, so `read` and `write` carry the job's own `location` and
-`format`. Every write is let through, each staged one gets a draft contract (`CONTRACT_INFERENCE`, with its self-check), and
-`finish` merges them into one draft for the job, named after it (`DRY_RUN_SUMMARY`), as Spark's and Beam's dry runs do.
+**Why two requests per write.** The columns and their types are known before any data is written, so a write that cannot
+pass is refused before the job spends time staging it. Whether a required column holds an empty value is known only once
+the data has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so
+Arrow's flag cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a
+refusal; the `written` check is the verdict on the whole write.
 
 ## Milestone 0: the checker as a native program
 
@@ -110,7 +80,10 @@ program with the 1 s limit, and the size check. It uploads the program.
 
 **What the native program cannot do** (design section 4): load a class named in configuration that was not built into it. That
 covers a team's own notification sink, custom rule verifiers, custom policy evaluators, and a registry client named by
-`INVARACT_REGISTRY_CLIENT_CLASS`. The `registry` case is therefore JVM-only: its stub client lives in the tests. A team that
+`INVARACT_REGISTRY_CLIENT_CLASS`. The default registry client, `HttpContractRegistryClient`, is built in (the checker
+depends on `registry-client` for it), so a `registry://` contract needs nothing installed; the package's tests fetch one
+from a real HTTP registry, against the native program in CI. The `registry` case, whose stub client lives in the tests, is
+JVM-only. A team that
 needs its own plug-ins needs a build that includes them, or the Java route.
 
 **With milestone 1** (2026-11-02) the protocol grew to 40 recorded cases: reads, the two-step write, Arrow's type names, empty
@@ -191,9 +164,9 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `lineage.boundaryResolution` | not-applicable | the note: no checkpoint or cache |
 | `policy.organizational` | supported | attested: `PythonIoProtocolCasesSpec` (the `org-policy-refused` and `org-policy-satisfied` cases) |
 | `config.zeroCodeInstall` | unsupported | the note: a one-time code change by design (decision 1) |
-| `config.locationRefs` | supported | attested: `PythonIoProtocolCasesSpec` (the `location-refs` case) |
-| `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only) |
-| `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases |
+| `config.locationRefs` | supported | `locations-from-map`, `locations-from-map-enforced`, `locations-from-service`, `location-not-in-service`, run through the checker and as real Python jobs (CI also against the native checker); the `location-refs` case |
+| `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry`, against a registry the kit serves, through the client the checker carries (CI also against the native checker); the `registry` case, and the package's `test_run.py` |
+| `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases. A `WRITE` event for each output published and a `JOB_SUMMARY` for each run (2026-11-08): the `published-write-events` and `published-misuse` cases, and the package's tests of Delta, Iceberg and plain-file outputs and of a publish that fails part way |
 | `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |
 
@@ -573,8 +546,17 @@ What was built:
   the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
-- The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
-  verification-core; a Python job sees it too. Left for a wording pass across adapters.
+- The registry client's "not found" message said to add a jar "via spark-submit --jars", which is Spark's wording, in
+  verification-core; a Python job saw it too. It now says to add the jar to the job's classpath, naming `--jars` as Spark's
+  way.
+- A `registry://` contract did not work for a Python job at all (found 2026-11-08, checking the adapter against Spark's
+  ways of naming locations and contracts): the checker had no registry client, the native program cannot load one, and
+  the only test used a stub on the JVM. The checker now carries `HttpContractRegistryClient`, and the package's tests run a
+  job against a real HTTP registry. The same check found that a registry's own error (a contract it does not hold) reached
+  the job, on every engine, as `InvocationTargetException: null`: verification-core now passes on the client's own
+  exception. `ref://` locations needed nothing: the checker resolves them with the same verification-core code as Spark,
+  and the package reads and writes where the `open` reply says, with no resolution of its own; a test now runs a job
+  through `INVARACT_LOCATION_MAP`.
 - The package's help text for `computeFingerprint` said a run with it is refused. Writing the guide's settings table from
   real runs showed it is not: like Beam, the run goes on and the checker logs that no fingerprint is published. Static data
   quality and role consistency are refused when the run opens (`UNSUPPORTED_CONTRACT_FEATURE`). The help text now says so.
@@ -598,6 +580,17 @@ What was built:
   refuses one it does not know.
 - After an overwrite, a Delta table keeps the replaced files for time travel until it is vacuumed; "nothing left behind"
   means no file that no commit ever named.
+- The declaration claimed `reporting.notifications` ("validation and write events"), and the design promised that "the
+  run's event records exactly what was published", but a Python job published no `WRITE` event and no summary, and the
+  declaration's note named a setting that does not exist (`INVARACT_NOTIFICATION_CONFIG` for `INVARACT_NOTIFY_CONFIG`).
+  Found reviewing what the adapter publishes (2026-11-08): the `published` request now reports what each output put in
+  place, and the checker publishes its `WRITE` event and the run's `JOB_SUMMARY`.
+- A plain-file output moved what it replaced aside "for rollback", but nothing rolled back: when a later output failed to
+  publish, the earlier ones stayed replaced and their previous versions were left beside them. `Output.restore` now puts
+  a renamed output back; a commit or a copy that cannot be undone stays published, and its `WRITE` event says so.
+- Events named a job run as `python main.py` `__main__.main`, listed only the libraries imported when the run opened
+  (pandas was usually missing: the package imports it at the first read), and described an output's columns by the
+  nulls this run's data held rather than as the file declares them. Each fixed with the write events.
 
 ## Unverified items
 

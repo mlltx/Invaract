@@ -332,8 +332,10 @@ are in the notification sinks guide.
 `job.jobId` comes from `spark.invaract.jobId` — set it. Spark's own app name is often
 different on every run under a scheduler, so it can't tell you "this is the same job as
 last night"; the `fingerprints` field identifies the transformation itself, which makes
-repeat runs recognizable. Every `spark.invaract.job.metadata.<key>=<value>` conf entry
-arrives as `job.attributes.<key>`; nothing else from your Spark configuration is sent.
+repeat runs recognizable. Every `spark.invaract.job.metadata.<key>=<value>` conf entry, and
+every `key=value` pair in `spark.invaract.jobAttributes`, arrives as `job.attributes.<key>`;
+nothing else from your Spark configuration is sent. Beam and Python jobs take the same job id
+and attributes in their own spelling ([Configuration Settings](/reference/configuration/#reporting)).
 
 ### Tag the draft, and link events back to the run
 

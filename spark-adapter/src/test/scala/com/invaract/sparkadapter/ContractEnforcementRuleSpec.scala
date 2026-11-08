@@ -1127,6 +1127,40 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
+  test("forContract end-to-end: a real write against a ref:// output is resolved via spark.invaract.locationUrl") {
+    // a location service on a free local port, answering as HttpLocationResolver asks:
+    // GET /locations/<id> -> {"location": ...}; every path it was asked is kept
+    val outputPath = scratchDir.resolve("service_end_to_end.parquet").toString
+    val asked = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val service = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    service.createContext("/", (exchange: com.sun.net.httpserver.HttpExchange) => {
+      asked.add(exchange.getRequestURI.getRawPath)
+      val known = exchange.getRequestURI.getRawPath == "/locations/service-output"
+      // JSON-escaped, so a Windows path's backslashes survive
+      val body = (if (known) s"""{"location": "${outputPath.replace("\\", "\\\\")}"}""" else "").getBytes("UTF-8")
+      exchange.sendResponseHeaders(if (known) 200 else 404, if (body.isEmpty) -1 else body.length.toLong)
+      if (body.nonEmpty) exchange.getResponseBody.write(body)
+      exchange.close()
+    })
+    service.start()
+    try {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath)
+      val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+        fail("no analyzed write plan was captured to reuse")
+      )
+      val rule = ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://service-output")))
+      spark.conf.set(ContractEnforcementRule.LocationUrlConfKey, s"http://127.0.0.1:${service.getAddress.getPort}")
+      try {
+        rule(spark)(writePlan) // must not throw: the service resolved ref://service-output to the real write's location
+        val unknown = ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://nobody-knows")))
+        val e = intercept[com.invaract.verification.location.LocationResolutionException](unknown(spark))
+        assert(e.getMessage.contains("could not resolve 'ref://nobody-knows'") && e.getMessage.endsWith("it has no location for that id"))
+      } finally spark.conf.unset(ContractEnforcementRule.LocationUrlConfKey)
+      assert(asked.toArray.toList == List("/locations/service-output", "/locations/nobody-knows"))
+    } finally service.stop(0)
+  }
+
   // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14 - the Spark contract
   // extension surfacing a computed fingerprint through its two existing
   // output channels, opt-in via VerificationOptions.computeFingerprint.
@@ -4278,6 +4312,22 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(job.runId.contains(spark.sparkContext.applicationId))
     assert(job.attributes == Map("team" -> "data-eng"))
     assert(event.runId == job.runId)
+  }
+
+  test("job: spark.invaract.jobAttributes adds the platform's facts to every event; a per-key job.metadata setting wins") {
+    val plan = capturedWritePlan("job_attributes.parquet")
+    val outputPath = scratchDir.resolve("job_attributes.parquet").toString
+    val sink = new TestNotificationSink
+    spark.conf.set("spark.invaract.jobAttributes", "team=orders, dag=orders_daily")
+    spark.conf.set(DryRunReporter.JobMetadataConfPrefix + "team", "data-eng")
+    try {
+      val rule = ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", outputPath)), VerificationOptions(), sink)
+      rule(spark)(plan)
+    } finally {
+      spark.conf.unset("spark.invaract.jobAttributes")
+      spark.conf.unset(DryRunReporter.JobMetadataConfPrefix + "team")
+    }
+    assert(validationEventsOf(sink).last.job.map(_.attributes) == Some(Map("team" -> "data-eng", "dag" -> "orders_daily")))
   }
 
   test("job: a rejected write's FAILED event names the job as well") {

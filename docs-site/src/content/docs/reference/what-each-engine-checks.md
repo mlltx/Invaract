@@ -416,7 +416,7 @@ Where an engine does not do it: The job's own code has to install Invaract. [Rea
 
 ### Locations resolved when the job starts
 
-A contract can name a location as `ref://<id>`, resolved from a mapping file when the job starts, so one contract works in every environment.
+A contract can name a location as `ref://<id>`, resolved from a mapping file or a location service when the job starts, so one contract works in every environment.
 
 Where an engine does not do it: Contracts must name real locations. [Read more](/guides/resolving-dataset-locations/)
 

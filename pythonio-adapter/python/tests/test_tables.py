@@ -249,6 +249,27 @@ def test_iceberg_save_modes_on_a_table_with_rows(catalog, mode, expected, snapsh
     assert regions == expected and len(table.snapshots()) == snapshots
 
 
+@pytest.mark.parametrize("mode", ["append", "ignore"])
+def test_an_iceberg_outputs_write_event_names_the_snapshot_its_commit_made(catalog, monkeypatch, mode):
+    from conftest import events, notify_to_file
+
+    existing_iceberg(catalog)
+    notify_to_file(monkeypatch)
+    write_contract(outputs=output(location=ICEBERG, fmt="iceberg", save_mode=mode))
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    written = [e for e in events() if e["eventType"] == "WRITE"]
+    if mode == "ignore":
+        # a table that holds rows is left as it is: nothing was written, so there is no write event
+        assert written == []
+        return
+    (event,) = written
+    table = catalog.load_table("sales.report")
+    assert event["icebergSnapshotId"] == table.current_snapshot().snapshot_id
+    assert (event["location"], event["rowCount"], event["fileCount"], event["deltaVersion"]) == (ICEBERG, 2, 1, None)
+    assert event["catalog"] == {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}
+
+
 def test_iceberg_error_refuses_a_table_with_rows_and_commits_nothing(catalog):
     existing_iceberg(catalog)
     write_contract(outputs=output(location=ICEBERG, fmt="iceberg", save_mode="error"))
@@ -485,15 +506,19 @@ def test_a_job_writing_delta_to_object_storage_exits_when_it_ends(s3, tmp_path):
 
 
 def test_a_dry_run_writes_a_delta_table_where_the_job_says_and_drafts_its_contract(monkeypatch):
-    from conftest import events, notify_to_file
+    from conftest import event_of, notify_to_file
 
     notify_to_file(monkeypatch)
     monkeypatch.setenv("INVARACT_DRY_RUN", "true")
     with invaract.run():
         invaract.write(REPORT, "report", location="data/out/report", format="delta")
     assert [r["region"] for r in delta_rows()[0]] == ["north", "south"]
-    draft = events()[-1]["mergedContractYaml"]
+    draft = event_of("DRY_RUN_SUMMARY")["mergedContractYaml"]
     assert "location: data/out/report" in draft and "format: delta" in draft
+    # the table's first commit, as its write event says
+    written = event_of("WRITE")
+    assert (written["format"], written["deltaVersion"], written["fileCount"], written["rowCount"]) == ("delta", 0, 1, 2)
+    assert written["bytesWritten"] > 0 and written["icebergSnapshotId"] is None
 
 
 # ---- HDFS: the same staging and rename, through a pyarrow file system --------------------------------------------------

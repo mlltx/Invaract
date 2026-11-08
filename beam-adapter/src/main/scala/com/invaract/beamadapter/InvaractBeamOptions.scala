@@ -39,6 +39,14 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractLocationMap: String
   def setInvaractLocationMap(value: String): Unit
 
+  @Description("Base URL of a location service that ref://<id> locations the location map does not hold are asked of (GET <url>/locations/<id>).")
+  def getInvaractLocationUrl: String
+  def setInvaractLocationUrl(value: String): Unit
+
+  @Description("Name of the environment variable holding the location service's bearer token (the name, never the token).")
+  def getInvaractLocationTokenEnv: String
+  def setInvaractLocationTokenEnv(value: String): Unit
+
   @Description("Path of an organizational policy document layered on the contract.")
   def getInvaractOrgPolicy: String
   def setInvaractOrgPolicy(value: String): Unit
@@ -74,6 +82,14 @@ trait InvaractBeamOptions extends PipelineOptions {
   @Description("Comma-separated names of steps the platform trusts not to move governed data (a metrics or a notification step), * for any run of characters: a step that ends the pipeline without a recognised write is not refused when named here.")
   def getInvaractTrustedSteps: String
   def setInvaractTrustedSteps(value: String): Unit
+
+  @Description("The job's stable identity across runs, named by every event (job.jobId), where --jobName may change from run to run.")
+  def getInvaractJobId: String
+  def setInvaractJobId(value: String): Unit
+
+  @Description("Facts about this run every event carries (job.attributes): comma-separated key=value pairs, such as team=orders,dag=orders_daily.")
+  def getInvaractJobAttributes: String
+  def setInvaractJobAttributes(value: String): Unit
 
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
@@ -117,6 +133,8 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.RegistryUrl            => options.getInvaractRegistryUrl
       case InvaractConf.RegistryClientClass    => options.getInvaractRegistryClientClass
       case InvaractConf.LocationMap            => options.getInvaractLocationMap
+      case InvaractConf.LocationUrl            => options.getInvaractLocationUrl
+      case InvaractConf.LocationTokenEnv       => options.getInvaractLocationTokenEnv
       case InvaractConf.OrgPolicy              => options.getInvaractOrgPolicy
       case InvaractConf.OrgPolicyOverlays      => options.getInvaractOrgPolicyOverlays
       case InvaractConf.RejectUndeclaredInputs => options.getInvaractRejectUndeclaredInputs
@@ -126,6 +144,8 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.RoleConsistency        => options.getInvaractRoleConsistency
       case InvaractConf.RuntimeDataQuality     => options.getInvaractRuntimeDataQuality
       case InvaractConf.TrustedSteps           => options.getInvaractTrustedSteps
+      case InvaractConf.JobId                  => options.getInvaractJobId
+      case InvaractConf.JobAttributes          => options.getInvaractJobAttributes
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 

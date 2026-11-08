@@ -1,6 +1,7 @@
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
 {"op": "read", "name": "orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "read", "name": "customers", "schema": [{"name": "customer_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}
 {"op": "written", "name": "report", "nulls": {"region": 0, "total": 0, "lines": 7}}
 {"op": "finish", "completed": false}
+{"op": "published", "outputs": []}

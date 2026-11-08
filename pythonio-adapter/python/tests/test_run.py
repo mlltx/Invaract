@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """A run against a real checker: what is read, what is refused and when, and what is published."""
+import contextlib
+import http.server
+import json
 import os
+import shlex
+import threading
 
 import pandas as pd
 import pyarrow as pa
@@ -9,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import invaract
-from conftest import events, notify_to_file, output, write_contract
+from conftest import event_of, events, notify_to_file, output, write_contract
 
 REPORT = pd.DataFrame({"region": ["north", "south"], "total": [10, 20]})
 
@@ -288,6 +293,146 @@ def test_a_location_that_disagrees_with_the_contract_is_refused():
     assert not os.path.exists("data/out/report_old") and published() == ([], [])
 
 
+def test_ref_locations_resolve_through_the_platforms_location_map(monkeypatch):
+    # the contract names its datasets by id; the platform maps each id to where it is in this environment, and the job reads
+    # and writes there without naming a path (the same resolution, in verification-core, as Spark's and Beam's)
+    orders = orders_input().replace("location: data/in/orders", "location: ref://orders_in")
+    write_contract(inputs=orders, outputs=output(location="ref://report_out"))
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write(f"orders_in={os.path.abspath('data/in/orders')}\nreport_out={os.path.abspath('data/out/report')}\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    with invaract.run("contract.yaml") as run:
+        assert [d["location"] for d in run.contract["inputs"] + run.contract["outputs"]] == [
+            os.path.abspath("data/in/orders"), os.path.abspath("data/out/report")]
+        orders = invaract.read("orders")
+        invaract.write(orders.groupby("region", as_index=False).size().rename(columns={"size": "total"}), "report")
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [1, 1]}
+    assert not os.path.exists("ref:"), "nothing is written under the unresolved name"
+
+
+def test_a_ref_location_the_map_does_not_hold_is_not_checked_and_names_the_ids_it_does(monkeypatch):
+    report_contract(location="ref://report_out")
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write("orders_in=/data/orders\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    with pytest.raises(invaract.CheckNotRun) as not_checked:
+        with invaract.run("contract.yaml"):
+            pass
+    assert "ref://report_out" in str(not_checked.value) and "orders_in" in str(not_checked.value)
+    assert "INVARACT_LOCATION_MAP" in str(not_checked.value), "the setting is named as the job's environment spells it"
+
+
+@contextlib.contextmanager
+def contract_registry(contracts):
+    """A contract registry on a free local port, serving each ``(id, version) -> YAML`` in ``contracts`` as the registry's
+    HTTP API does (``GET /contracts/<id>/versions/<version>``): its base URL, and the paths asked for."""
+    asked = []
+
+    class Registry(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append(self.path)
+            parts = self.path.strip("/").split("/")
+            served = contracts.get((parts[1], parts[3])) if len(parts) == 4 and parts[0] == "contracts" else None
+            body = (served or "not found").encode("utf-8")
+            self.send_response(200 if served else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Registry)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_registry_contract_is_fetched_from_the_registry_the_platform_names(monkeypatch):
+    # the checker carries the default registry client: a Python job has no classpath a platform could add one to
+    with open(report_contract(), encoding="utf-8") as f:
+        served = f.read()
+    os.remove("contract.yaml")
+    with contract_registry({("test_contract", "1.0.0"): served}) as (url, asked):
+        monkeypatch.setenv("INVARACT_CONTRACT", "registry://test_contract@1.0.0")
+        monkeypatch.setenv("INVARACT_REGISTRY_URL", url)
+        with invaract.run() as run:
+            assert (run.contract["id"], run.contract["version"]) == ("test_contract", "1.0.0")
+            invaract.write(REPORT, "report")
+    assert asked == ["/contracts/test_contract/versions/1.0.0"]
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [10, 20]}
+
+
+def test_a_registry_contract_the_registry_does_not_hold_is_not_checked(monkeypatch):
+    with contract_registry({}) as (url, _):
+        monkeypatch.setenv("INVARACT_CONTRACT", "registry://test_contract@9.9.9")
+        monkeypatch.setenv("INVARACT_REGISTRY_URL", url)
+        with pytest.raises(invaract.CheckNotRun) as not_checked:
+            with invaract.run():
+                pass
+    # the registry client's own message, not the reflective call's wrapper around it
+    assert "No contract registered for id 'test_contract' at version '9.9.9'" in str(not_checked.value)
+
+
+@contextlib.contextmanager
+def location_service(locations):
+    """A location service on a free local port, answering ``GET /locations/<id>`` with ``{"location": ...}`` for each id in
+    ``locations`` and 404 for any other: its base URL, and each request's ``(path, Authorization header)``."""
+    asked = []
+
+    class Service(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append((self.path, self.headers.get("Authorization")))
+            known = self.path.startswith("/locations/") and self.path[len("/locations/"):] in locations
+            body = json.dumps({"location": locations[self.path[len("/locations/"):]]}).encode("utf-8") if known else b""
+            self.send_response(200 if known else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Service)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ref_locations_resolve_through_the_platforms_location_service(monkeypatch):
+    # the same resolution as Spark's and Beam's (verification-core's HttpLocationResolver): GET <url>/locations/<id>, with the
+    # bearer token from the variable INVARACT_LOCATION_TOKEN_ENV names; the location map, when set too, is asked first
+    orders = orders_input().replace("location: data/in/orders", "location: ref://orders_in")
+    write_contract(inputs=orders, outputs=output(location="ref://report_out"))
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write(f"orders_in={os.path.abspath('data/in/orders')}\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    monkeypatch.setenv("LOCATIONS_TOKEN", "s3cr3t")
+    monkeypatch.setenv("INVARACT_LOCATION_TOKEN_ENV", "LOCATIONS_TOKEN")
+    with location_service({"report_out": os.path.abspath("data/out/report")}) as (url, asked):
+        monkeypatch.setenv("INVARACT_LOCATION_URL", url)
+        with invaract.run("contract.yaml"):
+            invaract.write(invaract.read("orders").groupby("region", as_index=False).size().rename(columns={"size": "total"}), "report")
+    assert asked == [("/locations/report_out", "Bearer s3cr3t")], "orders_in came from the map; only report_out was asked"
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [1, 1]}
+
+
+def test_a_ref_location_the_service_does_not_hold_is_not_checked(monkeypatch):
+    report_contract(location="ref://report_out")
+    with location_service({}) as (url, _):
+        monkeypatch.setenv("INVARACT_LOCATION_URL", url)
+        with pytest.raises(invaract.CheckNotRun) as not_checked:
+            with invaract.run("contract.yaml"):
+                pass
+    assert f"could not resolve 'ref://report_out' ({url}/locations/report_out): it has no location for that id" in str(not_checked.value)
+
+
 def test_a_read_location_that_disagrees_with_the_contract_is_refused():
     write_contract(inputs=orders_input(), outputs=output())
     with pytest.raises(invaract.ContractViolation) as refused:
@@ -324,7 +469,7 @@ def test_a_dry_runs_draft_declares_the_format_each_input_was_read_in(monkeypatch
     with invaract.run(name="orders_job.main"):
         invaract.read("orders", location="data/in/orders")
         invaract.write(REPORT, "report", location="data/out/report")
-    assert "location: data/in/orders\n  format: parquet\n" in events()[-1]["mergedContractYaml"]
+    assert "location: data/in/orders\n  format: parquet\n" in event_of("DRY_RUN_SUMMARY")["mergedContractYaml"]
 
 
 def test_a_format_or_save_mode_that_disagrees_with_the_contract_is_refused():
@@ -371,6 +516,17 @@ def test_append_adds_files_named_after_the_run_and_keeps_what_was_there():
     files, leftovers = published()
     assert files[0] == "old.parquet" and len(files) == 2 and run.run_id in files[1] and leftovers == []
     assert pq.read_table("data/out/report").num_rows == 3
+
+
+def test_one_output_written_twice_in_a_run_publishes_both_writes():
+    existing()
+    report_contract(save_mode="overwrite")
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "report")
+    files, leftovers = published()
+    assert len(files) == 2 and all(run.run_id in f for f in files) and leftovers == []
+    assert pq.read_table("data/out/report").num_rows == 2 * len(REPORT)
 
 
 def test_append_to_an_output_that_does_not_exist_yet():
@@ -439,9 +595,12 @@ def test_a_dry_run_reads_and_writes_where_the_job_says_and_infers_a_contract(mon
     assert orders.column_names == ["order_id", "region", "extra"], "with no contract, every column"
     assert pq.read_table("data/out/report").num_rows == 2
     kinds = [e["eventType"] for e in events()]
-    assert kinds == ["CONTRACT_INFERENCE", "DRY_RUN_SUMMARY"]
-    summary = events()[-1]
+    assert kinds == ["CONTRACT_INFERENCE", "DRY_RUN_SUMMARY", "WRITE", "JOB_SUMMARY"]
+    summary = event_of("DRY_RUN_SUMMARY")
     assert "data/out/report" in summary["mergedContractYaml"] and "data/in/orders" in summary["mergedContractYaml"]
+    # what a dry run really writes is still a write: it has no contract to name
+    written = event_of("WRITE")
+    assert (written["contract"], written["location"], written["rowCount"], written["fileCount"]) == (None, "data/out/report", 2, 1)
 
 
 def test_a_dry_run_read_or_write_with_no_location_is_not_checked(monkeypatch):
@@ -470,13 +629,71 @@ def test_the_events_name_the_engine_the_job_python_and_its_libraries(monkeypatch
     assert job["engineDetails"]["pyarrow"] == pa.__version__ and job["engineDetails"]["pandas"] == pd.__version__
 
 
+def test_a_platform_names_the_job_and_its_run_in_every_event_from_the_environment(monkeypatch):
+    report_contract()
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_JOB_ID", "orders_nightly")
+    monkeypatch.setenv("INVARACT_JOB_ATTRIBUTES", "team=orders,dag=orders_daily")
+    with invaract.run("contract.yaml", name="orders_job.main"):
+        invaract.write(REPORT, "report")
+    jobs = [e["job"] for e in events()]
+    assert [e["eventType"] for e in events()] == ["CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY"]
+    assert all((j["jobId"], j["name"], j["attributes"]) == ("orders_nightly", "orders_job.main", {"team": "orders", "dag": "orders_daily"})
+               for j in jobs)
+
+
+def test_malformed_job_attributes_are_not_checked_and_name_the_variable(monkeypatch):
+    report_contract()
+    monkeypatch.setenv("INVARACT_JOB_ATTRIBUTES", "team=orders,dag")
+    with pytest.raises(invaract.CheckNotRun, match="INVARACT_JOB_ATTRIBUTES.*'dag' is not key=value"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+    assert published() == ([], [])
+
+
+def test_the_events_list_each_installed_data_library_whether_or_not_the_job_has_imported_it_yet(monkeypatch):
+    import importlib.metadata
+    import sys
+
+    from invaract import _run
+
+    report_contract()
+    notify_to_file(monkeypatch)
+    monkeypatch.delitem(sys.modules, "polars", raising=False)
+    with invaract.run("contract.yaml"):
+        invaract.write(REPORT, "report")
+    details = events()[0]["job"]["engineDetails"]
+    installed = {}
+    for library in _run.LIBRARIES:
+        try:
+            installed[library] = importlib.metadata.version(library)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    assert details == installed and {"pyarrow", "pandas"} <= set(details)
+
+
+def test_a_jobs_name_is_its_function_s_module_and_name_or_for_a_script_the_script_s(monkeypatch):
+    from invaract import _run
+
+    def main():
+        pass
+
+    assert _run._function_name(main) == f"{__name__}.test_a_jobs_name_is_its_function_s_module_and_name_or_for_a_script_the_script_s.<locals>.main"
+    main.__module__ = "__main__"
+    monkeypatch.setattr(_run, "_script_name", lambda: "main.py")
+    assert _run._function_name(main).startswith("main.test_a_jobs_name")
+    # python -m orders_job.main: the module's own name, which a dot does not end
+    monkeypatch.setattr(_run, "_script_name", lambda: "orders_job.main")
+    assert _run._function_name(main).startswith("orders_job.main.test_a_jobs_name")
+
+
 def test_the_checker_is_closed_and_its_events_delivered_even_when_the_job_fails(monkeypatch):
     report_contract()
     notify_to_file(monkeypatch)
     with pytest.raises(invaract.ContractViolation):
         with invaract.run("contract.yaml"):
             invaract.write(REPORT.astype({"total": str}), "report")
-    assert [e["status"] for e in events()] == ["FAILED"]
+    assert [(e["eventType"], e.get("status")) for e in events()] == [("CONTRACT_VALIDATION", "FAILED"), ("JOB_SUMMARY", None)]
 
 
 # a run that cannot be checked raises CheckNotRun, and publishes nothing
@@ -513,6 +730,97 @@ def test_a_checker_whose_reply_is_not_json_is_not_checked(monkeypatch):
     with pytest.raises(invaract.CheckNotRun, match="answered 'open' with 'not-a-reply', which is not a reply"):
         with invaract.run("contract.yaml"):
             pass
+
+
+@pytest.mark.parametrize("reply, speaks", [('{"ok": true, "mode": "enforce"}', "unknown"),
+                                           ('{"ok": true, "protocol": 2, "mode": "enforce"}', "2")])
+def test_a_checker_from_another_release_is_not_checked_against(monkeypatch, reply, speaks):
+    # a checker older than the protocol's version, or newer, could read the package's requests otherwise than meant
+    from invaract import _checker
+    from conftest import UNCHECKED_ASK
+
+    monkeypatch.setattr(_checker.Checker, "ask", UNCHECKED_ASK)
+    with open("checker.sh", "w", encoding="utf-8") as f:
+        # it answers the open as a checker of another release would, then any finish as every checker does
+        f.write(f"read request\necho {shlex.quote(reply)}\nwhile read request; do echo '{{\"ok\": true, \"publish\": false}}'; done\n")
+    monkeypatch.setenv("INVARACT_CHECKER", "sh checker.sh")
+    with pytest.raises(invaract.CheckNotRun) as not_run:
+        with invaract.run("contract.yaml"):
+            pass
+    assert f"speaks protocol version {speaks}, and this package version 1" in str(not_run.value)
+    assert "(sh checker.sh)" in str(not_run.value) and "from the same release" in str(not_run.value)
+
+
+def _failing_publish(monkeypatch, failing="audit"):
+    """Makes publishing the output at ``data/out/<failing>`` fail, as a full disk would."""
+    from invaract import _files
+
+    publish = _files.RenamedOutput.publish
+
+    def fails(out):
+        if out.target.endswith(failing):
+            raise OSError("no space left on device")
+        return publish(out)
+
+    monkeypatch.setattr(_files.RenamedOutput, "publish", fails)
+
+
+def two_outputs():
+    existing()
+    write_contract(outputs=output() + output(name="audit", location="data/out/audit"))
+
+
+def test_a_publish_that_fails_part_way_puts_back_what_it_had_published(monkeypatch):
+    two_outputs()
+    notify_to_file(monkeypatch)
+    _failing_publish(monkeypatch)
+    with pytest.raises(OSError, match="no space left on device"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT, "audit")
+    # the report, published first, is as it was before the run, and nothing is left beside either output
+    assert published() == (["old.parquet"], []) and published("data/out/audit") == ([], [])
+    assert [e["eventType"] for e in events()] == ["CONTRACT_VALIDATION", "CONTRACT_VALIDATION", "JOB_SUMMARY"]
+    assert event_of("JOB_SUMMARY")["totalWrites"] == 0
+
+
+def test_an_output_whose_storage_cannot_undo_a_publish_stays_published_and_its_write_event_says_so(monkeypatch):
+    from invaract import _files
+
+    two_outputs()
+    notify_to_file(monkeypatch)
+    _failing_publish(monkeypatch)
+    # as a Delta or Iceberg commit, a copy to object storage or a database transaction is: done once made
+    monkeypatch.setattr(_files.RenamedOutput, "restore", lambda out: False)
+    with pytest.raises(OSError, match="no space left on device"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "report")
+            invaract.write(REPORT, "audit")
+    files, _ = published()
+    assert files != ["old.parquet"] and pq.read_table("data/out/report").num_rows == len(REPORT)
+    written = event_of("WRITE")
+    assert (written["location"], written["rowCount"], written["fileCount"]) == ("data/out/report", len(REPORT), 1)
+    assert event_of("JOB_SUMMARY")["totalWrites"] == 1
+
+
+def test_a_passing_run_publishes_a_write_event_for_each_output_and_a_summary(monkeypatch):
+    two_outputs()
+    notify_to_file(monkeypatch)
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "audit")
+    kinds = [e["eventType"] for e in events()]
+    assert kinds == ["CONTRACT_VALIDATION"] * 3 + ["WRITE", "WRITE", "JOB_SUMMARY"]
+    report, audit = [e for e in events() if e["eventType"] == "WRITE"]
+    # one event per output, however many writes staged it, in the order first written
+    assert (report["location"], report["rowCount"], report["fileCount"], audit["location"], audit["rowCount"]) == (
+        "data/out/report", 2 * len(REPORT), 2, "data/out/audit", len(REPORT))
+    assert report["bytesWritten"] == sum(os.path.getsize(os.path.join("data/out/report", f)) for f in os.listdir("data/out/report"))
+    assert report["runId"] == run.run_id and report["job"]["engine"] == "pythonio" and report["durationMs"] >= 0
+    assert [(f["name"], f["type"], f["nullable"]) for f in report["schema"]] == [("region", "string", False), ("total", "long", False)]
+    summary = event_of("JOB_SUMMARY")
+    assert (summary["totalWrites"], summary["checksPassed"], summary["checksFailed"], summary["totalViolations"]) == (2, 3, 0, 0)
 
 
 def test_an_output_that_cannot_be_discarded_leaves_neither_the_others_nor_the_checker_behind(monkeypatch):

@@ -158,6 +158,7 @@ capabilities:
       not pass its command line to Beam, bypasses it; a job submitted without the package, or without Java, does not start.
   config.locationRefs:
     status: supported
+    note: Resolved from --invaract_location_map (a .properties file) and --invaract_location_url (a location service), the map first.
   config.contractRegistry:
     status: supported
   reporting.notifications:

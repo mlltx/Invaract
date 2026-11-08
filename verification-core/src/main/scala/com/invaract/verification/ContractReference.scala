@@ -5,7 +5,7 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, ContractVersion}
 
-import java.lang.reflect.Method
+import java.lang.reflect.{InvocationTargetException, Method}
 
 /** Turns the value of the `contract` setting into a `Contract`: a file path
   * (`ContractParser.parseFile`), or a `registry://<id>@<version>` reference
@@ -73,12 +73,18 @@ object ContractReference {
       if (version == LatestVersion) method(clientClass, className, "getLatest", classOf[String])
       else method(clientClass, className, "get", classOf[String], classOf[ContractVersion])
     val client = construct(clientClass, className)
-    configure.invoke(client, registryUrl)
+    call(configure, client, registryUrl)
     val fetched =
-      if (version == LatestVersion) fetch.invoke(client, contractId)
-      else fetch.invoke(client, contractId, ContractVersion.parse(version))
+      if (version == LatestVersion) call(fetch, client, contractId)
+      else call(fetch, client, contractId, ContractVersion.parse(version))
     fetched.asInstanceOf[Contract]
   }
+
+  /** `m` called on `client`, throwing what the client's own method threw (a contract the registry does not hold, a registry
+    * it cannot reach), with its message, rather than the reflection wrapper around it, whose message is empty. */
+  private def call(m: Method, client: AnyRef, args: AnyRef*): AnyRef =
+    try m.invoke(client, args: _*)
+    catch { case e: InvocationTargetException if e.getCause != null => throw e.getCause }
 
   /** Loaded without initialising it: a name that is not a registry client must not get to run its static initialiser. */
   private def loadClientClass(className: String): Class[_] =
@@ -87,7 +93,7 @@ object ContractReference {
       case e: ClassNotFoundException =>
         throw new IllegalStateException(
           s"Could not find registry client class '$className' on the classpath - " +
-            "add the invaract-registry-client jar via spark-submit --jars.",
+            "add the jar that holds it to the job's classpath (on Spark, with --jars).",
           e
         )
       case e: LinkageError =>

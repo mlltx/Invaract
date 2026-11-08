@@ -31,6 +31,7 @@ from apache_beam.transforms import window
 from apache_beam.typehints.row_type import RowTypeConstraint
 
 from invaract_beam import CheckNotRun, ContractViolation
+from invaract_beam.runner import checker_arguments
 
 # The exit statuses the adapter reads: the contract refused the job, or it could not be checked. 0 is a job that ran.
 REFUSED = 10
@@ -232,9 +233,19 @@ def main(argv):
         return REFUSED
     except CheckNotRun as e:
         print(e)
+        # what stopped the job, apart from the log it printed around it
+        with open(os.path.join(job["root"], "stopped.txt"), "w") as f:
+            f.write(str(e))
         return NOT_CHECKED
     return 0
 
 
+def forwarded(argv):
+    """Prints the arguments the package hands its checker for a job given the flags ``argv``, one per line: what the
+    conformance kit's settings check reads back, to see each setting reach the checker."""
+    print("\n".join(checker_arguments("pipeline.pb", PipelineOptions(argv))))
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(forwarded(sys.argv[2:]) if sys.argv[1:2] == ["--forwarded"] else main(sys.argv))

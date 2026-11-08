@@ -5,8 +5,8 @@ package com.invaract.pythonioadapter
 
 import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalSchema, LogicalType}
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ColumnSource, ConformanceAdapter, EnvironmentUnavailable, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput}
-import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ColumnSource, ConformanceAdapter, EnvironmentUnavailable, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, VerificationOptions}
 import com.invaract.verification.notification.NotificationJson
 import org.yaml.snakeyaml.Yaml
 
@@ -44,7 +44,7 @@ class PythonIoPackageConformanceAdapter extends ConformanceAdapter {
     try {
       val events = root.resolve("events.jsonl")
       val settings = Map(
-        "INVARACT_CHECKER" -> s"$javaCommand @${slashes(checkerArguments)} ${PythonIoCheck.getClass.getName.stripSuffix("$")}",
+        "INVARACT_CHECKER" -> checkerCommand,
         "INVARACT_CONTRACT" -> slashes(write(root, "contract.yaml", ContractParser.write(registeredAsIceberg(contract, job)))),
         "INVARACT_NOTIFY_CONFIG" -> slashes(write(root, "sink.properties",
           s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${slashes(events)}\n"))
@@ -63,6 +63,36 @@ class PythonIoPackageConformanceAdapter extends ConformanceAdapter {
 
   /** The package hands the checker no plan, only reads and writes; lineage and sensitivity are declared unsupported. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+
+  /** The job run with the settings alone, as `INVARACT_<SETTING>` variables in its environment. What stopped it is the message
+    * the package raised (`CheckNotRun`), which the job writes apart from the log around it. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    environment.left.foreach(why => throw new EnvironmentUnavailable(why))
+    val root = Files.createTempDirectory("pythonio-conformance-")
+    try {
+      val variables = settings.map { case (name, value) => PythonIoConfigSource.variable(name) -> value } + ("INVARACT_CHECKER" -> checkerCommand)
+      val (status, output) = python(List(new File("python/tests/conformance_job.py").getAbsolutePath, slashes(write(root, "job.json", jobJson(scenarioId, contract, job)))), root, variables)
+      val stopped = root.resolve("stopped.txt")
+      status match {
+        case 0 | Refused                   => Some(AttachedRun.Ran)
+        case _ if Files.exists(stopped)    => Some(AttachedRun.Stopped(new String(Files.readAllBytes(stopped), StandardCharsets.UTF_8)))
+        case other                         => throw new IllegalStateException(s"the Python job stopped with exit status $other (not a refusal by its contract):\n$output")
+      }
+    } finally deleteQuietly(root)
+  }
+
+  /** The settings as the package reads them from the job's environment (`invaract._settings.from_environment`, asked of the
+    * package itself) and hands to its checker, read as the checker reads them. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] = {
+    environment.left.foreach(why => throw new EnvironmentUnavailable(why))
+    val variables = settings.map { case (name, value) => PythonIoConfigSource.variable(name) -> value }
+    val (status, output) = python(List("-c", "import json, invaract._settings as s; print(json.dumps(s.from_environment()))"), new File(".").toPath, variables)
+    require(status == 0, s"the package could not say which settings it reads (exit status $status):\n$output")
+    val read = new Yaml().load[java.util.Map[String, AnyRef]](output.trim.split("\n").last).asScala.map { case (k, v) => k -> String.valueOf(v) }.toMap
+    Some(new PythonIoConfigSource(read))
+  }
+
+  override def inapplicableSettings: Map[String, String] = PythonIoConformanceAdapter.Inapplicable
 }
 
 private[pythonioadapter] object PythonIoPackageConformanceAdapter {
@@ -178,6 +208,12 @@ private[pythonioadapter] object PythonIoPackageConformanceAdapter {
   val PythonPath: String = new File("python").getAbsolutePath
 
   val javaCommand: String = slashes(new File(System.getProperty("java.home"), "bin/java").toPath)
+
+  /** The checker the jobs run: `INVARACT_TEST_CHECKER` when set (CI sets it to the native checker the package's wheels carry,
+    * so the scenarios run against what ships), else this test run's own `PythonIoCheck` on the JVM. */
+  lazy val checkerCommand: String =
+    sys.env.get("INVARACT_TEST_CHECKER").filter(_.trim.nonEmpty)
+      .getOrElse(s"$javaCommand @${slashes(checkerArguments)} ${PythonIoCheck.getClass.getName.stripSuffix("$")}")
 
   /** An argument file (`java @file`) giving the checker this test run's own classpath. */
   lazy val checkerArguments: Path = {

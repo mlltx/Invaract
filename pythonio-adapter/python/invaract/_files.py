@@ -19,6 +19,7 @@ storage, its old files deleted); a dynamic overwrite is atomic per partition, no
 
 Any other location (a URI scheme Invaract does not know) is refused, never written somewhere else.
 """
+import contextlib
 import os
 import posixpath
 import shutil
@@ -73,6 +74,9 @@ class LocalFiles:
                 found.append(os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/"))
         return sorted(found)
 
+    def size(self, path):
+        return os.path.getsize(path)
+
     def has_data(self, path):
         """Whether ``path`` holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata
         (``_``)."""
@@ -124,6 +128,9 @@ class ArrowFiles:
     def files(self, root):
         root = root.rstrip("/")
         return sorted(posixpath.relpath(i.path, root) for i in self.listing(root, recursive=True))
+
+    def size(self, path):
+        return self.arrow.get_file_info(path).size
 
     def has_data(self, path):
         import pyarrow.fs as pafs
@@ -189,59 +196,6 @@ class _Closing:
             self._stream.close()
 
 
-def _stage_into(path, fmt, csv, schema, batches, required, files):
-    """Writes the batches to a new file at ``path`` with ``not null`` on each required column, and returns the empty values
-    each column held (``_frames.take``); a write that fails part way leaves no file."""
-    target = _frames.with_required(schema, required)
-    try:
-        out = writer(path, fmt, target, files, csv)
-        try:
-            return _frames.take(schema, target, batches, required, out.write_batch)
-        finally:
-            out.close()
-    except BaseException:
-        files.remove(path)
-        raise
-
-
-def _stage_partitioned(base, prefix, fmt, csv, schema, batches, required, keys, files):
-    """``_stage_into`` for a partitioned output: each batch written under ``base`` in Hive-style folders by ``keys``, as files
-    named ``<prefix>-<batch>-<n>.<extension>``; a write that fails part way leaves none of them."""
-    import pyarrow.dataset as ds
-
-    missing = [k for k in keys if k not in schema.names]
-    if missing:
-        raise CheckNotRun(f"Invaract cannot partition by {', '.join(missing)}: the table has no such column")
-    target = _frames.with_required(schema, required)
-    partitioning = ds.partitioning(pa.schema([target.field(k) for k in keys]), flavor="hive")
-    written = 0
-    # pyarrow's dataset writer lays out the folders; a format it does not write, or writes only one way (CSV with
-    # options), is written to a local scratch folder as Arrow files first, then each file copied into the format by ``writer``
-    direct = fmt in ("parquet", "feather") or (fmt == "csv" and not csv)
-    into, into_fs, kind = (base, files.arrow, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
-
-    def write(batch):
-        nonlocal written
-        written += 1
-        ds.write_dataset(pa.Table.from_batches([batch]), into, format=kind, partitioning=partitioning, filesystem=into_fs,
-                         basename_template=f"{prefix}-{written:05d}-{{i}}.{_formats.extension(fmt)}",
-                         existing_data_behavior="overwrite_or_ignore")
-
-    try:
-        nulls = _frames.take(schema, target, batches, required, write)
-        if not direct:
-            _convert(into, base, fmt, csv, files)
-        return nulls
-    except BaseException:
-        for rel in files.files(base):
-            if posixpath.basename(rel).startswith(prefix):
-                files.remove(files.join(base, rel))
-        raise
-    finally:
-        if not direct:
-            LocalFiles().remove(into)
-
-
 def _convert(scratch, base, fmt, csv, files):
     """Each Arrow file under the local folder ``scratch`` written as ``fmt`` at the same place under ``base`` on ``files``."""
     local = LocalFiles()
@@ -255,6 +209,15 @@ def _convert(scratch, base, fmt, csv, files):
                     out.write_batch(reader.get_batch(i))
             finally:
                 out.close()
+
+
+def _folders(files):
+    """Every folder that holds ``files`` (relative paths), and every folder above it: ``""`` (the top) for all of them."""
+    found = {""}
+    for f in files:
+        parts = posixpath.dirname(f).split("/") if posixpath.dirname(f) else []
+        found.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+    return found
 
 
 def _leaves(files):
@@ -278,22 +241,81 @@ class _FileOutput(_outputs.Output):
         self._writes = 0
 
     def stage(self, schema, batches, required):
-        files = self._staged_on
-        files.make_dir(self.staging)
+        self._staged_on.make_dir(self.staging)
         self._writes += 1
         prefix = f"part-{self.run_id}-{self._writes:05d}"
+        target = _frames.with_required(schema, required)
         if self.layout.keys:
-            return _stage_partitioned(self.staging, prefix, self.fmt, self.csv, schema, batches, required, self.layout.keys, files)
-        path = files.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}")
-        return _stage_into(path, self.fmt, self.csv, schema, batches, required, files)
+            return self._stage_partitioned(prefix, schema, target, batches, required)
+        return self._stage_file(f"{prefix}.{_formats.extension(self.fmt)}", schema, target, batches, required)
+
+    def _stage_file(self, name, schema, target, batches, required):
+        """Writes the batches to a new file ``name`` in ``staging``, as ``target`` (``schema`` with each required column not
+        null), and returns the empty values each column held (``_frames.take``); a write that fails part way leaves no file."""
+        files = self._staged_on
+        path = files.join(self.staging, name)
+        try:
+            out = writer(path, self.fmt, target, files, self.csv)
+            try:
+                return _frames.take(schema, target, batches, required, out.write_batch)
+            finally:
+                out.close()
+        except BaseException:
+            files.remove(path)
+            raise
+
+    def _stage_partitioned(self, prefix, schema, target, batches, required):
+        """``_stage_file`` for a partitioned output: each batch written in Hive-style folders by the layout's keys, as files
+        named ``<prefix>-<batch>-<n>.<extension>``; a write that fails part way leaves none of them."""
+        import pyarrow.dataset as ds
+
+        files, fmt = self._staged_on, self.fmt
+        _outputs.require_columns(schema, self.layout.keys)
+        partitioning = ds.partitioning(pa.schema([target.field(k) for k in self.layout.keys]), flavor="hive")
+        # pyarrow's dataset writer lays out the folders; a format it does not write, or writes only one way (CSV with
+        # options), is written to a local scratch folder as Arrow files first, then each file copied into the format by ``writer``
+        direct = fmt in ("parquet", "feather") or (fmt == "csv" and not self.csv)
+        into, into_fs, kind = (self.staging, files.arrow, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
+        written = 0
+
+        def write(batch):
+            nonlocal written
+            written += 1
+            ds.write_dataset(pa.Table.from_batches([batch]), into, format=kind, partitioning=partitioning, filesystem=into_fs,
+                             basename_template=f"{prefix}-{written:05d}-{{i}}.{_formats.extension(fmt)}",
+                             existing_data_behavior="overwrite_or_ignore")
+
+        try:
+            nulls = _frames.take(schema, target, batches, required, write)
+            if not direct:
+                _convert(into, self.staging, fmt, self.csv, files)
+            return nulls
+        except BaseException:
+            for rel in files.files(self.staging):
+                if posixpath.basename(rel).startswith(prefix):
+                    files.remove(files.join(self.staging, rel))
+            raise
+        finally:
+            if not direct:
+                LocalFiles().remove(into)
 
     def discard(self):
         self._staged_on.remove(self.staging)
 
+    def _staged(self):
+        """``(files, published)``: the files staged (relative to ``staging``), and what publishing them puts in place."""
+        files = self._staged_on.files(self.staging) if self._staged_on.exists(self.staging) else []
+        size = sum(self._staged_on.size(self._staged_on.join(self.staging, rel)) for rel in files)
+        return files, _outputs.Published(files=len(files), bytes=size)
+
 
 class RenamedOutput(_FileOutput):
     """Staged in a hidden folder beside its location (``path`` on ``files``), so that publishing is a rename on the same file
-    system; what a publish replaces is moved aside to ``previous`` until the whole run is published."""
+    system; what a publish replaces is moved aside to ``previous`` until the whole run is published, so that ``restore`` can
+    put it back if a later output fails to publish.
+
+    Each way of publishing (``_append``, ``_replace_partitions``, ``_replace_folder``) returns the function that undoes it,
+    and calls that function itself if it fails part way: a publish is all done, or not done at all."""
 
     def __init__(self, target, path, files, fmt, mode, run_id, layout=_outputs.FLAT, csv=None):
         parent, base = files.path.split(path)
@@ -301,59 +323,108 @@ class RenamedOutput(_FileOutput):
         self.path = path
         self.previous = files.path.join(parent, f".{base}.invaract-previous-{run_id}")
         self._files = files
+        #: what undoes the last publish, for ``restore``; ``None`` before a publish, or when it put nothing in place
+        self._undo = None
 
     def has_data(self):
         return self._files.has_data(self.path)
 
     def publish(self):
-        files = self._files
-        if not files.exists(self.staging):
-            return
+        staged, published = self._staged()
+        if not staged or (self.mode == "ignore" and self.has_data()):
+            self.discard()
+            return None
         if self.mode == "append":
-            staged = files.files(self.staging)
-            for rel in staged:
-                if files.exists(files.join(self.path, rel)):
-                    raise FileExistsError(f"Invaract will not replace {files.join(self.path, rel)} when appending")
-            for rel in staged:
-                files.move(files.join(self.staging, rel), files.join(self.path, rel))
-            self.discard()
-        elif self.mode == "ignore" and self.has_data():
-            self.discard()
+            self._undo = self._append(staged)
         elif self.mode == "overwrite" and self.layout.dynamic:
-            self._replace_partitions(_leaves(files.files(self.staging)))
+            self._undo = self._replace_partitions(_leaves(staged))
         else:
-            if files.exists(self.path):
-                files.move(self.path, self.previous)
-            try:
-                files.move(self.staging, self.path)
-            except BaseException:
-                if files.exists(self.previous):
-                    files.move(self.previous, self.path)
-                raise
-
-    def _replace_partitions(self, leaves):
-        """A dynamic overwrite: each partition folder the run wrote takes the place of the one there (moved aside to
-        ``previous`` until the run is over); one that fails part way puts back the folders already replaced."""
-        files, done = self._files, []
-        try:
-            for leaf in leaves:
-                destination, aside = files.join(self.path, leaf), files.join(self.previous, leaf)
-                if files.exists(destination):
-                    files.move(destination, aside)
-                done.append(leaf)
-                files.move(files.join(self.staging, leaf), destination)
-        except BaseException:
-            for leaf in reversed(done):
-                destination, aside, staged = files.join(self.path, leaf), files.join(self.previous, leaf), files.join(self.staging, leaf)
-                if files.exists(destination) and not files.exists(staged):
-                    files.move(destination, staged)
-                if files.exists(aside):
-                    files.move(aside, destination)
-            raise
+            self._undo = self._replace_folder()
         self.discard()
+        return published
+
+    def restore(self):
+        """Puts the location back as it was before ``publish``."""
+        undo, self._undo = self._undo, None
+        if undo is not None:
+            undo()
+        return True
 
     def forget_previous(self):
         self._files.remove(self.previous)
+
+    def _append(self, staged):
+        """Moves each staged file into place beside the files already there; undone by removing the files it added, then
+        the folders it made for them (the output's own, a partition's)."""
+        files = self._files
+        for rel in staged:
+            if files.exists(files.join(self.path, rel)):
+                raise FileExistsError(f"Invaract will not replace {files.join(self.path, rel)} when appending")
+        # deepest first, so that each folder is empty when it is removed
+        made = sorted((d for d in _folders(staged) if not files.exists(self._at(d))), reverse=True)
+        added = []
+
+        def undo():
+            for rel in reversed(added):
+                files.remove(files.join(self.path, rel))
+            for folder in made:
+                files.remove(self._at(folder))
+
+        with _undone_on_failure(undo):
+            for rel in staged:
+                files.move(files.join(self.staging, rel), files.join(self.path, rel))
+                added.append(rel)
+        return undo
+
+    def _replace_partitions(self, leaves):
+        """A dynamic overwrite: each partition folder the run wrote takes the place of the one there, which is moved aside
+        to ``previous``; undone by moving those back."""
+        files, replaced = self._files, []
+
+        def undo():
+            for leaf in reversed(replaced):
+                files.remove(files.join(self.path, leaf))
+                if files.exists(files.join(self.previous, leaf)):
+                    files.move(files.join(self.previous, leaf), files.join(self.path, leaf))
+            files.remove(self.previous)
+
+        with _undone_on_failure(undo):
+            for leaf in leaves:
+                if files.exists(files.join(self.path, leaf)):
+                    files.move(files.join(self.path, leaf), files.join(self.previous, leaf))
+                replaced.append(leaf)
+                files.move(files.join(self.staging, leaf), files.join(self.path, leaf))
+        return undo
+
+    def _replace_folder(self):
+        """Every other publish: the staged folder takes the place of the whole location, which is moved aside to
+        ``previous``; undone by moving it back."""
+        files = self._files
+
+        def undo():
+            files.remove(self.path)
+            if files.exists(self.previous):
+                files.move(self.previous, self.path)
+
+        if files.exists(self.path):
+            files.move(self.path, self.previous)
+        with _undone_on_failure(undo):
+            files.move(self.staging, self.path)
+        return undo
+
+    def _at(self, rel):
+        """The path of ``rel`` (``/``-separated, ``""`` for the top) under the location."""
+        return self._files.join(self.path, rel) if rel else self.path
+
+
+@contextlib.contextmanager
+def _undone_on_failure(undo):
+    """Runs ``undo`` if the block fails, then lets the failure go on."""
+    try:
+        yield
+    except BaseException:
+        undo()
+        raise
 
 
 class CopiedOutput(_FileOutput):
@@ -373,10 +444,10 @@ class CopiedOutput(_FileOutput):
         import pyarrow.fs as pafs
 
         store = self._store
-        staged = self._staged_on.files(self.staging)
+        staged, published = self._staged()
         if not staged or (self.mode == "ignore" and self.has_data()):
             self.discard()
-            return
+            return None
         marker = f"{self.path}/{SUCCESS}"
         uploaded = {f"{self.path}/{rel}" for rel in staged}
         if self.mode == "append":
@@ -403,3 +474,4 @@ class CopiedOutput(_FileOutput):
         with store.output_stream(marker):
             pass
         self.discard()
+        return published

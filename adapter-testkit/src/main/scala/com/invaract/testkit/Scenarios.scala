@@ -253,6 +253,19 @@ object Scenarios {
   private val castAmount = List(OutColumn("id", FromInput(0, "id")), OutColumn("amount_text", CastInput(0, "amount", Str)), OutColumn("total", NonNullLong(1)))
   private val castAmountFields = fields(8, ("id", "long", false), ("amount_text", "string", false), ("total", "long", true))
 
+  /** The default contract, its input and output named by `ref://` ids that resolve to where the job reads and writes. */
+  private val referencedContract = contract(
+    inputs = s"""  - name: orders
+                |    location: ref://orders_in
+                |    schema:
+                |      fields:
+                |$ordersContractFields""".stripMargin,
+    outputLocation = "ref://report_out"
+  )
+
+  /** Where the `ref://` ids of `referencedContract` are, as the platform's location map or service holds them. */
+  private val referencedLocations = Map("orders_in" -> "in/orders", "report_out" -> "out/report")
+
   val all: List[Scenario] = List(
     Scenario(
       "conforming-write",
@@ -793,6 +806,71 @@ object Scenarios {
       Set(Capability.CheckInputFormat),
       contract(inputs = ordersIn("csv")), job(), defaults, Expectation.Reject(Set(ViolationType.InputFormatMismatch))
     )
+  ) ++ attachedThroughConfiguration
+
+  /** The scenarios whose job is attached to Invaract through the engine's own configuration alone (`Attachment`): the
+    * contract fetched from a contract registry, and `ref://` locations resolved through a location map or a location service,
+    * each run on the services the kit stands up, with nothing handed to the adapter in code. */
+  private def attachedThroughConfiguration: List[Scenario] = List(
+    Scenario(
+      "contract-from-registry",
+      "a contract named registry://<id>@<version> in the job's configuration is fetched from the registry it names, and a conforming write is allowed",
+      "A platform team keeps its contracts in a contract registry and points a job at one by name and version, without touching the job's code. " +
+        "Invaract fetches that contract when the job starts and the job, which follows it, runs.",
+      Set(Capability.ConfigContractRegistry),
+      contract(), job(), defaults, Expectation.Pass, attach = Some(Attachment.Registry())
+    ),
+    Scenario(
+      "contract-from-registry-enforced",
+      "the contract fetched from the registry is enforced: a write to a location other than its own is blocked",
+      "The contract the platform's registry holds says where the report goes, and the job writes it somewhere else. Invaract enforces the " +
+        "contract it fetched, and stops the write.",
+      Set(Capability.ConfigContractRegistry),
+      contract(), job(output = ScenarioOutput("out/elsewhere")), defaults, Expectation.Reject(Set(ViolationType.OutputLocationMismatch)),
+      attach = Some(Attachment.Registry())
+    ),
+    Scenario(
+      "contract-not-in-registry",
+      "a contract the registry does not hold stops the job before it runs, with the registry's own message naming the contract and version",
+      "The platform points a job at a contract version nobody registered, a typo or a version not yet published. Invaract stops the job " +
+        "before it touches any data, and says which contract and version the registry does not have.",
+      Set(Capability.ConfigContractRegistry),
+      contract(), job(), defaults, Expectation.Stopped(Set("conformance", "1.0.0")), attach = Some(Attachment.Registry(held = false))
+    ),
+    Scenario(
+      "locations-from-map",
+      "ref://<id> locations resolve through the location map the job's configuration names, and a conforming write is allowed",
+      "A contract names its datasets by id instead of by path, so it runs unchanged in every environment, and the platform gives each " +
+        "environment a file saying where each id is. Invaract resolves the ids when the job starts, and the job runs.",
+      Set(Capability.ConfigLocationRefs),
+      referencedContract, job(), defaults, Expectation.Pass, attach = Some(Attachment.LocationMap(referencedLocations))
+    ),
+    Scenario(
+      "locations-from-map-enforced",
+      "a location resolved through the location map is enforced: a write elsewhere is blocked",
+      "The platform's file says the report goes to one folder, and the job writes it to another. Invaract checks the write against the " +
+        "location it resolved, and stops it.",
+      Set(Capability.ConfigLocationRefs),
+      referencedContract, job(output = ScenarioOutput("out/elsewhere")), defaults, Expectation.Reject(Set(ViolationType.OutputLocationMismatch)),
+      attach = Some(Attachment.LocationMap(referencedLocations))
+    ),
+    Scenario(
+      "locations-from-service",
+      "ref://<id> locations resolve by asking the location service the job's configuration names, and a conforming write is allowed",
+      "The platform already knows where every dataset lives, in a catalog or a small internal service. Invaract asks it where each id the " +
+        "contract names is when the job starts, and the job runs.",
+      Set(Capability.ConfigLocationRefs),
+      referencedContract, job(), defaults, Expectation.Pass, attach = Some(Attachment.LocationService(referencedLocations))
+    ),
+    Scenario(
+      "location-not-in-service",
+      "an id the location service does not hold stops the job before it runs, naming the reference",
+      "The contract names a dataset the platform's location service has never heard of. Invaract stops the job before it touches any " +
+        "data, and names the dataset it could not find.",
+      Set(Capability.ConfigLocationRefs),
+      referencedContract, job(), defaults, Expectation.Stopped(Set("ref://report_out")),
+      attach = Some(Attachment.LocationService(referencedLocations - "report_out"))
+    )
   )
 
   /** Capabilities a job cannot be evidence for, by their nature: how an adapter attaches to a job, what it
@@ -801,8 +879,6 @@ object Scenarios {
   val attested: Map[Capability, String] = Map(
     Capability.PolicyOrganizational -> "applied to the contract at session start, not part of a job",
     Capability.ConfigZeroCodeInstall -> "how an adapter attaches to a job is engine-specific, not a job",
-    Capability.ConfigLocationRefs -> "how an adapter attaches to a job is engine-specific, not a job",
-    Capability.ConfigContractRegistry -> "how an adapter attaches to a job is engine-specific, not a job",
     Capability.ReportingDryRun -> "dry-run mode is a mode of installing, not a job",
     Capability.WriteStateChange -> "a state change is not a read-transform-write job; each engine has its own",
     Capability.RulesCustom -> "a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one"

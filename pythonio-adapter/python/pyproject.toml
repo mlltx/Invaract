@@ -24,6 +24,8 @@ excel = ["openpyxl>=3.1"]
 postgres = ["adbc-driver-postgresql>=1.2", "adbc-driver-manager>=1.2"]
 # SQLite tables, through ADBC
 sqlite = ["adbc-driver-sqlite>=1.2", "adbc-driver-manager>=1.2"]
+# the package's own tests (CONTRIBUTING.md): the protocol and event schemas are checked with jsonschema
+test = ["pytest>=7", "jsonschema>=4.0", "pandas>=2.2", "polars>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/mlltx/Invaract"
@@ -34,7 +36,7 @@ packages = ["invaract"]
 # what a wheel carries besides the code (.github/scripts/python_wheel.py): the native checker in a platform wheel, the
 # checker jar in the pure-Python one; a source checkout has neither
 [tool.setuptools.package-data]
-invaract = ["bin/*", "lib/*"]
+invaract = ["bin/*", "lib/*", "py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "invaract.__version__" }

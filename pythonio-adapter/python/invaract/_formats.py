@@ -21,6 +21,7 @@ import base64
 import datetime
 import decimal
 import io
+import itertools
 import json
 import math
 import re
@@ -119,12 +120,13 @@ class Files:
 def _read_json(stream, fields, types):
     import pyarrow.json as pj
 
-    # a date is text in a JSON file, which pyarrow reads only as a number of days: read as text, then cast
-    explicit = pa.schema([(n, pa.string() if pa.types.is_date(t) else t) for n, t in types.items() if t is not None])
+    declared = pa.schema([(n, t) for n, t in types.items() if t is not None])
     data = stream.read()
     if not data.strip():
         # a file of no lines (an output of no rows), which pyarrow will not read: the contract's columns, empty
-        return pa.schema([(n, t) for n, t in types.items() if t is not None]).empty_table()
+        return declared.empty_table()
+    # a date is text in a JSON file, which pyarrow reads only as a number of days: read as text, then cast
+    explicit = pa.schema([f.with_type(pa.string()) if pa.types.is_date(f.type) else f for f in declared])
     table = pj.read_json(pa.BufferReader(data), parse_options=pj.ParseOptions(explicit_schema=explicit, unexpected_field_behavior="infer"))
     for name, t in types.items():
         if t is not None and pa.types.is_date(t) and name in table.column_names:
@@ -234,7 +236,7 @@ _READERS = {"json": _read_json, "avro": _read_avro, "excel": _read_excel}
 
 def writer(stream, fmt, schema):
     """A writer of ``fmt`` (not Parquet or CSV) to the binary ``stream``, which it closes with itself."""
-    return {"json": JsonWriter, "orc": OrcWriter, "avro": AvroWriter, "feather": FeatherWriter, "excel": ExcelWriter}[fmt](stream, schema)
+    return _WRITERS[fmt](stream, schema)
 
 
 class OrcWriter:
@@ -300,9 +302,9 @@ def _json_object(row):
 def _json_value(v):
     if isinstance(v, bool) or v is None:
         return json.dumps(v)
-    if isinstance(v, float):
+    if isinstance(v, float) and not math.isfinite(v):
         # Spark writes the numbers JSON has no literal for as text
-        return json.dumps("NaN" if math.isnan(v) else ("Infinity" if v > 0 else "-Infinity")) if not math.isfinite(v) else json.dumps(v)
+        return json.dumps("NaN" if math.isnan(v) else ("Infinity" if v > 0 else "-Infinity"))
     if isinstance(v, decimal.Decimal):
         return format(v, "f")
     if isinstance(v, datetime.datetime):
@@ -314,13 +316,17 @@ def _json_value(v):
     if isinstance(v, dict):
         return _json_object(v)
     if isinstance(v, list):
-        if v and all(isinstance(e, tuple) and len(e) == 2 for e in v):
-            # a map, as to_pylist gives it: its keys as the object's
+        if _is_map(v):
             return _json_object({str(k): e for k, e in v})
         return "[" + ",".join("null" if e is None else _json_value(e) for e in v) + "]"
     if isinstance(v, (datetime.time, datetime.timedelta)):
         return json.dumps(str(v))
     return json.dumps(v)
+
+
+def _is_map(value):
+    """Whether a list from ``to_pylist`` is a map's: its entries, each a ``(key, value)`` pair."""
+    return bool(value) and all(isinstance(e, tuple) and len(e) == 2 for e in value)
 
 
 def _iso(v):
@@ -338,7 +344,7 @@ class AvroWriter:
         from fastavro.write import Writer
 
         self._stream = stream
-        self._names = iter(range(1, 1_000_000))
+        self._names = itertools.count(1)
         self._out = Writer(stream, fastavro.parse_schema(self._record("topLevelRecord", schema)))
 
     def _record(self, name, fields):
@@ -361,7 +367,7 @@ class AvroWriter:
             return "double"
         if pa.types.is_string(t) or pa.types.is_large_string(t):
             return "string"
-        if pa.types.is_binary(t) or pa.types.is_large_binary(t) or pa.types.is_fixed_size_binary(t):
+        if _is_binary(t):
             return "bytes"
         if pa.types.is_date(t):
             return {"type": "int", "logicalType": "date"}
@@ -398,7 +404,7 @@ def _avro_row(value):
     if isinstance(value, dict):
         return {k: _avro_row(v) for k, v in value.items()}
     if isinstance(value, list):
-        if value and all(isinstance(e, tuple) and len(e) == 2 for e in value):
+        if _is_map(value):
             return {k: _avro_row(v) for k, v in value}
         return [_avro_row(e) for e in value]
     return value
@@ -411,7 +417,7 @@ class ExcelWriter:
         openpyxl = _optional.require("openpyxl", "excel", "excel")
         for field in schema:
             t = field.type
-            if pa.types.is_nested(t) or pa.types.is_binary(t) or pa.types.is_large_binary(t) or pa.types.is_fixed_size_binary(t):
+            if pa.types.is_nested(t) or _is_binary(t):
                 raise CheckNotRun(f"Invaract cannot write the column {field.name!r} ({t}) to an Excel sheet: a cell holds no {t}")
         self._stream, self._rows = stream, 0
         self._book = openpyxl.Workbook(write_only=True)
@@ -435,7 +441,14 @@ class ExcelWriter:
             self._stream.close()
 
 
+def _is_binary(t):
+    return pa.types.is_binary(t) or pa.types.is_large_binary(t) or pa.types.is_fixed_size_binary(t)
+
+
 def _cell(v):
     if isinstance(v, datetime.datetime) and v.tzinfo is not None:
         return v.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     return v
+
+
+_WRITERS = {"json": JsonWriter, "orc": OrcWriter, "avro": AvroWriter, "feather": FeatherWriter, "excel": ExcelWriter}

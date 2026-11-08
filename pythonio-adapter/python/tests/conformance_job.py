@@ -10,7 +10,7 @@ every column set, and for each column the input lets be empty, one where only th
 required column by the empty values the data holds). Then, inside one run, it reads each input through invaract.read, joins,
 filters, groups and projects them with pyarrow as the scenario says, and writes the result through invaract.write, with the
 format and save mode the job itself uses. It exits 0 when the run published, REFUSED when the contract refused it, and 2 (the
-package's own status) when the check could not be made.
+package's own status) when the check could not be made, writing why to stopped.txt.
 """
 import datetime
 import decimal
@@ -186,3 +186,9 @@ if __name__ == "__main__":
     except invaract.ContractViolation as refused:
         print(f"REFUSED {refused.violations}", file=sys.stderr)
         sys.exit(REFUSED)
+    except invaract.CheckNotRun as stopped:
+        # what stopped the job, apart from the log around it, for the conformance kit to read
+        with open("stopped.txt", "w", encoding="utf-8") as f:  # invaract: allow (a note for the kit, not data)
+            f.write(str(stopped))
+        print(stopped, file=sys.stderr)
+        sys.exit(stopped.exit_status)

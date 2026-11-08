@@ -1,0 +1,12 @@
+{"contract": {"id": "orders_report", "inputs": [], "outputs": [{"fields": [{"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": true}
+{"ok": true}
+{"ok": false, "reason": "published follows a finish that said to publish", "status": "not-checked"}
+{"ok": true, "publish": true}
+{"ok": false, "reason": "the run has finished: only what was published may follow", "status": "not-checked"}
+{"ok": false, "reason": "the rows of published output 'report' must be a count, not '-1'", "status": "not-checked"}
+{"ok": false, "reason": "the outputs published must be a list, not 'report'", "status": "not-checked"}
+{"ok": false, "reason": "each published output must be a JSON object, not 'report'", "status": "not-checked"}
+{"ok": false, "reason": "each published output must name the output", "status": "not-checked"}
+{"ok": false, "reason": "IllegalArgumentException: the package published 'audit', which this run did not stage", "status": "not-checked"}
+{"ok": false, "reason": "the run has already finished", "status": "not-checked"}

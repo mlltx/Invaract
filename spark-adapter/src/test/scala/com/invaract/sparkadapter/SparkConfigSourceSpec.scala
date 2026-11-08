@@ -19,6 +19,8 @@ class SparkConfigSourceSpec extends AnyFunSuite {
     assert(SparkConfigSource.Prefix == "spark.invaract.")
     val pairs = List(
       ContractEnforcementRule.LocationMapConfKey -> InvaractConf.LocationMap,
+      ContractEnforcementRule.LocationUrlConfKey -> InvaractConf.LocationUrl,
+      ContractEnforcementRule.LocationTokenEnvConfKey -> InvaractConf.LocationTokenEnv,
       ContractEnforcementRule.RejectUndeclaredInputsConfKey -> InvaractConf.RejectUndeclaredInputs,
       ContractEnforcementRule.RejectUndeclaredFieldsConfKey -> InvaractConf.RejectUndeclaredFields,
       ContractEnforcementRule.ComputeFingerprintConfKey -> InvaractConf.ComputeFingerprint,

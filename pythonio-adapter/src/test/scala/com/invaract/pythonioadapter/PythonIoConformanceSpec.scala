@@ -16,6 +16,10 @@ class PythonIoConformanceSpec extends AdapterConformanceSpec {
 
   override protected def adapter: ConformanceAdapter = pythonioAdapter
 
+  test("the settings the conformance adapter calls inapplicable are those the checker refuses as not applicable") {
+    assert(PythonIoConformanceAdapter.Inapplicable.keySet == PythonIoConfigSource.NotApplicable)
+  }
+
   test("the Arrow names the conformance adapter sends map back to the kit's types, so the scenarios test what a real job sends") {
     import LogicalType._
     val jobs = Scenarios.all.map(_.job)

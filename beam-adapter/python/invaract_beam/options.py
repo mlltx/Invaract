@@ -17,6 +17,8 @@ SETTINGS = {
     "registry_url": "Base URL of the contract registry a registry:// contract is fetched from.",
     "registry_client_class": "Class name of the registry client the checker loads, overriding the default.",
     "location_map": "Path of an id=location .properties file that ref://<id> locations in the contract resolve against.",
+    "location_url": "Base URL of a location service that ref://<id> locations the location map does not hold are asked of.",
+    "location_token_env": "Name of the environment variable holding the location service's bearer token (the name, never the token).",
     "org_policy": "Path of an organizational policy document layered on the contract.",
     "org_policy_overlays": "Comma-separated paths of further organizational policy layers.",
     "reject_undeclared_inputs": "true: a read of a dataset the contract does not declare is blocked.",
@@ -26,6 +28,8 @@ SETTINGS = {
     "role_consistency": "true: check each input's declared role (declared unsupported for Python pipelines, so a run with it is refused).",
     "runtime_data_quality": "true: check written values against declared constraints (declared unsupported for Python pipelines, so a run with it and constrained outputs is refused).",
     "trusted_steps": "Comma-separated names of steps the platform trusts not to move governed data (* for any run of characters).",
+    "job_id": "The job's stable identity across runs, named by every event (job.jobId), where the job name may change per run.",
+    "job_attributes": "Facts about this run every event carries (job.attributes): comma-separated key=value pairs, team=orders,dag=daily.",
 }
 
 

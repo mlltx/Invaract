@@ -5,7 +5,9 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParseException, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
 import com.invaract.ir
-import com.invaract.verification.location.{ContractLocationResolution, LocationRef, LocationResolutionException, LocationResolver, StaticMapLocationResolver}
+import com.invaract.verification.location.{
+  ContractLocationResolution, HttpLocationResolver, LocationRef, LocationResolutionException, LocationResolver, StaticMapLocationResolver
+}
 import com.invaract.verification.notification.{JobInfo, NotificationSink}
 
 /** Everything an engine adapter does once, at session/job start, to turn
@@ -20,6 +22,8 @@ import com.invaract.verification.notification.{JobInfo, NotificationSink}
   *   3. `enforceOrgPolicy`: organizational policy layers - rejecting a contract
   *      that doesn't satisfy platform-wide rules, injecting required rules, and
   *      raising the verification-option floor.
+  *   4. `identify`: the job's identity and the platform's facts about the run,
+  *      laid over what the adapter knows of the job, for every event it publishes.
   *
   * This is what makes each capability attachable purely through the engine's
   * own configuration surface against a job whose source a platform doesn't own
@@ -34,35 +38,99 @@ object VerificationSetup {
     * unverifiable step that ends the job. */
   def trustedSteps(config: ConfigSource): TrustedSteps = TrustedSteps.from(config)
 
-  /** `ref://<id>` locations in `contract`, resolved from the `.properties` file `locationMap` names. A contract with
-    * no `ref://` locations is completely unaffected, set or not; one that does declare a reference fails immediately,
-    * naming the setting and the id (and, with a map set, the ids it does map), instead of a confusing downstream
-    * `MissingInput`/`OutputLocationMismatch` against the literal `ref://...`.
-    */
-  def resolveContractLocations(contract: Contract, config: ConfigSource): Contract = {
-    val setting = config.describe(InvaractConf.LocationMap)
-    val resolver: LocationResolver = config.get(InvaractConf.LocationMap) match {
-      case Some(path) =>
-        if (!new java.io.File(path).isFile) {
-          throw new LocationResolutionException(s"'$setting' names '$path', which is not a file that exists.")
+  /** `job` (what the adapter knows of the job: its engine, its run, its name) as every event names it, with what the platform
+    * says of it in `config`: its stable identity across runs (`jobId`, in place of any the adapter found), and its facts about
+    * this run (`jobAttributes`; an attribute the adapter already has, from a more specific setting of its own, keeps its
+    * value). A malformed `jobAttributes` is refused, naming the setting, rather than half read. */
+  def identify(job: JobInfo, config: ConfigSource): JobInfo =
+    job.copy(
+      jobId = config.get(InvaractConf.JobId).map(_.trim).filter(_.nonEmpty).orElse(job.jobId),
+      attributes = jobAttributes(config) ++ job.attributes
+    )
+
+  /** The `jobAttributes` setting as a map: `team=orders, dag=orders_daily` is `team -> orders`, `dag -> orders_daily`. */
+  private[verification] def jobAttributes(config: ConfigSource): Map[String, String] =
+    config.get(InvaractConf.JobAttributes).fold(Map.empty[String, String]) { raw =>
+      def malformed(why: String) =
+        new IllegalArgumentException(s"'${config.describe(InvaractConf.JobAttributes)}' must be comma-separated key=value pairs ($why), not '$raw'.")
+      val pairs = splitCommaSeparated(raw).map { entry =>
+        entry.split("=", 2) match {
+          case Array(key, value) if key.trim.nonEmpty => key.trim -> value.trim
+          case _                                      => throw malformed(s"'$entry' is not key=value")
         }
-        val map = StaticMapLocationResolver.fromPropertiesFile(path)
-        id =>
-          if (map.ids.contains(id)) map.resolve(id)
-          else {
-            val known = if (map.ids.isEmpty) "it maps no ids at all" else "the ids it maps are: " + map.ids.toList.sorted.mkString(", ")
-            throw new LocationResolutionException(
-              s"The contract declares '${LocationRef.Scheme}$id', but the location map '$path' (named by '$setting') has no line for '$id'; $known."
-            )
-          }
-      case None =>
-        id =>
-          throw new LocationResolutionException(
-            s"The contract declares '${LocationRef.Scheme}$id', but no location map is set: set '$setting' to a .properties file " +
-              s"with a line '$id=<real location>'."
-          )
+      }
+      val repeated = pairs.groupBy(_._1).collect { case (key, all) if all.size > 1 => key }.toList.sorted
+      if (repeated.nonEmpty) throw malformed(s"${repeated.mkString("'", "', '", "'")} given more than once")
+      pairs.toMap
     }
+
+  /** `ref://<id>` locations in `contract`, resolved from the `.properties` file `locationMap` names and from the location
+    * service `locationUrl` names (`HttpLocationResolver`, with the bearer token in the environment variable
+    * `locationTokenEnv` names), the map first: an id the map holds is never asked of the service, so a platform can
+    * override one dataset's location without touching the service. A contract with no `ref://` locations is completely
+    * unaffected, set or not; one that does declare a reference fails immediately, naming the setting and the id (and, with
+    * a map set, the ids it does map), instead of a confusing downstream `MissingInput`/`OutputLocationMismatch` against the
+    * literal `ref://...`.
+    */
+  def resolveContractLocations(contract: Contract, config: ConfigSource): Contract =
+    resolveContractLocations(contract, config, sys.env.get)
+
+  /** `resolveContractLocations`, reading the token's environment variable from `environment`. */
+  private[verification] def resolveContractLocations(contract: Contract, config: ConfigSource, environment: String => Option[String]): Contract = {
+    val map = locationMap(config)
+    val service = locationService(config, environment)
+    val resolver: LocationResolver = id =>
+      map.filter(_._1.ids.contains(id)).map(_._1.resolve(id))
+        .orElse(service.map(_.resolve(id)))
+        .getOrElse(throw unresolved(id, map.map(_._2), config))
     ContractLocationResolution.resolve(contract, resolver)
+  }
+
+  /** The location map `locationMap` names, with its path; `None` when it names none. */
+  private def locationMap(config: ConfigSource): Option[(StaticMapLocationResolver, String)] =
+    config.get(InvaractConf.LocationMap).map { path =>
+      if (!new java.io.File(path).isFile) {
+        throw new LocationResolutionException(s"'${config.describe(InvaractConf.LocationMap)}' names '$path', which is not a file that exists.")
+      }
+      StaticMapLocationResolver.fromPropertiesFile(path) -> path
+    }
+
+  /** The location service `locationUrl` names, with the token `locationTokenEnv` points to; `None` when it names none. A
+    * token setting that names an unset variable, or that is set with no service to send it to, is refused rather than
+    * ignored: the service would refuse the request anyway, or the platform meant a service it did not name. */
+  private def locationService(config: ConfigSource, environment: String => Option[String]): Option[HttpLocationResolver] = {
+    val tokenSetting = config.describe(InvaractConf.LocationTokenEnv)
+    val token = config.get(InvaractConf.LocationTokenEnv).map(_.trim).filter(_.nonEmpty).map { variable =>
+      environment(variable).filter(_.trim.nonEmpty).getOrElse(
+        throw new LocationResolutionException(s"'$tokenSetting' names the environment variable '$variable', which is not set.")
+      )
+    }
+    config.get(InvaractConf.LocationUrl).map(_.trim).filter(_.nonEmpty) match {
+      case Some(url) => Some(new HttpLocationResolver(url, token.map(_.trim)))
+      case None if token.isDefined =>
+        throw new LocationResolutionException(
+          s"'$tokenSetting' is set, but '${config.describe(InvaractConf.LocationUrl)}' names no location service to send the token to."
+        )
+      case None => None
+    }
+  }
+
+  private def unresolved(id: String, mapPath: Option[String], config: ConfigSource): LocationResolutionException = {
+    val reference = s"${LocationRef.Scheme}$id"
+    val mapSetting = config.describe(InvaractConf.LocationMap)
+    mapPath match {
+      case Some(path) =>
+        val ids = StaticMapLocationResolver.fromPropertiesFile(path).ids
+        val known = if (ids.isEmpty) "it maps no ids at all" else "the ids it maps are: " + ids.toList.sorted.mkString(", ")
+        new LocationResolutionException(
+          s"The contract declares '$reference', but the location map '$path' (named by '$mapSetting') has no line for '$id'; $known."
+        )
+      case None =>
+        new LocationResolutionException(
+          s"The contract declares '$reference', but no location map or location service is set: set '$mapSetting' to a " +
+            s".properties file with a line '$id=<real location>', or '${config.describe(InvaractConf.LocationUrl)}' to a location service."
+        )
+    }
   }
 
   /** Overlays the six option flags onto `options` - `||`, not a replacement: a

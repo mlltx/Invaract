@@ -3,3 +3,5 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+# a contributor's virtual environment (docs/PYTHONIO_PACKAGE.md, "Running the tests")
+.venv/

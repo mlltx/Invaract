@@ -406,8 +406,10 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 |---|---|
 | `INVARACT_CONTRACT` | The contract to enforce: a file path, or `registry://<id>@<version>` ([Use a Contract Registry](/guides/using-a-contract-registry/)). Overrides the one `@invaract.job` names. |
 | `INVARACT_DRY_RUN=true` | Infer a contract from the job's writes instead of enforcing one ([above](#start-from-a-job-with-no-contract)). |
-| `INVARACT_NOTIFY_CONFIG` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
+| `INVARACT_NOTIFY_CONFIG` | Where the run's events go: each check, each output published, and the run's summary ([Events from a Python job](/guides/notification-sinks/#events-from-a-python-job)). |
+| `INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
 | `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
+| `INVARACT_LOCATION_URL`, `INVARACT_LOCATION_TOKEN_ENV` | A location service `ref://` locations the map does not hold are asked of, and the name of the variable holding its token ([Or ask a location service](/guides/resolving-dataset-locations/#or-ask-a-location-service)). |
 | `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `INVARACT_REJECT_UNDECLARED_FIELDS=true` | Refuse an output column the contract does not declare. |
 | `INVARACT_RUNTIME_DATA_QUALITY=true` | Check every row the job writes against its outputs' declared value constraints, before anything is published ([Check Data Values at Run Time](/guides/checking-data-values-at-run-time/)). |
@@ -471,6 +473,12 @@ How an output is published when the job returns depends on where it lives:
 | SQLite table | in a database file of its own, on the job's local disk | one transaction: all at once |
 
 In every case nothing is published unless the whole run passed, and a refused or failed run leaves the output as it was.
+
+The outputs of a run are published one after another, in the order the job first wrote them. If one fails to publish
+(the disk fills, the store refuses a file), the outputs already published by a rename are put back as they were, and the
+job fails with the error. An output already committed to a table, copied to object storage or committed to a database
+cannot be taken back and stays published; its `WRITE` event says so ([Events from a Python
+job](/guides/notification-sinks/#events-from-a-python-job)).
 
 **Plain files on object storage** are published the way Spark and Hadoop publish them, because object storage has no
 rename: first the old `_SUCCESS` marker is removed, then the run's files are uploaded, then (for `overwrite`) the old
@@ -634,6 +642,8 @@ outputs:
 
 ## Related
 
+- [Python Package API](/reference/python-api/): every function and argument of the package, its exceptions, and the
+  formats and locations it reads and writes.
 - [Configuration Settings](/reference/configuration/): every `INVARACT_...` variable, with its Spark and Beam spelling.
 - [What Each Engine Checks](/reference/what-each-engine-checks/): what each engine checks and what it cannot, in plain words.
 - [Engine Capabilities](/reference/engine-capabilities/): the same, per capability, with the adapters' own notes.

@@ -3,8 +3,8 @@ not json
 {"op": "launch"}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}
 {"op": "write", "format": "parquet"}
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
 {"op": "read", "schema": []}
 {"op": "write", "name": "report", "schema": [{"name": "total"}]}
 {"op": "write", "name": "report", "schema": [{"name": "total", "type": "list<item: int64"}]}
