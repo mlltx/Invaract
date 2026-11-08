@@ -87,7 +87,8 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
       rowMutation = job.rowChange.map(ReferenceAdapter.mutationOf),
       lineageBoundaryTypes = Set.empty,
       partitioning = Some(ReferenceAdapter.partitioningOf(job.output)),
-      formatOptions = ReferenceAdapter.formatOptionsOf(job.inputs, job.output)
+      formatOptions = ReferenceAdapter.formatOptionsOf(job.inputs, job.output),
+      inputFormats = ReferenceAdapter.inputFormatsOf(job.inputs)
     )
 
   /** The reference engine has no checkpoint or cache, so a job run through a boundary translates to the same
@@ -123,6 +124,9 @@ object ReferenceAdapter {
   /** The CSV options each read and the write use, by location: as the scenario says. */
   def formatOptionsOf(inputs: List[ScenarioInput], output: ScenarioOutput): Map[String, Map[String, String]] =
     ((output.location -> output.csvOptions) :: inputs.map(i => i.location -> i.csvOptions)).filter(_._2.nonEmpty).toMap
+
+  /** The format each read uses, by location: as the scenario says (`ScenarioInput.format`). */
+  def inputFormatsOf(inputs: List[ScenarioInput]): Map[String, String] = inputs.map(i => i.location -> i.format).toMap
 
   private def catalogOf(output: ScenarioOutput): Option[CatalogIdentity] =
     output.registeredAs.map(table => CatalogIdentity(table = Some(table)))
@@ -176,7 +180,8 @@ object ReferenceAdapter {
       rowMutation = None,
       lineageBoundaryTypes = Set.empty,
       partitioning = Some(partitioningOf(write.output)),
-      formatOptions = formatOptionsOf(List(write.input), write.output)
+      formatOptions = formatOptionsOf(List(write.input), write.output),
+      inputFormats = inputFormatsOf(List(write.input))
     )
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {

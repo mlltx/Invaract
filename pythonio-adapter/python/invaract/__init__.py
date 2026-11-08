@@ -46,8 +46,9 @@ def read(name, as_="pandas", *, location=None, format=None, dtype_backend=None, 
     laid out, for a job with no contract yet; the contract's ``csv:`` options are used otherwise, and ones that disagree with
     them are refused.
 
-    ``location`` and ``format`` are for migrating a job with no contract yet (``INVARACT_DRY_RUN=true``): they say where the
-    job reads. With a contract in force, a ``location`` that disagrees with it is refused.
+    ``location`` and ``format`` are for migrating a job with no contract yet (``INVARACT_DRY_RUN=true``): they say where, and
+    in which format, the job reads. With a contract in force, one that disagrees with it is refused (a ``format`` before
+    anything is read).
     """
     return _run.current("read").read(name, as_, location, format, dtype_backend, chunksize, csv)
 

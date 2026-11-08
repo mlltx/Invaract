@@ -328,6 +328,7 @@ class BeamIOSpec extends AnyFunSuite {
     assert(w.inputSchemas.head._2.fields.map(_.name) == List("id", "amount"))
     assert(w.unlocatedReads.isEmpty)
     assert(unlocatedIn(w.plan).isEmpty, "a reader of located files is not a lineage boundary")
+    assert(w.readFormats == Map("/data/in/orders" -> "parquet"), "the matched folder is read in the reader's format")
   }
 
   test("matched files the job reads with its own function are still a read of that folder") {
@@ -337,6 +338,7 @@ class BeamIOSpec extends AnyFunSuite {
     val Seq(w) = BeamTranslator.translate(p).writes
     assert(readsIn(w.plan) == List("/data/in/raw"))
     assert(w.inputSchemas.isEmpty, "a function's output has no columns to check")
+    assert(w.readFormats.isEmpty, "nor a format: the job's own function decides what the files are")
   }
 
   test("files whose patterns the job computes are seen but not located") {
@@ -446,6 +448,15 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     assert(w.format.contains("csv") && withoutDrive(w.location) == "/data/out/csv/part")
     assert(columns(w.outputSchema).contains(List("id" -> false, "amount" -> true)))
     assert(w.inputSchemas.map { case (l, s) => l -> s.fields.map(_.name) } == List("/data/in/lines" -> List("id", "amount")))
+    assert(w.readFormats == Map("/data/in/lines" -> "json"), "a text read parsed straight away is in the parser's format")
+  }
+
+  test("the parsers a text read goes straight to name the format of its lines; no other step does") {
+    def bare(className: String) = BeamStep("S", className, Nil, Nil, Map.empty, Nil)
+    assert(BeamIO.textParserFormat(bare("org.apache.beam.sdk.transforms.JsonToRow$JsonToRowFn")).contains("json"))
+    assert(BeamIO.textParserFormat(bare("org.apache.beam.sdk.transforms.JsonToRow$JsonToRowWithFailures")).contains("json"))
+    assert(BeamIO.textParserFormat(bare("org.apache.beam.sdk.io.csv.AutoValue_CsvIOParse")).contains("csv"))
+    assert(BeamIO.textParserFormat(bare("org.apache.beam.sdk.transforms.ToJson")).isEmpty)
   }
 
   test("a text write of rows ToJson made is json, with the rows' columns") {
@@ -473,6 +484,7 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     assert(writes.forall(_.inputSchemas.isEmpty), "the read's lines are not all parsed, so the parser's columns are not the dataset's")
     val raw = writes.find(_.location.endsWith("raw")).get
     assert(raw.outputSchema.isEmpty && raw.format.contains("text"), "plain lines are text, with no columns")
+    assert(writes.forall(_.readFormats == Map("/data/in/lines" -> "text")), "lines not all parsed are text, whatever parses some of them")
   }
 
   test("a Read.from step is data the job makes only when its source says so, and a step with no transform is no file write") {

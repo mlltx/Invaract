@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import invaract
-from invaract import _pandas
+from invaract import _pandas, _types
 from conftest import output, write_contract
 
 
@@ -338,7 +338,7 @@ def test_an_empty_list_column_takes_the_declared_type():
     ("map<string>", None), ("", None),
 ])
 def test_which_contract_types_a_pandas_column_can_be_written_as(declared, arrow):
-    assert _pandas.arrow_target(declared) == arrow
+    assert _types.of(declared) == arrow
 
 
 def test_a_sparse_column_is_written_with_its_values():

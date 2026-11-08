@@ -25,10 +25,12 @@ private[pythonioadapter] object Request {
   final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
-    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `catalog` is the
-    * catalog the dataset is registered in, when it is a catalog table (an Iceberg table names its catalog and namespace). */
-  final case class Read(name: String, location: Option[String], schema: List[Column], catalog: Option[CatalogIdentity] = None,
-      csv: Map[String, String] = Map.empty) extends Request
+    * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `format` is the
+    * format the package reads it in. `catalog` is the catalog the dataset is registered in, when it is a catalog table (an
+    * Iceberg table names its catalog and namespace). `schema` is `None` for a read the package has not made because its
+    * description already disagrees with the contract (a `format` the contract does not declare): it can only be refused. */
+  final case class Read(name: String, location: Option[String], schema: Option[List[Column]], catalog: Option[CatalogIdentity] = None,
+      csv: Map[String, String] = Map.empty, format: Option[String] = None) extends Request
 
   /** A table the job hands to `invaract.write`, described before any of it is staged: the output's name, the format and save
     * mode the package writes, and the table's columns. `unverifiable` says why the package could not describe the table (it
@@ -107,9 +109,9 @@ private[pythonioadapter] object Requests {
   private def read(m: Map[String, AnyRef]): Either[String, Request] =
     for {
       name <- text(m, "name").toRight("a read must name the input it reads")
-      schema <- columns(m.get("schema"), s"the read of '$name'")
+      schema <- traverse(m.get("schema").toList)(s => columns(Some(s), s"the read of '$name'"))
       registered <- catalog(m.get("catalog"), s"the read of '$name'")
-    } yield Request.Read(name, text(m, "location"), schema, registered, strings(m, "csv"))
+    } yield Request.Read(name, text(m, "location"), schema.headOption, registered, strings(m, "csv"), text(m, "format"))
 
   private def write(m: Map[String, AnyRef]): Either[String, Request] =
     for {

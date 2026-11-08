@@ -235,10 +235,13 @@ private[beamadapter] object BeamIO {
   private def isInJobSource(sourceClass: String): Boolean =
     sourceClass.endsWith("Create$Values$CreateSource") || sourceClass.contains("CountingSource")
 
-  /** Steps that turn lines of text into rows with a schema (`JsonToRow`, `CsvIO.parseRows`): the columns a text read really has
-    * when it is parsed straight away. */
-  def isTextParser(step: BeamStep): Boolean =
-    Set("JsonToRow$JsonToRowFn", "JsonToRow$JsonToRowWithFailures", "AutoValue_CsvIOParse").contains(step.simpleName)
+  /** Steps that turn lines of text into rows with a schema (`JsonToRow`, `CsvIO.parseRows`), with the format of those lines:
+    * the columns, and the format, a text read really has when it is parsed straight away. */
+  def textParserFormat(step: BeamStep): Option[String] = step.simpleName match {
+    case "JsonToRow$JsonToRowFn" | "JsonToRow$JsonToRowWithFailures" => Some(Formats.Json)
+    case "AutoValue_CsvIOParse"                                      => Some(Formats.Csv)
+    case _                                                           => None
+  }
 
   /** Steps that turn rows into lines of text in a known format (`ToJson`): the columns and format a text write of their output has. */
   def textFormatterFormat(step: BeamStep): Option[String] = step.simpleName match {

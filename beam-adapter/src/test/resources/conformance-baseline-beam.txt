@@ -18,6 +18,8 @@ nested-type-matches
 nested-type-mismatch
 output-format-matches
 output-format-mismatch
+input-format-matches
+input-format-mismatch
 output-nullability-mismatch
 output-save-mode-matches
 output-save-mode-mismatch

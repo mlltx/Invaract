@@ -14,7 +14,7 @@ commit per output, only when the whole run passed (docs/PYTHONIO_ADAPTER.md, mil
 Save modes: ``overwrite`` replaces the table's rows, ``append`` adds to them, ``error`` refuses a table that holds rows, and
 ``ignore`` publishes nothing to one that does.
 
-**Partitioned tables** (a ``_files.Layout`` with keys): a new table is created partitioned by the keys (Delta's partition
+**Partitioned tables** (a ``_outputs.Layout`` with keys): a new table is created partitioned by the keys (Delta's partition
 columns; an Iceberg identity partition spec), and a table that exists must already be partitioned so, or the write is not
 checked. An ``overwrite`` replaces every partition (``static``) or only those written (``dynamic``), in the same one commit:
 for Delta, the new files added and the old files of the written partitions removed (deltalake's ``RemoveAction``, absent from
@@ -30,7 +30,7 @@ import urllib.parse
 
 import pyarrow as pa
 
-from . import _files, _frames, _storage
+from . import _frames, _optional, _outputs, _storage
 from .errors import CheckNotRun
 
 #: How a null partition value is spelt in a folder name, as Hive, Spark and pyarrow spell it.
@@ -40,11 +40,7 @@ TABLE_FORMATS = ("delta", "iceberg")
 
 
 def _require(module, extra):
-    try:
-        return __import__(module, fromlist=["_"])
-    except ImportError as e:
-        raise CheckNotRun(f"Invaract needs the {module} package to read or write {extra} tables: "
-                          f'pip install "invaract[{extra}]"') from e
+    return _optional.require(module, extra, f"{extra} tables")
 
 
 # ---- Delta -----------------------------------------------------------------------------------------------------------
@@ -74,23 +70,21 @@ def delta_dataset(location):
     return table.to_pyarrow_dataset()
 
 
-class DeltaOutput:
+class DeltaOutput(_outputs.Output):
     """A Delta table output. Its Parquet files are staged where no reader sees them: in the table's own folder when it is local
     (no commit names them yet), on local disk when the table is anywhere else, object storage or HDFS (uploaded at publish,
     so a refused run never touches the store: deleting there leaves "folder" markers behind). Publishing commits them, once."""
 
-    def __init__(self, location, mode, run_id, layout=_files.FLAT):
-        self.target = _storage.uri(location)
-        self.mode = mode
+    def __init__(self, location, mode, run_id, layout=_outputs.FLAT):
+        super().__init__(_storage.uri(location), mode, layout)
         self.run_id = run_id
-        self.layout = layout
         existing = _delta_table(location)
         if existing is not None:
             columns = tuple(existing.metadata().partition_columns)
             if columns != tuple(layout.keys):
-                raise CheckNotRun(f"the Delta table at {location} is {_files.Layout(columns, 'static').describe()}, "
+                raise CheckNotRun(f"the Delta table at {location} is {_outputs.Layout(columns, 'static').describe()}, "
                                   f"but the write is {layout.describe()}")
-            if layout.keys and layout.overwrite == "dynamic" and mode == "overwrite":
+            if layout.dynamic and mode == "overwrite":
                 import deltalake.transaction as transaction
 
                 if not hasattr(transaction, "RemoveAction"):
@@ -188,7 +182,7 @@ class DeltaOutput:
             from deltalake.transaction import create_table_with_add_actions
 
             create_table_with_add_actions(self.target, Schema.from_arrow(self._schema), self._actions, mode="error", partition_by=keys)
-        elif keys and self.mode == "overwrite" and self.layout.overwrite == "dynamic":
+        elif self.layout.dynamic and self.mode == "overwrite":
             # one commit: the new files, and the old files of the partitions written removed
             written = {json.dumps(a.partition_values, sort_keys=True) for a in self._actions}
             removals = [_remove_action(row) for row in _delta_files(table) if json.dumps(row["partition_values"], sort_keys=True) in written]
@@ -210,9 +204,6 @@ class DeltaOutput:
                 except OSError:
                     pass
         self._actions = []
-
-    def forget_previous(self):
-        pass
 
 
 def _partition_text(value, arrow_type):
@@ -241,24 +232,32 @@ def _remove_action(row):
 
 # ---- Iceberg ---------------------------------------------------------------------------------------------------------
 
-def _iceberg_identifier(location):
-    """``(catalog, identifier)`` from ``<catalog>.<namespace>.<table>``."""
-    catalog, _, identifier = str(location).partition(".")
-    if not catalog or "." not in identifier:
-        raise CheckNotRun(f"an Iceberg location is <catalog>.<namespace>.<table>, not {location!r}")
-    return catalog, identifier
-
-
-def catalog_of(location, fmt):
-    """The catalog registration the checker is told a dataset has, as the protocol's ``catalog``: an Iceberg table's catalog,
-    namespace and table (its location names them); ``None`` for files and Delta tables, which are named by their path. The
-    catalog service's own address is not sent: a catalog URI can hold credentials."""
-    if fmt != "iceberg" or not location:
-        return None
+def _iceberg_parts(location):
+    """``(catalog, namespace, table)`` from ``<catalog>.<namespace>.<table>`` (the namespace may itself hold dots), or
+    ``None`` for any other location."""
     catalog, _, identifier = str(location).partition(".")
     namespace, _, table = identifier.rpartition(".")
-    if not catalog or not namespace or not table:
-        return None  # not an Iceberg location: reading or writing it is refused with the reason
+    return (catalog, namespace, table) if catalog and namespace and table else None
+
+
+def _iceberg_identifier(location):
+    """``(catalog, identifier)`` from ``<catalog>.<namespace>.<table>``, the identifier as pyiceberg takes it."""
+    parts = _iceberg_parts(location)
+    if parts is None:
+        raise CheckNotRun(f"an Iceberg location is <catalog>.<namespace>.<table>, not {location!r}")
+    catalog, namespace, table = parts
+    return catalog, f"{namespace}.{table}"
+
+
+def catalog_of(location):
+    """The catalog registration the checker is told an Iceberg table has, as the protocol's ``catalog``: its catalog,
+    namespace and table, as its location names them; ``None`` for a location that is not an Iceberg table's, whose reading
+    or writing is then refused with the reason. The catalog service's own address is not sent: a catalog URI can hold
+    credentials."""
+    parts = _iceberg_parts(location) if location else None
+    if parts is None:
+        return None
+    catalog, namespace, table = parts
     return {"technology": "iceberg", "catalogName": catalog, "namespace": namespace.split("."), "table": table}
 
 
@@ -290,7 +289,7 @@ def read_iceberg(location, columns):
 
 
 def iceberg_batches(location, columns):
-    """``(schema, batches)`` of the Iceberg table at ``location``, as ``_frames.read_batches`` gives them."""
+    """``(schema, batches)`` of the Iceberg table at ``location``, as ``_datasets.read_batches`` gives them."""
     _, _, table = _iceberg_table(location)
     if table is None:
         raise FileNotFoundError(f"there is no Iceberg table {location}")
@@ -312,17 +311,16 @@ def _iceberg_keys(table):
                  else f"{f.transform}({schema.find_column_name(f.source_id)})" for f in table.spec().fields)
 
 
-class IcebergOutput:
-    def __init__(self, location, mode, run_id, layout=_files.FLAT):
+class IcebergOutput(_outputs.Output):
+    """An Iceberg table output: its batches held until publishing, which writes and commits them in one transaction."""
+
+    def __init__(self, location, mode, run_id, layout=_outputs.FLAT):
         _iceberg_identifier(location)
-        self.target = str(location)
-        self.mode = mode
-        self.run_id = run_id
-        self.layout = layout
+        super().__init__(str(location), mode, layout)
         # a table that exists keeps its partitioning: a write laid out otherwise is not checked rather than mis-written
         table = _iceberg_table(location)[2]
         if table is not None and _iceberg_keys(table) != tuple(layout.keys):
-            raise CheckNotRun(f"the Iceberg table {location} is {_files.Layout(_iceberg_keys(table), 'static').describe()}, "
+            raise CheckNotRun(f"the Iceberg table {location} is {_outputs.Layout(_iceberg_keys(table), 'static').describe()}, "
                               f"but the write is {layout.describe()}")
         self._batches = []
         self._schema = None
@@ -355,7 +353,7 @@ class IcebergOutput:
             with table.transaction() as transaction:
                 if self.mode != "overwrite":
                     transaction.append(data)
-                elif self.layout.keys and self.layout.overwrite == "dynamic":
+                elif self.layout.dynamic:
                     transaction.dynamic_partition_overwrite(data)
                 else:
                     transaction.overwrite(data)
@@ -364,6 +362,3 @@ class IcebergOutput:
     def discard(self):
         self._batches = []
         self._schema = None
-
-    def forget_previous(self):
-        pass

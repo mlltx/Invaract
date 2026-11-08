@@ -16,18 +16,10 @@ import re
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from . import _types
 from .errors import CheckNotRun
 
 NAMES = ("delimiter", "header", "encoding", "quote", "escape", "nullValue", "dateFormat", "timestampFormat")
-
-
-class Format(str):
-    """``"csv"``, carrying the options a CSV output is written with; equal to ``"csv"`` wherever a format is compared."""
-
-    def __new__(cls, options):
-        value = super().__new__(cls, "csv")
-        value.options = dict(options)
-        return value
 
 
 def options(declared, given):
@@ -90,9 +82,7 @@ def read_format(fields, options):
     import pyarrow.csv as csv
     import pyarrow.dataset as ds
 
-    from . import _frames
-
-    types = {f["name"]: _frames.arrow_type(f["type"]) for f in fields}
+    types = _types.scalars(fields)
     patterns = {}
     for name, t in types.items():
         if t is not None and pa.types.is_date(t) and "dateFormat" in options:

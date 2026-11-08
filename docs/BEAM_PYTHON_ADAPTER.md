@@ -112,6 +112,7 @@ permanent as the recorded fixtures. What building it added:
 | `check.schema` | partial | scenarios 3, 4, 12-14; dictionaries and untyped fields have none (`PythonStepsSpec`) |
 | `check.nestedTypes` | supported | scenarios 28, 29; `ArrowSchemasSpec` (verification-core) |
 | `check.format` | partial | scenarios 24, 25 |
+| `check.inputFormat` | partial | scenarios 64, 65; a text read satisfies an input declared csv, json or text, as a text write does |
 | `check.saveMode` | partial | scenarios 26, 27 (BigQuery) |
 | `check.partitioning` | unsupported | the partitioning scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |
 | `check.csvOptions` | unsupported | the CSV option scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |

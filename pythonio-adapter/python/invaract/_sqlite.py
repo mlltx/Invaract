@@ -22,7 +22,6 @@ committed. ``error`` refuses a table that holds rows; ``ignore`` publishes nothi
 written partitioned.
 """
 import os
-import re
 import shutil
 import sqlite3
 import tempfile
@@ -31,12 +30,12 @@ import urllib.parse
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from . import _files, _frames
+from . import _frames, _jdbc, _optional, _outputs, _types
+from ._jdbc import FORMAT, quote as _quote
 from .errors import CheckNotRun
 
 SCHEME = "sqlite"
-FORMAT = "jdbc"
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+#: The staged rows' table, in the output's own staging database file.
 _STAGED = "invaract_staged"
 
 
@@ -52,7 +51,7 @@ def parse(location):
     if not database or not table:
         raise CheckNotRun(f"a SQLite location is sqlite:///<path to the database file>/<table> (sqlite://// for an absolute "
                           f"path), not {location!r}")
-    if not _IDENTIFIER.match(table):
+    if not _jdbc.IDENTIFIER.match(table):
         raise CheckNotRun(f"Invaract names SQLite tables as plain identifiers, not {table!r} (in {location!r})")
     return database, table
 
@@ -63,60 +62,32 @@ def catalog_of(location):
     return {"technology": "jdbc", "catalogName": os.path.splitext(os.path.basename(database))[0], "namespace": ["main"], "table": table}
 
 
-def _quote(name):
-    return '"' + name.replace('"', '""') + '"'
+def _connect(database):
+    dbapi = _optional.require("adbc_driver_sqlite.dbapi", "sqlite", "SQLite tables", package="adbc-driver-sqlite")
+    return dbapi.connect(database)
 
 
-def _dbapi():
-    try:
-        import adbc_driver_sqlite.dbapi as dbapi
-    except ImportError as e:
-        raise CheckNotRun('Invaract needs the adbc-driver-sqlite package to read or write SQLite tables: '
-                          'pip install "invaract[sqlite]"') from e
-    return dbapi
-
-
-def _read_only(database):
-    return _dbapi().connect("file:" + urllib.parse.quote(os.path.abspath(database)) + "?mode=ro")
-
-
-def _columns(cursor, table):
-    cursor.execute(f"PRAGMA table_info({_quote(table)})")
-    return [row[1] for row in cursor.fetchall()]
+def _read_only_uri(database):
+    """The URI that opens ``database`` read-only, as SQLite and its ADBC driver both take it."""
+    return "file:" + urllib.parse.quote(os.path.abspath(database)) + "?mode=ro"
 
 
 def read(location, fields):
     """The table at ``location``: the columns the contract lists (all of them when it lists none), each cast to the
     contract's type where it declares one."""
     database, query = _select(location, fields)
-    with _read_only(database) as conn, conn.cursor() as cursor:
+    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
         cursor.execute(query())
-        data = cursor.fetch_arrow_table()
-    return typed(data, fields)
+        return typed(cursor.fetch_arrow_table(), fields)
 
 
 def batches(location, fields):
-    """``(schema, batches)`` of the table at ``location``, as ``_frames.read_batches`` gives them."""
+    """``(schema, batches)`` of the table at ``location``, as ``_datasets.read_batches`` gives them."""
     database, query = _select(location, fields)
-    with _read_only(database) as conn, conn.cursor() as cursor:
+    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
         cursor.execute(query() + " WHERE 0")
         schema = typed(cursor.fetch_arrow_table(), fields).schema
-
-    def read(only=None):
-        conn = _read_only(database)
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(query(only))
-                reader = cursor.fetch_record_batch()
-                try:
-                    for batch in reader:
-                        yield typed(pa.Table.from_batches([batch]), fields).to_batches()[0] if batch.num_rows else batch
-                finally:
-                    reader.close()
-        finally:
-            conn.close()
-
-    return schema, read
+    return schema, _jdbc.stream(lambda: _connect(_read_only_uri(database)), query, lambda batch: typed(batch, fields))
 
 
 def _select(location, fields):
@@ -125,8 +96,9 @@ def _select(location, fields):
     database, table = parse(location)
     if not os.path.isfile(database):
         raise FileNotFoundError(f"there is no SQLite database {database} (for {location})")
-    with _read_only(database) as conn, conn.cursor() as cursor:
-        present = _columns(cursor, table)
+    with _connect(_read_only_uri(database)) as conn, conn.cursor() as cursor:
+        cursor.execute(f"PRAGMA table_info({_quote(table)})")
+        present = [row[1] for row in cursor.fetchall()]
     if not present:
         raise FileNotFoundError(f"there is no SQLite table {table} in {database}")
     declared = [f["name"] for f in fields]
@@ -139,13 +111,14 @@ def _select(location, fields):
 
 
 def typed(data, fields):
-    """``data`` with each column the contract types cast to that type from what SQLite held."""
-    types = {f["name"]: _frames.arrow_type(f["type"]) for f in fields}
-    return pa.table({c: _cast(data[c], types[c]) if types.get(c) is not None else data[c] for c in data.column_names})
+    """``data`` (a table or a record batch) with each column the contract types cast to that type from what SQLite held."""
+    types = _types.scalars(fields)
+    names = data.schema.names
+    return type(data).from_arrays([_cast(data.column(i), types.get(name)) for i, name in enumerate(names)], names=names)
 
 
 def _cast(column, t):
-    if column.type == t:
+    if t is None or column.type == t:
         return column
     if pa.types.is_decimal(t) and pa.types.is_floating(column.type):
         # through its shortest text, as a real holds no decimal exactly
@@ -183,16 +156,14 @@ def _affinity(t):
     return "TEXT"
 
 
-class SqliteOutput:
+class SqliteOutput(_outputs.Output):
     """One output: staged in a private database file, moved into the target's table at publish."""
 
-    def __init__(self, location, mode, run_id, layout=_files.FLAT):
+    def __init__(self, location, mode, run_id, layout=_outputs.FLAT):
         if layout.keys:
             raise CheckNotRun(f"Invaract does not write a SQLite table partitioned ({layout.describe()}): {location}")
-        self.target = str(location)
-        self.mode = mode
+        super().__init__(str(location), mode, layout)
         self.run_id = run_id
-        self.layout = layout
         self.database, self.table = parse(location)
         self._folder = None
         self._schema = None
@@ -205,7 +176,7 @@ class SqliteOutput:
     def has_data(self):
         if not os.path.isfile(self.database):
             return False
-        conn = sqlite3.connect("file:" + urllib.parse.quote(os.path.abspath(self.database)) + "?mode=ro", uri=True)
+        conn = sqlite3.connect(_read_only_uri(self.database), uri=True)
         try:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (self.table,)).fetchone()
             return bool(exists) and conn.execute(f"SELECT EXISTS (SELECT 1 FROM {_quote(self.table)})").fetchone()[0] == 1
@@ -220,7 +191,7 @@ class SqliteOutput:
         elif list(target.names) != self._schema.names:
             raise CheckNotRun(f"every write of {self.target} in one run has the same columns: {self._schema.names}, not {target.names}")
         self._required |= set(required)
-        conn = _dbapi().connect(self._staging)
+        conn = _connect(self._staging)
         try:
             with conn.cursor() as cursor:
                 # the staged table made first, so that a write of no rows still publishes the table's columns
@@ -270,10 +241,12 @@ class SqliteOutput:
                 conn.close()
                 self.discard()
 
-    def forget_previous(self):
-        pass
-
     def discard(self):
         if self._folder is not None:
             shutil.rmtree(self._folder, ignore_errors=True)
             self._folder = None
+
+
+def output(location, mode, run_id, layout=_outputs.FLAT):
+    """The output that writes the table at ``location`` (``_datasets.output``)."""
+    return SqliteOutput(location, mode, run_id, layout)

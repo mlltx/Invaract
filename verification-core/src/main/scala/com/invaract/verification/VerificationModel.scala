@@ -48,6 +48,14 @@ object ViolationType {
   val InputFieldTypeMismatch = "INPUT_FIELD_TYPE_MISMATCH"
   val InputFieldNullabilityMismatch = "INPUT_FIELD_NULLABILITY_MISMATCH"
 
+  /** Produced by `InputChecker.formatFindings` - an input declares a format
+    * and the job reads it in another (a contract saying `csv` for a folder the
+    * job reads as Parquet). Checked only when the adapter reports the read's
+    * format (`CheckedWrite.inputFormats`), the same both-sides-known rule as
+    * `OutputFormatMismatch`.
+    */
+  val InputFormatMismatch = "INPUT_FORMAT_MISMATCH"
+
   val MissingOutput = "MISSING_OUTPUT"
   val OutputLocationMismatch = "OUTPUT_LOCATION_MISMATCH"
   val OutputFormatMismatch = "OUTPUT_FORMAT_MISMATCH"

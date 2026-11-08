@@ -38,9 +38,9 @@ class PythonIoCsvOptionsSpec extends AnyFunSuite {
   private val write = s"""{"op": "write", "name": "report", "location": "out/report", "format": "csv", "saveMode": "overwrite", "schema": [{"name": "id", "type": "int64", "nullable": true}], "csv": {"delimiter": "|"}}"""
   private val written = """{"op": "written", "name": "report", "nulls": {"id": 0}}"""
 
-  test("the draft declares the options a read and a write reported") {
+  test("the draft declares the options a read and a write reported, and the format the input was read in") {
     val draft = dryRun(read(""", "csv": {"delimiter": ";", "encoding": "ISO-8859-1"}"""), write, written)
-    assert(draft.contains("- name: orders\n  location: in/orders.csv\n  schema:"), draft)
+    assert(draft.contains("- name: orders\n  location: in/orders.csv\n  format: csv\n  schema:"), draft)
     assert(draft.contains("    nullable: false\n  csv:\n    delimiter: ;\n    encoding: ISO-8859-1\noutputs:"), draft)
     assert(draft.contains("  - orders\n  csv:\n    delimiter: '|'\n"), draft)
   }

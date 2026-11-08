@@ -116,9 +116,10 @@ def check_source(source, path="<source>"):
 
 
 def check_file(path):
-    with open(path, "rb") as f:
+    """``check_source`` of the file at ``path``, read as Python reads it (UTF-8, or the encoding its first lines declare)."""
+    with tokenize.open(path) as f:
         source = f.read()
-    return check_source(source.decode("utf-8"), path)
+    return check_source(source, path)
 
 
 def _allowed_lines(source):

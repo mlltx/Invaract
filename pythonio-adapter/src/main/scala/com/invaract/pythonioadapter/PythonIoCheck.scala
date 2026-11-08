@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractParser, Dataset, LogicalField, L
 import com.invaract.ir
 import com.invaract.ir.{CatalogIdentity, DatasetRef, UnknownPlan}
 import com.invaract.verification.{
-  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, CsvOptionsChecker, ContractInference, ContractViolationException, DataCheckResult, DryRunReporting, DryRunSelfCheck,
+  AttachPlan, AttachSetup, CatalogChecker, CheckedWrite, CsvOptionsChecker, ContractInference, InputChecker, ContractViolationException, DataCheckResult, DryRunReporting, DryRunSelfCheck,
   InferredWrite, LocationMatching, RuntimeDataQuality, SchemaChecker, UnverifiableOperation, VerificationOptions, VerificationPipeline, VerificationResult,
   VerificationSetup, Violations
 }
@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
   *
   * {{{
   * {"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}, "check": false}
-  * {"op": "read", "name": "orders", "schema": [{"name": "id", "type": "int64", "nullable": true, "nulls": 0}]}
+  * {"op": "read", "name": "orders", "format": "parquet", "schema": [{"name": "id", "type": "int64", "nullable": true, "nulls": 0}]}
   * {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "total", "type": "int64"}]}
   * {"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [{"failed": 0, "examples": []}]}
   * {"op": "finish", "completed": true}
@@ -74,8 +74,10 @@ private[pythonioadapter] final class Run {
   private var reads = Vector.empty[(String, LogicalSchema)]
   /** The catalog each location read is registered in, where it is a catalog table. */
   private var readCatalogs = Map.empty[String, CatalogIdentity]
-  // the CSV options each read was made with, by location (`check.csvOptions`)
+  /** The CSV options each read was made with, by location (`check.csvOptions`). */
   private var readOptions = Map.empty[String, Map[String, String]]
+  /** The format each read was made in, by location (`check.inputFormat`). */
+  private var readFormats = Map.empty[String, String]
   private var pending = Map.empty[String, (Request.Write, String)]
   private var written = Vector.empty[String]
   private var drafts = Vector.empty[(String, Option[Contract])]
@@ -128,6 +130,7 @@ private[pythonioadapter] final class Run {
     * its declared columns and the catalog it must be registered in, so the write is judged on its own. */
   private def assumeDeclaredInputsRead(contract: Contract): Unit = {
     reads = contract.inputs.toVector.map(i => i.location -> declaredSchema(i))
+    readFormats = contract.inputs.flatMap(i => i.format.map(i.location -> _)).toMap
     readCatalogs = contract.inputs.flatMap { i =>
       i.catalog.filter(_.required).map(c => i.location -> CatalogIdentity(c.technology, c.catalogName, c.location, c.namespace, c.table))
     }.toMap
@@ -149,25 +152,30 @@ private[pythonioadapter] final class Run {
   }
 
   /** A read: in enforcement, of a declared input (the package has no location for any other name, so any other is refused
-    * whatever `rejectUndeclaredInputs` says), its columns checked against the input's; in a dry run, of the location the job
-    * names. Either way it counts toward every later write. */
+    * whatever `rejectUndeclaredInputs` says), its format and columns checked against the input's; in a dry run, of the
+    * location the job names. Either way it counts toward every later write. A read described without its columns, which
+    * the package sends when it already knows the read disagrees with the contract, is refused or, if nothing about it
+    * disagrees after all, not checked: its columns are never taken on trust. */
   private def read(r: Request.Read, run: Opened): Map[String, Any] = {
-    val schema = LogicalSchema(r.schema.map(c => c.field(c.nulls)))
+    val schema = LogicalSchema(r.schema.getOrElse(Nil).map(c => c.field(c.nulls)))
     val location = locate(r.name, r.location, "read", run)(_.inputs)
     run.contract.foreach { c =>
       val violations = c.inputs.find(_.name == r.name) match {
         case Some(input) if !LocationMatching.matches(input.location, location) => List(Violations.undeclaredInput(location))
         case Some(input) =>
-          SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true) ++
+          InputChecker.formatFinding(input, r.format, location).toList ++
+            r.schema.toList.flatMap(_ => SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, location, run.options.rejectUndeclaredFields, caseSensitive = true)) ++
             input.catalog.toList.flatMap(CatalogChecker.check(_, r.catalog, location, SchemaChecker.Side.Input)) ++
             CsvOptionsChecker.findings(input, r.csv, SchemaChecker.Side.Input, location)
         case None => List(Violations.undeclaredInput(r.name))
       }
       if (violations.nonEmpty) reject(c, VerificationResult.of(s"${c.id}@${c.version}", violations), ir.Read(DatasetRef(location), catalog = r.catalog), run)
     }
+    if (r.schema.isEmpty) throw new IllegalArgumentException(s"the read of '${r.name}' describes no columns")
     reads = reads.filterNot(_._1 == location) :+ (location -> schema)
     readCatalogs = r.catalog.fold(readCatalogs - location)(registered => readCatalogs + (location -> registered))
     readOptions = if (r.csv.isEmpty) readOptions - location else readOptions + (location -> r.csv)
+    readFormats = r.format.fold(readFormats - location)(format => readFormats + (location -> format))
     Map("ok" -> true)
   }
 
@@ -268,7 +276,7 @@ private[pythonioadapter] final class Run {
 
   private def checkedWrite(plan: ir.Write, schema: LogicalSchema, csv: Map[String, String]): CheckedWrite =
     CheckedWrite(plan, reads.toList, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty,
-      formatOptions = formatOptions(plan.dataset.location, csv))
+      formatOptions = formatOptions(plan.dataset.location, csv), inputFormats = readFormats)
 
   /** The CSV options of every read so far, and of the write to `location` (`check.csvOptions`). */
   private def formatOptions(location: String, csv: Map[String, String]): Map[String, Map[String, String]] =
@@ -281,7 +289,7 @@ private[pythonioadapter] final class Run {
   private def infer(location: String, w: Request.Write, plan: ir.Write, schema: LogicalSchema, run: Opened): Unit = {
     val outcome =
       try {
-        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning), formatOptions(location, w.csv)), reads.toList, plan)
+        val draft = ContractInference.infer(InferredWrite(location, w.format, w.saveMode, schema, Some(w.partitioning), formatOptions(location, w.csv), readFormats), reads.toList, plan)
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads.toList, schema, run.options, caseSensitive = true, Set.empty)
         DryRunReporting.inference(run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck))
         InferenceStatus.Inferred -> Some(draft)
@@ -332,7 +340,7 @@ private[pythonioadapter] object Run {
   /** What the package needs from the contract: where each dataset is, and what each output must look like; with
     * `runtimeDataQuality` on, also each output's data checks (`RuntimeDataQuality.checks`), which the package evaluates on the
     * data it stages and reports, in the same order, with `written`. */
-  def describe(c: Contract, options: VerificationOptions = VerificationOptions()): Map[String, Any] =
+  def describe(c: Contract, options: VerificationOptions): Map[String, Any] =
     Map(
       "id" -> c.id,
       "version" -> c.version,

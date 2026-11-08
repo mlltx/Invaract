@@ -1,15 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """Outputs of plain files (Parquet, CSV and the formats in ``_formats``): staged during the run, published only when the
-whole run passed. How depends on
-where the location lives:
+whole run passed. How depends on where the location lives:
 
-- **A local or mounted file system** (``LocalFileOutput``): staged in a hidden folder beside the location and renamed into
-  place, which is atomic per output.
-- **HDFS** (``hdfs://``, ``viewfs://``; ``HadoopFileOutput``): the same, on HDFS itself through pyarrow's Hadoop file system,
-  whose rename is atomic too.
-- **Object storage** (S3, GCS, Azure; ``ObjectStorageFileOutput``): there is no rename, so the files are staged on the job's
-  local disk (a refused run never touches the bucket) and copied into place at publish, as Spark and Hadoop do: the old
+- **A local or mounted file system, or HDFS** (``hdfs://``, ``viewfs://``, through pyarrow's Hadoop file system;
+  ``RenamedOutput``): staged in a hidden folder beside the location and renamed into place, which is atomic per output.
+- **Object storage** (S3, GCS, Azure; ``CopiedOutput``): there is no rename, so the files are staged on the job's local
+  disk (a refused run never touches the bucket) and copied into place at publish, as Spark and Hadoop do: the old
   ``_SUCCESS`` marker removed, the new files uploaded, the old ones deleted (overwrite), and ``_SUCCESS`` written last.
   A reader that waits for ``_SUCCESS`` sees a complete output; one that does not can see old and new files together while
   the publish runs, and a crash part way leaves them so, without ``_SUCCESS`` (decided 2026-11-03, docs/PYTHONIO_ADAPTER.md).
@@ -22,13 +19,14 @@ storage, its old files deleted); a dynamic overwrite is atomic per partition, no
 
 Any other location (a URI scheme Invaract does not know) is refused, never written somewhere else.
 """
-import collections
 import os
 import posixpath
 import shutil
 import tempfile
 
-from . import _formats, _frames, _storage
+import pyarrow as pa
+
+from . import _csv, _formats, _frames, _outputs, _storage
 from .errors import CheckNotRun
 
 #: Schemes of file systems whose rename is atomic, through pyarrow's Hadoop file system.
@@ -36,55 +34,146 @@ HADOOP = frozenset({"hdfs", "viewfs"})
 SUCCESS = "_SUCCESS"
 
 
-class Layout(collections.namedtuple("Layout", ["keys", "overwrite"])):
-    """How an output lays out its data: the columns it is partitioned by, in order (none: not partitioned), and what an
-    ``overwrite`` replaces, ``static`` (every partition) or ``dynamic`` (only those written)."""
-
-    __slots__ = ()
-
-    def describe(self):
-        return f"partitioned by {', '.join(self.keys)}" if self.keys else "not partitioned"
-
-
-FLAT = Layout((), "static")
-
-
-def output(location, fmt, mode, run_id, layout=FLAT):
+def output(location, fmt, mode, run_id, layout=_outputs.FLAT, csv=None):
+    """The output that writes ``fmt`` files at ``location``; ``csv``, the options a CSV output is written with."""
     kind = _storage.scheme(location)
     if kind in (None, "file"):
-        return LocalFileOutput(location, fmt, mode, run_id, layout)
+        target = _storage.uri(location)
+        return RenamedOutput(target, target, LocalFiles(), fmt, mode, run_id, layout, csv)
     if kind in HADOOP:
-        return HadoopFileOutput(location, fmt, mode, run_id, layout)
+        filesystem, path = _storage.filesystem(location)
+        return RenamedOutput(_storage.uri(location), path.rstrip("/"), ArrowFiles(filesystem), fmt, mode, run_id, layout, csv)
     if kind in _storage.OBJECT_STORAGE:
-        return ObjectStorageFileOutput(location, fmt, mode, run_id, layout)
+        return CopiedOutput(location, fmt, mode, run_id, layout, csv)
     raise CheckNotRun(f"Invaract cannot write files to {location}: it writes to local and mounted file systems, HDFS "
                       "(hdfs://, viewfs://) and object storage (s3://, gs://, abfss://, ...)")
 
 
-def writer(path, fmt, schema, filesystem=None):
-    """A writer of ``fmt`` (``_formats.FORMATS``) at ``path``, on ``filesystem`` (pyarrow's) or the local one."""
-    if fmt not in ("parquet", "csv"):
-        import pyarrow as pa
+# ---- the file systems an output is staged and published on -------------------------------------------------------------
 
-        return _formats.writer(pa.OSFile(path, "wb") if filesystem is None else filesystem.open_output_stream(path), fmt, schema)
-    if fmt == "csv" and getattr(fmt, "options", None):
-        from . import _csv
+class LocalFiles:
+    """The operations an output needs, on the local file system (or one mounted there). Paths below a root are relative and
+    ``/``-separated, whatever the platform."""
 
-        return _csv.Writer(open(path, "wb") if filesystem is None else filesystem.open_output_stream(path), schema, fmt.options)
+    #: The pyarrow file system a writer is given: none, the local one.
+    arrow = None
+    path = os.path
+
+    def join(self, base, rel):
+        return os.path.join(base, *rel.split("/"))
+
+    def exists(self, path):
+        return os.path.lexists(path)
+
+    def files(self, root):
+        """Every file under ``root``, relative to it, in order; none when there is no ``root``."""
+        found = []
+        for folder, _, names in os.walk(root):
+            for name in names:
+                found.append(os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/"))
+        return sorted(found)
+
+    def has_data(self, path):
+        """Whether ``path`` holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata
+        (``_``)."""
+        if os.path.isfile(path):
+            return True
+        return os.path.isdir(path) and any(not f.startswith((".", "_")) for f in os.listdir(path))
+
+    def make_dir(self, path):
+        os.makedirs(path, exist_ok=True)
+
+    def move(self, source, destination):
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        os.rename(source, destination)
+
+    def remove(self, path):
+        """Deletes the file or folder at ``path``, if there is one (a link, not what it links to)."""
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.lexists(path):
+            os.remove(path)
+
+    def output_stream(self, path):
+        return pa.OSFile(path, "wb")
+
+
+class ArrowFiles:
+    """``LocalFiles`` on a pyarrow file system (HDFS, object storage)."""
+
+    path = posixpath
+
+    def __init__(self, filesystem):
+        self.arrow = filesystem
+
+    def join(self, base, rel):
+        return posixpath.join(base, rel)
+
+    def exists(self, path):
+        import pyarrow.fs as pafs
+
+        return self.arrow.get_file_info(path).type != pafs.FileType.NotFound
+
+    def listing(self, path, recursive=False):
+        """What is in the folder ``path``: every file under it, or, not ``recursive``, everything directly in it."""
+        import pyarrow.fs as pafs
+
+        return [i for i in self.arrow.get_file_info(pafs.FileSelector(path, allow_not_found=True, recursive=recursive))
+                if i.type == pafs.FileType.File or not recursive]
+
+    def files(self, root):
+        root = root.rstrip("/")
+        return sorted(posixpath.relpath(i.path, root) for i in self.listing(root, recursive=True))
+
+    def has_data(self, path):
+        import pyarrow.fs as pafs
+
+        info = self.arrow.get_file_info(path)
+        if info.type == pafs.FileType.File:
+            return True
+        return info.type == pafs.FileType.Directory and any(
+            not posixpath.basename(i.path).startswith((".", "_")) for i in self.listing(path))
+
+    def make_dir(self, path):
+        self.arrow.create_dir(path, recursive=True)
+
+    def move(self, source, destination):
+        self.arrow.create_dir(posixpath.dirname(destination), recursive=True)
+        self.arrow.move(source, destination)
+
+    def remove(self, path):
+        import pyarrow.fs as pafs
+
+        kind = self.arrow.get_file_info(path).type
+        if kind == pafs.FileType.Directory:
+            self.arrow.delete_dir(path)
+        elif kind != pafs.FileType.NotFound:
+            self.arrow.delete_file(path)
+
+    def output_stream(self, path):
+        return self.arrow.open_output_stream(path)
+
+
+# ---- writing files -----------------------------------------------------------------------------------------------------
+
+def writer(path, fmt, schema, files, csv=None):
+    """A writer of ``fmt`` (``_formats.FORMATS``) at ``path`` on ``files``; ``csv``, the options a CSV file is written with."""
+    if fmt == "parquet":
+        import pyarrow.parquet as pq
+
+        return pq.ParquetWriter(path, schema, filesystem=files.arrow)
+    if fmt == "csv" and csv:
+        return _csv.Writer(files.output_stream(path), schema, csv)
     if fmt == "csv":
-        import pyarrow.csv as csv
+        import pyarrow.csv as pacsv
 
-        if filesystem is None:
-            return csv.CSVWriter(path, schema)
-        stream = filesystem.open_output_stream(path)
-        return _Closing(csv.CSVWriter(stream, schema), stream)
-    import pyarrow.parquet as pq
-
-    return pq.ParquetWriter(path, schema, filesystem=filesystem)
+        stream = files.output_stream(path)
+        return _Closing(pacsv.CSVWriter(stream, schema), stream)
+    return _formats.writer(files.output_stream(path), fmt, schema)
 
 
 class _Closing:
-    """A CSV writer over a stream it opened, closing the stream with it."""
+    """A writer over a stream it does not close itself, closing the stream with it."""
 
     def __init__(self, inner, stream):
         self._inner = inner
@@ -94,29 +183,30 @@ class _Closing:
         self._inner.write_batch(batch)
 
     def close(self):
-        self._inner.close()
-        self._stream.close()
+        try:
+            self._inner.close()
+        finally:
+            self._stream.close()
 
 
-def _stage_into(path, fmt, schema, batches, required, filesystem, remove):
+def _stage_into(path, fmt, csv, schema, batches, required, files):
     """Writes the batches to a new file at ``path`` with ``not null`` on each required column, and returns the empty values
     each column held (``_frames.take``); a write that fails part way leaves no file."""
     target = _frames.with_required(schema, required)
     try:
-        out = writer(path, fmt, target, filesystem)
+        out = writer(path, fmt, target, files, csv)
         try:
             return _frames.take(schema, target, batches, required, out.write_batch)
         finally:
             out.close()
     except BaseException:
-        remove(path)
+        files.remove(path)
         raise
 
 
-def _stage_partitioned(base, prefix, fmt, schema, batches, required, keys, filesystem, remove_prefixed):
+def _stage_partitioned(base, prefix, fmt, csv, schema, batches, required, keys, files):
     """``_stage_into`` for a partitioned output: each batch written under ``base`` in Hive-style folders by ``keys``, as files
     named ``<prefix>-<batch>-<n>.<extension>``; a write that fails part way leaves none of them."""
-    import pyarrow as pa
     import pyarrow.dataset as ds
 
     missing = [k for k in keys if k not in schema.names]
@@ -124,42 +214,42 @@ def _stage_partitioned(base, prefix, fmt, schema, batches, required, keys, files
         raise CheckNotRun(f"Invaract cannot partition by {', '.join(missing)}: the table has no such column")
     target = _frames.with_required(schema, required)
     partitioning = ds.partitioning(pa.schema([target.field(k) for k in keys]), flavor="hive")
-    written = [0]
+    written = 0
     # pyarrow's dataset writer lays out the folders; a format it does not write, or writes only one way (CSV with
     # options), is written to a local scratch folder as Arrow files first, then each file copied into the format by ``writer``
-    direct = fmt in ("parquet", "feather") or (fmt == "csv" and not getattr(fmt, "options", None))
-    into, into_fs, kind = (base, filesystem, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
+    direct = fmt in ("parquet", "feather") or (fmt == "csv" and not csv)
+    into, into_fs, kind = (base, files.arrow, fmt) if direct else (tempfile.mkdtemp(prefix=f"invaract-{prefix}-"), None, "ipc")
 
     def write(batch):
-        written[0] += 1
+        nonlocal written
+        written += 1
         ds.write_dataset(pa.Table.from_batches([batch]), into, format=kind, partitioning=partitioning, filesystem=into_fs,
-                         basename_template=f"{prefix}-{written[0]:05d}-{{i}}.{_formats.extension(fmt)}", existing_data_behavior="overwrite_or_ignore")
+                         basename_template=f"{prefix}-{written:05d}-{{i}}.{_formats.extension(fmt)}",
+                         existing_data_behavior="overwrite_or_ignore")
 
     try:
         nulls = _frames.take(schema, target, batches, required, write)
         if not direct:
-            _convert(into, base, fmt, filesystem)
+            _convert(into, base, fmt, csv, files)
         return nulls
     except BaseException:
-        remove_prefixed(base, prefix)
+        for rel in files.files(base):
+            if posixpath.basename(rel).startswith(prefix):
+                files.remove(files.join(base, rel))
         raise
     finally:
         if not direct:
-            _remove(into)
+            LocalFiles().remove(into)
 
 
-def _convert(scratch, base, fmt, filesystem):
-    """Each Arrow file under the local folder ``scratch`` written as ``fmt`` at the same place under ``base``."""
-    import pyarrow as pa
-
-    for rel in _local_files(scratch):
-        destination = posixpath.join(base, rel) if filesystem is not None else os.path.join(base, *rel.split("/"))
-        if filesystem is None:
-            os.makedirs(os.path.dirname(destination), exist_ok=True)
-        else:
-            filesystem.create_dir(posixpath.dirname(destination), recursive=True)
-        with pa.ipc.open_file(os.path.join(scratch, *rel.split("/"))) as reader:
-            out = writer(destination, fmt, reader.schema, filesystem)
+def _convert(scratch, base, fmt, csv, files):
+    """Each Arrow file under the local folder ``scratch`` written as ``fmt`` at the same place under ``base`` on ``files``."""
+    local = LocalFiles()
+    for rel in local.files(scratch):
+        destination = files.join(base, rel)
+        files.make_dir(files.path.dirname(destination))
+        with pa.ipc.open_file(local.join(scratch, rel)) as reader:
+            out = writer(destination, fmt, reader.schema, files, csv)
             try:
                 for i in range(reader.num_record_batches):
                     out.write_batch(reader.get_batch(i))
@@ -172,309 +262,144 @@ def _leaves(files):
     return sorted({posixpath.dirname(f) for f in files})
 
 
-# ---- local and mounted file systems ------------------------------------------------------------------------------------
+# ---- outputs -----------------------------------------------------------------------------------------------------------
 
-class LocalFileOutput:
-    """Its staging folder is beside its location, so that publishing is a rename on the same file system."""
+class _FileOutput(_outputs.Output):
+    """Files staged in the folder ``staging`` on ``staged_on`` (``LocalFiles`` or ``ArrowFiles``), one file (or, partitioned,
+    one file per partition) per write."""
 
-    def __init__(self, location, fmt, mode, run_id, layout=FLAT):
-        self.target = _storage.uri(location)
+    def __init__(self, target, fmt, mode, run_id, layout, csv, staged_on, staging):
+        super().__init__(target, mode, layout)
         self.fmt = fmt
-        parent, base = os.path.split(self.target)
-        self.staging = os.path.join(parent, f".{base}.invaract-staging-{run_id}")
-        self.previous = os.path.join(parent, f".{base}.invaract-previous-{run_id}")
-        self.mode = mode
+        self.csv = csv
         self.run_id = run_id
-        self.layout = layout
-        self.files = 0
-
-    def has_data(self):
-        return _has_data(self.target)
+        self.staging = staging
+        self._staged_on = staged_on
+        self._writes = 0
 
     def stage(self, schema, batches, required):
-        os.makedirs(self.staging, exist_ok=True)
-        self.files += 1
-        prefix = f"part-{self.run_id}-{self.files:05d}"
+        files = self._staged_on
+        files.make_dir(self.staging)
+        self._writes += 1
+        prefix = f"part-{self.run_id}-{self._writes:05d}"
         if self.layout.keys:
-            return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, None,
-                                      lambda base, p: _remove_prefixed_local(base, p))
-        return _stage_into(os.path.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, None, _remove)
+            return _stage_partitioned(self.staging, prefix, self.fmt, self.csv, schema, batches, required, self.layout.keys, files)
+        path = files.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}")
+        return _stage_into(path, self.fmt, self.csv, schema, batches, required, files)
+
+    def discard(self):
+        self._staged_on.remove(self.staging)
+
+
+class RenamedOutput(_FileOutput):
+    """Staged in a hidden folder beside its location (``path`` on ``files``), so that publishing is a rename on the same file
+    system; what a publish replaces is moved aside to ``previous`` until the whole run is published."""
+
+    def __init__(self, target, path, files, fmt, mode, run_id, layout=_outputs.FLAT, csv=None):
+        parent, base = files.path.split(path)
+        super().__init__(target, fmt, mode, run_id, layout, csv, files, files.path.join(parent, f".{base}.invaract-staging-{run_id}"))
+        self.path = path
+        self.previous = files.path.join(parent, f".{base}.invaract-previous-{run_id}")
+        self._files = files
+
+    def has_data(self):
+        return self._files.has_data(self.path)
 
     def publish(self):
-        if not os.path.isdir(self.staging):
+        files = self._files
+        if not files.exists(self.staging):
             return
         if self.mode == "append":
-            staged = _local_files(self.staging)
+            staged = files.files(self.staging)
             for rel in staged:
-                if os.path.exists(os.path.join(self.target, rel)):
-                    raise FileExistsError(f"Invaract will not replace {os.path.join(self.target, rel)} when appending")
+                if files.exists(files.join(self.path, rel)):
+                    raise FileExistsError(f"Invaract will not replace {files.join(self.path, rel)} when appending")
             for rel in staged:
-                destination = os.path.join(self.target, rel)
-                os.makedirs(os.path.dirname(destination), exist_ok=True)
-                os.rename(os.path.join(self.staging, rel), destination)
+                files.move(files.join(self.staging, rel), files.join(self.path, rel))
             self.discard()
-        elif self.mode == "ignore" and _has_data(self.target):
+        elif self.mode == "ignore" and self.has_data():
             self.discard()
-        elif self.mode == "overwrite" and self.layout.keys and self.layout.overwrite == "dynamic":
-            self._replace_partitions(_leaves(_local_files(self.staging)))
+        elif self.mode == "overwrite" and self.layout.dynamic:
+            self._replace_partitions(_leaves(files.files(self.staging)))
         else:
-            if os.path.lexists(self.target):
-                os.rename(self.target, self.previous)
+            if files.exists(self.path):
+                files.move(self.path, self.previous)
             try:
-                os.rename(self.staging, self.target)
+                files.move(self.staging, self.path)
             except BaseException:
-                if os.path.lexists(self.previous):
-                    os.rename(self.previous, self.target)
+                if files.exists(self.previous):
+                    files.move(self.previous, self.path)
                 raise
 
     def _replace_partitions(self, leaves):
         """A dynamic overwrite: each partition folder the run wrote takes the place of the one there (moved aside to
         ``previous`` until the run is over); one that fails part way puts back the folders already replaced."""
-        done = []
+        files, done = self._files, []
         try:
             for leaf in leaves:
-                destination, aside = os.path.join(self.target, leaf), os.path.join(self.previous, leaf)
-                if os.path.lexists(destination):
-                    os.makedirs(os.path.dirname(aside), exist_ok=True)
-                    os.rename(destination, aside)
+                destination, aside = files.join(self.path, leaf), files.join(self.previous, leaf)
+                if files.exists(destination):
+                    files.move(destination, aside)
                 done.append(leaf)
-                os.makedirs(os.path.dirname(destination), exist_ok=True)
-                os.rename(os.path.join(self.staging, leaf), destination)
+                files.move(files.join(self.staging, leaf), destination)
         except BaseException:
             for leaf in reversed(done):
-                destination, aside = os.path.join(self.target, leaf), os.path.join(self.previous, leaf)
-                if os.path.lexists(destination) and not os.path.lexists(os.path.join(self.staging, leaf)):
-                    os.rename(destination, os.path.join(self.staging, leaf))
-                if os.path.lexists(aside):
-                    os.rename(aside, destination)
+                destination, aside, staged = files.join(self.path, leaf), files.join(self.previous, leaf), files.join(self.staging, leaf)
+                if files.exists(destination) and not files.exists(staged):
+                    files.move(destination, staged)
+                if files.exists(aside):
+                    files.move(aside, destination)
             raise
         self.discard()
 
     def forget_previous(self):
-        _remove(self.previous)
-
-    def discard(self):
-        _remove(self.staging)
+        self._files.remove(self.previous)
 
 
-def _local_files(root):
-    """Every file under ``root``, as a ``/``-separated path relative to it, in order."""
-    found = []
-    for folder, _, names in os.walk(root):
-        for name in names:
-            found.append(os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/"))
-    return sorted(found)
-
-
-def _remove_prefixed_local(base, prefix):
-    for rel in _local_files(base) if os.path.isdir(base) else []:
-        if posixpath.basename(rel).startswith(prefix):
-            os.remove(os.path.join(base, rel))
-
-
-def _has_data(path):
-    """Whether a location holds data: a file, or a folder with anything in it that is not hidden (``.``) or metadata (``_``)."""
-    if os.path.isfile(path):
-        return True
-    return os.path.isdir(path) and any(not f.startswith((".", "_")) for f in os.listdir(path))
-
-
-def _remove(path):
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path, ignore_errors=True)
-    elif os.path.lexists(path):
-        os.remove(path)
-
-
-# ---- pyarrow file systems (HDFS, object storage) -----------------------------------------------------------------------
-
-def _exists(fs, path):
-    import pyarrow.fs as pafs
-
-    return fs.get_file_info(path).type != pafs.FileType.NotFound
-
-
-def _listing(fs, path, recursive=False):
-    import pyarrow.fs as pafs
-
-    return [i for i in fs.get_file_info(pafs.FileSelector(path, allow_not_found=True, recursive=recursive))
-            if i.type == pafs.FileType.File or not recursive]
-
-
-def _fs_has_data(fs, path):
-    """``_has_data`` on a pyarrow file system."""
-    import pyarrow.fs as pafs
-
-    info = fs.get_file_info(path)
-    if info.type == pafs.FileType.File:
-        return True
-    return info.type == pafs.FileType.Directory and any(
-        not posixpath.basename(i.path).startswith((".", "_")) for i in _listing(fs, path))
-
-
-def _fs_files(fs, root):
-    """Every file under ``root`` on ``fs``, relative to it, in order."""
-    root = root.rstrip("/")
-    return sorted(posixpath.relpath(i.path, root) for i in _listing(fs, root, recursive=True))
-
-
-class HadoopFileOutput:
-    """``LocalFileOutput`` on HDFS: staged beside the location and renamed into place, through pyarrow's Hadoop file system
-    (which needs Hadoop's client libraries where the job runs, as any pyarrow HDFS access does)."""
-
-    def __init__(self, location, fmt, mode, run_id, layout=FLAT, filesystem=None):
-        self.target = _storage.uri(location)
-        self.fmt = fmt
-        self.mode = mode
-        self.run_id = run_id
-        self.layout = layout
-        self.fs, self.path = filesystem or _storage.filesystem(location)
-        parent, base = posixpath.split(self.path.rstrip("/"))
-        self.staging = posixpath.join(parent, f".{base}.invaract-staging-{run_id}")
-        self.previous = posixpath.join(parent, f".{base}.invaract-previous-{run_id}")
-        self.files = 0
-
-    def has_data(self):
-        return _fs_has_data(self.fs, self.path)
-
-    def stage(self, schema, batches, required):
-        self.fs.create_dir(self.staging, recursive=True)
-        self.files += 1
-        prefix = f"part-{self.run_id}-{self.files:05d}"
-        if self.layout.keys:
-            return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, self.fs, self._remove_prefixed)
-        return _stage_into(posixpath.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, self.fs, self._remove_file)
-
-    def publish(self):
-        if not _exists(self.fs, self.staging):
-            return
-        if self.mode == "append":
-            staged = _fs_files(self.fs, self.staging)
-            for rel in staged:
-                if _exists(self.fs, posixpath.join(self.path, rel)):
-                    raise FileExistsError(f"Invaract will not replace {posixpath.join(self.path, rel)} when appending")
-            for rel in staged:
-                destination = posixpath.join(self.path, rel)
-                self.fs.create_dir(posixpath.dirname(destination), recursive=True)
-                self.fs.move(posixpath.join(self.staging, rel), destination)
-            self.discard()
-        elif self.mode == "ignore" and self.has_data():
-            self.discard()
-        elif self.mode == "overwrite" and self.layout.keys and self.layout.overwrite == "dynamic":
-            self._replace_partitions(_leaves(_fs_files(self.fs, self.staging)))
-        else:
-            if _exists(self.fs, self.path):
-                self.fs.move(self.path, self.previous)
-            try:
-                self.fs.move(self.staging, self.path)
-            except BaseException:
-                if _exists(self.fs, self.previous):
-                    self.fs.move(self.previous, self.path)
-                raise
-
-    def _replace_partitions(self, leaves):
-        """``LocalFileOutput._replace_partitions`` on HDFS."""
-        done = []
-        try:
-            for leaf in leaves:
-                destination, aside = posixpath.join(self.path, leaf), posixpath.join(self.previous, leaf)
-                if _exists(self.fs, destination):
-                    self.fs.create_dir(posixpath.dirname(aside), recursive=True)
-                    self.fs.move(destination, aside)
-                done.append(leaf)
-                self.fs.create_dir(posixpath.dirname(destination), recursive=True)
-                self.fs.move(posixpath.join(self.staging, leaf), destination)
-        except BaseException:
-            for leaf in reversed(done):
-                destination, aside = posixpath.join(self.path, leaf), posixpath.join(self.previous, leaf)
-                if _exists(self.fs, destination) and not _exists(self.fs, posixpath.join(self.staging, leaf)):
-                    self.fs.move(destination, posixpath.join(self.staging, leaf))
-                if _exists(self.fs, aside):
-                    self.fs.move(aside, destination)
-            raise
-        self.discard()
-
-    def forget_previous(self):
-        if _exists(self.fs, self.previous):
-            self.fs.delete_dir(self.previous)
-
-    def discard(self):
-        if _exists(self.fs, self.staging):
-            self.fs.delete_dir(self.staging)
-
-    def _remove_file(self, path):
-        if _exists(self.fs, path):
-            self.fs.delete_file(path)
-
-    def _remove_prefixed(self, base, prefix):
-        for rel in _fs_files(self.fs, base):
-            if posixpath.basename(rel).startswith(prefix):
-                self.fs.delete_file(posixpath.join(base, rel))
-
-
-class ObjectStorageFileOutput:
+class CopiedOutput(_FileOutput):
     """Staged on local disk, copied into place Spark-style at publish, ``_SUCCESS`` written last (module docstring)."""
 
-    def __init__(self, location, fmt, mode, run_id, layout=FLAT):
-        self.target = _storage.uri(location)
-        self.fmt = fmt
-        self.mode = mode
-        self.run_id = run_id
-        self.layout = layout
-        self.fs, self.path = _storage.filesystem(location)
-        self.path = self.path.rstrip("/")
-        self.staging = tempfile.mkdtemp(prefix=f"invaract-{run_id}-")
-        self.files = 0
+    def __init__(self, location, fmt, mode, run_id, layout=_outputs.FLAT, csv=None):
+        filesystem, path = _storage.filesystem(location)
+        super().__init__(_storage.uri(location), fmt, mode, run_id, layout, csv, LocalFiles(),
+                         tempfile.mkdtemp(prefix=f"invaract-{run_id}-"))
+        self.path = path.rstrip("/")
+        self._store = ArrowFiles(filesystem)
 
     def has_data(self):
-        return _fs_has_data(self.fs, self.path)
-
-    def stage(self, schema, batches, required):
-        os.makedirs(self.staging, exist_ok=True)
-        self.files += 1
-        prefix = f"part-{self.run_id}-{self.files:05d}"
-        if self.layout.keys:
-            return _stage_partitioned(self.staging, prefix, self.fmt, schema, batches, required, self.layout.keys, None,
-                                      lambda base, p: _remove_prefixed_local(base, p))
-        return _stage_into(os.path.join(self.staging, f"{prefix}.{_formats.extension(self.fmt)}"), self.fmt, schema, batches, required, None, _remove)
+        return self._store.has_data(self.path)
 
     def publish(self):
         import pyarrow.fs as pafs
 
-        staged = _local_files(self.staging) if os.path.isdir(self.staging) else []
+        store = self._store
+        staged = self._staged_on.files(self.staging)
         if not staged or (self.mode == "ignore" and self.has_data()):
             self.discard()
             return
         marker = f"{self.path}/{SUCCESS}"
         uploaded = {f"{self.path}/{rel}" for rel in staged}
         if self.mode == "append":
-            clashes = sorted(p for p in uploaded if _exists(self.fs, p))
+            clashes = sorted(p for p in uploaded if store.exists(p))
             if clashes:
                 raise FileExistsError(f"Invaract will not replace {clashes[0]} when appending")
             old = []
-        elif self.layout.keys and self.layout.overwrite == "dynamic":
+        elif self.layout.dynamic:
             # only the partitions the run wrote are replaced
-            old = [i.path for leaf in _leaves(staged) for i in _listing(self.fs, f"{self.path}/{leaf}", recursive=True)]
+            old = [i.path for leaf in _leaves(staged) for i in store.listing(f"{self.path}/{leaf}", recursive=True)]
         else:
-            old = [i.path for i in _listing(self.fs, self.path, recursive=True)]
+            old = [i.path for i in store.listing(self.path, recursive=True)]
         # 1. no reader that waits for _SUCCESS takes the output for complete while it changes
-        if _exists(self.fs, marker):
-            self.fs.delete_file(marker)
+        store.remove(marker)
         # 2. the new files, beside the old ones (nothing is deleted before they are all there)
         for rel in staged:
-            pafs.copy_files(os.path.join(self.staging, *rel.split("/")), f"{self.path}/{rel}",
-                            source_filesystem=pafs.LocalFileSystem(), destination_filesystem=self.fs)
+            pafs.copy_files(self._staged_on.join(self.staging, rel), f"{self.path}/{rel}",
+                            source_filesystem=pafs.LocalFileSystem(), destination_filesystem=store.arrow)
         # 3. an overwrite's old files
         for path in old:
             if path not in uploaded and path != marker:
-                self.fs.delete_file(path)
+                store.arrow.delete_file(path)
         # 4. complete
-        with self.fs.open_output_stream(marker):
+        with store.output_stream(marker):
             pass
         self.discard()
-
-    def forget_previous(self):
-        pass
-
-    def discard(self):
-        shutil.rmtree(self.staging, ignore_errors=True)

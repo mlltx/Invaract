@@ -32,8 +32,9 @@ private[beamadapter] trait StepCatalogue {
   /** Whether `step` concatenates collections without matching rows of one with another (`Flatten`). */
   def isUnion(step: BeamStep): Boolean
 
-  /** Whether `step` turns lines of text into rows whose columns are known (`JsonToRow`). */
-  def isTextParser(step: BeamStep): Boolean
+  /** The format of the lines of text `step` turns into rows whose columns are known (`JsonToRow` is json), when it is such a
+    * parser. */
+  def textParserFormat(step: BeamStep): Option[String]
 
   /** The format a text write of `step`'s output is in, when `step` turns rows into lines of a known format (`ToJson`). */
   def textFormatterFormat(step: BeamStep): Option[String]
@@ -53,7 +54,7 @@ private[beamadapter] object JavaSteps extends StepCatalogue {
   override def fileWrite(unit: BeamStep): IoWrite = BeamIO.fileWrite(unit)
   override def isInJobData(step: BeamStep): Boolean = BeamIO.isInJobData(step)
   override def isUnion(step: BeamStep): Boolean = BeamIO.isUnion(step)
-  override def isTextParser(step: BeamStep): Boolean = BeamIO.isTextParser(step)
+  override def textParserFormat(step: BeamStep): Option[String] = BeamIO.textParserFormat(step)
   override def textFormatterFormat(step: BeamStep): Option[String] = BeamIO.textFormatterFormat(step)
   override def recognisesShape(step: BeamStep): Boolean = BeamShapes.recognises(step)
   override def shape(step: BeamStep): Option[SchemaShape] = BeamShapes.of(step)

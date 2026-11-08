@@ -35,7 +35,8 @@ private[invaract] case class InferredWrite(
     saveMode: Option[String],
     outputSchema: LogicalSchema,
     partitioning: Option[WritePartitioning] = None,
-    formatOptions: Map[String, Map[String, String]] = Map.empty
+    formatOptions: Map[String, Map[String, String]] = Map.empty,
+    inputFormats: Map[String, String] = Map.empty
 )
 
 private[invaract] object ContractInference {
@@ -85,7 +86,7 @@ private[invaract] object ContractInference {
       Dataset(
         name = inputName(index, totalInputs),
         location = normalizedLocation,
-        format = None, // recognizedRead only ever yields a (location, schema) pair - no format is collected alongside it
+        format = write.inputFormats.get(location), // the format the read used, where the adapter reports it
         schema = schemaOf(schema),
         description = observedUsageDescription(normalizedLocation, outputContributingQualifiers, conditionReferencedQualifiers),
         csv = csvOf(write.formatOptions.get(location))

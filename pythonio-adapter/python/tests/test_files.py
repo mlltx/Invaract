@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2024 Invaract Contributors
+"""A plain-file output renamed into place (``_files.RenamedOutput``) behaves the same on the local file system as through a
+pyarrow file system, which is how it reaches HDFS. Here the pyarrow file system is the local one, so every run of the suite
+holds the HDFS code path to the local one, publish mode by publish mode (a whole run on HDFS: test_tables.py, through a local
+file system standing in for it, and test_storage.py, on a real cluster)."""
+import os
+
+import pyarrow as pa
+import pyarrow.fs as pafs
+import pyarrow.parquet as pq
+import pytest
+
+from invaract import _files, _outputs
+
+ROWS = pa.table({"region": ["north", "south"], "total": pa.array([10, 20], pa.int64())})
+DYNAMIC = _outputs.Layout(("region",), "dynamic")
+
+
+@pytest.fixture(params=["local", "pyarrow"])
+def files(request):
+    return _files.LocalFiles() if request.param == "local" else _files.ArrowFiles(pafs.LocalFileSystem())
+
+
+def renamed(files, mode, layout=_outputs.FLAT, fmt="parquet", csv=None, run_id="run1"):
+    path = os.path.abspath("out")
+    return _files.RenamedOutput(path, path, files, fmt, mode, run_id, layout, csv)
+
+
+def write(out, table=ROWS, required=()):
+    nulls = out.stage(table.schema, iter(table.to_batches()), set(required))
+    out.publish()
+    out.forget_previous()
+    return nulls
+
+
+def contents():
+    """Every file under the output, relative to it, and what is left beside it."""
+    found = sorted(os.path.relpath(os.path.join(d, f), "out").replace(os.sep, "/") for d, _, fs in os.walk("out") for f in fs)
+    return found, sorted(f for f in os.listdir(".") if f.startswith(".out."))
+
+
+def test_an_overwrite_replaces_the_output_and_leaves_nothing_beside_it(files):
+    write(renamed(files, "overwrite"))
+    write(renamed(files, "overwrite", run_id="run2"))
+    assert contents() == (["part-run2-00001.parquet"], [])
+    assert pq.read_table("out").to_pydict() == ROWS.to_pydict()
+
+
+def test_an_append_keeps_what_was_there(files):
+    write(renamed(files, "overwrite"))
+    write(renamed(files, "append", run_id="run2"))
+    assert contents() == (["part-run1-00001.parquet", "part-run2-00001.parquet"], [])
+
+
+def test_ignore_publishes_nothing_to_an_output_that_holds_data(files):
+    write(renamed(files, "overwrite"))
+    out = renamed(files, "ignore", run_id="run2")
+    assert out.has_data()
+    write(out)
+    assert contents() == (["part-run1-00001.parquet"], [])
+
+
+def test_a_dynamic_overwrite_replaces_only_the_partitions_written(files):
+    write(renamed(files, "overwrite", DYNAMIC))
+    write(renamed(files, "overwrite", DYNAMIC, run_id="run2"), ROWS.slice(0, 1))
+    assert contents() == (["region=north/part-run2-00001-00001-0.parquet", "region=south/part-run1-00001-00001-0.parquet"], [])
+
+
+def test_a_partitioned_csv_with_options_is_converted_into_its_folders(files):
+    write(renamed(files, "overwrite", DYNAMIC, fmt="csv", csv={"delimiter": ";"}))
+    assert contents() == (["region=north/part-run1-00001-00001-0.csv", "region=south/part-run1-00001-00001-0.csv"], [])
+    with open("out/region=south/part-run1-00001-00001-0.csv", encoding="utf-8") as f:
+        assert f.read() == "total\n20\n"
+
+
+def test_a_write_that_fails_part_way_leaves_nothing_staged(files):
+    out = renamed(files, "overwrite", DYNAMIC)
+
+    def failing():
+        yield from ROWS.to_batches()
+        raise RuntimeError("the job's frame failed")
+
+    with pytest.raises(RuntimeError):
+        out.stage(ROWS.schema, failing(), set())
+    assert files.files(out.staging) == []
+    out.discard()
+    assert contents() == ([], [])
+
+
+def test_a_required_columns_empty_value_ends_the_write(files):
+    with_null = pa.table({"region": ["north", None], "total": pa.array([10, 20], pa.int64())})
+    nulls = write(renamed(files, "overwrite"), with_null, required={"region"})
+    assert nulls == {"region": 1, "total": 0}

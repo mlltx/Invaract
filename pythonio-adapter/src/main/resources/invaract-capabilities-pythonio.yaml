@@ -73,6 +73,11 @@ capabilities:
     note: >-
       The package writes the format itself (parquet, csv, json, orc, avro, feather, excel, delta, iceberg, or jdbc for a
       PostgreSQL or SQLite table) and says which.
+  check.inputFormat:
+    status: supported
+    note: >-
+      The package reads each input in the format its contract declares, or in the one the job's format= names, and says
+      which; a format= that disagrees with the contract is refused before anything is read.
   check.saveMode:
     status: supported
     note: The package applies the save mode itself (overwrite, append, error or ignore) and says which.

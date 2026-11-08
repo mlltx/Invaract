@@ -50,7 +50,8 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 | [Every promised output is written](#every-promised-output-is-written) | ✅ Yes | ✅ Yes | ◐ Partly | ✅ Yes |
 | [Columns match the contract](#columns-match-the-contract) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [Nested columns are compared in full](#nested-columns-are-compared-in-full) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| [The file format matches](#the-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [The output's file format matches](#the-outputs-file-format-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [Inputs are read in their declared format](#inputs-are-read-in-their-declared-format) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [The save mode matches](#the-save-mode-matches) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
 | [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared) | ✖ No | ✖ No | ✖ No | ◐ Partly |
 | [CSV files are read and written as declared](#csv-files-are-read-and-written-as-declared) | ✖ No | ✖ No | ◐ Partly | ✅ Yes |
@@ -113,7 +114,8 @@ Everything not listed here is checked in full.
 **Checked in part**
 
 - [Columns match the contract](#columns-match-the-contract): Columns are checked where the pipeline states them: Parquet and Avro schemas, BigQuery table schemas and Beam rows. A write of plain Java objects or of text lines has no columns to compare, so it is refused unless its output declares none.
-- [The file format matches](#the-file-format-matches): The format comes from the IO the pipeline uses. A text write cannot tell CSV from JSON or plain text.
+- [The output's file format matches](#the-outputs-file-format-matches): The format comes from the IO the pipeline uses. A text write cannot tell CSV from JSON or plain text.
+- [Inputs are read in their declared format](#inputs-are-read-in-their-declared-format): The format comes from the IO the pipeline reads with. A text read cannot tell CSV from JSON or plain text.
 - [The save mode matches](#the-save-mode-matches): Only BigQuery writes state a save mode. A contract that declares one for a file, Kafka, JDBC or Pub/Sub write has that write refused.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): BigQuery tables are checked against the `bigquery` catalog. Files, Kafka, JDBC and Pub/Sub have no catalog in Beam, so a requirement on them is never met.
 - [Rules about the transformation's shape](#rules-about-the-transformations-shape): Checked where the pipeline uses Beam's schema transforms (`Filter`, `Group`, `Join`, `CoGroup`) or Beam SQL's GROUP BY and JOIN. A filter, grouping or join written as code is a black box: it does not satisfy a rule, and under `forbid_cross_join` a step that combines collections in code is refused.
@@ -149,7 +151,8 @@ Everything not listed here is checked in full.
 
 - [Streaming reads](#streaming-reads): Pub/Sub streams are located by topic. A file stream (`fileio.MatchContinuously`) does not say which files it reads, so an input it may be is reported as unverifiable.
 - [Columns match the contract](#columns-match-the-contract): Columns are checked where the pipeline states them: a Parquet write's pyarrow schema, an Avro schema, a BigQuery table schema, or typed rows (`ReadFromParquet(..., as_rows=True)`). A write of Python dictionaries has no columns to compare, so it is refused unless its output declares none.
-- [The file format matches](#the-file-format-matches): The format comes from the sink the write uses. A text write cannot tell CSV from JSON or plain text.
+- [The output's file format matches](#the-outputs-file-format-matches): The format comes from the sink the write uses. A text write cannot tell CSV from JSON or plain text.
+- [Inputs are read in their declared format](#inputs-are-read-in-their-declared-format): The format comes from the source the read uses. A text read cannot tell CSV from JSON or plain text.
 - [The save mode matches](#the-save-mode-matches): Only BigQuery writes state a save mode. A contract that declares one for a file or Pub/Sub write has that write refused.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): BigQuery tables are checked against the `bigquery` catalog. Files and Pub/Sub have no catalog in Beam, so a requirement on them is never met.
 - [Turn it on without changing the job](#turn-it-on-without-changing-the-job): Turned on with `--runner=invaract_beam.InvaractRunner` and the `--invaract_...` flags, with the `invaract_beam` package and Java 11 or later where the job is submitted. A job that sets its runner in its own code, or does not pass its command line to Beam, bypasses it.
@@ -297,9 +300,15 @@ Compares arrays, maps and structs element by element, not only by their outer ty
 
 Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/reference/contract-format/)
 
-### The file format matches
+### The output's file format matches
 
 Stops a write in a different format from the one the contract declares, such as CSV where it says Parquet (`OUTPUT_FORMAT_MISMATCH`).
+
+Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/reference/contract-format/)
+
+### Inputs are read in their declared format
+
+Stops a job that reads an input in a different format from the one the contract declares, such as Parquet where it says CSV (`INPUT_FORMAT_MISMATCH`).
 
 Where an engine does not do it: If your contract relies on it, the job is refused before it writes anything (`UNSUPPORTED_CONTRACT_FEATURE`), rather than run with that part unchecked. [Read more](/reference/contract-format/)
 

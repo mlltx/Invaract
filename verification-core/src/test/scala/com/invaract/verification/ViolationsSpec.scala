@@ -38,6 +38,7 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.undeclaredInputNotSourceOf("bronze/in", in, out) -> "L",
     Violations.missingOutput(out) -> "L",
     Violations.outputLocationMismatch(List("gold/a"), "gold/b") -> "LEA",
+    Violations.inputFormatMismatch("csv", "parquet", "bronze/in") -> "LEA",
     Violations.outputFormatMismatch("parquet", "csv", "gold/out") -> "LEA",
     Violations.outputSaveModeMismatch("overwrite", "append", "gold/out") -> "LEA",
     Violations.missingCatalogRegistration(Side.Input, "bronze/in") -> "L",

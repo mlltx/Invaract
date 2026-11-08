@@ -42,6 +42,10 @@ import org.slf4j.LoggerFactory
   *   `delimiter`, `header`, ...: `CsvOptionsChecker.Names`); checked against
   *   the datasets' declared CSV options (`check.csvOptions`). An option not
   *   reported, and a location not in the map, are not checked.
+  * @param inputFormats the format each read used, by its location (`parquet`,
+  *   `csv`, `delta`, ...: `com.invaract.contract.Formats`), for an adapter
+  *   that knows them; checked against the inputs' declared formats
+  *   (`check.inputFormat`). A location not in the map is not checked.
   */
 final case class CheckedWrite(
     plan: ir.Plan,
@@ -53,7 +57,8 @@ final case class CheckedWrite(
     resolutionNotes: List[String] = Nil,
     dataChecks: List[DataCheckResult] = Nil,
     partitioning: Option[WritePartitioning] = None,
-    formatOptions: Map[String, Map[String, String]] = Map.empty
+    formatOptions: Map[String, Map[String, String]] = Map.empty,
+    inputFormats: Map[String, String] = Map.empty
 )
 
 /** How a write lays out its data: the columns it partitions by, in order (empty when it does not partition), and what an
@@ -216,11 +221,12 @@ object VerificationPipeline {
     val runtimeDataQualityViolations = if (options.runtimeDataQuality) RuntimeDataQuality.violations(checked.dataChecks, writeLocation) else Nil
     val partitioningViolations = OutputChecker.partitioningCheck(contract, checked.plan, checked.partitioning)
     val csvViolations = CsvOptionsChecker.check(contract, checked.plan, planFacts.reads, checked.formatOptions)
+    val inputFormatViolations = InputChecker.formatFindings(contract, planFacts.reads, checked.inputFormats)
 
     VerificationResult.of(
       structuralResult.contract,
       capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations ++
-        runtimeDataQualityViolations ++ partitioningViolations ++ csvViolations,
+        runtimeDataQualityViolations ++ partitioningViolations ++ csvViolations ++ inputFormatViolations,
       fingerprints,
       dataQualityResults,
       roleConformanceResults,

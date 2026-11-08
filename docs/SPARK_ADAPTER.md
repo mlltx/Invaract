@@ -434,6 +434,21 @@ covered: a streaming CSV sink (`FileStreamSink` keeps its options in a construct
 a field), whose options are therefore not compared. Tests: `SparkCsvOptionsSpec` (a real session), and
 the `csv-*` conformance scenarios.
 
+**Input formats.** `check.inputFormat` (an input's declared `format`, `INPUT_FORMAT_MISMATCH`) is declared
+`supported`. `ContractEnforcementRule` hands the pipeline, as `CheckedWrite.inputFormats`, the format of
+every read `collectInputSchemas` finds, by the same location, and a dry run's draft declares it.
+`SparkPlanAdapter.readFormatOf` names a read the way a write to the same dataset is named, so one contract
+reads the same on both sides: a catalog table by its provider (`hive`, `delta`, `parquet`, ...), whichever
+reader Spark plans for it (a Parquet or ORC Hive table read through Spark's converted file reader is still
+`hive`, as a write to it is); a Delta table read by its path as `delta`, though Spark plans a
+`HadoopFsRelation` over Parquet files for it (recognised by Delta's file index class); any other file read
+by its file format's registered short name; a JDBC relation as `jdbc`; a DataSourceV2 table (Iceberg, ...)
+by its `provider` property; a streaming source by its data source, whether the job named it
+(`readStream.format("csv")`) or its class. A read of a third-party `BaseRelation` that names no format, or
+a DataSourceV2 table with no `provider` property, reports none and is not compared. Tests:
+`SparkInputFormatSpec` (a real session with Delta), `HiveConnectorSpec`, `IcebergConnectorSpec`, and the
+`input-format-*` conformance scenarios.
+
 **Not the runtime check.** `VerificationOptions.runtimeDataQuality`
 (`spark.invaract.runtimeDataQuality`, capability `check.runtimeDataQuality`)
 holds the *rows* a write puts in an output to the same constraints, which

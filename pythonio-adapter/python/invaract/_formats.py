@@ -27,9 +27,10 @@ import re
 
 import pyarrow as pa
 
+from . import _optional, _storage
 from .errors import CheckNotRun
 
-#: Formats pyarrow's datasets read (``_frames._file_dataset``), by the name pyarrow gives each.
+#: Formats pyarrow's datasets read (``_datasets``), by the name pyarrow gives each.
 DATASET = {"parquet": "parquet", "orc": "orc", "feather": "feather"}
 #: Formats read file by file here.
 FOREIGN = ("json", "avro", "excel")
@@ -53,24 +54,15 @@ def by_extension(location):
     return next((fmt for ext, fmt in _BY_EXTENSION.items() if lowered.endswith(ext)), None)
 
 
-def _need(module, extra, fmt):
-    try:
-        return __import__(module, fromlist=["_"])
-    except ImportError as e:
-        raise CheckNotRun(f'Invaract needs the {module} package to read or write {fmt}: pip install "invaract[{extra}]"') from e
-
-
 # ---- reading, file by file ---------------------------------------------------------------------------------------------
 
 class Files:
     """A file, or a folder of files partitioned Hive-style or not, in a format pyarrow's datasets do not read: what
-    ``_frames`` reads a pyarrow dataset through (``schema``, ``to_table``, ``to_batches``). A partition key the contract
+    ``_datasets`` reads a pyarrow dataset through (``schema``, ``to_table``, ``to_batches``). A partition key the contract
     lists is typed as it declares it, any other read as text."""
 
     def __init__(self, location, fmt, fields, types):
         import pyarrow.dataset as ds
-
-        from . import _storage
 
         self._fmt, self._fields, self._types = fmt, fields, types
         self._fs, base = _storage.filesystem(location)
@@ -142,7 +134,7 @@ def _read_json(stream, fields, types):
 
 
 def _read_avro(stream, fields, types):
-    fastavro = _need("fastavro", "avro", "avro")
+    fastavro = _optional.require("fastavro", "avro", "avro")
     reader = fastavro.reader(stream)
     schema = _arrow_of_avro(reader.writer_schema)
     return pa.Table.from_pylist(list(reader), schema=schema)
@@ -186,7 +178,7 @@ def _avro_type(avro):
 
 
 def _read_excel(stream, fields, types):
-    openpyxl = _need("openpyxl", "excel", "excel")
+    openpyxl = _optional.require("openpyxl", "excel", "excel")
     book = openpyxl.load_workbook(io.BytesIO(stream.read()), read_only=True, data_only=True)
     try:
         rows = [r for r in book.worksheets[0].iter_rows(values_only=True) if any(v is not None for v in r)]
@@ -342,7 +334,7 @@ class AvroWriter:
     names it."""
 
     def __init__(self, stream, schema):
-        fastavro = _need("fastavro", "avro", "avro")
+        fastavro = _optional.require("fastavro", "avro", "avro")
         from fastavro.write import Writer
 
         self._stream = stream
@@ -416,7 +408,7 @@ class ExcelWriter:
     """One sheet: a header row naming the columns, then a row per row (module docstring)."""
 
     def __init__(self, stream, schema):
-        openpyxl = _need("openpyxl", "excel", "excel")
+        openpyxl = _optional.require("openpyxl", "excel", "excel")
         for field in schema:
             t = field.type
             if pa.types.is_nested(t) or pa.types.is_binary(t) or pa.types.is_large_binary(t) or pa.types.is_fixed_size_binary(t):

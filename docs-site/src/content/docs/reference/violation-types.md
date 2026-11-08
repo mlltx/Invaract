@@ -45,6 +45,7 @@ that sets them, so a consumer can group or route findings without special-casing
 |---|---|---|---|---|
 | `MISSING_INPUT`, `MISSING_OUTPUT` | declared | — | — | — |
 | `UNDECLARED_INPUT` | the read | — | — | — |
+| `INPUT_FORMAT_MISMATCH` | the read | — | declared format / the format read | — |
 | `OUTPUT_LOCATION_MISMATCH` / `_FORMAT_` / `_SAVE_MODE_` | write | — | declared / actual | — |
 | `*_CATALOG_REGISTRATION`, `*_CATALOG_MISMATCH` | dataset | — | catalog (mismatch only) | — |
 | `MISSING_*_FIELD` | dataset | path | declared type / — | — |
@@ -68,6 +69,7 @@ that sets them, so a consumer can group or route findings without special-casing
 |---|---|
 | `MISSING_INPUT` | A dataset the contract declares as an input was never read by the plan. A `.checkpoint()` between the read and the write does not cause this: Invaract sees through it, so an input read before a checkpoint counts as read (see [Notification sinks](/guides/notification-sinks/#what-an-event-looks-like)). It is also not reported when the plan contains a lineage boundary Invaract could not see through (for example a checkpoint created before the enforcement rule was installed) — the input is then reported as unverifiable instead, since its absence isn't proven. An unrelated checkpoint elsewhere in the job never excuses a genuinely missing input. See `unverifiableInputs` in the [notification sinks guide](/guides/notification-sinks/#what-an-event-looks-like) for that report-only alternative. When the output the write lands on declares [`derivedFrom`](/guides/mapping-outputs-to-inputs/), only *those* inputs are expected of that write. |
 | `UNDECLARED_INPUT` | The plan read a dataset the contract doesn't declare as an input. Only checked when `rejectUndeclaredInputs` is enabled. The table a row-level `DELETE`/`UPDATE`/`MERGE` changes is not an input, even though the command reads it. Also raised, under the same option, for a read of an input the contract does declare but not as a source of the output being written (via that output's [`derivedFrom`](/guides/mapping-outputs-to-inputs/)). |
+| `INPUT_FORMAT_MISMATCH` | The input declares a `format` and the job reads it in another: a folder of CSV files the contract declares, read as Parquet, say. Only checked when the engine reports the format a read uses; see [What Each Engine Checks](/reference/what-each-engine-checks/). |
 | `MISSING_INPUT_FIELD` | A required input field is absent from the actual input schema. |
 | `UNDECLARED_INPUT_COLUMN` | The actual input schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
 | `INPUT_FIELD_TYPE_MISMATCH` | An input field's actual type doesn't match the contract's declared type — including the contents of an `array<...>`/`map<...>`/`struct<...>` type or a struct's `properties` (the violation's `column` is then a dotted path such as `address.zip`). |

@@ -49,7 +49,7 @@ the rest of `invaract/_settings.py`.
 **Migrating a job with no contract yet.** Replace each read and write, keeping its path as `location=`
 (`invaract.read("orders", location="data/in/orders")`), and run it with `INVARACT_DRY_RUN=true`: the job reads and writes as
 before, and a draft contract is published to the notification sink. Review it, commit it, and remove the `location=`
-arguments. With a contract in force, a `location=` that disagrees with it is refused.
+arguments. With a contract in force, a `location=` or `format=` that disagrees with it is refused.
 
 `examples/orders_job` is a job over three files (`load.py`, `build.py`, `main.py`) written this way. The design is
 `docs/PYTHON_IO_ADAPTER_DESIGN.md`, the checker's side `docs/PYTHONIO_ADAPTER.md`. Tests: `python -m pytest` here, with a

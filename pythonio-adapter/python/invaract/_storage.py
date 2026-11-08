@@ -9,11 +9,17 @@ Credentials and endpoints come from each library's own standard sources (``AWS_*
 """
 import os
 import re
+import urllib.parse
 
 from .errors import CheckNotRun
 
+#: Azure's URI schemes: ``az://<container>/<path>`` (delta-rs's and fsspec's), and
+#: ``abfs[s]://<container>@<account>.dfs.core.windows.net/<path>``.
+AZURE = frozenset({"az", "abfs", "abfss"})
+#: Google Cloud Storage's URI schemes.
+GCS = frozenset({"gs", "gcs"})
 #: URI schemes of object storage, as pyarrow, delta-rs and pyiceberg spell them.
-OBJECT_STORAGE = frozenset({"s3", "s3a", "gs", "gcs", "az", "abfs", "abfss"})
+OBJECT_STORAGE = frozenset({"s3", "s3a"}) | GCS | AZURE
 
 _SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
 
@@ -22,10 +28,6 @@ def scheme(location):
     """The URI scheme of ``location``, lower case, or ``None`` for a plain path."""
     found = _SCHEME.match(os.fspath(location))
     return found.group(1).lower() if found else None
-
-
-def on_object_storage(location):
-    return scheme(location) in OBJECT_STORAGE
 
 
 def uri(location):
@@ -37,13 +39,6 @@ def uri(location):
     if kind == "file":
         return os.path.abspath(location[len("file://"):])
     return location
-
-
-#: Azure's URI schemes: ``az://<container>/<path>`` (delta-rs's and fsspec's), and
-#: ``abfs[s]://<container>@<account>.dfs.core.windows.net/<path>``.
-AZURE = frozenset({"az", "abfs", "abfss"})
-#: Google Cloud Storage's URI schemes.
-GCS = frozenset({"gs", "gcs"})
 
 
 def filesystem(location):
@@ -66,8 +61,6 @@ def azure(location):
     ``AZURE_TENANT_ID``, the Azure CLI's login, ...), and ``AZURE_STORAGE_USE_EMULATOR=true`` for Azurite (at
     ``AZURITE_BLOB_STORAGE_URL``, by default ``http://127.0.0.1:10000``). pyarrow reads none of these itself, and knows no
     ``az://``."""
-    import urllib.parse
-
     import pyarrow.fs as fs
 
     if not hasattr(fs, "AzureFileSystem"):
@@ -91,8 +84,6 @@ def azure(location):
 def gcs_emulator(location):
     """``(file system, path)`` on a Google Cloud Storage emulator, named as every Google client library names one:
     ``STORAGE_EMULATOR_HOST`` (``http://127.0.0.1:4443``), with no credentials, as an emulator takes none."""
-    import urllib.parse
-
     import pyarrow.fs as fs
 
     host = os.environ["STORAGE_EMULATOR_HOST"]

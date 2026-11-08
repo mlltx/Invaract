@@ -75,6 +75,12 @@ capabilities:
     status: partial
     summary: "The format comes from the sink the write uses. A text write cannot tell CSV from JSON or plain text."
     note: The format is the sink the write uses (parquet, avro, tfrecord, text). A text write cannot tell csv from json from plain text.
+  check.inputFormat:
+    status: partial
+    summary: "The format comes from the source the read uses. A text read cannot tell CSV from JSON or plain text."
+    note: >-
+      The format is the source the read uses (parquet, avro, tfrecord, text). A text read cannot tell csv from json from
+      plain text, so it satisfies an input declared as any of them.
   check.saveMode:
     status: partial
     summary: "Only BigQuery writes state a save mode. A contract that declares one for a file or Pub/Sub write has that write refused."

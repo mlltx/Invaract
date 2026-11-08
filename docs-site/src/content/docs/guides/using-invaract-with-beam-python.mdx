@@ -246,10 +246,11 @@ version: 0.1.0
 status: draft
 inputs:
 - name: input
-  location: ./in/orders
+  location: in/orders
+  format: parquet
 outputs:
 - name: output
-  location: ./out/report
+  location: out/report
   format: parquet
   schema:
     fields:
@@ -268,7 +269,7 @@ outputs:
 The output's columns come from the schema `WriteToParquet` is given. The input has none, because
 a `ReadFromParquet` of dictionaries leaves its file schema for Python to read when the job runs.
 The event says so, with status `INFERRED_DEGRADED` and the reason
-`the pipeline states no columns for the read of ./in/orders, so the draft declares none for it`.
+`the pipeline states no columns for the read of in/orders, so the draft declares none for it`.
 Read with `as_rows=True`, or fill the columns in yourself when you review the draft.
 
 After the last write, one `DRY_RUN_SUMMARY` event merges every draft into one contract named

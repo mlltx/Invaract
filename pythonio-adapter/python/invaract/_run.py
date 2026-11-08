@@ -13,19 +13,14 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _csv, _files, _formats, _frames, _pandas, _postgres, _sqlite, _tables
+from . import _checks, _csv, _datasets, _frames, _outputs, _pandas
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
 
 SAVE_MODES = ("overwrite", "append", "error", "ignore")
-#: Plain files (``_files``): renamed into place locally and on HDFS, copied into place on object storage.
-FILE_FORMATS = _formats.FORMATS
-#: Databases (``_postgres``, ``_sqlite``): staged in a temporary table or file, moved into place in one transaction.
-FORMATS = FILE_FORMATS + _tables.TABLE_FORMATS + (_postgres.FORMAT,)
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
-DEFAULT_FORMAT = "parquet"
 
 _current = None
 _starting = threading.Lock()
@@ -88,21 +83,29 @@ class Run:
         return False
 
     def _end_unpublished(self, finished=False):
-        """Discards what is still staged and lets the checker deliver its events and stop."""
-        global _current
-        try:
-            for out in self._outputs.values():
-                out.discard()
+        """Discards what is still staged and lets the checker deliver its events and stop. Every step is taken even if an
+        earlier one fails, and a failure is raised only once they all have been, so one output that cannot be discarded
+        leaves neither the others' staged data nor the checker behind."""
+        with contextlib.ExitStack() as steps:
+            # taken last to first: each output discarded, in the order first written, then the checker, then the run ended
+            steps.callback(self._release)
             if self._checker is not None:
-                if not finished:
-                    try:
-                        self._checker.ask({"op": "finish", "completed": False})
-                    except CheckNotRun:
-                        pass
-                self._checker.close()
-        finally:
-            if _current is self:
-                _current = None
+                steps.callback(self._stop_checker, finished)
+            for out in reversed(list(self._outputs.values())):
+                steps.callback(out.discard)
+
+    def _stop_checker(self, finished):
+        if not finished:
+            try:
+                self._checker.ask({"op": "finish", "completed": False})
+            except CheckNotRun:
+                pass
+        self._checker.close()
+
+    def _release(self):
+        global _current
+        if _current is self:
+            _current = None
 
     # reads and writes
 
@@ -123,54 +126,57 @@ class Run:
             # a name the contract does not declare, or a dry run with nowhere to read: the checker refuses it
             self._ask({**request, "schema": []})
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
-        fmt = declared.get("format") or fmt or _format_of(where)
+        # the job's format if it names one, else the contract's: what is reported is what is read
+        fmt = (fmt or declared.get("format") or _datasets.format_of(where)).lower()
         fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
-        used = _csv_options(name, (fmt or "").lower(), declared, csv)
-        request = {**request, **({"csv": used} if used else {})}
+        used = _csv_options(name, fmt, declared, csv)
+        request = {**request, **_registered(where, fmt), "format": fmt, **({"csv": used} if used else {})}
+        if declared.get("format") and declared["format"].lower() != fmt:
+            # a read in another format than the contract declares is refused on its description, before it is made: the
+            # checker is never told columns the package did not read
+            self._ask(request)
+            raise CheckNotRun(f"Invaract's checker did not refuse reading '{name}' as {fmt}, which its contract does not declare")
         if chunksize is not None:
             # the checker is told the input's empty values before any of it is handed over: one pass counts them, a
             # second reads the chunks, and neither holds the whole input in memory
-            schema, batches = _frames.read_batches(where, fmt, fields, partition_by, used)
-            self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(schema, _frames.count_nulls(schema, batches))})
+            schema, batches = _datasets.read_batches(where, fmt, fields, partition_by, used)
+            self._ask({**request, "schema": _frames.describe(schema, _frames.count_nulls(schema, batches))})
             return (_frames.as_frame(chunk, as_, dtype_backend) for chunk in _frames.chunks(schema, batches(), chunksize))
-        table = _frames.read_table(where, fmt, fields, partition_by, used)
+        table = _datasets.read_table(where, fmt, fields, partition_by, used)
         nulls = {n: table.column(n).null_count for n in table.column_names}
-        self._ask({**request, **_registered(where, fmt), "schema": _frames.describe(table.schema, nulls)})
+        self._ask({**request, "schema": _frames.describe(table.schema, nulls)})
         return _frames.as_frame(table, as_, dtype_backend)
 
     def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None, csv=None):
         declared = self._declared("outputs", name)
         request = _with_location({"op": "write", "name": name}, location)
-        notes = []
-        if _pandas.is_frame(frame):
-            # written as the contract declares where pandas cannot hold it, and no value changes (_pandas)
-            table, notes = _pandas.to_arrow(frame, declared.get("fields", []), dry_run=self.dry_run)
-            described = table.schema, iter(table.to_batches())
-        else:
-            described = _frames.stream(frame)
+        # a pandas frame is written as the contract declares where pandas cannot hold it, and no value changes (_pandas)
+        described = _frames.stream(frame, declared.get("fields", []), dry_run=self.dry_run)
         if described is None:
             kind = f"{type(frame).__module__}.{type(frame).__qualname__}"
             self._ask({**request, "unverifiable": f"a {kind} offers no Arrow stream (__arrow_c_stream__)"})
             raise CheckNotRun(f"Invaract could not describe the table handed to invaract.write('{name}')")
-        schema, batches = described
+        schema, batches, notes = described
         where = location if self.dry_run else declared.get("location")
-        fmt = fmt or declared.get("format") or (_format_of(where) if where is not None else DEFAULT_FORMAT)
+        fmt = fmt or declared.get("format") or (_datasets.format_of(where) if where is not None else _datasets.DEFAULT_FORMAT)
         mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
         # the job's partitioning if it says one, else the contract's; what is reported is what is written
-        layout = _files.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
-                               (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
-        used = _csv_options(name, (fmt or "").lower(), declared, csv)
+        layout = _outputs.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
+                                 (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
+        used = _csv_options(name, fmt.lower(), declared, csv)
         with _noted(notes):
             self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
                        "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite, **({"csv": used} if used else {})})
         if where is None:
             raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
         fmt, mode = fmt.lower(), mode.lower()
-        if fmt not in FORMATS or mode not in SAVE_MODES:
-            raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(FORMATS)}, "
+        if fmt not in _datasets.FORMATS or mode not in SAVE_MODES:
+            raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(_datasets.FORMATS)}, "
                               f"with save mode {', '.join(SAVE_MODES)}")
-        out = self._outputs.get(name) or self._outputs.setdefault(
-            name, _Checked(where, mode, layout) if self.checking else _output(where, _csv.Format(used) if used else fmt, mode, self.run_id, layout))
+        out = self._outputs.get(name)
+        if out is None:
+            out = self._outputs[name] = (_Checked(where, mode, layout) if self.checking
+                                         else _datasets.output(where, fmt, mode, self.run_id, layout, used))
         if out.layout != layout:
             raise CheckNotRun(f"invaract.write('{name}') is {layout.describe()}, but an earlier write of it in this run is "
                               f"{out.layout.describe()}: one output has one layout")
@@ -231,13 +237,8 @@ def _csv_options(name, fmt, declared, given):
     return _csv.options(declared.get("csv"), given)
 
 
-class _Checked:
+class _Checked(_outputs.Output):
     """What a check "writes" to: nothing. Staging only counts the empty values, which the checker judges."""
-
-    target = None
-
-    def __init__(self, location, mode, layout):
-        self.target, self.mode, self.layout = location, mode, layout
 
     def has_data(self):
         return False
@@ -246,9 +247,6 @@ class _Checked:
         return _frames.take(schema, _frames.with_required(schema, required), batches, required, lambda batch: None)
 
     def publish(self):
-        pass
-
-    def forget_previous(self):
         pass
 
     def discard(self):
@@ -277,38 +275,14 @@ def _noted(notes):
         raise
 
 
-def _output(location, fmt, mode, run_id, layout=_files.FLAT):
-    if fmt == _postgres.FORMAT:
-        if _sqlite.is_sqlite(location):
-            return _sqlite.SqliteOutput(location, mode, run_id, layout)
-        if not _postgres.is_postgres(location):
-            raise CheckNotRun(f"Invaract writes jdbc only to PostgreSQL (postgresql://...) and SQLite (sqlite:///...) tables, not {location}")
-        return _postgres.PostgresOutput(location, mode, run_id, layout)
-    if fmt == "delta":
-        return _tables.DeltaOutput(location, mode, run_id, layout)
-    if fmt == "iceberg":
-        return _tables.IcebergOutput(location, mode, run_id, layout)
-    return _files.output(location, fmt, mode, run_id, layout)
-
-
 def _registered(location, fmt):
-    """The ``catalog`` a request carries for a catalog table (``_tables.catalog_of``, ``_postgres.catalog_of``), or nothing."""
-    if (fmt or "").lower() == _postgres.FORMAT and _postgres.is_postgres(location):
-        return {"catalog": _postgres.catalog_of(location)}
-    if (fmt or "").lower() == _sqlite.FORMAT and _sqlite.is_sqlite(location):
-        return {"catalog": _sqlite.catalog_of(location)}
-    catalog = _tables.catalog_of(location, (fmt or "").lower())
+    """The ``catalog`` a request carries for a catalog table (``_datasets.catalog_of``), or nothing."""
+    catalog = _datasets.catalog_of(location, fmt) if location is not None else None
     return {"catalog": catalog} if catalog else {}
 
 
 def _with_location(request, location):
     return {**request, "location": os.fspath(location)} if location is not None else request
-
-
-def _format_of(location):
-    if _postgres.is_postgres(location) or _sqlite.is_sqlite(location):
-        return _postgres.FORMAT
-    return _formats.by_extension(os.fspath(location)) or DEFAULT_FORMAT
 
 
 def _script_name():

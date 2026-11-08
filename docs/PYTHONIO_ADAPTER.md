@@ -34,8 +34,10 @@ finished and every answer was yes.
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
-| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow (`_frames`); the checker process (`_checker`); the settings (`_settings`); `ContractViolation` and `CheckNotRun` (`errors`) |
-| `python/invaract/_storage.py`, `_files.py`, `_tables.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (renamed into place locally and on HDFS, copied with `_SUCCESS` last on object storage); Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6) |
+| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `check`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
+| `python/invaract/_datasets.py`, `_outputs.py` | a dataset by its location and format: how it is read, the catalog it is registered in, and the output that writes it (`_datasets`); what every output is to a run, staged and then published or discarded, and its partition layout (`_outputs`) |
+| `python/invaract/_storage.py`, `_files.py`, `_csv.py`, `_formats.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (`RenamedOutput`, renamed into place locally and on HDFS; `CopiedOutput`, copied with `_SUCCESS` last on object storage); CSV options, and the JSON, ORC, Avro, Feather and Excel formats |
+| `python/invaract/_tables.py`, `_jdbc.py`, `_postgres.py`, `_sqlite.py` | Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6); database tables (`jdbc`), PostgreSQL and SQLite, staged in a temporary table or file and moved into place in one transaction |
 | `python/tests` | the package's pytest suite, run against a real checker (`INVARACT_TEST_CHECKER`, or the jar); `test_tables.py` needs the `delta` and `iceberg` extras and moto, and runs strictly in CI (`INVARACT_TEST_TABLES=true`) |
 | `python/examples/orders_job` | the sink records survey's probe 14 made permanent: a job over three files, with its contract and data |
 | `lint/invaract_lint` | `invaract-lint`, a separate pure-Python package: finds the reads and writes a job makes outside the package (`checker`), and its command line (`cli`) |
@@ -53,7 +55,7 @@ holds, where the data has been seen.
 | Request | The checker | Reply |
 |---|---|---|
 | `{"op": "open", "settings": {...}, "job": {...}, "check": false}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties); with `"check": true`, a check (`invaract.check`): every declared input counts as read, with its declared columns and catalog, and a dry run is not checked | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
-| `{"op": "read", "name": "orders", "schema": [...], "csv": {...}}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read for every later write | `{"ok": true}` |
+| `{"op": "read", "name": "orders", "format": "parquet", "schema": [...], "csv": {...}}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the `format` the package reads in against the input's (`INPUT_FORMAT_MISMATCH`), the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read, and its format, for every later write and a dry run's draft. A read with no `schema` is one the package has not made because its `format` disagrees with the contract: it is refused on that, or, if nothing about it disagrees, not checked, so its columns are never taken on trust | `{"ok": true}` |
 | `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...], "partitionBy": ["region"], "partitionOverwriteMode": "static"}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses; the layout (`partitionBy`, empty for none; `partitionOverwriteMode`, `static` when absent) against the output's partition keys (`OUTPUT_PARTITIONING_MISMATCH`) | `{"ok": true}` |
 | `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
 | `{"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [...]}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event; with `runtimeDataQuality` on, `checks` holds what the package found for each of the output's data checks, in the order `open` sent them (`{"failed": 2, "examples": ["-3"]}`), and a check with failing rows is refused (`RUNTIME_DATA_QUALITY_VIOLATION`); a package that reports a different number of checks is not checked | `{"ok": true}` |
@@ -171,6 +173,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `check.schema` | supported | `missing-output-field`, `output-type-mismatch`, `extended-type-not-produced`, `output-nullability-mismatch` (a required column whose data holds an empty value), the undeclared-column scenarios; the `input-schema-*`, `required-column-*`, `arrow-type-*` and `column-names-are-case-sensitive` cases |
 | `check.nestedTypes` | supported | `nested-type-matches`, `nested-type-mismatch`; the `nested-type-refused` case |
 | `check.format` | supported | `output-format-matches`, `output-format-mismatch` |
+| `check.inputFormat` | supported | `input-format-matches`, `input-format-mismatch` through both conformance adapters (the package one reads the input as Parquet with `format=`, against an input declared csv); the `input-format-*` and `read-without-columns-*` protocol cases; `test_run.py`'s read-format tests |
 | `check.saveMode` | supported | `output-save-mode-matches`, `output-save-mode-mismatch` |
 | `check.partitioning` | partial | Hive-style folders for Parquet and CSV (local, HDFS, object storage), Delta partition columns, Iceberg identity partitions; static and dynamic overwrites (`tests/test_partitions.py`, `tests/test_tables.py`); the partitioning scenarios through both conformance adapters; the `partition*` protocol cases. Partial: a dynamic overwrite of an existing Delta table needs a deltalake with `RemoveAction`, and a table already partitioned otherwise is not written |
 | `check.csvOptions` | supported | The package reads and writes a CSV dataset with its contract's `csv:` options (a job's `csv=` in their place) and reports the options it used on each read and write; the checker compares them with the declared ones (`tests/test_csv.py`; the `csv-*` protocol cases; `PythonIoCsvOptionsSpec`; the `csv-*` scenarios through both conformance adapters) |
@@ -215,6 +218,7 @@ rejection), or ❓ not investigated. A ❓ is an open item, not a finished one.
 | A run whose job failed (`completed: false`) | ✅ covered: nothing is published, no missing-output refusal | the `failed-run-publishes-nothing` case |
 | A run that ends without `finish` (the package was interrupted) | ✅ covered: its events are still delivered | the `events-delivered-without-finish` case |
 | A `location=` argument, with a contract in force | ✅ covered when it is the contract's; 🚫 fails closed when it is not | the `location-given-agrees` and `*-location-disagrees-refused` cases; `test_run.py` |
+| A read's `format=` argument, with a contract in force | ✅ covered when it is the contract's (case aside); 🚫 fails closed when it is not (`INPUT_FORMAT_MISMATCH`), before anything is read | the `input-format-*` and `read-without-columns-*` cases; `test_a_read_format_that_*` |
 | Each save mode, against an output that holds data and one that does not | ✅ covered | `test_run.py`'s save-mode tests |
 | A refusal the job catches and carries on past | 🚫 fails closed: the run still ends refused, nothing published | `test_a_refusal_the_job_swallows_still_refuses_the_run` |
 | A write that fails part way (the frame's source raises) | ✅ covered: the part-written file is removed at once | `test_a_write_that_fails_part_way_leaves_nothing_staged` |
@@ -508,9 +512,9 @@ What was built:
 
 - `_storage`: a location is local, or object storage by its URI scheme (`s3`, `s3a`, `gs`, `gcs`, `az`, `abfs`, `abfss`).
   Reads of Parquet and CSV go through pyarrow's own file systems, HDFS included.
-- `_files`: plain-file outputs. `LocalFileOutput` is milestone 2's, unchanged; `HadoopFileOutput` does the same on HDFS
-  through pyarrow's file system (staged beside the location, `move` into place); `ObjectStorageFileOutput` stages on local
-  disk and copies at publish, `_SUCCESS` last. Any other URI scheme is refused.
+- `_files`: plain-file outputs. `RenamedOutput` is milestone 2's local output, and does the same on HDFS through pyarrow's
+  file system (staged beside the location, `move` into place); `CopiedOutput` stages on local disk and copies at publish,
+  `_SUCCESS` last. Any other URI scheme is refused.
 - `_tables.DeltaOutput`: each write is a Parquet file staged uncommitted, in the table's folder when it is local, on local
   disk when it is on object storage (uploaded at publish); publishing commits them all in one transaction, creating the
   table if needed. `ignore` and `error` look at whether the table holds files.
@@ -562,8 +566,9 @@ What was built:
   in October 2025), so the package requires 3.10, the oldest CI can test.
 - The design placed the lint at `python/invaract_lint/`, beside the package. A second package needs its own `pyproject.toml`
   and root, so it is `lint/` instead.
-- Run over the package's own code, the lint finds exactly the package's three pyarrow reads and writes (`_frames.read_table`,
-  `_run._writer`). That is a check that it catches real I/O; the package is not a job, so it is not marked.
+- Run over the package's own code, the lint finds the package's own reads and writes: the pyarrow, fastavro, openpyxl and
+  SQLite calls through which it does a job's I/O. That is a check that it catches real I/O; the package is not a job, so
+  they are not marked.
 - Both conformance specs record their results as `target/conformance/<adapter>.json`, and both are the adapter `pythonio`, so
   the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry

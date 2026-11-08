@@ -296,6 +296,37 @@ def test_a_read_location_that_disagrees_with_the_contract_is_refused():
     assert refused.value.violations == ["UNDECLARED_INPUT"]
 
 
+def test_a_read_format_that_disagrees_with_the_contract_is_refused_before_anything_is_read(monkeypatch):
+    from invaract import _datasets
+
+    write_contract(inputs=orders_input(), outputs=output())
+    reads = []
+    monkeypatch.setattr(_datasets, "read_table", lambda *args, **kwargs: reads.append(args))
+    with pytest.raises(invaract.ContractViolation) as refused:
+        with invaract.run("contract.yaml"):
+            invaract.read("orders", format="csv")
+    assert refused.value.violations == ["INPUT_FORMAT_MISMATCH"]
+    assert "contract declares input format 'parquet' but the plan reads 'data/in/orders' in format 'csv'" in str(refused.value)
+    assert reads == [], "the data is never read in a format the contract does not declare"
+
+
+def test_a_read_format_that_agrees_with_the_contract_is_read_in_it():
+    write_contract(inputs=orders_input(), outputs=output())
+    with invaract.run("contract.yaml"):
+        assert invaract.read("orders", format="PARQUET", as_="arrow").column_names == ["order_id", "region"]
+        invaract.write(REPORT, "report")
+
+
+def test_a_dry_runs_draft_declares_the_format_each_input_was_read_in(monkeypatch):
+    orders_input()
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_DRY_RUN", "true")
+    with invaract.run(name="orders_job.main"):
+        invaract.read("orders", location="data/in/orders")
+        invaract.write(REPORT, "report", location="data/out/report")
+    assert "location: data/in/orders\n  format: parquet\n" in events()[-1]["mergedContractYaml"]
+
+
 def test_a_format_or_save_mode_that_disagrees_with_the_contract_is_refused():
     report_contract()
     with pytest.raises(invaract.ContractViolation) as refused:
@@ -474,6 +505,41 @@ def test_a_checker_that_stops_without_answering(monkeypatch):
         with invaract.run("contract.yaml"):
             pass
     assert "stopped" in str(not_run.value) and "'open'" in str(not_run.value)
+
+
+def test_a_checker_whose_reply_is_not_json_is_not_checked(monkeypatch):
+    # it reads the request before answering, so the package is never writing to a checker that has already gone
+    monkeypatch.setenv("INVARACT_CHECKER", "sh -c 'read request; echo not-a-reply'")
+    with pytest.raises(invaract.CheckNotRun, match="answered 'open' with 'not-a-reply', which is not a reply"):
+        with invaract.run("contract.yaml"):
+            pass
+
+
+def test_an_output_that_cannot_be_discarded_leaves_neither_the_others_nor_the_checker_behind(monkeypatch):
+    from invaract import _checker, _files, _run
+
+    write_contract(outputs=output(name="first", location="data/out/first") + output(name="second", location="data/out/second"))
+    discard, close, closed = _files.RenamedOutput.discard, _checker.Checker.close, []
+
+    def failing(out):
+        if out.target.endswith("first"):
+            raise OSError("cannot discard first")
+        discard(out)
+
+    def closing(checker):
+        closed.append(checker)
+        close(checker)
+
+    monkeypatch.setattr(_files.RenamedOutput, "discard", failing)
+    monkeypatch.setattr(_checker.Checker, "close", closing)
+    with pytest.raises(OSError, match="cannot discard first"):
+        with invaract.run("contract.yaml"):
+            invaract.write(REPORT, "first")
+            invaract.write(REPORT, "second")
+            raise RuntimeError("the job failed")
+    assert published("data/out/second") == ([], []), "the second output is discarded although the first could not be"
+    assert len(closed) == 1, "the checker is closed"
+    assert _run._current is None, "the run is over, so the process can start another"
 
 
 def test_a_missing_contract_or_no_contract_at_all_is_not_checked():

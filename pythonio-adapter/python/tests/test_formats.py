@@ -2,13 +2,13 @@
 # Copyright 2024 Invaract Contributors
 """The formats besides Parquet and CSV: JSON lines, ORC, Avro, Feather and Excel, each written and read back as the
 contract types it, laid out as Spark lays it out, partitioned or not."""
-import builtins
 import contextlib
 import datetime
 import decimal
 import glob
 import json
 import os
+import sys
 
 import pyarrow as pa
 import pytest
@@ -249,14 +249,7 @@ def test_excel_refuses_a_column_a_cell_cannot_hold_and_too_many_rows(monkeypatch
 
 @pytest.mark.parametrize("fmt, module, extra", [("avro", "fastavro", "avro"), ("excel", "openpyxl", "excel")])
 def test_a_format_whose_library_is_missing_says_which_extra_to_install(monkeypatch, fmt, module, extra):
-    real = builtins.__import__
-
-    def without(name, *args, **kwargs):
-        if name == module or name.startswith(module + "."):
-            raise ImportError(name)
-        return real(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", without)
+    monkeypatch.setitem(sys.modules, module, None)  # as Python has it for a package that is not installed
     write_contract(outputs=f"  - name: report\n    location: data/out/report\n    format: {fmt}\n")
     with pytest.raises(CheckNotRun, match=rf'needs the {module} package to read or write {fmt}: pip install "invaract\[{extra}\]"'):
         with invaract.run("contract.yaml"):

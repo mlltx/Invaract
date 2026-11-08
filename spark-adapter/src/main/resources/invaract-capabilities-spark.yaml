@@ -66,6 +66,13 @@ capabilities:
     note: array, map and struct are compared structurally, ignoring nullability inside a container.
   check.format:
     status: supported
+  check.inputFormat:
+    status: supported
+    note: >-
+      Each read is named as a write to the same dataset is: a catalog table by its provider (a Hive table is hive, whichever
+      reader Spark plans), a Delta table read by path delta, any other file read by its file format, a JDBC read jdbc, a
+      DataSourceV2 table by its provider, a streaming source by its data source. A read of a third-party relation that
+      names no format is not compared.
   check.saveMode:
     status: supported
   check.partitioning:

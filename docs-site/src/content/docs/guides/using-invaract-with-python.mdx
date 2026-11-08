@@ -340,6 +340,7 @@ status: draft
 inputs:
 - name: orders
   location: data/in/orders
+  format: parquet
   schema:
     fields:
     - name: order_id
@@ -359,8 +360,9 @@ says), or give the columns pandas' `Int64` dtype before the dry run.
 Review the draft before you commit it. Its id is the job's entry point; give it a real one. Each output's `derivedFrom`
 lists every input read before that output was written (here the audit is listed as derived from the customers too,
 because they were read first): keep only the inputs it really comes from. Then commit the contract, name it in
-`@invaract.job` (or with `INVARACT_CONTRACT`), and remove the `location=` arguments. With a contract in force, a
-`location=` that disagrees with it is refused. See [Dry-run mode](/guides/dry-run-mode/) for more on turning a draft into
+`@invaract.job` (or with `INVARACT_CONTRACT`), and remove the `location=` arguments. The draft declares the format each
+input was read in, so the contract holds later reads to it. With a contract in force, a `location=` or `format=` that
+disagrees with it is refused, a `format=` before anything is read. See [Dry-run mode](/guides/dry-run-mode/) for more on turning a draft into
 a contract.
 
 ## Find reads and writes around the package
@@ -418,8 +420,9 @@ setting, with its spelling on the other engines, is in [Configuration Settings](
 ## Formats, save modes and locations
 
 - **Formats**: for reading and writing, files in `parquet`, `csv`, `json`, `orc`, `avro`, `feather` and `excel`, and
-  Delta Lake (`delta`), Iceberg (`iceberg`), PostgreSQL and SQLite tables (`jdbc`). A read or write uses the format the contract
-  declares for the dataset; otherwise the one the location's extension names (`.json`, `.jsonl`, `.orc`, `.avro`,
+  Delta Lake (`delta`), Iceberg (`iceberg`), PostgreSQL and SQLite tables (`jdbc`). A read or write uses the format the job
+  names (`format=`), then the one the contract declares for the dataset, which a `format=` must agree with
+  (`INPUT_FORMAT_MISMATCH` for a read, `OUTPUT_FORMAT_MISMATCH` for a write); otherwise the one the location's extension names (`.json`, `.jsonl`, `.orc`, `.avro`,
   `.feather`, `.xlsx`, `.csv`), `jdbc` for a `postgresql://` or `sqlite://` location, and Parquet for any other. See the
   [file formats](#file-formats) below.
 - **CSV layout**: a CSV dataset is read and written with its contract's `csv:` options (delimiter, header, encoding,
