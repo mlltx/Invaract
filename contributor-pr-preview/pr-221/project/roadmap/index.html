@@ -4049,7 +4049,11 @@ generated docs-site matrix with a drift test, <code dir="auto">UNSUPPORTED_CONTR
 <li class="task-list-item"><input type="checkbox" checked disabled> Stage 4: <code dir="auto">adapter-testkit</code> — engine-neutral conformance scenarios (55 today) judged
 against each adapter’s own declaration, as real jobs that may make several writes; a
 reference adapter on the SPI; deliberately broken adapters every scenario must catch;
-per-adapter conformance baselines</li>
+per-adapter conformance baselines; scenarios that attach the job through configuration alone
+(a contract from a kit-served registry, <code dir="auto">ref://</code> locations from a location map and a location
+service, and the stops when either lacks what is asked), so <code dir="auto">config.contractRegistry</code> and
+<code dir="auto">config.locationRefs</code> are verified on every engine rather than attested, and a check that every
+neutral setting reaches each adapter through its engine’s own configuration (2026-11-08)</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Stage 5: function canonicalisation — <code dir="auto">ir.FunctionCatalog</code> + per-adapter <code dir="auto">FunctionAliases</code>;
 non-determinism and seed handling read the catalog; Spark’s table swept against Spark’s own registry</li>
 </ul>

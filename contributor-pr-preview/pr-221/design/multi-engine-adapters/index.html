@@ -743,6 +743,34 @@ with no condition (<code dir="auto">crossJoin</code>: engines report a cartesian
 the rule must catch both) and <code dir="auto">required_group_by</code> needs an aggregation (<code dir="auto">groupBy</code>, with <code dir="auto">RowCount</code> for the aggregate
 column). Each rule has a satisfied and a violated scenario; the violated <code dir="auto">required_group_by</code> one groups by a column the
 output merely <em>renames</em> to the required name, which an adapter that confuses a grouping column with its alias gets wrong.</p>
+<p><strong>Some scenarios attach the job through configuration alone.</strong> How a contract and its locations reach a job is
+something a platform sets, not the job’s code, and every engine spells it differently, so it is easy for one adapter to
+get wrong while its unit tests pass: a registry client missing from what ships, a setting the engine never forwards, a
+registry’s own error lost on the way to the job. A scenario with <code dir="auto">attach</code> set (<code dir="auto">Attachment.Registry</code>, <code dir="auto">LocationMap</code>,
+<code dir="auto">LocationService</code>) is run through <code dir="auto">ConformanceAdapter.attached</code> instead of <code dir="auto">run</code>: the kit stands up what the settings
+point at (a contract registry speaking <code dir="auto">docs/CONTRACT_REGISTRY.md</code>’s protocol, a location service speaking
+<code dir="auto">HttpLocationResolver</code>’s, the contract and location-map files), hands the adapter nothing but the settings by their
+neutral names (<code dir="auto">InvaractConf</code>), and reads the verdict from the validation events of the file sink those settings
+configure (<code dir="auto">notifyConfig</code>), so nothing is passed in code. The adapter sets them through its engine’s own configuration
+(Spark’s <code dir="auto">spark.invaract.*</code>, Beam’s pipeline flags, a Python job’s <code dir="auto">INVARACT_*</code> variables) and launches the job as a team
+would, answering <code dir="auto">Ran</code> or <code dir="auto">Stopped(message)</code> with the message a user would see. Seven scenarios use it: a contract
+fetched from the registry is enforced, and one it does not hold stops the job with the registry’s own message naming
+the contract and version; <code dir="auto">ref://</code> locations resolve through a location map and through a location service, are
+enforced, and an id the service does not hold stops the job naming the reference. <code dir="auto">config.locationRefs</code> and
+<code dir="auto">config.contractRegistry</code> are therefore verified, no longer attested. The kit serves the registry and leaves the client
+to the adapter: an adapter carries the default client (<code dir="auto">invaract-registry-client</code>) in what its users install unless it
+says otherwise (<code dir="auto">bundlesRegistryClient = false</code>, for an engine whose users add the jar themselves, as Spark’s <code dir="auto">--jars</code>
+and Beam’s classpath do, and whose guide says how), in which case the kit names a client of its own (<code dir="auto">KitRegistryClient</code>)
+with <code dir="auto">registryClientClass</code>, as such a user names theirs. The Python I/O package’s scenarios run as real Python jobs, and CI
+runs them a second time against the native checker its wheels carry (<code dir="auto">INVARACT_TEST_CHECKER</code>), so what ships is what is
+held to them.</p>
+<p><strong>Every setting must reach the adapter.</strong> <code dir="auto">AdapterConformanceSpec</code> also sets every neutral setting, each to a value of
+its own, through the engine’s configuration (<code dir="auto">ConformanceAdapter.configSource</code>: the <code dir="auto">ConfigSource</code> the adapter’s attach
+path would read, built the way the engine builds it - for Beam Python and the Python package, by asking the package
+itself what it hands its checker) and fails naming each one that does not arrive. A setting added to <code dir="auto">InvaractConf</code> is
+then caught on every engine that does not spell it. A setting with no meaning for an engine is listed in
+<code dir="auto">inapplicableSettings</code> with why, and is not set; the check is canceled only for an adapter that claims none of the
+<code dir="auto">config.*</code> capabilities (a newly generated one).</p>
 <p><strong>The analyses are read from what the run reported and from the adapter’s own translation.</strong> The outcome
 carries the static data-quality results, the role-consistency verdicts and the inputs reported hidden
 behind a boundary, all read off the last <code dir="auto">ContractValidationEvent</code> (so an adapter fills them in by finishing
