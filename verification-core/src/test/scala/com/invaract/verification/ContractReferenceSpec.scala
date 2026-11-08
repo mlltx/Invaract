@@ -77,6 +77,16 @@ class ContractReferenceSpec extends AnyFunSuite with BeforeAndAfterEach {
     assert(FakeRegistryClient.calls == List("get:customer_orders@2.1.0"))
   }
 
+  test("what the client throws reaches the job as it was thrown, message and all, not wrapped by the reflective call") {
+    // nothing stubbed: the fake client throws as a real one does for a contract its registry does not hold
+    val notHeld = intercept[NoSuchElementException](ContractReference.resolve("registry://customer_orders@2.1.0", registry(classOf[FakeRegistryClient])))
+    assert(notHeld.getMessage == s"no stub for customer_orders@2.1.0 at '$Url'")
+    val latestNotHeld = intercept[NoSuchElementException](ContractReference.resolve("registry://customer_orders@latest", registry(classOf[FakeRegistryClient])))
+    assert(latestNotHeld.getMessage == s"no 'latest' stub for '$Url'")
+    val refused = intercept[IllegalArgumentException](ContractReference.resolve("registry://customer_orders@latest", registry(classOf[RefusingRegistryClient])))
+    assert(refused.getMessage == s"'$Url' is not a registry this client can reach")
+  }
+
   test("a client with no 'get' resolves 'latest', because only the method a call needs is looked for") {
     assert(ContractReference.resolve("registry://c@latest", registry(classOf[LatestOnlyRegistryClient])).id == "c")
   }

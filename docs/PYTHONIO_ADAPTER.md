@@ -80,7 +80,10 @@ program with the 1 s limit, and the size check. It uploads the program.
 
 **What the native program cannot do** (design section 4): load a class named in configuration that was not built into it. That
 covers a team's own notification sink, custom rule verifiers, custom policy evaluators, and a registry client named by
-`INVARACT_REGISTRY_CLIENT_CLASS`. The `registry` case is therefore JVM-only: its stub client lives in the tests. A team that
+`INVARACT_REGISTRY_CLIENT_CLASS`. The default registry client, `HttpContractRegistryClient`, is built in (the checker
+depends on `registry-client` for it), so a `registry://` contract needs nothing installed; the package's tests fetch one
+from a real HTTP registry, against the native program in CI. The `registry` case, whose stub client lives in the tests, is
+JVM-only. A team that
 needs its own plug-ins needs a build that includes them, or the Java route.
 
 **With milestone 1** (2026-11-02) the protocol grew to 40 recorded cases: reads, the two-step write, Arrow's type names, empty
@@ -162,7 +165,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `policy.organizational` | supported | attested: `PythonIoProtocolCasesSpec` (the `org-policy-refused` and `org-policy-satisfied` cases) |
 | `config.zeroCodeInstall` | unsupported | the note: a one-time code change by design (decision 1) |
 | `config.locationRefs` | supported | attested: `PythonIoProtocolCasesSpec` (the `location-refs` case) |
-| `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only) |
+| `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only), and the package's `test_run.py`, which fetches a contract from a real HTTP registry through the built-in client |
 | `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases. A `WRITE` event for each output published and a `JOB_SUMMARY` for each run (2026-11-08): the `published-write-events` and `published-misuse` cases, and the package's tests of Delta, Iceberg and plain-file outputs and of a publish that fails part way |
 | `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |
@@ -543,8 +546,17 @@ What was built:
   the second overwrote the first. The package spec now writes to `target/conformance/package/`.
 - Re-recording every case with `cases.py --record` overwrote the JVM-only `registry` case with a failure (its stub registry
   client is on the test classpath only). `--record` now skips JVM-only cases, whose replies are written by hand.
-- The registry client's "not found" message says to add a jar "via spark-submit --jars", which is Spark's wording, in
-  verification-core; a Python job sees it too. Left for a wording pass across adapters.
+- The registry client's "not found" message said to add a jar "via spark-submit --jars", which is Spark's wording, in
+  verification-core; a Python job saw it too. It now says to add the jar to the job's classpath, naming `--jars` as Spark's
+  way.
+- A `registry://` contract did not work for a Python job at all (found 2026-11-08, checking the adapter against Spark's
+  ways of naming locations and contracts): the checker had no registry client, the native program cannot load one, and
+  the only test used a stub on the JVM. The checker now carries `HttpContractRegistryClient`, and the package's tests run a
+  job against a real HTTP registry. The same check found that a registry's own error (a contract it does not hold) reached
+  the job, on every engine, as `InvocationTargetException: null`: verification-core now passes on the client's own
+  exception. `ref://` locations needed nothing: the checker resolves them with the same verification-core code as Spark,
+  and the package reads and writes where the `open` reply says, with no resolution of its own; a test now runs a job
+  through `INVARACT_LOCATION_MAP`.
 - The package's help text for `computeFingerprint` said a run with it is refused. Writing the guide's settings table from
   real runs showed it is not: like Beam, the run goes on and the checker logs that no fingerprint is published. Static data
   quality and role consistency are refused when the run opens (`UNSUPPORTED_CONTRACT_FEATURE`). The help text now says so.

@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """A run against a real checker: what is read, what is refused and when, and what is published."""
+import contextlib
+import http.server
 import os
 import shlex
+import threading
 
 import pandas as pd
 import pyarrow as pa
@@ -287,6 +290,90 @@ def test_a_location_that_disagrees_with_the_contract_is_refused():
             invaract.write(REPORT, "report", location="data/out/report_old")
     assert refused.value.violations == ["OUTPUT_LOCATION_MISMATCH"]
     assert not os.path.exists("data/out/report_old") and published() == ([], [])
+
+
+def test_ref_locations_resolve_through_the_platforms_location_map(monkeypatch):
+    # the contract names its datasets by id; the platform maps each id to where it is in this environment, and the job reads
+    # and writes there without naming a path (the same resolution, in verification-core, as Spark's and Beam's)
+    orders = orders_input().replace("location: data/in/orders", "location: ref://orders_in")
+    write_contract(inputs=orders, outputs=output(location="ref://report_out"))
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write(f"orders_in={os.path.abspath('data/in/orders')}\nreport_out={os.path.abspath('data/out/report')}\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    with invaract.run("contract.yaml") as run:
+        assert [d["location"] for d in run.contract["inputs"] + run.contract["outputs"]] == [
+            os.path.abspath("data/in/orders"), os.path.abspath("data/out/report")]
+        orders = invaract.read("orders")
+        invaract.write(orders.groupby("region", as_index=False).size().rename(columns={"size": "total"}), "report")
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [1, 1]}
+    assert not os.path.exists("ref:"), "nothing is written under the unresolved name"
+
+
+def test_a_ref_location_the_map_does_not_hold_is_not_checked_and_names_the_ids_it_does(monkeypatch):
+    report_contract(location="ref://report_out")
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write("orders_in=/data/orders\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    with pytest.raises(invaract.CheckNotRun) as not_checked:
+        with invaract.run("contract.yaml"):
+            pass
+    assert "ref://report_out" in str(not_checked.value) and "orders_in" in str(not_checked.value)
+    assert "INVARACT_LOCATION_MAP" in str(not_checked.value), "the setting is named as the job's environment spells it"
+
+
+@contextlib.contextmanager
+def contract_registry(contracts):
+    """A contract registry on a free local port, serving each ``(id, version) -> YAML`` in ``contracts`` as the registry's
+    HTTP API does (``GET /contracts/<id>/versions/<version>``): its base URL, and the paths asked for."""
+    asked = []
+
+    class Registry(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append(self.path)
+            parts = self.path.strip("/").split("/")
+            served = contracts.get((parts[1], parts[3])) if len(parts) == 4 and parts[0] == "contracts" else None
+            body = (served or "not found").encode("utf-8")
+            self.send_response(200 if served else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Registry)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_registry_contract_is_fetched_from_the_registry_the_platform_names(monkeypatch):
+    # the checker carries the default registry client: a Python job has no classpath a platform could add one to
+    with open(report_contract(), encoding="utf-8") as f:
+        served = f.read()
+    os.remove("contract.yaml")
+    with contract_registry({("test_contract", "1.0.0"): served}) as (url, asked):
+        monkeypatch.setenv("INVARACT_CONTRACT", "registry://test_contract@1.0.0")
+        monkeypatch.setenv("INVARACT_REGISTRY_URL", url)
+        with invaract.run() as run:
+            assert (run.contract["id"], run.contract["version"]) == ("test_contract", "1.0.0")
+            invaract.write(REPORT, "report")
+    assert asked == ["/contracts/test_contract/versions/1.0.0"]
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [10, 20]}
+
+
+def test_a_registry_contract_the_registry_does_not_hold_is_not_checked(monkeypatch):
+    with contract_registry({}) as (url, _):
+        monkeypatch.setenv("INVARACT_CONTRACT", "registry://test_contract@9.9.9")
+        monkeypatch.setenv("INVARACT_REGISTRY_URL", url)
+        with pytest.raises(invaract.CheckNotRun) as not_checked:
+            with invaract.run():
+                pass
+    # the registry client's own message, not the reflective call's wrapper around it
+    assert "No contract registered for id 'test_contract' at version '9.9.9'" in str(not_checked.value)
 
 
 def test_a_read_location_that_disagrees_with_the_contract_is_refused():

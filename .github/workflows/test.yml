@@ -1397,8 +1397,8 @@ jobs:
           else
             echo "beam=false" >> "$GITHUB_OUTPUT"
           fi
-          # the native checker: pythonio-adapter and what it is built from
-          PYTHONIO_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit pythonio-adapter .github/workflows/test.yml .github/actions)
+          # the native checker: pythonio-adapter and what it is built from (registry-client is built into it)
+          PYTHONIO_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit registry-client pythonio-adapter .github/workflows/test.yml .github/actions)
           if [ -n "$PYTHONIO_CHANGED" ]; then
             echo "pythonio=true" >> "$GITHUB_OUTPUT"
           else
