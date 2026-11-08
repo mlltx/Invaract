@@ -87,7 +87,8 @@ object Conformance {
         if (CapabilityCheck.violations(scenario.contract, scenario.options, capabilities).nonEmpty) Right(Expected.RejectedAsUnsupported)
         else
           Right(scenario.expect match {
-            case Expectation.Pass => Expected.Pass
+            case Expectation.Pass                => Expected.Pass
+            case Expectation.Stopped(mentioning) => Expected.Stopped(mentioning)
             case Expectation.Reject(types) =>
               val excused = Scenarios.partialExcuses.get(scenario.id).filter(e => capabilities.supportOf(e.capability) == Support.Partial)
               Expected.RejectExactly(types -- excused.fold(Set.empty[String])(_.violationTypes))
@@ -104,6 +105,9 @@ object Conformance {
     /** The adapter declared a capability the contract needs unsupported: it must reject with
       * `UNSUPPORTED_CONTRACT_FEATURE` (other violations may accompany it). */
     case object RejectedAsUnsupported extends Expected
+
+    /** Invaract must stop the job before it runs, naming each of `mentioning` (`Expectation.Stopped`). */
+    final case class Stopped(mentioning: Set[String]) extends Expected
   }
 
   /** Compares what the adapter did with what it must have done, for a job that makes one write. */
@@ -141,6 +145,9 @@ object Conformance {
         else Some(s"the adapter declares a needed capability unsupported, so it must block with UNSUPPORTED_CONTRACT_FEATURE; got ${show(r.violationTypes)}")
       case (Expected.RejectedAsUnsupported, _: ScenarioOutcome.Passed) =>
         Some("the adapter declares a capability the contract needs unsupported, yet the write was allowed - it must fail closed")
+      // only a job attached through configuration is stopped before it runs, and `Attached` judges that itself
+      case (Expected.Stopped(mentioning), _) =>
+        Some(s"expected Invaract to stop the job before it ran, naming ${show(mentioning)}, but the job ran")
     }
     verdict match {
       case Some(reason) => ScenarioVerdict.Diverges(reason)
@@ -242,10 +249,12 @@ object Conformance {
       case Left(reason) => ScenarioVerdict.Skipped(reason)
       case Right(expected) =>
         try
-          judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis, scenario.job.writes) match {
-            case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
-            case other                    => other
-          }
+          if (scenario.attach.isDefined) Attached.judge(adapter, caps, scenario, expected)
+          else
+            judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis, scenario.job.writes) match {
+              case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
+              case other                    => other
+            }
         catch {
           case e: EnvironmentUnavailable => ScenarioVerdict.Unavailable(e.reason)
           case e: Exception              => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}")

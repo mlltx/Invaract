@@ -170,7 +170,7 @@ And how the checker is run:
 | `--invaract_check_only=true` | Check the pipeline and hand it to no runner, for a CI build (see below). |
 | `--invaract_checker_jar` | The checker jar. Default: the `INVARACT_BEAM_CHECKER_JAR` environment variable. |
 | `--invaract_java` | The `java` program. Default: `$JAVA_HOME/bin/java`, else `java` on the `PATH`. |
-| `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. |
+| `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. With no checker jar given, a `-cp` here runs the checker from that classpath: how a jar is added beside it, such as the [registry client](/guides/using-a-contract-registry/). |
 
 ## Where locations come from
 

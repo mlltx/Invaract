@@ -3970,7 +3970,11 @@ Extend verification engine to support multiple execution engines.
   - [x] Stage 4: `adapter-testkit` — engine-neutral conformance scenarios (55 today) judged
         against each adapter's own declaration, as real jobs that may make several writes; a
         reference adapter on the SPI; deliberately broken adapters every scenario must catch;
-        per-adapter conformance baselines
+        per-adapter conformance baselines; scenarios that attach the job through configuration alone
+        (a contract from a kit-served registry, `ref://` locations from a location map and a location
+        service, and the stops when either lacks what is asked), so `config.contractRegistry` and
+        `config.locationRefs` are verified on every engine rather than attested, and a check that every
+        neutral setting reaches each adapter through its engine's own configuration (2026-11-08)
   - [x] Stage 5: function canonicalisation — `ir.FunctionCatalog` + per-adapter `FunctionAliases`;
         non-determinism and seed handling read the catalog; Spark's table swept against Spark's own registry
 - [x] Adapter pattern documentation: docs/ADDING_AN_ENGINE_ADAPTER.md (the process), docs/MULTI_ENGINE_ADAPTERS.md

@@ -191,6 +191,20 @@ declare a capability `supported`, run `<Engine>ConformanceSpec`, and fix what di
 3. Fail-closed (`failClosed.unverifiableWrites`) and the DML job shape.
 4. Rules and the analyses (`translation` exposes the plan for lineage and sensitivity).
 5. Streaming and boundaries, if the engine has them.
+6. Configuration: `config.contractRegistry` and `config.locationRefs`, through `attached` (below), and the settings check
+   through `configSource`.
+
+**The job attached through configuration alone.** Seven scenarios (a contract from a registry, `ref://` locations from a
+location map and from a location service, and the stops when either lacks what is asked) are run through
+`<Engine>ConformanceAdapter.attached`, not `run`. The kit stands up the registry and location service and passes only
+settings, by their neutral names (`InvaractConf`); set them through the engine's own configuration surface, spelled its
+way (pipeline flags, session configuration, environment variables), launch the job as a team would, and answer
+`AttachedRun.Ran` or `AttachedRun.Stopped(message)` with the message a user would see. Nothing is handed over in code, so
+a setting the engine drops or a registry client missing from what users install fails here, not in a user's job. Carry the
+default registry client in what users install, or set `bundlesRegistryClient = false` and say in the user guide how users
+add it (the kit then names a client of its own). Implement `configSource` too: the configuration the adapter reads when
+every setting is set through the engine's surface, built the way the engine builds it. The kit fails naming each setting
+that does not arrive; list one that cannot apply to the engine in `inapplicableSettings` with why.
 
 The report has four verdicts: *conforms*, *skipped* (a scenario the declaration says does not apply, with the
 adapter's own reason), *diverges* (the adapter did something its declaration does not allow) and *unavailable* (the
@@ -226,7 +240,7 @@ test's own thread with no limit.
 
 ## Step 6: Attest what no job can show
 
-For each of the seven attested capabilities the adapter claims, name the test that demonstrates it in
+For each of the five attested capabilities the adapter claims, name the test that demonstrates it in
 `<Engine>AttestedClaimsSpec`. `AttestedClaims.requirements` says what each must show. Write the test; the kit only
 checks that it exists and is not ignored (a test that cancels or is `pending` at run time passes that check, so read
 the build's test report to see that it ran).

@@ -5,8 +5,8 @@ package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, LogicalSchema, LogicalType}
 import com.invaract.ir
-import com.invaract.testkit.{ColumnSource, ConformanceAdapter, RecordingSink, RowChange, ScenarioJob, ScenarioOutcome}
-import com.invaract.verification.{AdapterCapabilities, ContractViolationException, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ColumnSource, ConformanceAdapter, RecordingSink, RowChange, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, VerificationOptions}
 
 import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -15,6 +15,7 @@ import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 import java.nio.file.{Files, Path}
+import scala.util.control.NonFatal
 
 /** Spark as an adapter for the conformance kit: each neutral `ScenarioJob` becomes a real Spark job
   * on a local session, run through `ContractEnforcementRule.forContract` - the same builder
@@ -68,7 +69,7 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       else
         job.rowChange match {
           case Some(change) => runRowChange(scenarioId, contract, job, change, options)
-          case None         => runTransform(scenarioId, contract, job, options)
+          case None         => runTransform(scenarioId, job)(enforced(contract, options))
         }
     finally SparkSession.clearActiveSession()
   }
@@ -77,7 +78,7 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     * inside the enforced block: a job that goes through a checkpoint is only seen through if the check rule saw the
     * plan the checkpoint was made from, which happens when that plan is analyzed.
     */
-  private def runTransform(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
+  private def runTransform[T](scenarioId: String, job: ScenarioJob)(enforce: (=> Unit) => T): T = {
     materializeInputs(scenarioId, job)
     val target = path(scenarioId, job.output.location)
     // A write that registers a catalog table is an append onto a table that already exists: Spark plans a
@@ -87,7 +88,7 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     job.output.registeredAs.foreach { table =>
       resultFrame(job, readInputs(scenarioId, job)).limit(0).write.format(job.output.format).mode("overwrite").option("path", target).saveAsTable(table)
     }
-    enforced(contract, options) {
+    enforce {
       val result = resultFrame(job, readInputs(scenarioId, job), materialize = job.boundary)
       val writer = result.write.format(job.output.format).mode(job.output.saveMode).options(job.output.csvOptions)
       job.output.registeredAs match {
@@ -215,6 +216,51 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
         DeclaredOutputs.discardAll(spark.sparkContext)
         sink.rejected(e.result.violations.map(_.violationType).toSet)
     } finally active = None
+  }
+
+  /** The job attached the way a platform attaches it: the settings set on the session's configuration as
+    * `spark.invaract.<name>` (what `spark-submit --conf` sets), and the check rule built by `InvaractSparkSessionExtension`'s
+    * own builder (what `spark.sql.extensions` installs) from that configuration alone. The events go to the sink the
+    * settings configure; a contract or location the builder cannot resolve stops the job before it runs. The settings are
+    * removed again afterwards, so no other scenario sees them. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    SparkSession.setActiveSession(spark)
+    settings.foreach { case (name, value) => spark.conf.set(SparkConfigSource.Prefix + name, value) }
+    try {
+      val rule =
+        try Right(InvaractSparkSessionExtension.checkRuleFor(spark))
+        catch { case NonFatal(e) => Left(Option(e.getMessage).getOrElse(e.getClass.getName)) }
+      Some(rule match {
+        case Left(message) => AttachedRun.Stopped(message)
+        case Right(check) =>
+          runTransform(scenarioId, job) { body =>
+            active = Some(check)
+            try {
+              body
+              DeclaredOutputs.finishAll(spark.sparkContext)
+            } catch {
+              // blocked: the verdict is in the events the configured sink wrote
+              case _: ContractViolationException => DeclaredOutputs.discardAll(spark.sparkContext)
+            } finally active = None
+            AttachedRun.Ran
+          }
+      })
+    } finally {
+      settings.keys.foreach(name => spark.conf.unset(SparkConfigSource.Prefix + name))
+      SparkSession.clearActiveSession()
+    }
+  }
+
+  /** Spark's users add the registry client to the job themselves (`--jars invaract-registry-client-*.jar`, the user guide's
+    * "Use a Contract Registry"), so the kit names its own, as they name theirs. */
+  override def bundlesRegistryClient: Boolean = false
+
+  /** The settings set on a session's configuration (`spark.invaract.<name>`), read as the extension reads them. A session of
+    * its own, so nothing is left on the one the scenarios share. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] = {
+    val session = spark.newSession()
+    settings.foreach { case (name, value) => session.conf.set(SparkConfigSource.Prefix + name, value) }
+    Some(SparkConfigSource(session))
   }
 
   /** Writes the scenario's inputs as empty parquet datasets of their schema (every check is about shape, not

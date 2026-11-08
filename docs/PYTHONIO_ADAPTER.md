@@ -164,8 +164,8 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `lineage.boundaryResolution` | not-applicable | the note: no checkpoint or cache |
 | `policy.organizational` | supported | attested: `PythonIoProtocolCasesSpec` (the `org-policy-refused` and `org-policy-satisfied` cases) |
 | `config.zeroCodeInstall` | unsupported | the note: a one-time code change by design (decision 1) |
-| `config.locationRefs` | supported | attested: `PythonIoProtocolCasesSpec` (the `location-refs` case) |
-| `config.contractRegistry` | supported | attested: `PythonIoProtocolCasesSpec` (the `registry` case, JVM-only), and the package's `test_run.py`, which fetches a contract from a real HTTP registry through the built-in client |
+| `config.locationRefs` | supported | `locations-from-map`, `locations-from-map-enforced`, `locations-from-service`, `location-not-in-service`, run through the checker and as real Python jobs (CI also against the native checker); the `location-refs` case |
+| `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry`, against a registry the kit serves, through the client the checker carries (CI also against the native checker); the `registry` case, and the package's `test_run.py` |
 | `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases. A `WRITE` event for each output published and a `JOB_SUMMARY` for each run (2026-11-08): the `published-write-events` and `published-misuse` cases, and the package's tests of Delta, Iceberg and plain-file outputs and of a publish that fails part way |
 | `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |

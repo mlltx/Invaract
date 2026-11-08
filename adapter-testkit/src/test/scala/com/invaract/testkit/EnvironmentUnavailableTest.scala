@@ -19,6 +19,10 @@ class EnvironmentlessAdapter(unavailableFor: String => Boolean = _ => true) exte
     else reference.run(id, c, j, o)
   override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] =
     if (unavailableFor(id)) throw new EnvironmentUnavailable(s"no connection to translate $id") else reference.translation(id, j)
+  override def attached(id: String, c: Contract, j: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
+    if (unavailableFor(id)) throw new EnvironmentUnavailable(s"the emulator for $id would not start") else reference.attached(id, c, j, settings)
+  override def bundlesRegistryClient: Boolean = reference.bundlesRegistryClient
+  override def configSource(settings: Map[String, String]): Option[com.invaract.verification.ConfigSource] = reference.configSource(settings)
 }
 
 @DoNotDiscover

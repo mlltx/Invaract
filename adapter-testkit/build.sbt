@@ -148,6 +148,10 @@ mimaBinaryIssueFilters ++= Seq(
   // Engine identity on the events: ScenarioOutcome gained `eventEngines` (which engine each validation event named), so the
   // kit can fail an adapter whose events do not name its own. ScenarioOutcome is sealed to Passed and Rejected, whose
   // constructors are covered by the Passed/Rejected lines below. Same reason as above: no consumer outside this repository.
+  // Attached scenarios: Scenario gained a last parameter, `attach` (a job attached through the engine's configuration alone),
+  // which the Scenario.apply/copy/this and Scenario$ lines below already exclude by name. ConformanceAdapter's new methods
+  // (`attached`, `bundlesRegistryClient`, `configSource`, `inapplicableSettings`) have defaults, so an adapter compiled
+  // against the previous kit still links. Same reason as above: no consumer outside this repository.
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.eventEngines"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.copy"),

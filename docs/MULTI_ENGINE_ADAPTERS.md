@@ -489,6 +489,36 @@ the rule must catch both) and `required_group_by` needs an aggregation (`groupBy
 column). Each rule has a satisfied and a violated scenario; the violated `required_group_by` one groups by a column the
 output merely *renames* to the required name, which an adapter that confuses a grouping column with its alias gets wrong.
 
+**Some scenarios attach the job through configuration alone.** How a contract and its locations reach a job is
+something a platform sets, not the job's code, and every engine spells it differently, so it is easy for one adapter to
+get wrong while its unit tests pass: a registry client missing from what ships, a setting the engine never forwards, a
+registry's own error lost on the way to the job. A scenario with `attach` set (`Attachment.Registry`, `LocationMap`,
+`LocationService`) is run through `ConformanceAdapter.attached` instead of `run`: the kit stands up what the settings
+point at (a contract registry speaking `docs/CONTRACT_REGISTRY.md`'s protocol, a location service speaking
+`HttpLocationResolver`'s, the contract and location-map files), hands the adapter nothing but the settings by their
+neutral names (`InvaractConf`), and reads the verdict from the validation events of the file sink those settings
+configure (`notifyConfig`), so nothing is passed in code. The adapter sets them through its engine's own configuration
+(Spark's `spark.invaract.*`, Beam's pipeline flags, a Python job's `INVARACT_*` variables) and launches the job as a team
+would, answering `Ran` or `Stopped(message)` with the message a user would see. Seven scenarios use it: a contract
+fetched from the registry is enforced, and one it does not hold stops the job with the registry's own message naming
+the contract and version; `ref://` locations resolve through a location map and through a location service, are
+enforced, and an id the service does not hold stops the job naming the reference. `config.locationRefs` and
+`config.contractRegistry` are therefore verified, no longer attested. The kit serves the registry and leaves the client
+to the adapter: an adapter carries the default client (`invaract-registry-client`) in what its users install unless it
+says otherwise (`bundlesRegistryClient = false`, for an engine whose users add the jar themselves, as Spark's `--jars`
+and Beam's classpath do, and whose guide says how), in which case the kit names a client of its own (`KitRegistryClient`)
+with `registryClientClass`, as such a user names theirs. The Python I/O package's scenarios run as real Python jobs, and CI
+runs them a second time against the native checker its wheels carry (`INVARACT_TEST_CHECKER`), so what ships is what is
+held to them.
+
+**Every setting must reach the adapter.** `AdapterConformanceSpec` also sets every neutral setting, each to a value of
+its own, through the engine's configuration (`ConformanceAdapter.configSource`: the `ConfigSource` the adapter's attach
+path would read, built the way the engine builds it - for Beam Python and the Python package, by asking the package
+itself what it hands its checker) and fails naming each one that does not arrive. A setting added to `InvaractConf` is
+then caught on every engine that does not spell it. A setting with no meaning for an engine is listed in
+`inapplicableSettings` with why, and is not set; the check is canceled only for an adapter that claims none of the
+`config.*` capabilities (a newly generated one).
+
 **The analyses are read from what the run reported and from the adapter's own translation.** The outcome
 carries the static data-quality results, the role-consistency verdicts and the inputs reported hidden
 behind a boundary, all read off the last `ContractValidationEvent` (so an adapter fills them in by finishing

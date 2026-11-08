@@ -648,6 +648,17 @@ jobs:
           cd pythonio-adapter
           python3 native/cases.py src/test/resources/protocol --native --max-seconds 1 -- "$PWD/target/native/invaract-pythonio-checker"
 
+      # the conformance scenarios as real Python jobs again, now with the checker the package's wheels carry: a registry
+      # client or a resolver the native build left out (reflection, resources) shows up here, not in a user's job
+      - name: Run the package's conformance scenarios against the native checker
+        shell: bash
+        env:
+          INVARACT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+          INVARACT_CONFORMANCE_STRICT: "true"
+        run: |
+          cd pythonio-adapter
+          INVARACT_TEST_CHECKER="$PWD/target/native/invaract-pythonio-checker" sbt "testOnly *PythonIoPackageConformanceSpec"
+
       - name: Check the native checker's size
         shell: bash
         run: |

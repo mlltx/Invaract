@@ -92,8 +92,8 @@ backing is not allowed.
 | `lineage.boundaryResolution` | not-applicable | not applicable: a Beam pipeline is an immutable graph (the 2 boundary scenarios are skipped with that reason) |
 | `policy.organizational` | supported | BeamAttachSpec "organizational policy: ..." |
 | `config.zeroCodeInstall` | partial | BeamAttachSpec "zero-code install: ..." (also records the two ways a job escapes it) |
-| `config.locationRefs` | supported | BeamAttachSpec "location refs: ..." |
-| `config.contractRegistry` | supported | BeamAttachSpec "contract registry: ..." |
+| `config.locationRefs` | supported | `locations-from-map`, `locations-from-map-enforced`, `locations-from-service`, `location-not-in-service` (the pipeline launched with `--invaract*` flags alone); BeamAttachSpec "location refs: ..." |
+| `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry` (the user adds the registry client to the launcher's classpath); BeamAttachSpec "contract registry: ..." |
 | `reporting.notifications` | supported | the PASSED/FAILED events every scenario checks; BeamCheckSpec for the engine, version and job they name |
 | `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec (per-write drafts, each self-checked by `DryRunSelfCheck`, then the job summary `DryRunSummary` builds; both shared with Spark) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed`; BeamTranslatorSpec and BeamCheckSpec for the other shapes it refuses |

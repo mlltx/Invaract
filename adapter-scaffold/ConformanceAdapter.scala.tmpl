@@ -5,8 +5,8 @@ package com.invaract.@@pkg@@
 
 import com.invaract.contract.Contract
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ScenarioJob, ScenarioOutcome}
-import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ConformanceAdapter, RecordingSink, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, VerificationOptions}
 
 /** @@Engine@@ as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
   *
@@ -44,4 +44,26 @@ class @@Engine@@ConformanceAdapter extends ConformanceAdapter {
     * lineage and sensitivity scenarios. Leave it `None` only while `lineage.columnLevel` and
     * `analysis.sensitivityPropagation` are declared unsupported. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+
+  /** The job attached the way a platform attaches it, with nothing handed over in code: `settings` (by neutral name, the
+    * `InvaractConf` names) set through @@Engine@@'s own configuration surface, spelled its way, and the job launched as a
+    * team launches it. The kit stands up the contract registry and location service the settings name, and reads the
+    * verdict from the events the configured notification sink writes. Answer `AttachedRun.Ran` when the job ran (blocked or
+    * not), or `AttachedRun.Stopped(message)` with the message a user would see when Invaract stopped it before it ran (a
+    * contract the registry does not hold, a location the service cannot resolve). The registry, location map and location
+    * service scenarios run through here once `config.contractRegistry` and `config.locationRefs` are declared supported. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
+    None // TODO: set `settings` through @@Engine@@'s configuration, launch the job, and answer what happened
+
+  /** `true` when the adapter carries the default registry client (`invaract-registry-client`) in what users install. Leave it
+    * `true` unless @@Engine@@'s users add the client to their job themselves and the user guide says how; then the kit names
+    * a client of its own, as they name theirs. */
+  override def bundlesRegistryClient: Boolean = true
+
+  /** The configuration the adapter reads when a platform sets `settings` through @@Engine@@'s configuration surface: the
+    * `ConfigSource` its attach path builds (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b). The kit sets every neutral setting and
+    * checks each one arrives, once any `config.*` capability is declared supported. List the settings that cannot apply to
+    * @@Engine@@, each with why, in `inapplicableSettings`. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] =
+    None // TODO: the engine's own configuration holding `settings`, read through @@Engine@@'s ConfigSource
 }

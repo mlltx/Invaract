@@ -52,3 +52,10 @@ role-source-contributing-conforms
 role-control-contributing-contradicts
 untranslatable-write-fails-closed
 invalid-contract
+contract-from-registry
+contract-from-registry-enforced
+contract-not-in-registry
+locations-from-map
+locations-from-map-enforced
+locations-from-service
+location-not-in-service

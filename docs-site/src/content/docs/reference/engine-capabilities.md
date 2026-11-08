@@ -35,9 +35,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (58) | ✅ | ✅ | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (65) | ✅ | ✅ | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✖ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (59) | ✅ | ✅ | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (66) | ✅ | ✅ | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ✖ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | — | ✅ |
@@ -90,8 +90,8 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
 | `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ✖ | ✅ |
-| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | attested | ✅ | ✅ | ✅ | ✅ |
-| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | attested | ✅ | ✅ | ✅ | ✅ |
+| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | verified (4) | ✅ | ✅ | ✅ | ✅ |
+| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | verified (3) | ✅ | ✅ | ✅ | ✅ |
 
 ### Reporting
 
@@ -120,20 +120,18 @@ Attested:
 - `rules.custom` — a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one
 - `policy.organizational` — applied to the contract at session start, not part of a job
 - `config.zeroCodeInstall` — how an adapter attaches to a job is engine-specific, not a job
-- `config.locationRefs` — how an adapter attaches to a job is engine-specific, not a job
-- `config.contractRegistry` — how an adapter attaches to a job is engine-specific, not a job
 - `reporting.dryRunInference` — dry-run mode is a mode of installing, not a job
 
 ## Conformance results
 
-The suite has 65 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 72 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 54 | 65 |
-| `beam-python` | 54 | 65 |
-| `pythonio` | 52 | 65 |
-| `spark` | 65 | 65 |
+| `beam` | 61 | 72 |
+| `beam-python` | 61 | 72 |
+| `pythonio` | 59 | 72 |
+| `spark` | 72 | 72 |
 
 ## Notes
 

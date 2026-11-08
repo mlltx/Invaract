@@ -5,8 +5,8 @@ package com.invaract.pythonioadapter
 
 import com.invaract.contract.{Contract, Dataset, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput, ScenarioRows}
-import com.invaract.verification.{AdapterCapabilities, ContractViolationException, DataCheckResult, RuntimeDataQuality, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ConformanceAdapter, RecordingSink, ReferenceAdapter, ScenarioInput, ScenarioJob, ScenarioOutcome, ScenarioOutput, ScenarioRows}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, InvaractConf, DataCheckResult, RuntimeDataQuality, VerificationOptions}
 import com.invaract.verification.notification.{JobInfo, NotificationJson}
 
 /** PythonIo as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
@@ -36,17 +36,7 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
     val run = new Run
     try {
       run.start(contract, options, Some(sink), JobInfo(name = Some(scenarioId), engine = Some(PythonIoCheck.Engine)))
-      val main = job.inputs.map(readRequest(contract, _)) ++ (
-        if (job.untranslatableWrite) List(unverifiableWrite(contract, job.output))
-        else writeRequests(contract, job.output, ReferenceAdapter.outputSchema(job), dataChecks(contract, job.output, ScenarioRows.of(job), options))
-      )
-      // a further write reads its own input first, unless the job has read it already
-      val extra = job.extraWrites.foldLeft((job.inputs.map(_.location).toSet, List.empty[String])) { case ((read, lines), w) =>
-        val readIt = if (read.contains(w.input.location)) Nil else List(readRequest(contract, w.input))
-        (read + w.input.location, lines ++ readIt ++ writeRequests(contract, w.output, w.input.schema, dataChecks(contract, w.output, w.input.rows, options)))
-      }._2
-      val replies = (main ++ extra :+ """{"op": "finish", "completed": true}""").iterator.map(run.answer)
-      replies.find(_("ok") != true) match {
+      requests(contract, job, options).iterator.map(run.answer).find(_("ok") != true) match {
         case None                                                   => sink.passed
         case Some(reply) if reply.get("status").contains("refused") => sink.rejected(reply("violations").asInstanceOf[List[String]].toSet)
         case Some(reply)                                            => throw new IllegalStateException(s"the checker did not check scenario '$scenarioId': ${reply.get("reason").getOrElse(reply)}")
@@ -58,9 +48,57 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
 
   /** The package hands the checker no plan, only reads and writes; lineage and sensitivity are declared unsupported. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+
+  /** The run opened as the package opens it, with an `open` request carrying the settings, then the job's reads and writes. A
+    * reply that refuses a write is a run the contract blocked, its verdict in the events the configured sink wrote; any other
+    * failure stopped the job, with the reason the package would raise. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    import PythonIoConformanceAdapter._
+    val run = new Run
+    val replies = (openRequest(scenarioId, settings) :: requests(contract, job, VerificationOptions())).iterator.map(run.answer)
+    Some(replies.find(_("ok") != true) match {
+      case None                                                   => AttachedRun.Ran
+      case Some(reply) if reply.get("status").contains("refused") => AttachedRun.Ran
+      case Some(reply)                                            => AttachedRun.Stopped(reply.get("reason").fold(reply.toString)(String.valueOf))
+    })
+  }
+
+  /** The settings as the checker reads them from an `open` request: a setting the protocol drops is lost. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] =
+    Requests.parse(PythonIoConformanceAdapter.openRequest("settings", settings)) match {
+      case Right(open: Request.Open) => Some(new PythonIoConfigSource(open.settings))
+      case other                     => throw new IllegalStateException(s"the checker did not read the open request: $other")
+    }
+
+  override def inapplicableSettings: Map[String, String] = PythonIoConformanceAdapter.Inapplicable
 }
 
 object PythonIoConformanceAdapter {
+
+  /** The settings a Python job has no use for (`PythonIoConfigSource.NotApplicable`), each with why. */
+  val Inapplicable: Map[String, String] = Map(
+    InvaractConf.FailOnMissingOutput -> "a Python job's declared output that is never written always fails its run",
+    InvaractConf.TrustedSteps -> "a Python job has no steps to trust: the package sees only its reads and writes"
+  )
+
+  /** The `open` the package sends for a job run with `settings`. */
+  def openRequest(jobName: String, settings: Map[String, String]): String =
+    json("op" -> "open", "protocol" -> Requests.Version, "settings" -> settings, "job" -> Map("name" -> jobName))
+
+  /** The requests the package sends for `job` once the run is open: a `read` per input, the `write` and `written` for its
+    * output (or a write it cannot describe), the same for each further write, and the `finish`. */
+  def requests(contract: Contract, job: ScenarioJob, options: VerificationOptions): List[String] = {
+    val main = job.inputs.map(readRequest(contract, _)) ++ (
+      if (job.untranslatableWrite) List(unverifiableWrite(contract, job.output))
+      else writeRequests(contract, job.output, ReferenceAdapter.outputSchema(job), dataChecks(contract, job.output, ScenarioRows.of(job), options))
+    )
+    // a further write reads its own input first, unless the job has read it already
+    val extra = job.extraWrites.foldLeft((job.inputs.map(_.location).toSet, List.empty[String])) { case ((read, lines), w) =>
+      val readIt = if (read.contains(w.input.location)) Nil else List(readRequest(contract, w.input))
+      (read + w.input.location, lines ++ readIt ++ writeRequests(contract, w.output, w.input.schema, dataChecks(contract, w.output, w.input.rows, options)))
+    }._2
+    main ++ extra :+ """{"op": "finish", "completed": true}"""
+  }
 
   /** The Iceberg catalog and namespace a scenario's registered output is a table in. */
   val IcebergCatalog = "conformance"

@@ -5,7 +5,7 @@ package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalType}
 import com.invaract.ir.{Aggregate, CatalogIdentity, ColumnRef, ColumnReference, Comparison, DatasetRef, Filter, Function, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Union, UnknownPlan, Write}
-import com.invaract.verification.{CheckedWrite, VerificationOptions, ViolationType}
+import com.invaract.verification.{CheckedWrite, InvaractConf, VerificationOptions, ViolationType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -28,8 +28,15 @@ class BrokenAdapterSpec extends AnyFunSuite {
       boundaryTypes: Set[String] = Set.empty,
       outputsWritten: Boolean = true,
       extraWrites: Boolean = true,
-      dataValues: Boolean = true
+      dataValues: Boolean = true,
+      attachable: Boolean = true,
+      bundles: Boolean = false,
+      rewriteSettings: Map[String, String] => Map[String, String] = identity,
+      rewriteAttached: AttachedRun => AttachedRun = identity
   ) extends ReferenceAdapter() {
+    override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
+      if (!attachable) None else super.attached(scenarioId, contract, job, rewriteSettings(settings)).map(rewriteAttached)
+    override def bundlesRegistryClient: Boolean = bundles
     override protected def checksOutputsWritten: Boolean = outputsWritten
     override protected def checksExtraWrites: Boolean = extraWrites
     override protected def dataChecks(contract: Contract, job: ScenarioJob, options: VerificationOptions): List[com.invaract.verification.DataCheckResult] =
@@ -64,8 +71,13 @@ class BrokenAdapterSpec extends AnyFunSuite {
   /** A variant, and the scenarios that must report it. */
   private case class Mistake(name: String, adapter: ConformanceAdapter, mustCatch: Set[String])
 
-  private val rejecting: Set[String] = Scenarios.all.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
-  private val passing: Set[String] = allIds -- rejecting
+  /** The scenarios handed their contract in code (`run`): what a mistake in `run`'s reporting reaches. A job attached through
+    * configuration reports through the events its configured sink writes, which the attached mistakes below get at. */
+  private val handed: Set[String] = Scenarios.all.filter(_.attach.isEmpty).map(_.id).toSet
+  private val attachedIds: Set[String] = allIds -- handed
+
+  private val rejecting: Set[String] = Scenarios.all.filter(s => s.attach.isEmpty && s.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
+  private val passing: Set[String] = handed -- rejecting
 
   // The four blunt mistakes: they prove the verdict plumbing, not that any one check is sensitive.
   private val blunt = List(
@@ -99,7 +111,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
         case r: ScenarioOutcome.Rejected => r.copy(statuses = Nil)
         case p: ScenarioOutcome.Passed   => p.copy(statuses = Nil)
       }),
-      allIds
+      handed
     ),
     Mistake(
       "publishes events that do not say which engine produced them",
@@ -107,7 +119,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
         case r: ScenarioOutcome.Rejected => r.copy(eventEngines = r.eventEngines.map(_ => None))
         case p: ScenarioOutcome.Passed   => p.copy(eventEngines = p.eventEngines.map(_ => None))
       }),
-      allIds
+      handed
     ),
     Mistake(
       "publishes events naming another engine",
@@ -115,8 +127,33 @@ class BrokenAdapterSpec extends AnyFunSuite {
         case r: ScenarioOutcome.Rejected => r.copy(eventEngines = r.eventEngines.map(_ => Some("some-other-engine")))
         case p: ScenarioOutcome.Passed   => p.copy(eventEngines = p.eventEngines.map(_ => Some("some-other-engine")))
       }),
-      allIds
+      handed
     )
+  )
+
+  // Each of these gets wrong how a job attached through the engine's own configuration reaches its contract and locations.
+  private val attaching = List(
+    Mistake("cannot attach a job through its configuration at all", new Variant(attachable = false), attachedIds),
+    Mistake(
+      "says it carries the default registry client, but its shipped form does not",
+      new Variant(bundles = true),
+      Set("contract-from-registry", "contract-from-registry-enforced", "contract-not-in-registry")
+    ),
+    Mistake(
+      "runs the job without enforcing the contract its configuration names",
+      new Variant(rewriteSettings = settings => settings - InvaractConf.Contract + (InvaractConf.DryRun -> "true")),
+      attachedIds
+    ),
+    Mistake(
+      "loses the message of what stopped the job, behind a wrapper of its own",
+      new Variant(rewriteAttached = {
+        case AttachedRun.Stopped(_) => AttachedRun.Stopped("InvocationTargetException: null")
+        case ran                    => ran
+      }),
+      Set("contract-not-in-registry", "location-not-in-service")
+    ),
+    Mistake("never reads the location map", new Variant(rewriteSettings = _ - InvaractConf.LocationMap), Set("locations-from-map", "locations-from-map-enforced")),
+    Mistake("never asks the location service", new Variant(rewriteSettings = _ - InvaractConf.LocationUrl), Set("locations-from-service"))
   )
 
   // Each of these breaks one thing an adapter's engine-specific half does.
@@ -323,7 +360,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
   private def diverging(adapter: ConformanceAdapter): Set[String] =
     Conformance.evaluate(adapter).results.collect { case ScenarioResult(s, _: ScenarioVerdict.Diverges) => s.id }.toSet
 
-  (blunt ++ specific).foreach { mistake =>
+  (blunt ++ specific ++ attaching).foreach { mistake =>
     test(s"the kit catches an adapter that ${mistake.name}") {
       val caught = diverging(mistake.adapter)
       val missed = mistake.mustCatch -- caught
@@ -339,7 +376,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
   }
 
   test("every scenario is the catch for some mistake, or says why not") {
-    val targeted = specific.flatMap(_.mustCatch).toSet
+    val targeted = (specific ++ attaching).flatMap(_.mustCatch).toSet
     val uncovered = allIds -- targeted -- controls.keySet
     assert(uncovered.isEmpty, s"scenarios with no mistake that targets them (add one to BrokenAdapterSpec, or list them as a control): ${uncovered.toList.sorted.mkString(", ")}")
     val stale = controls.keySet -- allIds
@@ -355,7 +392,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
 
   // --- the exemptions are checked, so a dangling one is caught ------------------------------------------------
 
-  private val targetedByMistakes = specific.flatMap(_.mustCatch).toSet
+  private val targetedByMistakes = (specific ++ attaching).flatMap(_.mustCatch).toSet
   private val bluntTargets = blunt.flatMap(_.mustCatch).toSet
   private def problems(e: Exemption, scenario: String = "some-scenario"): List[String] = problemWith(scenario, e, guardedScenarios(targetedByMistakes), bluntTargets)
 

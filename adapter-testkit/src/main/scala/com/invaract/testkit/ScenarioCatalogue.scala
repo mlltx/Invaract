@@ -37,6 +37,9 @@ object ScenarioCatalogue {
 
     /** The scenario does not apply to this adapter, for the reason its own declaration gives. */
     final case class Skipped(reason: String) extends Forecast
+
+    /** Invaract stops the job before it runs, naming `mentioning`. */
+    final case class Stops(mentioning: Set[String]) extends Forecast
   }
 
   def forecast(scenario: Scenario, capabilities: AdapterCapabilities): Forecast =
@@ -45,13 +48,18 @@ object ScenarioCatalogue {
       case Right(Conformance.Expected.Pass)                 => Forecast.Allows
       case Right(Conformance.Expected.RejectExactly(types)) => Forecast.Blocks(types)
       case Right(Conformance.Expected.RejectedAsUnsupported) => Forecast.RefusesAsUnsupported
+      case Right(Conformance.Expected.Stopped(mentioning))  => Forecast.Stops(mentioning)
     }
 
   /** The neutral result: what the scenario expects of an adapter that supports everything it needs. */
   def neutral(scenario: Scenario): String = scenario.expect match {
     case Expectation.Pass          => "allowed"
     case Expectation.Reject(types) => describeBlock(types)
+    case Expectation.Stopped(names) => describeStop(names)
   }
+
+  private[testkit] def describeStop(names: Set[String]): String =
+    "stopped before it runs, naming " + names.toList.sorted.map(n => s"`$n`").mkString(", ")
 
   private[testkit] def describeBlock(types: Set[String]): String = "blocked: " + types.toList.sorted.map(t => s"`$t`").mkString(", ")
 
@@ -60,6 +68,7 @@ object ScenarioCatalogue {
     case Forecast.Blocks(types)        => "does the checks, write " + describeBlock(types)
     case Forecast.RefusesAsUnsupported => "must refuse safely (`UNSUPPORTED_CONTRACT_FEATURE`)"
     case Forecast.Skipped(reason)      => s"skipped: ${cell(reason)}"
+    case Forecast.Stops(names)         => "job " + describeStop(names)
   }
 
   /** A markdown table cell: one line, `|` escaped. */

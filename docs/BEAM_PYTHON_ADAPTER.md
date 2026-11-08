@@ -130,8 +130,8 @@ permanent as the recorded fixtures. What building it added:
 | `lineage.boundaryResolution` | not-applicable | scenarios 48, 49 skipped |
 | `policy.organizational` | supported | `BeamPythonAttachSpec` |
 | `config.zeroCodeInstall` | partial | `BeamPythonAttachSpec` (a real Python job; the limits too) |
-| `config.locationRefs` | supported | `BeamPythonAttachSpec` |
-| `config.contractRegistry` | supported | `BeamPythonAttachSpec` |
+| `config.locationRefs` | supported | `locations-from-map`, `locations-from-map-enforced`, `locations-from-service`, `location-not-in-service` (real Python pipelines given `--invaract_*` flags alone); `BeamPythonAttachSpec` |
+| `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry` (the user adds the registry client to the checker's classpath with `--invaract_java_options`); `BeamPythonAttachSpec` |
 | `reporting.notifications` | supported | every scenario reads the checker's events |
 | `reporting.dryRunInference` | partial | `BeamPythonAttachSpec` (a real Python job) |
 | `failClosed.unverifiableWrites` | partial | scenario 52; `PythonStepsSpec` |

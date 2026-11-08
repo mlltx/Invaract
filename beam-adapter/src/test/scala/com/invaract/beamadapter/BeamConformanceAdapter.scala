@@ -5,8 +5,8 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.Contract
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ConformanceAdapter, EnvironmentUnavailable, RecordingSink, ScenarioJob, ScenarioOutcome}
-import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, VerificationOptions}
+import com.invaract.testkit.{AttachedRun, ConformanceAdapter, EnvironmentUnavailable, RecordingSink, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, InvaractConf, VerificationOptions}
 import org.apache.beam.runners.direct.DirectRunner
 import org.apache.beam.sdk.io.gcp.testing.{FakeBigQueryServices, FakeDatasetService, FakeJobService}
 import org.apache.beam.sdk.options.PipelineOptionsFactory
@@ -14,6 +14,7 @@ import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 
 import java.nio.file.{Files, Path}
 import scala.util.Try
+import scala.util.control.NonFatal
 
 /** Beam as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
   *
@@ -47,6 +48,43 @@ class BeamConformanceAdapter extends ConformanceAdapter {
   /** Beam's plan lineage is not available (the functions in a Beam job are opaque), and the lineage and sensitivity
     * capabilities are declared unsupported, so the kit never asks. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+
+  /** The job launched the way a platform launches one: the settings as `--invaract<Name>` flags beside `--runner` naming
+    * `InvaractRunner`, parsed into the pipeline's own options, and the pipeline created and run with those options alone. Beam
+    * builds the runner `--runner` names when the pipeline is created, so a contract or location that cannot be resolved stops
+    * the job there, with the message its user sees. */
+  override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] = {
+    val root = Files.createTempDirectory("beam-conformance-")
+    try
+      Some(
+        try {
+          val beamOptions = PipelineOptionsFactory
+            .fromArgs(BeamConformanceAdapter.flags(settings) ++ List(s"--runner=${classOf[InvaractRunner].getName}", "--invaractDelegate=DirectRunner"): _*)
+            .create()
+          beamOptions.setTempLocation(root.resolve("tmp").toString)
+          val pipeline = Pipeline.create(beamOptions)
+          BeamScenarioJobs.build(pipeline, job, root, BeamConformanceAdapter.targetFor(contract, job))
+          pipeline.run().waitUntilFinish()
+          AttachedRun.Ran
+        } catch {
+          // blocked: the verdict is in the events the configured sink wrote
+          case _: ContractViolationException => AttachedRun.Ran
+          case NonFatal(e)                   => AttachedRun.Stopped(Option(e.getMessage).getOrElse(e.getClass.getName))
+        }
+      )
+    finally BeamConformanceAdapter.deleteQuietly(root)
+  }
+
+  /** Beam's users add the registry client to the job's classpath themselves, as a dependency of their launcher, so the kit
+    * names its own, as they name theirs. */
+  override def bundlesRegistryClient: Boolean = false
+
+  /** The settings as `--invaract<Name>` flags, parsed into pipeline options and read as the runner reads them. */
+  override def configSource(settings: Map[String, String]): Option[ConfigSource] =
+    Some(new BeamConfigSource(PipelineOptionsFactory.fromArgs(BeamConformanceAdapter.flags(settings): _*).create().as(classOf[InvaractBeamOptions])))
+
+  override def inapplicableSettings: Map[String, String] =
+    Map(InvaractConf.FailOnMissingOutput -> "Beam sees a job's whole graph before it runs, so a declared output it never writes is refused then")
 }
 
 private[beamadapter] object BeamConformanceAdapter {
@@ -65,6 +103,10 @@ private[beamadapter] object BeamConformanceAdapter {
       datasets.createDataset(Project, job.output.location.split('/').init.mkString("_"), "", "", null)
       BeamScenarioJobs.BigQuery(new FakeBigQueryServices().withDatasetService(datasets).withJobService(new FakeJobService()), Project)
     }
+
+  /** The settings as a Beam command line spells them: `--invaract<Name>=<value>`. */
+  def flags(settings: Map[String, String]): List[String] =
+    settings.toList.sortBy(_._1).map { case (name, value) => s"${BeamConfigSource.spelling(name)}=$value" }
 
   /** Removes `root` and everything under it; a file the platform still holds open is left rather than failing the run. */
   def deleteQuietly(root: Path): Unit =

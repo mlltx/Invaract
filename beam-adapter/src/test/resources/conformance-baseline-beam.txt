@@ -54,3 +54,10 @@ rejoining-branches-do-not-hide-an-undeclared-read
 unrecognized-step-keeps-the-reads-beneath-it-visible
 untranslatable-write-fails-closed
 wrong-output-location
+contract-from-registry
+contract-from-registry-enforced
+contract-not-in-registry
+locations-from-map
+locations-from-map-enforced
+locations-from-service
+location-not-in-service

@@ -88,11 +88,11 @@ capabilities:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
   config.locationRefs:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Through the shared attach path (AttachSetup, VerificationSetup), with the settings as its configuration.
   config.contractRegistry:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Through the shared attach path (AttachSetup, VerificationSetup), with the settings as its configuration.
   reporting.notifications:
     status: supported
   reporting.dryRunInference:
