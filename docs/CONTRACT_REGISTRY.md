@@ -157,7 +157,7 @@ object RegistryError {
 **This atomicity guarantee is not optional or v1-only** — it's the
 contract any future backend has to satisfy, the same way `LocationResolver`
 in `spark-adapter` is one trait with swappable implementations
-(`NoOpLocationResolver`, `StaticMapLocationResolver`, a future
+(`NoOpLocationResolver`, `StaticMapLocationResolver`,
 `HttpLocationResolver`). The reference implementation
 (`InMemoryRegistryStore`, in `invaract-registry`) proves the semantics
 with `java.util.concurrent.ConcurrentHashMap.compute` — genuine

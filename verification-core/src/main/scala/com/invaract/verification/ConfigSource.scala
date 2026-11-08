@@ -69,7 +69,13 @@ object ConfigSource {
   * prefixes them as its engine requires (Spark: `spark.invaract.<name>`).
   */
 object InvaractConf {
+  /** Path of an `id=location` `.properties` file `ref://<id>` locations resolve against (`StaticMapLocationResolver`). */
   val LocationMap = "locationMap"
+  /** Base URL of a location service `ref://<id>` locations not in the location map are asked of (`HttpLocationResolver`). */
+  val LocationUrl = "locationUrl"
+  /** Name of the environment variable holding the location service's bearer token: the name, so the token itself never
+    * appears in a job's configuration. */
+  val LocationTokenEnv = "locationTokenEnv"
   val RejectUndeclaredInputs = "rejectUndeclaredInputs"
   val RejectUndeclaredFields = "rejectUndeclaredFields"
   val ComputeFingerprint = "computeFingerprint"
@@ -109,7 +115,7 @@ object InvaractConf {
   /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
-    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
+    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, LocationUrl, LocationTokenEnv, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
     RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps,
     JobId, JobAttributes
   )

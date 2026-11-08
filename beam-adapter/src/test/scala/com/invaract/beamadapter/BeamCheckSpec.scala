@@ -277,7 +277,8 @@ class BeamCheckSpec extends AnyFunSuite {
     val options = PipelineOptionsFactory
       .fromArgs(
         "--invaractContract=c.yaml", "--invaractDryRun=true", "--invaractNotifyConfig=n.properties", "--invaractRegistryUrl=http://r",
-        "--invaractRegistryClientClass=a.B", "--invaractLocationMap=l.properties", "--invaractOrgPolicy=p.yaml", "--invaractOrgPolicyOverlays=o.yaml",
+        "--invaractRegistryClientClass=a.B", "--invaractLocationMap=l.properties", "--invaractLocationUrl=http://l",
+        "--invaractLocationTokenEnv=LOC_TOKEN", "--invaractOrgPolicy=p.yaml", "--invaractOrgPolicyOverlays=o.yaml",
         "--invaractRejectUndeclaredInputs=true", "--invaractRejectUndeclaredFields=false", "--invaractComputeFingerprint=true",
         "--invaractStaticDataQuality=true", "--invaractRoleConsistency=true", "--invaractDelegate=DirectRunner"
       )
@@ -286,6 +287,7 @@ class BeamCheckSpec extends AnyFunSuite {
     val expected = Map(
       InvaractConf.Contract -> "c.yaml", InvaractConf.DryRun -> "true", InvaractConf.NotifyConfig -> "n.properties",
       InvaractConf.RegistryUrl -> "http://r", InvaractConf.RegistryClientClass -> "a.B", InvaractConf.LocationMap -> "l.properties",
+      InvaractConf.LocationUrl -> "http://l", InvaractConf.LocationTokenEnv -> "LOC_TOKEN",
       InvaractConf.OrgPolicy -> "p.yaml", InvaractConf.OrgPolicyOverlays -> "o.yaml", InvaractConf.RejectUndeclaredInputs -> "true",
       InvaractConf.RejectUndeclaredFields -> "false", InvaractConf.ComputeFingerprint -> "true", InvaractConf.StaticDataQuality -> "true",
       InvaractConf.RoleConsistency -> "true"

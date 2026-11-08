@@ -2109,9 +2109,13 @@ inspects it.
   throwing `LocationResolutionException` on failure) a real id-to-location
   mapping implements. `StaticMapLocationResolver` — built `fromPropertiesFile`
   (the same `.properties` convention `NotificationConfig` already uses) or
-  `fromArgs` (`"id=location"` strings) — is the resolver shipped today; an
-  `HttpLocationResolver` calling out to a path registry is a planned follow-up
-  behind the same trait.
+  `fromArgs` (`"id=location"` strings) — and `HttpLocationResolver`, which asks a
+  location service (`GET <url>/locations/<id>` answering `{"location": ...}`, an
+  optional bearer token read from the environment variable `locationTokenEnv` names)
+  are the resolvers shipped. Both live in verification-core, and
+  `VerificationSetup.resolveContractLocations` builds them from the neutral settings
+  `locationMap`, `locationUrl` and `locationTokenEnv` for every adapter, the map
+  asked first.
 - `ContractLocationResolution.resolve(contract, resolver)` is a pure
   `Contract => Contract` transform — no changes to `contract`'s object model,
   since it's just `Dataset.copy(location = ...)` wherever `LocationRef.id`
@@ -2141,7 +2145,7 @@ Two ways to trigger that resolution, both ending at the same
 - **Explicit, in code** — call `ContractLocationResolution.resolve` yourself,
   with any `LocationResolver`, before passing the contract to `forContract`.
   Needed for a resolver the conf key can't express (a mapping assembled at
-  runtime, a future `HttpLocationResolver`'s endpoint/auth configuration).
+  runtime, a service speaking a protocol other than `HttpLocationResolver`'s).
   The two compose freely: a location already resolved to a literal has
   nothing left for `forContract`'s own conf-driven pass to find.
 

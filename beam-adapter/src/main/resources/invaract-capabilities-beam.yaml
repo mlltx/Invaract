@@ -159,6 +159,7 @@ capabilities:
     note: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
   config.locationRefs:
     status: supported
+    note: Resolved from --invaractLocationMap (a .properties file) and --invaractLocationUrl (a location service), the map first.
   config.contractRegistry:
     status: supported
   reporting.notifications:

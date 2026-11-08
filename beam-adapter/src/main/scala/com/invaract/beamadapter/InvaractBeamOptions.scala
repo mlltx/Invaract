@@ -39,6 +39,14 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractLocationMap: String
   def setInvaractLocationMap(value: String): Unit
 
+  @Description("Base URL of a location service that ref://<id> locations the location map does not hold are asked of (GET <url>/locations/<id>).")
+  def getInvaractLocationUrl: String
+  def setInvaractLocationUrl(value: String): Unit
+
+  @Description("Name of the environment variable holding the location service's bearer token (the name, never the token).")
+  def getInvaractLocationTokenEnv: String
+  def setInvaractLocationTokenEnv(value: String): Unit
+
   @Description("Path of an organizational policy document layered on the contract.")
   def getInvaractOrgPolicy: String
   def setInvaractOrgPolicy(value: String): Unit
@@ -125,6 +133,8 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.RegistryUrl            => options.getInvaractRegistryUrl
       case InvaractConf.RegistryClientClass    => options.getInvaractRegistryClientClass
       case InvaractConf.LocationMap            => options.getInvaractLocationMap
+      case InvaractConf.LocationUrl            => options.getInvaractLocationUrl
+      case InvaractConf.LocationTokenEnv       => options.getInvaractLocationTokenEnv
       case InvaractConf.OrgPolicy              => options.getInvaractOrgPolicy
       case InvaractConf.OrgPolicyOverlays      => options.getInvaractOrgPolicyOverlays
       case InvaractConf.RejectUndeclaredInputs => options.getInvaractRejectUndeclaredInputs

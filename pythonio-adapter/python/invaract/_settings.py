@@ -19,6 +19,8 @@ SETTINGS = {
     "registryUrl": "Base URL of the contract registry a registry:// contract is fetched from.",
     "registryClientClass": "Class name of the registry client the checker loads (only one built into the checker).",
     "locationMap": "Path of an id=location .properties file that ref://<id> locations in the contract resolve against.",
+    "locationUrl": "Base URL of a location service that ref://<id> locations the location map does not hold are asked of.",
+    "locationTokenEnv": "Name of the environment variable holding the location service's bearer token (the name, never the token).",
     "orgPolicy": "Path of an organisational policy document layered on the contract.",
     "orgPolicyOverlays": "Comma-separated paths of further organisational policy layers.",
     "rejectUndeclaredInputs": "true: a read of a dataset the contract does not declare is refused (it always is here).",

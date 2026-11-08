@@ -349,7 +349,7 @@ that moment exists at all. A platform attaches this with
 that already installs `forContract`, with no change to that job's source.
 An explicit `ContractLocationResolution.resolve(...)` call in code remains
 available too, for a resolver the conf key can't express (a mapping built at
-runtime, a future `HttpLocationResolver`'s endpoint/auth) — the two compose
+runtime, a service `HttpLocationResolver`'s protocol does not fit) — the two compose
 freely, and neither substitutes for the other: a feature needs the
 conf-driven path to satisfy this requirement at all; the code path is a
 bonus for cases the conf key can't reach, not an alternative way to meet it.

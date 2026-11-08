@@ -208,6 +208,8 @@
         "registryUrl": { "type": "string", "description": "Base URL of the contract registry a registry:// contract is fetched from." },
         "registryClientClass": { "type": "string", "description": "Class name of the registry client (only one built into the checker)." },
         "locationMap": { "type": "string", "description": "Path of an id=location .properties file that ref://<id> locations resolve against." },
+        "locationUrl": { "type": "string", "description": "Base URL of a location service that ref://<id> locations the location map does not hold are asked of (GET <url>/locations/<id>)." },
+        "locationTokenEnv": { "type": "string", "description": "Name of the environment variable holding the location service's bearer token: the name, never the token." },
         "orgPolicy": { "type": "string", "description": "Path of an organisational policy document." },
         "orgPolicyOverlays": { "type": "string", "description": "Comma-separated paths of further policy layers." },
         "rejectUndeclaredInputs": { "type": "string" },

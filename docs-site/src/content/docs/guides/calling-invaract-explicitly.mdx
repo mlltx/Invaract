@@ -74,9 +74,9 @@ val spark = SparkSession.builder()
   .getOrCreate()
 ```
 
-Reach for this over `spark.invaract.locationMap` when you need a resolver the conf key
-can't express — a mapping assembled at runtime, or a resolver reading from somewhere other
-than a `.properties` file. The two compose freely: a location this call already resolved to
+Reach for this over `spark.invaract.locationMap` and `spark.invaract.locationUrl` when you
+need a resolver those settings can't express — a mapping assembled at runtime, or a service
+that speaks a different protocol. The two compose freely: a location this call already resolved to
 a literal is simply left alone by `forContract`'s own conf-driven pass, since there's no
 `ref://` left in it to find.
 

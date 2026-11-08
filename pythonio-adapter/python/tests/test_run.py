@@ -3,6 +3,7 @@
 """A run against a real checker: what is read, what is refused and when, and what is published."""
 import contextlib
 import http.server
+import json
 import os
 import shlex
 import threading
@@ -374,6 +375,62 @@ def test_a_registry_contract_the_registry_does_not_hold_is_not_checked(monkeypat
                 pass
     # the registry client's own message, not the reflective call's wrapper around it
     assert "No contract registered for id 'test_contract' at version '9.9.9'" in str(not_checked.value)
+
+
+@contextlib.contextmanager
+def location_service(locations):
+    """A location service on a free local port, answering ``GET /locations/<id>`` with ``{"location": ...}`` for each id in
+    ``locations`` and 404 for any other: its base URL, and each request's ``(path, Authorization header)``."""
+    asked = []
+
+    class Service(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append((self.path, self.headers.get("Authorization")))
+            known = self.path.startswith("/locations/") and self.path[len("/locations/"):] in locations
+            body = json.dumps({"location": locations[self.path[len("/locations/"):]]}).encode("utf-8") if known else b""
+            self.send_response(200 if known else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Service)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ref_locations_resolve_through_the_platforms_location_service(monkeypatch):
+    # the same resolution as Spark's and Beam's (verification-core's HttpLocationResolver): GET <url>/locations/<id>, with the
+    # bearer token from the variable INVARACT_LOCATION_TOKEN_ENV names; the location map, when set too, is asked first
+    orders = orders_input().replace("location: data/in/orders", "location: ref://orders_in")
+    write_contract(inputs=orders, outputs=output(location="ref://report_out"))
+    with open("locations.properties", "w", encoding="utf-8") as f:
+        f.write(f"orders_in={os.path.abspath('data/in/orders')}\n")
+    monkeypatch.setenv("INVARACT_LOCATION_MAP", "locations.properties")
+    monkeypatch.setenv("LOCATIONS_TOKEN", "s3cr3t")
+    monkeypatch.setenv("INVARACT_LOCATION_TOKEN_ENV", "LOCATIONS_TOKEN")
+    with location_service({"report_out": os.path.abspath("data/out/report")}) as (url, asked):
+        monkeypatch.setenv("INVARACT_LOCATION_URL", url)
+        with invaract.run("contract.yaml"):
+            invaract.write(invaract.read("orders").groupby("region", as_index=False).size().rename(columns={"size": "total"}), "report")
+    assert asked == [("/locations/report_out", "Bearer s3cr3t")], "orders_in came from the map; only report_out was asked"
+    assert pq.read_table("data/out/report").to_pydict() == {"region": ["north", "south"], "total": [1, 1]}
+
+
+def test_a_ref_location_the_service_does_not_hold_is_not_checked(monkeypatch):
+    report_contract(location="ref://report_out")
+    with location_service({}) as (url, _):
+        monkeypatch.setenv("INVARACT_LOCATION_URL", url)
+        with pytest.raises(invaract.CheckNotRun) as not_checked:
+            with invaract.run("contract.yaml"):
+                pass
+    assert f"could not resolve 'ref://report_out' ({url}/locations/report_out): it has no location for that id" in str(not_checked.value)
 
 
 def test_a_read_location_that_disagrees_with_the_contract_is_refused():

@@ -160,7 +160,7 @@ capabilities:
     note: Adopting the package is a one-time change to the job's code by design (docs/PYTHON_IO_ADAPTER_DESIGN.md); settings are environment variables, so a platform configures a job without touching it.
   config.locationRefs:
     status: supported
-    note: Set with INVARACT_LOCATION_MAP, resolved when the run opens.
+    note: Resolved when the run opens, from INVARACT_LOCATION_MAP (a .properties file) and INVARACT_LOCATION_URL (a location service), the map first.
   config.contractRegistry:
     status: supported
     note: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.

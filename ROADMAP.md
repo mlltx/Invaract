@@ -4084,6 +4084,12 @@ Extend verification engine to support multiple execution engines.
       `VerificationSetup.identify` and spelled by each adapter (`spark.invaract.jobId`/`jobAttributes`, `--invaractJobId`,
       `--invaract_job_id`, `INVARACT_JOB_ID`, ...), so a sink groups any job's runs by `job.jobId` and the platform's
       `job.attributes`, which were Spark's alone
+- [x] `ref://` locations from a location service on every engine: `HttpLocationResolver` in verification-core
+      (`GET <url>/locations/<id>` answering `{"location": ...}`, an optional bearer token read from the environment
+      variable `locationTokenEnv` names, fail-closed), built by `VerificationSetup.resolveContractLocations` from the
+      neutral `locationUrl` after the location map, and spelled by each adapter (`spark.invaract.locationUrl`,
+      `--invaractLocationUrl`, `--invaract_location_url`, `INVARACT_LOCATION_URL`); tested through a real local service
+      on Spark, Beam Java, Beam Python and Python jobs
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

@@ -167,6 +167,7 @@ The suite has 65 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which opaque functions hide.
 - `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
 - `config.zeroCodeInstall` — partial: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
+- `config.locationRefs` — supported: Resolved from --invaractLocationMap (a .properties file) and --invaractLocationUrl (a location service), the map first.
 - `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the graph states them; one with none (a text write of strings) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
 - `failClosed.unverifiableWrites` — partial: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.
 
@@ -200,6 +201,7 @@ The suite has 65 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which pickled functions hide.
 - `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
 - `config.zeroCodeInstall` — partial: --runner=invaract_beam.InvaractRunner and the --invaract_* flags on the job's command line, with the invaract_beam package installed and Java 11 or later where the job is submitted. A job that sets its runner in its own code, or does not pass its command line to Beam, bypasses it; a job submitted without the package, or without Java, does not start.
+- `config.locationRefs` — supported: Resolved from --invaract_location_map (a .properties file) and --invaract_location_url (a location service), the map first.
 - `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the pipeline states them; one whose columns cannot be told (a ReadFromParquet of dictionaries) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
 - `failClosed.unverifiableWrites` — partial: A step that ends the pipeline without being a recognised write is refused, unless it reads only what a write reports or the platform trusts it (--invaract_trusted_steps). A function that writes to an outside system in the middle of the pipeline is invisible to any check made before it runs.
 
@@ -234,7 +236,7 @@ The suite has 65 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.boundaryResolution` — not-applicable: No checkpoint or cache stands between a read and a write in the package.
 - `policy.organizational` — supported: Set with INVARACT_ORG_POLICY, applied when the run opens.
 - `config.zeroCodeInstall` — unsupported: Adopting the package is a one-time change to the job's code by design (docs/PYTHON_IO_ADAPTER_DESIGN.md); settings are environment variables, so a platform configures a job without touching it.
-- `config.locationRefs` — supported: Set with INVARACT_LOCATION_MAP, resolved when the run opens.
+- `config.locationRefs` — supported: Resolved when the run opens, from INVARACT_LOCATION_MAP (a .properties file) and INVARACT_LOCATION_URL (a location service), the map first.
 - `config.contractRegistry` — supported: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
 - `reporting.notifications` — supported: Set with INVARACT_NOTIFY_CONFIG. Every check publishes a CONTRACT_VALIDATION event, every output the run publishes a WRITE event (rows, files, bytes, the Delta version or Iceberg snapshot its commit made), and every run ends with a JOB_SUMMARY; the checker delivers a run's events before it ends.
 - `reporting.dryRunInference` — supported: Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
@@ -265,6 +267,7 @@ The suite has 65 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — partial: A user-defined function body is opaque; it is translated to an explicit UDF node over its declared arguments, and constructs the translator has no case for degrade to an UnknownPlan with a diagnostic. ([details](https://github.com/mlltx/Invaract/blob/main/docs/TRANSFORMATION_IR.md))
 - `lineage.boundaryResolution` — partial: .checkpoint() and cached relations are resolved back to the work behind them when the enforcement rule saw it; a boundary created before the rule was installed, or an evicted or ambiguous one, stays opaque and is reported as unverifiable. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 - `config.zeroCodeInstall` — supported: spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension with spark.invaract.* settings; no change to the job.
+- `config.locationRefs` — supported: Resolved from spark.invaract.locationMap (a .properties file) and spark.invaract.locationUrl (a location service), the map first.
 - `config.contractRegistry` — supported: Needs the registry client on the classpath and spark.invaract.registryUrl; a job that does neither is unaffected. ([details](https://github.com/mlltx/Invaract/blob/main/docs/CONTRACT_REGISTRY.md))
 - `reporting.dryRunInference` — supported: Infers from plain writes; row-level DML is inferred from only weakly and state-changing calls are skipped.
 - `failClosed.unverifiableWrites` — supported: A Command-shaped plan that does not translate and is not on the known-safe list is rejected (UNVERIFIABLE_WRITE). ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))

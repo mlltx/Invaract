@@ -105,6 +105,33 @@ class BeamAttachSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(blockedWith(elsewhere.main(flags(map("out/report")))) == Set(ViolationType.OutputLocationMismatch))
   }
 
+  test("location refs: a ref:// location the location service resolves, through --invaractLocationUrl, is checked against the real write") {
+    val root = freshRoot()
+    val contract = file(root, "contract.yaml", ExampleJob.contractYaml(outputLocation = "ref://report_dir", inputLocation = "ref://orders_dir"))
+    val locations = Map(
+      "/locations/orders_dir" -> root.resolve("in/orders").toString.replace('\\', '/'),
+      "/locations/report_dir" -> root.resolve("out/report").toString.replace('\\', '/')
+    )
+    val asked = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val service = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    service.createContext("/", (exchange: com.sun.net.httpserver.HttpExchange) => {
+      asked.add(exchange.getRequestURI.getRawPath)
+      val body = locations.get(exchange.getRequestURI.getRawPath).fold("")(l => s"""{"location": "$l"}""").getBytes("UTF-8")
+      exchange.sendResponseHeaders(if (body.isEmpty) 404 else 200, if (body.isEmpty) -1 else body.length.toLong)
+      if (body.nonEmpty) exchange.getResponseBody.write(body)
+      exchange.close()
+    })
+    service.start()
+    try {
+      val flags = Array(runnerFlag, s"--invaractContract=$contract", s"--invaractLocationUrl=http://127.0.0.1:${service.getAddress.getPort}")
+      val conforming = new ExampleJob(root, "out/report")
+      conforming.main(flags)
+      assert(conforming.written.nonEmpty)
+      assert(blockedWith(new ExampleJob(root, "out/elsewhere").main(flags)) == Set(ViolationType.OutputLocationMismatch))
+      assert(asked.toArray.toSet == locations.keySet)
+    } finally service.stop(0)
+  }
+
   // --- the contract registry ---
 
   test(BeamAttachSpec.ContractRegistry) {

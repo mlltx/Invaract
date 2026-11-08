@@ -156,6 +156,7 @@ so a switch is `--invaract_dry_run=true`):
 | `--invaract_notify_config` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
 | `--invaract_job_id`, `--invaract_job_attributes` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
 | `--invaract_location_map` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
+| `--invaract_location_url`, `--invaract_location_token_env` | A location service `ref://` locations the map does not hold are asked of, and the name of the variable holding its token ([Or ask a location service](/guides/resolving-dataset-locations/#or-ask-a-location-service)). |
 | `--invaract_org_policy`, `--invaract_org_policy_overlays` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
 | `--invaract_reject_undeclared_inputs=true`, `--invaract_reject_undeclared_fields=true` | Stricter checking of reads and columns. |
 | `--invaract_trusted_steps` | Steps that end the pipeline without a write that a platform trusts (see below). |

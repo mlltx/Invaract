@@ -148,6 +148,7 @@ capabilities:
     note: spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension with spark.invaract.* settings; no change to the job.
   config.locationRefs:
     status: supported
+    note: Resolved from spark.invaract.locationMap (a .properties file) and spark.invaract.locationUrl (a location service), the map first.
   config.contractRegistry:
     status: supported
     note: Needs the registry client on the classpath and spark.invaract.registryUrl; a job that does neither is unaffected.
