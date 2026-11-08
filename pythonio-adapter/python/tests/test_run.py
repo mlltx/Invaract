@@ -2,6 +2,7 @@
 # Copyright 2024 Invaract Contributors
 """A run against a real checker: what is read, what is refused and when, and what is published."""
 import os
+import shlex
 
 import pandas as pd
 import pyarrow as pa
@@ -373,6 +374,17 @@ def test_append_adds_files_named_after_the_run_and_keeps_what_was_there():
     assert pq.read_table("data/out/report").num_rows == 3
 
 
+def test_one_output_written_twice_in_a_run_publishes_both_writes():
+    existing()
+    report_contract(save_mode="overwrite")
+    with invaract.run("contract.yaml") as run:
+        invaract.write(REPORT, "report")
+        invaract.write(REPORT, "report")
+    files, leftovers = published()
+    assert len(files) == 2 and all(run.run_id in f for f in files) and leftovers == []
+    assert pq.read_table("data/out/report").num_rows == 2 * len(REPORT)
+
+
 def test_append_to_an_output_that_does_not_exist_yet():
     report_contract(save_mode="append")
     with invaract.run("contract.yaml"):
@@ -513,6 +525,25 @@ def test_a_checker_whose_reply_is_not_json_is_not_checked(monkeypatch):
     with pytest.raises(invaract.CheckNotRun, match="answered 'open' with 'not-a-reply', which is not a reply"):
         with invaract.run("contract.yaml"):
             pass
+
+
+@pytest.mark.parametrize("reply, speaks", [('{"ok": true, "mode": "enforce"}', "unknown"),
+                                           ('{"ok": true, "protocol": 2, "mode": "enforce"}', "2")])
+def test_a_checker_from_another_release_is_not_checked_against(monkeypatch, reply, speaks):
+    # a checker older than the protocol's version, or newer, could read the package's requests otherwise than meant
+    from invaract import _checker
+    from conftest import UNCHECKED_ASK
+
+    monkeypatch.setattr(_checker.Checker, "ask", UNCHECKED_ASK)
+    with open("checker.sh", "w", encoding="utf-8") as f:
+        # it answers the open as a checker of another release would, then any finish as every checker does
+        f.write(f"read request\necho {shlex.quote(reply)}\nwhile read request; do echo '{{\"ok\": true, \"publish\": false}}'; done\n")
+    monkeypatch.setenv("INVARACT_CHECKER", "sh checker.sh")
+    with pytest.raises(invaract.CheckNotRun) as not_run:
+        with invaract.run("contract.yaml"):
+            pass
+    assert f"speaks protocol version {speaks}, and this package version 1" in str(not_run.value)
+    assert "(sh checker.sh)" in str(not_run.value) and "from the same release" in str(not_run.value)
 
 
 def test_an_output_that_cannot_be_discarded_leaves_neither_the_others_nor_the_checker_behind(monkeypatch):

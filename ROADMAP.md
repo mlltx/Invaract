@@ -4070,6 +4070,12 @@ Extend verification engine to support multiple execution engines.
         knows no `az://`), a Delta table on HDFS was staged as a local path, and GCS emulators named by
         `STORAGE_EMULATOR_HOST` were not used. A Delta table on GCS stays unverified: no emulator serves both pyarrow and
         delta-rs
+  - [x] The protocol as a published contract: a JSON Schema for every request and reply
+        (`schemas/pythonio/v1/protocol.schema.json`) that the recorded cases, the package's every request and reply in its
+        tests, and the docs build (Ajv) are all held to; a protocol version on `open` and its reply, so a package and a
+        checker from different releases stop the run instead of misreading each other; every request built in one module
+        (`_protocol`); the reference docs/PYTHONIO_PROTOCOL.md, the contributor guide docs/PYTHONIO_PACKAGE.md, a typed
+        public interface (`py.typed`) and the user reference "Python Package API"
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`
 - [ ] dbt adapter: survey first with `survey-engine-adapter`
 

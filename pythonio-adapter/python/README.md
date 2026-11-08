@@ -7,7 +7,8 @@ and publishes what the job writes only if the contract allows it.
 pip install "invaract[pandas]"     # or invaract[polars], or invaract for pyarrow alone
 ```
 
-The guide: [Use Invaract with Python Jobs](https://mlltx.github.io/Invaract/guides/using-invaract-with-python/).
+The guide: [Use Invaract with Python Jobs](https://mlltx.github.io/Invaract/guides/using-invaract-with-python/). Every
+function and argument: [Python Package API](https://mlltx.github.io/Invaract/reference/python-api/).
 
 ```python
 import invaract
@@ -51,6 +52,10 @@ the rest of `invaract/_settings.py`.
 before, and a draft contract is published to the notification sink. Review it, commit it, and remove the `location=`
 arguments. With a contract in force, a `location=` or `format=` that disagrees with it is refused.
 
-`examples/orders_job` is a job over three files (`load.py`, `build.py`, `main.py`) written this way. The design is
-`docs/PYTHON_IO_ADAPTER_DESIGN.md`, the checker's side `docs/PYTHONIO_ADAPTER.md`. Tests: `python -m pytest` here, with a
-checker built (`INVARACT_TEST_CHECKER`, or the jar `sbt assembly` builds in `pythonio-adapter`).
+`examples/orders_job` is a job over three files (`load.py`, `build.py`, `main.py`) written this way.
+
+**Working on the package**: [docs/PYTHONIO_PACKAGE.md](https://github.com/mlltx/Invaract/blob/main/docs/PYTHONIO_PACKAGE.md)
+(its layout, conventions, tests and common changes) and
+[docs/PYTHONIO_PROTOCOL.md](https://github.com/mlltx/Invaract/blob/main/docs/PYTHONIO_PROTOCOL.md) (how it talks to its
+checker, with the protocol's JSON Schema). The design is `docs/PYTHON_IO_ADAPTER_DESIGN.md`, what was built
+`docs/PYTHONIO_ADAPTER.md`.

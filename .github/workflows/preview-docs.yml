@@ -6,6 +6,8 @@ on:
     paths:
       - "docs-site/**"
       - "contract/schema/**"
+      # the recorded checker replies the protocol schema is checked against (scripts/check-schemas.mjs)
+      - "pythonio-adapter/src/test/resources/protocol/**"
       - ".github/workflows/preview-docs.yml"
 
 permissions:

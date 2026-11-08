@@ -31,7 +31,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from . import _frames, _jdbc, _optional, _outputs, _types
-from ._jdbc import FORMAT, quote as _quote
+from ._jdbc import quote as _quote
 from .errors import CheckNotRun
 
 SCHEME = "sqlite"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """The checker process: started once per run, one JSON request per line on its standard input and one reply per line on its
-standard output (the protocol, docs/PYTHONIO_ADAPTER.md). Its log goes to the job's own standard error."""
+standard output (``_protocol``; docs/PYTHONIO_PROTOCOL.md). Its log goes to the job's own standard error."""
 import json
 import os
 import shlex
@@ -54,6 +54,7 @@ class Checker:
     """One running checker."""
 
     def __init__(self, cmd):
+        self._command = list(cmd)
         try:
             self._process = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, encoding="utf-8", bufsize=1
@@ -75,6 +76,10 @@ class Checker:
             return json.loads(line)
         except ValueError as e:
             raise CheckNotRun(f"Invaract's checker answered '{request['op']}' with {line.strip()[:200]!r}, which is not a reply") from e
+
+    def describe(self):
+        """The checker's command line, as a message names it."""
+        return shlex.join(self._command)
 
     def close(self):
         """Lets the checker deliver its events and stop."""

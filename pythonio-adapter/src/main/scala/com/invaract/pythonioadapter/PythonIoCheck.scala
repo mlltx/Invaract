@@ -22,21 +22,22 @@ import scala.util.control.NonFatal
   * JSON object per line each way:
   *
   * {{{
-  * {"op": "open", "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}, "check": false}
+  * {"op": "open", "protocol": 1, "settings": {"contract": "contract.yaml"}, "job": {"name": "orders_job.main", "pythonVersion": "3.11"}}
   * {"op": "read", "name": "orders", "format": "parquet", "schema": [{"name": "id", "type": "int64", "nullable": true, "nulls": 0}]}
   * {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "total", "type": "int64"}]}
   * {"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [{"failed": 0, "examples": []}]}
   * {"op": "finish", "completed": true}
   * }}}
   *
-  * Each request gets one reply: `{"ok": true, ...}`; `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`
+  * Each request gets one reply: `{"ok": true, ...}` (to `open`, with the protocol version the checker speaks); `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`
   * when the contract refuses it; or `{"ok": false, "status": "not-checked", "reason": ...}` when it could not be checked, which
   * the package treats as a refusal too, so nothing is published unchecked. The checks are the shared ones
   * (`VerificationPipeline`), with this adapter's declaration and events naming the engine `pythonio`; this program only turns
   * requests into the plans and schemas they describe. Column types are Arrow's own names, mapped by the shared `ArrowSchemas`.
   * With `dryRun` set there is no contract: reads and writes name their locations, and each staged write gets a draft contract
   * (`ContractInferenceEvent`), merged into one for the job at `finish`. It is compiled ahead of time into a native program for
-  * the package's wheels, so no Java is needed where jobs run (milestone 0 of the design).
+  * the package's wheels, so no Java is needed where jobs run (milestone 0 of the design). Every request and reply is described
+  * by the protocol's JSON Schema (docs/PYTHONIO_PROTOCOL.md).
   */
 object PythonIoCheck {
 
@@ -106,7 +107,9 @@ private[pythonioadapter] final class Run {
 
   private def open(o: Request.Open): Map[String, Any] = {
     val unknown = (o.settings.keySet -- PythonIoConfigSource.Known).toList.sorted
-    if (unknown.nonEmpty) notChecked(s"unknown setting(s): ${unknown.mkString(", ")}")
+    if (o.protocol != Requests.Version)
+      notChecked(s"this checker speaks protocol version ${Requests.Version}, and the package speaks protocol version ${o.protocol}: install the invaract package and its checker from the same release")
+    else if (unknown.nonEmpty) notChecked(s"unknown setting(s): ${unknown.mkString(", ")}")
     else {
       val config = new PythonIoConfigSource(o.settings)
       val job = jobInfo(o.job)
@@ -114,7 +117,7 @@ private[pythonioadapter] final class Run {
         case AttachPlan.DryRun(_) if o.check => notChecked("a check needs a contract to judge the frame against")
         case AttachPlan.DryRun(sink) =>
           state = Opened(None, VerificationOptions(), sink, job)
-          Map("ok" -> true, "mode" -> DryRunMode)
+          Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> DryRunMode)
         case AttachPlan.Enforce(contract, sink) =>
           val located = VerificationSetup.resolveContractLocations(contract, config)
           val resolved = VerificationSetup.resolveVerificationOptions(VerificationOptions(), config)
@@ -148,7 +151,7 @@ private[pythonioadapter] final class Run {
     // a contract that asks for something this adapter cannot check is refused before the job's code runs
     PythonIoCapabilities.declared.foreach(VerificationPipeline.requireSupported(contract, options, _, JobPlan, sink, job.runId, Some(job)))
     state = Opened(Some(contract), options, sink, job)
-    Map("ok" -> true, "mode" -> EnforceMode, "contract" -> describe(contract, options))
+    Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> EnforceMode, "contract" -> describe(contract, options))
   }
 
   /** A read: in enforcement, of a declared input (the package has no location for any other name, so any other is refused

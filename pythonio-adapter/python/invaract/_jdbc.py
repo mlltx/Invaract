@@ -2,7 +2,19 @@
 # Copyright 2024 Invaract Contributors
 """Database tables, the format Spark and Beam call ``jdbc``: PostgreSQL (``_postgres``) and SQLite (``_sqlite``), told apart
 by their location's scheme (``_datasets``). What the two share is here: how a table is named, and how one is read a batch at
-a time."""
+a time.
+
+Each database is a module ``_datasets`` uses through the same functions, so adding a database is adding one more module
+that has them, and naming it in ``_datasets._database``:
+
+- ``is_<database>(location)``: whether ``location`` names a table of this database (by its scheme);
+- ``catalog_of(location)``: the catalog the checker is told the table is registered in (``technology: jdbc``, the
+  database, its schema, the table);
+- ``read(location, fields)`` and ``batches(location, fields)``: the table read whole, or a batch at a time (``stream``),
+  each column as the contract types it;
+- ``output(location, mode, run_id, layout)``: an ``_outputs.Output`` that stages into a table no reader sees and moves it
+  into place in one transaction at publish.
+"""
 import re
 
 #: The format of a database table, whichever database holds it.

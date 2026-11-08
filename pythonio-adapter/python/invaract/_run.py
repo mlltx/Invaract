@@ -3,6 +3,7 @@
 """A run: the checker started at its beginning, every read and write described to it as it is made, each output staged
 (beside its location, or uncommitted in its Delta or Iceberg table), and at the end every staged output published, or, if
 anything was refused or the job failed, none."""
+import collections
 import contextlib
 import functools
 import os
@@ -13,7 +14,7 @@ import uuid
 
 import pyarrow as pa
 
-from . import _checks, _csv, _datasets, _frames, _outputs, _pandas
+from . import _checks, _csv, _datasets, _frames, _outputs, _pandas, _protocol
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -58,7 +59,12 @@ class Run:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
                 settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
             self._checker = Checker(command())
-            reply = self._ask({"op": "open", "settings": settings, "job": self._job(), **({"check": True} if self.checking else {})})
+            reply = self._ask(_protocol.open_run(settings, self._job(), check=self.checking))
+            if reply.get("protocol") != _protocol.VERSION:
+                # a checker from another release (INVARACT_CHECKER) could read this package's requests otherwise than meant
+                raise CheckNotRun(f"Invaract's checker ({self._checker.describe()}) speaks protocol version "
+                                  f"{reply.get('protocol', 'unknown')}, and this package version {_protocol.VERSION}: install the "
+                                  f"invaract package and its checker from the same release")
             self.mode, self.contract = reply["mode"], reply.get("contract")
         except BaseException:
             self._end_unpublished()
@@ -76,7 +82,7 @@ class Run:
                 raise self._failure
             return False
         try:
-            if self._ask({"op": "finish", "completed": True}).get("publish"):
+            if self._ask(_protocol.finish(completed=True)).get("publish"):
                 self._publish()
         finally:
             self._end_unpublished(finished=True)
@@ -97,7 +103,7 @@ class Run:
     def _stop_checker(self, finished):
         if not finished:
             try:
-                self._checker.ask({"op": "finish", "completed": False})
+                self._checker.ask(_protocol.finish(completed=False))
             except CheckNotRun:
                 pass
         self._checker.close()
@@ -114,84 +120,94 @@ class Run:
         return self.mode == "dry-run"
 
     def read(self, name, as_, location, fmt, dtype_backend=None, chunksize=None, csv=None):
-        if as_ not in _frames.FRAME_KINDS:
-            raise ValueError(f"invaract.read cannot return as_={as_!r}: give one of {', '.join(_frames.FRAME_KINDS)}")
-        _pandas.check_dtype_backend(dtype_backend, as_)
-        if chunksize is not None and (isinstance(chunksize, bool) or not isinstance(chunksize, int) or chunksize < 1):
-            raise ValueError(f"invaract.read takes chunksize as a number of rows, 1 or more, not {chunksize!r}")
+        """``invaract.read``: the input ``name`` described to the checker, then handed over as the frame ``as_`` names."""
+        _check_read_arguments(as_, dtype_backend, chunksize)
         declared = self._declared("inputs", name)
-        request = _with_location({"op": "read", "name": name}, location)
         where = location if self.dry_run else declared.get("location")
         if where is None:
             # a name the contract does not declare, or a dry run with nowhere to read: the checker refuses it
-            self._ask({**request, "schema": []})
+            self._ask(_protocol.read(name, location, schema=[]))
             raise CheckNotRun(f"Invaract has nowhere to read '{name}' from")
         # the job's format if it names one, else the contract's: what is reported is what is read
         fmt = (fmt or declared.get("format") or _datasets.format_of(where)).lower()
-        fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
         used = _csv_options(name, fmt, declared, csv)
-        request = {**request, **_registered(where, fmt), "format": fmt, **({"csv": used} if used else {})}
+        describe = functools.partial(_protocol.read, name, location, fmt, catalog=_catalog(where, fmt), csv=used)
         if declared.get("format") and declared["format"].lower() != fmt:
-            # a read in another format than the contract declares is refused on its description, before it is made: the
-            # checker is never told columns the package did not read
-            self._ask(request)
+            # refused on its description, before anything is read: the checker is never told columns the package did not read
+            self._ask(describe())
             raise CheckNotRun(f"Invaract's checker did not refuse reading '{name}' as {fmt}, which its contract does not declare")
+        fields, partition_by = declared.get("fields", []), declared.get("partitionBy", [])
         if chunksize is not None:
             # the checker is told the input's empty values before any of it is handed over: one pass counts them, a
             # second reads the chunks, and neither holds the whole input in memory
             schema, batches = _datasets.read_batches(where, fmt, fields, partition_by, used)
-            self._ask({**request, "schema": _frames.describe(schema, _frames.count_nulls(schema, batches))})
+            self._ask(describe(schema=_protocol.columns(schema, _frames.count_nulls(schema, batches))))
             return (_frames.as_frame(chunk, as_, dtype_backend) for chunk in _frames.chunks(schema, batches(), chunksize))
         table = _datasets.read_table(where, fmt, fields, partition_by, used)
         nulls = {n: table.column(n).null_count for n in table.column_names}
-        self._ask({**request, "schema": _frames.describe(table.schema, nulls)})
+        self._ask(describe(schema=_protocol.columns(table.schema, nulls)))
         return _frames.as_frame(table, as_, dtype_backend)
 
     def write(self, frame, name, location, fmt, save_mode, partition_by=None, partition_overwrite=None, csv=None):
+        """``invaract.write``: ``frame`` described to the checker, staged, and its empty values (and data checks) reported."""
         declared = self._declared("outputs", name)
-        request = _with_location({"op": "write", "name": name}, location)
         # a pandas frame is written as the contract declares where pandas cannot hold it, and no value changes (_pandas)
         described = _frames.stream(frame, declared.get("fields", []), dry_run=self.dry_run)
         if described is None:
             kind = f"{type(frame).__module__}.{type(frame).__qualname__}"
-            self._ask({**request, "unverifiable": f"a {kind} offers no Arrow stream (__arrow_c_stream__)"})
+            self._ask(_protocol.unverifiable_write(name, f"a {kind} offers no Arrow stream (__arrow_c_stream__)", location))
             raise CheckNotRun(f"Invaract could not describe the table handed to invaract.write('{name}')")
         schema, batches, notes = described
-        where = location if self.dry_run else declared.get("location")
-        fmt = fmt or declared.get("format") or (_datasets.format_of(where) if where is not None else _datasets.DEFAULT_FORMAT)
-        mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
-        # the job's partitioning if it says one, else the contract's; what is reported is what is written
-        layout = _outputs.Layout(tuple(partition_by if partition_by is not None else declared.get("partitionBy", [])),
-                                 (partition_overwrite or declared.get("partitionOverwriteMode") or "static").lower())
-        used = _csv_options(name, fmt.lower(), declared, csv)
+        target = self._target(declared, location, fmt, save_mode, partition_by, partition_overwrite)
+        used = _csv_options(name, target.format.lower(), declared, csv)
         with _noted(notes):
-            self._ask({**request, **_registered(where, fmt), "format": fmt, "saveMode": mode, "schema": _frames.describe(schema),
-                       "partitionBy": list(layout.keys), "partitionOverwriteMode": layout.overwrite, **({"csv": used} if used else {})})
-        if where is None:
-            raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
-        fmt, mode = fmt.lower(), mode.lower()
-        if fmt not in _datasets.FORMATS or mode not in SAVE_MODES:
-            raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(_datasets.FORMATS)}, "
-                              f"with save mode {', '.join(SAVE_MODES)}")
-        out = self._outputs.get(name)
-        if out is None:
-            out = self._outputs[name] = (_Checked(where, mode, layout) if self.checking
-                                         else _datasets.output(where, fmt, mode, self.run_id, layout, used))
-        if out.layout != layout:
-            raise CheckNotRun(f"invaract.write('{name}') is {layout.describe()}, but an earlier write of it in this run is "
-                              f"{out.layout.describe()}: one output has one layout")
-        if out.mode == "error" and out.has_data():
-            raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
+            # the pre-check, before anything is staged: everything but the empty values, which only the data shows
+            self._ask(_protocol.write(name, location, target.format, target.mode, _protocol.columns(schema), target.layout,
+                                      _catalog(target.where, target.format), used))
+        out = self._output(name, target, used)
         required = {f["name"] for f in declared.get("fields", []) if f.get("required")}
         # with runtimeDataQuality on, the checker sent this output's data checks: each batch is evaluated as it is staged
         checks = _checks.Evaluation(declared["checks"]) if "checks" in declared else None
         nulls = out.stage(schema, checks.observe(batches) if checks else batches, required)
         with _noted(notes):
-            self._ask({"op": "written", "name": name, "nulls": nulls, **({"checks": checks.results()} if checks else {})})
+            self._ask(_protocol.written(name, nulls, checks.results() if checks else None))
+
+    def _target(self, declared, location, fmt, save_mode, partition_by, partition_overwrite):
+        """Where and how a write goes: what the job says (``location=``, ``format=``, ...), else what the contract declares,
+        else the defaults. It is what the checker is told, so a job that says otherwise than its contract is refused."""
+        where = location if self.dry_run else declared.get("location")
+        fmt = fmt or declared.get("format") or (_datasets.format_of(where) if where is not None else _datasets.DEFAULT_FORMAT)
+        mode = save_mode or declared.get("saveMode") or DEFAULT_SAVE_MODE
+        keys = partition_by if partition_by is not None else declared.get("partitionBy", [])
+        overwrite = partition_overwrite or declared.get("partitionOverwriteMode") or "static"
+        return _Target(where, fmt, mode, _outputs.Layout(tuple(keys), overwrite.lower()))
+
+    def _output(self, name, target, csv):
+        """The output ``name`` stages into: made by its first write, and the same for every later one, which must share its
+        layout. A write the package cannot make (no location, a format or save mode it does not write, data already where
+        the save mode is ``error``) is not made."""
+        if target.where is None:
+            raise CheckNotRun(f"Invaract has nowhere to write '{name}'")
+        fmt, mode = target.format.lower(), target.mode.lower()
+        if fmt not in _datasets.FORMATS or mode not in SAVE_MODES:
+            raise CheckNotRun(f"Invaract cannot yet write '{name}' as {fmt} with save mode {mode}: it writes {', '.join(_datasets.FORMATS)}, "
+                              f"with save mode {', '.join(SAVE_MODES)}")
+        out = self._outputs.get(name)
+        if out is None:
+            out = self._outputs[name] = (_Checked(target.where, mode, target.layout) if self.checking
+                                         else _datasets.output(target.where, fmt, mode, self.run_id, target.layout, csv))
+        if out.layout != target.layout:
+            raise CheckNotRun(f"invaract.write('{name}') is {target.layout.describe()}, but an earlier write of it in this run is "
+                              f"{out.layout.describe()}: one output has one layout")
+        if out.mode == "error" and out.has_data():
+            raise FileExistsError(f"invaract.write('{name}'): its save mode is error, and {out.target} already holds data")
+        return out
 
     # talking to the checker
 
     def _ask(self, request):
+        """Sends ``request`` (``_protocol``) and returns the checker's reply; a refusal raises ``ContractViolation``, a request
+        that could not be checked ``CheckNotRun``, and either one stops the run from publishing anything."""
         with self._asking:
             reply = self._checker.ask(request)
         if reply.get("ok"):
@@ -225,6 +241,18 @@ class Run:
             out.publish()
         for out in self._outputs.values():
             out.forget_previous()
+
+
+#: Where and how one write goes (``Run._target``): its location, format, save mode and partition layout.
+_Target = collections.namedtuple("_Target", ["where", "format", "mode", "layout"])
+
+
+def _check_read_arguments(as_, dtype_backend, chunksize):
+    if as_ not in _frames.FRAME_KINDS:
+        raise ValueError(f"invaract.read cannot return as_={as_!r}: give one of {', '.join(_frames.FRAME_KINDS)}")
+    _pandas.check_dtype_backend(dtype_backend, as_)
+    if chunksize is not None and (isinstance(chunksize, bool) or not isinstance(chunksize, int) or chunksize < 1):
+        raise ValueError(f"invaract.read takes chunksize as a number of rows, 1 or more, not {chunksize!r}")
 
 
 def _csv_options(name, fmt, declared, given):
@@ -275,14 +303,9 @@ def _noted(notes):
         raise
 
 
-def _registered(location, fmt):
-    """The ``catalog`` a request carries for a catalog table (``_datasets.catalog_of``), or nothing."""
-    catalog = _datasets.catalog_of(location, fmt) if location is not None else None
-    return {"catalog": catalog} if catalog else {}
-
-
-def _with_location(request, location):
-    return {**request, "location": os.fspath(location)} if location is not None else request
+def _catalog(location, fmt):
+    """The catalog a request says a catalog table is registered in (``_datasets.catalog_of``), or ``None``."""
+    return _datasets.catalog_of(location, fmt) if location is not None else None
 
 
 def _script_name():
@@ -318,8 +341,10 @@ def current(verb):
 
 
 def job(contract=None, *, name=None):
-    """Decorates a job's entry point: each call is one run. ``contract`` is the default contract (a path, or
-    ``registry://<id>@<version>``); ``INVARACT_CONTRACT`` overrides it."""
+    """Decorates a job's entry point: each call is one run (``@invaract.job()``, ``@invaract.job("contract.yaml")``, or bare
+    ``@invaract.job``). ``contract`` is the default contract (a path, or ``registry://<id>@<version>``);
+    ``INVARACT_CONTRACT`` overrides it. ``name`` names the job in its events (by default, the entry point's module and
+    name). The run publishes what the job wrote when the function returns, and nothing if it raises."""
     if callable(contract) and not isinstance(contract, (str, bytes, os.PathLike)):
         return job()(contract)
 

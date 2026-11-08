@@ -1,1 +1,1 @@
-{"op": "open", "settings": {"contract": "${CASE}/nowhere.yaml"}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/nowhere.yaml"}}

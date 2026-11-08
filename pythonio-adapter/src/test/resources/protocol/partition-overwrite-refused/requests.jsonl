@@ -1,3 +1,3 @@
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.13.1", "libraries": {"pyarrow": "26.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.13.1", "libraries": {"pyarrow": "26.0.1"}}}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "large_string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}], "partitionBy": ["region"], "partitionOverwriteMode": "static"}
 {"op": "finish", "completed": false}

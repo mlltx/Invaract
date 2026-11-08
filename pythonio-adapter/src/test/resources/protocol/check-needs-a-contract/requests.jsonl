@@ -1,3 +1,3 @@
-{"op": "open", "settings": {"dryRun": "true"}, "job": {"name": "invaract.check('report')", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}, "check": true}
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "invaract.check('report')", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}, "check": "yes"}
+{"op": "open", "protocol": 1, "settings": {"dryRun": "true"}, "job": {"name": "invaract.check('report')", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}, "check": true}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "invaract.check('report')", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}, "check": "yes"}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}], "partitionBy": [], "partitionOverwriteMode": "static"}

@@ -1,0 +1,4 @@
+{"op": "open", "protocol": 2, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.13.1", "libraries": {"pyarrow": "26.0.1"}}}
+{"op": "open", "protocol": "one", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.13.1", "libraries": {"pyarrow": "26.0.1"}}}
+{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.13.1", "libraries": {"pyarrow": "26.0.1"}}}
+{"op": "finish", "completed": false}

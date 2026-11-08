@@ -34,7 +34,7 @@ finished and every answer was yes.
 | `PythonIoCapabilities` | loads `invaract-capabilities-pythonio.yaml` |
 | `META-INF/native-image/...` | what GraalVM `native-image` needs to build the checker from its jar: the classes loaded by name, the resources, and the build flags |
 | `native/cases.py` | runs the recorded protocol cases against any command: the jar, or the native program |
-| `python/invaract` | the Python package: `job`, `run`, `read`, `write`, `check`, `reads`, `writes` (`__init__`); a run's lifecycle, staging and publishing (`_run`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
+| `python/invaract` | the Python package (docs/PYTHONIO_PACKAGE.md): `job`, `run`, `read`, `write`, `check`, `reads`, `writes`, typed (`__init__`, `py.typed`); a run's lifecycle, staging and publishing (`_run`); every request it sends the checker (`_protocol`); frames in and out of Arrow, pandas' own conversions (`_frames`, `_pandas`); the contract's types as Arrow types (`_types`); the checker process (`_checker`); the settings (`_settings`); runtime data checks (`_checks`); `ContractViolation` and `CheckNotRun` (`errors`) |
 | `python/invaract/_datasets.py`, `_outputs.py` | a dataset by its location and format: how it is read, the catalog it is registered in, and the output that writes it (`_datasets`); what every output is to a run, staged and then published or discarded, and its partition layout (`_outputs`) |
 | `python/invaract/_storage.py`, `_files.py`, `_csv.py`, `_formats.py` | where a location lives (local, HDFS, object storage by its URI); plain-file outputs (`RenamedOutput`, renamed into place locally and on HDFS; `CopiedOutput`, copied with `_SUCCESS` last on object storage); CSV options, and the JSON, ORC, Avro, Feather and Excel formats |
 | `python/invaract/_tables.py`, `_jdbc.py`, `_postgres.py`, `_sqlite.py` | Delta and Iceberg tables, staged uncommitted and committed at publish (milestone 6); database tables (`jdbc`), PostgreSQL and SQLite, staged in a temporary table or file and moved into place in one transaction |
@@ -46,48 +46,18 @@ finished and every answer was yes.
 
 ### The protocol
 
-One request per line from the package, one reply per line from the checker, as the recorded cases
-(`src/test/resources/protocol`) hold them. A column is `{"name", "type", "nullable", "nulls"}`: `type` is pyarrow's own name
-for it (`str(field.type)`: `int64`, `large_string`, `list<item: struct<sku: string, qty: int32>>`,
-`dictionary<values=string, indices=int8, ordered=0>`), `nullable` is Arrow's flag, and `nulls` how many empty values the data
-holds, where the data has been seen.
+One JSON request per line from the package, one reply per line from the checker: `open`, then the job's `read`s and
+`write`/`written` pairs, then `finish`. **docs/PYTHONIO_PROTOCOL.md** is its reference: each message, what the checker
+does with it, how versions work, and how to change it. Every message is described by the JSON Schema
+`docs-site/public/schemas/pythonio/v1/protocol.schema.json`, and the recorded cases (`src/test/resources/protocol`), the
+package's every request and reply in its tests, and the docs build all hold to it. How the package itself is laid out,
+tested and changed is **docs/PYTHONIO_PACKAGE.md**.
 
-| Request | The checker | Reply |
-|---|---|---|
-| `{"op": "open", "settings": {...}, "job": {...}, "check": false}` | reads the settings (the neutral names, from `INVARACT_*`), resolves the contract, location map and organisational policy, and refuses a contract it cannot check; with `runtimeDataQuality` on, the reply's contract gives each output's data checks (`RuntimeDataQuality.checks`: the field, the constraint type and its properties); with `"check": true`, a check (`invaract.check`): every declared input counts as read, with its declared columns and catalog, and a dry run is not checked | `{"ok": true, "mode": "enforce", "contract": {inputs and outputs, each with its location, format, save mode and fields}}`, or `"mode": "dry-run"` |
-| `{"op": "read", "name": "orders", "format": "parquet", "schema": [...], "csv": {...}}` | refuses a name the contract does not declare (`UNDECLARED_INPUT`: the package has no location for it), and a `location` the job gives that is not the input's (`UNDECLARED_INPUT`); checks the `format` the package reads in against the input's (`INPUT_FORMAT_MISMATCH`), the columns against the input's, and the input's `catalog:` requirement against the read's `catalog`; records the read, and its format, for every later write and a dry run's draft. A read with no `schema` is one the package has not made because its `format` disagrees with the contract: it is refused on that, or, if nothing about it disagrees, not checked, so its columns are never taken on trust | `{"ok": true}` |
-| `{"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [...], "partitionBy": ["region"], "partitionOverwriteMode": "static"}` | the pre-check, before anything is staged: location (the contract's, or the `location` the job gives, which must be the output's), format, save mode, catalog registration, the inputs read, the columns and their types; publishes an event only when it refuses; the layout (`partitionBy`, empty for none; `partitionOverwriteMode`, `static` when absent) against the output's partition keys (`OUTPUT_PARTITIONING_MISMATCH`) | `{"ok": true}` |
-| `{"op": "write", "name": "report", "unverifiable": "why"}` | a table the package could not describe (no Arrow stream): `UNVERIFIABLE_WRITE` | refused |
-| `{"op": "written", "name": "report", "nulls": {"total": 0}, "checks": [...]}` | the final check of a staged write, with the empty values each column turned out to hold: a required column that holds one is refused (decision 3); publishes the write's event; with `runtimeDataQuality` on, `checks` holds what the package found for each of the output's data checks, in the order `open` sent them (`{"failed": 2, "examples": ["-3"]}`), and a check with failing rows is refused (`RUNTIME_DATA_QUALITY_VIOLATION`); a package that reports a different number of checks is not checked | `{"ok": true}` |
-| `{"op": "finish", "completed": true}` | refuses a completed run that never wrote a declared output; in a dry run, publishes the job's merged draft | `{"ok": true, "publish": true}` |
-
-A refusal is `{"ok": false, "status": "refused", "violations": [...], "explanation": ...}`. A request the checker cannot check
-(a missing contract file, an unknown setting, a malformed request, a `written` with no `write` before it) gets
-`{"ok": false, "status": "not-checked", "reason": ...}`, which the package treats as a refusal, so nothing is published
-unchecked.
-
-**Why two requests per write.** The columns and their types are known before any data is written, so a write that cannot pass
-is refused before the job spends time staging it. Whether a required column holds an empty value is known only once the data
-has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so Arrow's flag
-cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a refusal; the
-`written` check is the verdict on the whole write.
-
-**`catalog`.** A read or write of a catalog table also carries the catalog it is registered in:
-`"catalog": {"technology": "iceberg", "catalogName": "lake", "namespace": ["sales"], "table": "report"}`, which the package
-sends for an Iceberg dataset (its location, `<catalog>.<namespace>.<table>`, names them), and as
-`{"technology": "jdbc", "catalogName": <database>, "namespace": [<schema>], "table": <table>}` for a PostgreSQL table. The checker puts it on the plan's
-read or write, where the contract's `catalog:` requirement is checked as on every engine (`catalog-*` cases). Files and Delta
-tables, named by their path, carry none, so a requirement on them is never met. The catalog service's own address is not sent,
-since a catalog URI can hold credentials.
-
-**`location` with a contract in force.** A job migrated from a dry run may still say where it reads and writes
-(`location=`). The checker then checks that location like any other, so an argument left behind cannot point a read or a write
-somewhere the contract does not declare (`location-given-agrees`, `read-location-disagrees-refused`,
-`write-location-disagrees-refused`).
-
-**Dry-run mode** (`INVARACT_DRY_RUN=true`). There is no contract, so `read` and `write` carry the job's own `location` and
-`format`. Every write is let through, each staged one gets a draft contract (`CONTRACT_INFERENCE`, with its self-check), and
-`finish` merges them into one draft for the job, named after it (`DRY_RUN_SUMMARY`), as Spark's and Beam's dry runs do.
+**Why two requests per write.** The columns and their types are known before any data is written, so a write that cannot
+pass is refused before the job spends time staging it. Whether a required column holds an empty value is known only once
+the data has been written, batch by batch: pandas marks every column nullable (the native Python survey, probe 8), so
+Arrow's flag cannot answer it. The pre-check judges every column as if it held no empty values, and publishes only a
+refusal; the `written` check is the verdict on the whole write.
 
 ## Milestone 0: the checker as a native program
 

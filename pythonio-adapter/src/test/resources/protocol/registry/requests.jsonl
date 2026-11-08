@@ -1,4 +1,4 @@
-{"op": "open", "settings": {"contract": "registry://orders_report@1.0.0", "registryUrl": "stub-registry", "registryClientClass": "com.invaract.pythonioadapter.StubRegistryClient"}, "job": {"name": "orders_job.main"}}
+{"op": "open", "protocol": 1, "settings": {"contract": "registry://orders_report@1.0.0", "registryUrl": "stub-registry", "registryClientClass": "com.invaract.pythonioadapter.StubRegistryClient"}, "job": {"name": "orders_job.main"}}
 {"op": "read", "name": "orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}, {"name": "region", "type": "string", "nullable": true, "nulls": 3}, {"name": "amount", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "read", "name": "customers", "schema": [{"name": "customer_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "report", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "region", "type": "string", "nullable": true}, {"name": "total", "type": "int64", "nullable": true}, {"name": "lines", "type": "list<item: struct<sku: string, qty: int32>>", "nullable": true}]}

@@ -54,8 +54,29 @@ for (const file of readdirSync(contractSchemas).filter((f) => f.endsWith('.schem
   }
 }
 
+// The Python I/O checker protocol's schema (docs/PYTHONIO_PROTOCOL.md) must compile under strict mode, and every reply the
+// checker's recorded cases hold must be one it allows. (The package's own tests hold every request and reply of a real run
+// to it, and the recorded requests, some of them malformed on purpose, with the reason each is.)
+const protocolSchema = JSON.parse(readFileSync(join(root, '..', '..', 'pythonio', 'v1', 'protocol.schema.json'), 'utf8'));
+let protocolReplies = 0;
+try {
+  const protocolAjv = new Ajv2020({ strict: true, allErrors: true, allowUnionTypes: true });
+  protocolAjv.addSchema(protocolSchema);
+  const validateReply = protocolAjv.getSchema(`${protocolSchema.$id}#/$defs/Reply`);
+  const cases = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'pythonio-adapter', 'src', 'test', 'resources', 'protocol');
+  for (const name of readdirSync(cases).sort()) {
+    const replies = join(cases, name, 'replies.jsonl');
+    for (const [i, line] of readFileSync(replies, 'utf8').split('\n').filter((l) => l.trim()).entries()) {
+      protocolReplies += 1;
+      if (!validateReply(JSON.parse(line))) failures.push(`pythonio protocol case ${name}, reply ${i + 1}: ${protocolAjv.errorsText(validateReply.errors)}`);
+    }
+  }
+} catch (e) {
+  failures.push(`pythonio/v1/protocol.schema.json: ${e.message}`);
+}
+
 if (failures.length > 0) {
   console.error(`check-schemas: ${failures.length} problem(s)\n  ${failures.join('\n  ')}`);
   process.exit(1);
 }
-console.log(`check-schemas: schema compiles; ${seen.size} event types, all examples valid`);
+console.log(`check-schemas: schemas compile; ${seen.size} event types, all examples valid; ${protocolReplies} recorded checker replies valid`);

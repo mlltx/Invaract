@@ -114,6 +114,7 @@ export default defineConfig({
 						{ label: 'What Each Engine Checks', slug: 'reference/what-each-engine-checks' },
 						{ label: 'Contract Format', slug: 'reference/contract-format' },
 						{ label: 'Configuration Settings', slug: 'reference/configuration' },
+						{ label: 'Python Package API', slug: 'reference/python-api' },
 						{ label: 'Connector Support', slug: 'reference/connector-support' },
 						{ label: 'Engine Version Support', slug: 'reference/spark-version-support' },
 						{ label: 'Engine Capabilities', slug: 'reference/engine-capabilities' },

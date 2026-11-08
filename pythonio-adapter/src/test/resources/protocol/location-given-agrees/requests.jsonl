@@ -1,4 +1,4 @@
-{"op": "open", "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
 {"op": "read", "name": "orders", "location": "data/in/orders", "schema": [{"name": "order_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "read", "name": "customers", "location": "./data/in/customers.csv", "schema": [{"name": "customer_id", "type": "int64", "nullable": true, "nulls": 0}]}
 {"op": "write", "name": "audit", "location": "data/out/audit", "format": "csv", "saveMode": "overwrite", "schema": [{"name": "order_id", "type": "int64", "nullable": true}, {"name": "status", "type": "string", "nullable": true}]}

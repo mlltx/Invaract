@@ -21,8 +21,10 @@ private[pythonioadapter] sealed trait Request
 private[pythonioadapter] object Request {
 
   /** Start a run: the Invaract settings by their neutral names (`contract`, `orgPolicy`, ...), and the job's details. `check`
-    * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read. */
-  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false) extends Request
+    * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read.
+    * `protocol` is the protocol version the package speaks (`Requests.Version` when it does not say: a package from before
+    * the version was sent). */
+  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false, protocol: Long = Requests.Version) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
     * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `format` is the
@@ -79,6 +81,11 @@ private[pythonioadapter] final case class Column(name: String, dataType: Logical
 
 private[pythonioadapter] object Requests {
 
+  /** The protocol version this checker speaks: what `open` says and what its reply says back. It changes only when a request
+    * or reply changes in a way an older package or checker would misread (a field removed, renamed or given another meaning);
+    * a new optional field leaves it as it is (docs/PYTHONIO_PROTOCOL.md, "Versions"). */
+  val Version: Long = 1L
+
   /** The request on one line, or why it is not one. */
   def parse(line: String): Either[String, Request] =
     try {
@@ -102,8 +109,10 @@ private[pythonioadapter] object Requests {
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
     val job = section(m, "job")
-    Right(Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
-      check = m.get("check").contains(java.lang.Boolean.TRUE)))
+    m.get("protocol").fold[Either[String, Long]](Right(Version))(count(_, "the protocol version")).map { protocol =>
+      Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
+        check = m.get("check").contains(java.lang.Boolean.TRUE), protocol = protocol)
+    }
   }
 
   private def read(m: Map[String, AnyRef]): Either[String, Request] =

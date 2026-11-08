@@ -1,21 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """Tables in and out: what a job hands ``invaract.write`` as an Arrow stream, what a read returns in the frame library the job
-asked for, and each as the checker is told about it (a column's pyarrow type name, Arrow's nullable flag, its empty values)."""
+asked for, and how many empty values each column holds (which ``_protocol.columns`` tells the checker)."""
 import pyarrow as pa
 
 from . import _pandas
 
 #: What ``invaract.read`` can return.
 FRAME_KINDS = ("pandas", "polars", "polars-lazy", "arrow")
-
-
-def describe(schema, nulls=None):
-    """The columns as the checker reads them: ``str(type)`` is pyarrow's own name for a type, which the checker maps."""
-    return [
-        {"name": f.name, "type": str(f.type), "nullable": f.nullable, **({"nulls": nulls[f.name]} if nulls is not None else {})}
-        for f in schema
-    ]
 
 
 def stream(frame, fields=(), dry_run=False):
