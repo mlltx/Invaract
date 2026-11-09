@@ -86,7 +86,9 @@ final class BeamCheck private[beamadapter] (
         lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType),
         inputFormats = BeamCheck.inputFormatsAsDeclared(c, w),
         // what a CsvIO write or parse states (check.csvOptions); `refusal` refuses a declared option no step states
-        formatOptions = w.formatOptions
+        formatOptions = w.formatOptions,
+        // how the write lays out its data (check.partitioning); `refusal` refuses declared keys a write does not say it keeps
+        partitioning = w.partitioning
       ),
       options,
       sink,
@@ -106,7 +108,7 @@ final class BeamCheck private[beamadapter] (
       )(_ -> None)
       try {
         val draft = DryRunReporting.tagged(
-          ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema, formatOptions = w.formatOptions, inputFormats = w.readFormats), w.draftInputs, w.plan),
+          ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema, w.partitioning, w.formatOptions, w.readFormats), w.draftInputs, w.plan),
           contractMetadata
         )
         // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
@@ -206,6 +208,8 @@ private[beamadapter] object BeamCheck {
     lazy val unknownSaveMode = if (write.plan.saveMode.isEmpty) declaredSaveMode(contract, write) else None
     // a CSV option the contract declares that no CsvIO step states would pass unchecked (check.csvOptions is partial)
     lazy val unstatedCsv = unstatedCsvOptions(contract, write)
+    // partition keys a write does not say it keeps, or an overwrite mode a write with no save mode cannot say (check.partitioning)
+    lazy val unstatedPartitioning = unstatedPartitioningOf(contract, write)
     if (write.outputSchema.isEmpty && declaresColumns(contract, write))
       Some(s"a write to ${write.location} whose data exposes no schema (its items are plain objects, not rows with a schema), so its columns cannot be checked")
     else if (unknownFormat.isDefined)
@@ -214,6 +218,8 @@ private[beamadapter] object BeamCheck {
       Some(s"a write to ${write.location} that states no save mode (only a BigQuery write does), while the contract declares '${unknownSaveMode.get}'")
     else if (unstatedCsv.isDefined)
       unstatedCsv
+    else if (unstatedPartitioning.isDefined)
+      unstatedPartitioning
     else if (options.rejectUndeclaredInputs && write.unlocatedReads.nonEmpty)
       // strict mode promises no read goes undeclared, which cannot be shown for a read whose source is not known
       Some(s"the write to ${write.location} depends on reads whose source cannot be located (${write.unlocatedReads.mkString("; ")}), so an undeclared input cannot be ruled out")
@@ -227,6 +233,19 @@ private[beamadapter] object BeamCheck {
   }
 
   private def ruleTypes(contract: Contract): Set[String] = contract.rules.map(_.ruleType).toSet
+
+  /** Why `write` cannot be held to the partitioning its declared output names: a write whose layout the pipeline does not state
+    * (a dynamic destination other than `HivePartitions`', a BigQuery table with no stated time partitioning), or one that
+    * states no save mode (a file write) while the output declares what an overwrite of it replaces. */
+  def unstatedPartitioningOf(contract: Contract, write: TranslatedWrite): Option[String] =
+    OutputChecker.expectedOutputFor(contract.outputs, write.location).filter(_.partitionKeys.nonEmpty).flatMap { output =>
+      val keys = output.partitionKeys.mkString(", ")
+      if (write.partitioning.isEmpty)
+        Some(s"a write to ${write.location} whose layout the pipeline does not state (its destinations are the job's own code, or its table's partitioning is not stated), while the contract declares it partitioned by $keys")
+      else if (output.partitionOverwriteMode.isDefined && write.plan.saveMode.isEmpty)
+        Some(s"a write to ${write.location} that states no save mode, so what an overwrite of it replaces cannot be told, while the contract declares partitionOverwriteMode '${output.effectivePartitionOverwriteMode}'")
+      else None
+    }
 
   /** Why `write`, or a read it depends on, cannot be held to the CSV options its declared dataset names: only a `CsvIO` write or
     * parse states its options (`BeamIO.csvOptions`), and never a date or timestamp pattern, so a text write or read whose lines

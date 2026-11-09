@@ -86,9 +86,16 @@ capabilities:
       JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them
       has the write refused as unverifiable rather than passed unchecked.
   check.partitioning:
-    status: unsupported
-    summary: A pipeline's writes state no partition columns, so a contract that declares partition keys is refused.
-    note: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
+    status: partial
+    summary: "A write's partitioning is checked where the pipeline states it: files written to one folder are unpartitioned, a FileIO write partitioned with Invaract's HivePartitions is partitioned by its keys, and a BigQuery write by its time-partitioning column. Any other partitioned write is refused, and so is a declared overwrite mode on a write that states no save mode."
+    note: >-
+      Beam has no file writer that lays out folders by column values: a team writes one with FileIO.writeDynamic(), whose
+      destination is the job's own code. A write to one folder (TextIO, AvroIO, TFRecordIO, CsvIO, FileIO.write()) is
+      unpartitioned; FileIO.writeDynamic() by HivePartitions.by(keys) and HivePartitions.naming(suffix) is partitioned by those
+      keys, read from FileIO.Write's non-public members as its destination is; a BigQuery write by the column of the time
+      partitioning it states. Any other dynamic destination, and a BigQuery write that states no partitioning (its table may
+      already have one), is refused when the output declares partition keys. File writes state no save mode, so a declared
+      partitionOverwriteMode on one is refused as unverifiable rather than passed unchecked.
   check.csvOptions:
     status: partial
     summary: "CsvIO writes and the reads CsvIO parses are checked against the contract's CSV options. Any other text read or write, and a date or timestamp pattern, states none, so a contract that declares one for it is refused."

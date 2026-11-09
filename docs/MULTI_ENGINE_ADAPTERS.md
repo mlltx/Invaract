@@ -453,6 +453,8 @@ divergence naming it, run on a daemon thread of the kit's, so an adapter binds i
 | The adapter declares... | The scenario's expected result |
 |---|---|
 | everything the scenario needs `supported` / `partial` | the neutral verdict, exactly (the same violation types) |
+| a capability `partial` that excuses violations in this scenario (`Scenarios.partialExcuses`) | the neutral rejection without the excused violation types |
+| a capability `partial` that may refuse this scenario instead (`Scenarios.partialRefusals`) | the neutral rejection, or a refusal as unverifiable alone (`UNVERIFIABLE_WRITE`): what the job does is something the engine does not state, and refusing is the fail-closed answer |
 | a capability the scenario's contract relies on `unsupported` (and it `enforcesContract`) | a rejection including `UNSUPPORTED_CONTRACT_FEATURE` - a quiet pass is a failure |
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |

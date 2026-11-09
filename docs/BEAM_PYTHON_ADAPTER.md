@@ -38,6 +38,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | D9 | **CI runs real Python pipelines** through the real package and checker (`beam-python` job), and the translator's unit tests run on **recorded protos**, so `sbt test` needs no Python. | Fast unit tests everywhere; the end-to-end proof where Python is installed. |
 | D10 | **Release later**: the checker jar is `sbt assembly` in `beam-adapter`; the package installs from the repository. | No release steps to maintain before there is a user; PyPI and a jar asset are a follow-up once the shape has settled. |
 | D11 | **A check-only mode for CI** (`--invaract_check_only=true`): the pipeline is checked and handed to no runner; `run()` returns `CheckedOnly` (finished, no metrics), the delegate is not created, and the checker is told (`--check_only=true`) so events carry `engineDetails.checkOnly`. | The Java adapter's D22, in the bridge's one place for runner behaviour. It is a runner flag, not a setting forwarded to the checker, because it decides what the runner does after the verdict. |
+| D12 | **The wrapper runner states what the portable form leaves pickled about a pandas CSV read or write** (`ReadFromCsv`, `WriteToCsv`): `invaract_beam.pandas_csv` reads the path and the pandas options off the live transforms and adds them to the step as display items (`file_pattern` and `csv_options`, under a namespace naming the format), which the catalogue then reads as it reads any file read or write (`PythonSteps.PandasCsvRead`/`PandasCsvWrite`). | The SDK states nothing of either (its path and options are pickled into the pandas steps), so without it every pandas CSV read was unlocated and every such write refused. It stays a bridge (D2): the facts are pandas' own, under the contract's names, with pandas' default for what the job leaves unset; anything pandas would guess (a sniffed delimiter) or that is not the contract's (a strftime date pattern) is left unstated, and a contract that declares it is refused. A pipeline checked without the package (a recorded portable form) keeps the old, unlocated reading. |
 
 ## Where things are
 
@@ -115,7 +116,7 @@ permanent as the recorded fixtures. What building it added:
 | `check.inputFormat` | partial | scenarios 64, 65; a text read satisfies an input declared csv, json or text, as a text write does |
 | `check.saveMode` | partial | scenarios 26, 27 (BigQuery) |
 | `check.partitioning` | unsupported | the partitioning scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |
-| `check.csvOptions` | unsupported | the CSV option scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE` |
+| `check.csvOptions` | partial | `csv-options-match`, `csv-output-options-mismatch`, `csv-input-options-mismatch`, as real pandas `ReadFromCsv`/`WriteToCsv` jobs; the options are stated by the wrapper runner (D12); a declared option nothing states is refused (`BeamCheck.unstatedCsvOptions`); `PythonStepsSpec`, `tests/test_pandas_csv.py` |
 | `check.catalogRegistration` | partial | scenarios 10, 11 (BigQuery) |
 | `check.runtimeDataQuality` | unsupported | the runtime data-quality scenarios refuse with `UNSUPPORTED_CONTRACT_FEATURE`: the pipeline is checked before it runs |
 | `rules.dml` | not-applicable | — |

@@ -95,7 +95,28 @@ def materialize(root, dataset):
     return os.path.join(folder, "*.parquet")
 
 
+def read_csv(p, root, dataset, label):
+    """A CSV input as a team's Python job reads one, with pandas (``ReadFromCsv``): the file written with the input's delimiter,
+    a header line when it has one and one row, read with the same options."""
+    options = dataset["csvOptions"]
+    delimiter, header = options.get("delimiter", ","), options.get("header", "false") == "true"
+    names = [f["name"] for f in dataset["fields"]]
+    folder = os.path.join(root, dataset["location"])
+    os.makedirs(folder, exist_ok=True)
+    zeros = [str(zero(arrow_type(f["type"]))) for f in dataset["fields"]]
+    with open(os.path.join(folder, "part-0.csv"), "w") as f:
+        f.write((delimiter.join(names) + "\n" if header else "") + delimiter.join(zeros) + "\n")
+    pattern = os.path.join(folder, "*.csv")
+    # the column types given, as a careful job gives them, rather than left to pandas to guess from the data
+    dtype = {f["name"]: {"bigint": "int64", "string": "str"}[f["type"]] for f in dataset["fields"]}
+    if header:
+        return p | label >> beam.io.ReadFromCsv(pattern, sep=delimiter, dtype=dtype)
+    return p | label >> beam.io.ReadFromCsv(pattern, sep=delimiter, header=None, names=names, dtype=dtype)
+
+
 def read(p, root, dataset, label, streaming):
+    if dataset.get("csvOptions"):
+        return read_csv(p, root, dataset, label)
     pattern = materialize(root, dataset)
     if not streaming:
         return p | label >> beam.io.ReadFromParquet(pattern, as_rows=True)
@@ -206,6 +227,9 @@ def write(rows, job, root, target):
     if output["format"] == "parquet":
         _ = (rows | "Dicts" >> beam.Map(as_dict)
                   | "Write" >> beam.io.WriteToParquet(destination, arrow_schema(job["outputFields"]), file_name_suffix=".parquet", **frequency))
+    elif output["format"] == "csv" and output.get("csvOptions"):
+        # written as a team writes CSV with pandas, which states its options: with the output's delimiter
+        _ = rows | "Write" >> beam.io.WriteToCsv(destination, sep=output["csvOptions"].get("delimiter", ","))
     elif output["format"] == "csv":
         # rows written straight to text: the write's columns are the rows'
         _ = rows | "Write" >> beam.io.WriteToText(destination, file_name_suffix=".csv", **frequency)

@@ -3,9 +3,9 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.contract.{CatalogTechnologies, Formats, LogicalSchema}
+import com.invaract.contract.{CatalogTechnologies, Formats, LogicalSchema, PartitionOverwriteModes}
 import com.invaract.ir.CatalogIdentity
-import com.invaract.verification.LocationMatching
+import com.invaract.verification.{LocationMatching, WritePartitioning}
 import org.apache.beam.sdk.io.WriteFiles
 import org.apache.beam.sdk.options.ValueProvider
 import org.apache.beam.sdk.transforms.Contextful
@@ -63,7 +63,8 @@ private[beamadapter] object IoWrite {
       saveMode: Option[String] = None,
       catalog: Option[CatalogIdentity] = None,
       schema: Option[LogicalSchema] = None,
-      csvOptions: Option[Map[String, String]] = None
+      csvOptions: Option[Map[String, String]] = None,
+      partitioning: Option[WritePartitioning] = None
   ) extends IoWrite
 
   final case class Unverifiable(why: String) extends IoWrite
@@ -303,7 +304,11 @@ private[beamadapter] object BeamIO {
 
   private def statedWrite(step: BeamStep): Option[IoWrite] =
     step.simpleName match {
-      case "AutoValue_BigQueryIO_Write"                                     => Some(bigQueryWrite(step))
+      case "AutoValue_BigQueryIO_Write"                                     =>
+        Some(bigQueryWrite(step) match {
+          case located: IoWrite.Located => located.copy(partitioning = bigQueryPartitioning(step))
+          case other                    => other
+        })
       case "AutoValue_KafkaIO_Write" | "AutoValue_KafkaIO_WriteRecords"     => Some(kafkaWrite(step))
       case "JdbcIO$Write" | "AutoValue_JdbcIO_Write" | "AutoValue_JdbcIO_WriteVoid" | "AutoValue_JdbcIO_WriteWithResults" =>
         Some(jdbcWrite(step))
@@ -369,7 +374,10 @@ private[beamadapter] object BeamIO {
       case None                              => IoWrite.Unverifiable(s"$what write whose file prefix is not published")
       case Some(p) if isRuntimeParameter(p)  => IoWrite.templateParameter(all.flatMap(runtimeParameter).headOption.getOrElse(p))
       case Some(p)                           =>
-        IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema, csvOptions = csvOptions(unit))
+        IoWrite.Located(
+          BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema, csvOptions = csvOptions(unit),
+          partitioning = prefixPartitioning(all)
+        )
     }
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")
@@ -377,13 +385,57 @@ private[beamadapter] object BeamIO {
       case Some(tf) if tf.endsWith("TFRecordIO$TFRecordSink") => prefixed(BeamFormats.TFRecord, "a TFRecord")
       case Some("org.apache.beam.sdk.io.FileIO$Write$ViaFileBasedSink") =>
         fileIoWrite(all) match {
-          case Some((location, sink)) => IoWrite.Located(location, formatOfSink(sink.getClass.getName), schema = sinkSchema(sink))
+          case Some((location, sink)) =>
+            IoWrite.Located(location, formatOfSink(sink.getClass.getName), schema = sinkSchema(sink), partitioning = fileIoPartitioning(all))
           case None                   => IoWrite.Unverifiable("a FileIO write whose destination or sink cannot be read")
         }
       case Some(other) => IoWrite.Unverifiable(s"a file write through $other, which this adapter does not recognise")
       case None        => IoWrite.Unverifiable("a write whose sink cannot be read")
     }
   }
+
+  // --- how a write lays out its data (check.partitioning) ---
+
+  /** A write known to put all its files in one folder: no partition columns. Nothing it writes replaces any partition (Beam
+    * file writes state no save mode), so the overwrite mode is nominal. */
+  private val Unpartitioned = WritePartitioning(Nil, PartitionOverwriteModes.Static)
+
+  /** A prefix write's (`TextIO`, `AvroIO`, `TFRecordIO`, and `CsvIO` through `TextIO`) layout: one folder when its file names
+    * are the one constant policy `.to(prefix)` makes; `None` for dynamic destinations, whose names are the job's own code. */
+  private def prefixPartitioning(steps: List[BeamStep]): Option[WritePartitioning] =
+    steps.flatMap(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w }.flatMap { w =>
+      Try(w.getSink.getDynamicDestinations.getClass.getSimpleName == "ConstantFilenamePolicy").toOption.collect { case true => Unpartitioned }
+    }
+
+  /** A `FileIO.write()`'s layout: one folder for a write with no destinations; for `writeDynamic()`, the keys of
+    * `HivePartitions.by` when both its destination and its naming are `HivePartitions`' (so the folders are `key=value`, in
+    * order), and `None` for any other destination function, which is the job's own code. Read from non-public members of
+    * `FileIO.Write` (`getDynamic`, `getDestinationFn`, `getFileNamingFn`), as `fileIoWrite` reads its destination. */
+  private def fileIoPartitioning(steps: List[BeamStep]): Option[WritePartitioning] =
+    steps.find(_.className.endsWith("AutoValue_FileIO_Write")).flatMap(_.transform).flatMap { t =>
+      Try {
+        if (!Reflection.call(t, "getDynamic").asInstanceOf[Boolean]) Some(Unpartitioned)
+        else
+          (closureOf(Reflection.call(t, "getDestinationFn")), closureOf(Reflection.call(t, "getFileNamingFn"))) match {
+            case (Some(key: HivePartitions.Key[_]), Some(_: HivePartitions.Naming)) => Some(WritePartitioning(key.fields, PartitionOverwriteModes.Static))
+            case _                                                                => None
+          }
+      }.toOption.flatten
+    }
+
+  private def closureOf(contextful: AnyRef): Option[AnyRef] = Option(contextful).map(_.asInstanceOf[Contextful[_ <: AnyRef]].getClosure)
+
+  /** A BigQuery write's layout: the column its table is partitioned by when it states a time partitioning on one
+    * (`withTimePartitioning`); `None` when it states none, or one by ingestion time (no column): the table may be
+    * partitioned already, or by a pseudo-column no contract field names. A load replaces the table (or the one partition a
+    * table decorator names) whole, so an overwrite is `static`. */
+  private def bigQueryPartitioning(step: BeamStep): Option[WritePartitioning] =
+    step.transform.flatMap { t =>
+      Try(Option(Reflection.call(t, "getJsonTimePartitioning")).map(_.asInstanceOf[ValueProvider[String]].get())).toOption.flatten
+    }.flatMap(json => Try(new Yaml().load[AnyRef](json)).toOption).collect {
+      case m: java.util.Map[_, _] if Option(m.get("field")).exists(_.toString.nonEmpty) =>
+        WritePartitioning(List(m.get("field").toString), PartitionOverwriteModes.Static)
+    }
 
   private def formatOfSink(sinkClass: String): Option[String] =
     if (sinkClass.contains("ParquetIO")) Some(Formats.Parquet)

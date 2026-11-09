@@ -77,17 +77,17 @@ capabilities:
     status: supported
   check.partitioning:
     status: partial
-    summary: "Partition keys and the overwrite mode are checked for file-source writes, new data source tables, Delta writes given partitionBy and V2 table writes. A write whose partitioning Spark does not state is refused when its output declares partition keys."
+    summary: "Partition keys and the overwrite mode are checked for file-source writes, new data source tables, Delta writes (by the table's own partitioning when the job gives none), V2 table writes and file and Delta streams. A write whose partitioning Spark does not state is refused when its output declares partition keys."
     note: >-
       Checked where Spark states both the partition columns and what an overwrite replaces: a file-source write
       (partitionBy, an insert into a data source table or a converted Hive table, with Spark's own rule for a dynamic
       overwrite: the partitionOverwriteMode option, else spark.sql.sources.partitionOverwriteMode, when a partition column
-      takes its value from the data), a new data source table, a CreatableRelationProvider write given partitionBy (Delta's
-      save(path)) and a DataSource V2 write into a table partitioned by plain columns (overwritePartitions is dynamic). A
-      streaming sink, a Hive serde write Spark does not convert, a Delta save(path) with no partitionBy and a V2 table
-      partitioned by a derived transform (days(ts), bucket) do not state it, so a write of one onto an output that declares
-      partition keys is refused as unverifiable (UNVERIFIABLE_WRITE) rather than passed unchecked.
-    docs: SPARK_ADAPTER.md
+      takes its value from the data), a new data source table, a Delta save(path) (its partitionBy, else the table's own
+      partition columns read from its log, none for a new table or an overwrite with overwriteSchema), a DataSource V2 write
+      into a table partitioned by plain columns (overwritePartitions is dynamic), and a stream into a file, Delta or V2
+      sink. A foreachBatch, console or Kafka stream, a Hive serde write Spark does not convert, another source's save with
+      no partitionBy and a V2 table partitioned by a derived transform (days(ts), bucket) do not state it, so a write of one
+      onto an output that declares partition keys is refused as unverifiable (UNVERIFIABLE_WRITE) rather than passed unchecked.
   check.csvOptions:
     status: partial
     summary: "CSV reads and writes are checked against the contract's CSV options, Spark's own default standing for each option the job leaves unset. A streaming CSV sink's options are not checked."

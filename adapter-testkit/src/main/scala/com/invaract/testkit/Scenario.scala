@@ -311,6 +311,11 @@ sealed trait Expectation
   * partial adapter cannot report them (`Scenarios.partialExcuses`). */
 final case class PartialExcuse(capability: Capability, violationTypes: Set[String], why: String)
 
+/** A scenario an adapter that declares `capability` `partial` may refuse as unverifiable (`UNVERIFIABLE_WRITE`) instead of with
+  * the violations it expects, and `why` (`Scenarios.partialRefusals`): what the scenario's job does is something the adapter's
+  * engine does not state, and refusing is the fail-closed answer. An adapter that can tell is still held to the expected ones. */
+final case class PartialRefusal(capability: Capability, why: String)
+
 object Expectation {
   case object Pass extends Expectation
 

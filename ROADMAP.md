@@ -4049,7 +4049,15 @@ Extend verification engine to support multiple execution engines.
         file-source writes and inserts (Spark's own dynamic-overwrite rule; a converted Hive insert is dynamic), new data source
         tables, Delta `.save(path)` given `.partitionBy`, and V2 writes into tables partitioned by plain columns
         (`overwritePartitions` dynamic); any other write onto an output that declares partition keys is refused as
-        `UNVERIFIABLE_WRITE` rather than passed unchecked. The kit's three partitioning scenarios now run on Spark
+        `UNVERIFIABLE_WRITE` rather than passed unchecked. The kit's three partitioning scenarios now run on Spark.
+        Then Delta and streams: a Delta `.save(path)` with no `.partitionBy` is held to the table's own partition columns,
+        read from its log (none for a new table, or an overwrite with `overwriteSchema`, which Delta leaves unpartitioned),
+        and a stream into a file, Delta or V2 sink to its partitioning; `foreachBatch`, console and Kafka streams state none
+  - [x] Beam Java: `check.partitioning` (`partial`, docs/BEAM_ADAPTER.md D23): a write to one folder is unpartitioned,
+        `FileIO.writeDynamic()` by `HivePartitions` (a helper the adapter ships, Spark's folder layout) is partitioned by its
+        keys, a BigQuery write by its time-partitioning column; any other partitioned write is refused, and so is a declared
+        `partitionOverwriteMode` on a write with no save mode (the kit accepts that refusal from a partial adapter,
+        `Scenarios.partialRefusals`). Beam Python still declares it unsupported
   - [x] PostgreSQL outputs and inputs, through ADBC (`invaract[postgres]`, adbc 1.2 or later): location
         `postgresql://host/<database>/<schema>.<table>`, format `jdbc`, registered in the `jdbc` catalog; an output is staged
         in a session-temporary table and published in one transaction (created, `TRUNCATE`d for overwrite, inserted,
@@ -4070,8 +4078,11 @@ Extend verification engine to support multiple execution engines.
   - [x] Beam Java: hand a `CsvIO` write's and parse's options to `check.csvOptions` (`partial`): the Commons CSV format each
         holds (delimiter, quote, escape, null text; a write's header unless it skips the header record, a read's when its
         `TextIO.read()` skips a first line); a declared option no step states (a plain TextIO file, a date or timestamp
-        pattern) refuses the write as unverifiable. The kit's three CSV scenarios run for real on Beam Java. Beam Python
-        still declares it unsupported
+        pattern) refuses the write as unverifiable. The kit's three CSV scenarios run for real on Beam Java
+  - [x] Beam Python: `check.csvOptions` (`partial`, docs/BEAM_PYTHON_ADAPTER.md D12) for pandas CSV reads and writes
+        (`ReadFromCsv`, `WriteToCsv`), now located: their path and pandas options, which the portable form leaves pickled,
+        are stated on the step by the wrapper runner (`invaract_beam.pandas_csv`); the kit's three CSV scenarios run as
+        real Python jobs
   - [x] JSON lines (`json`), ORC, Avro (`invaract[avro]`), Feather and Excel (`invaract[excel]`) inputs and outputs, laid out
         as Spark lays them out and partitioned Hive-style like Parquet; `excel` and `feather` added to the canonical formats;
         a location's extension names its format when nothing else does

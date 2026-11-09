@@ -234,6 +234,14 @@ private[beamadapter] object BeamScenarioJobs {
     // a stream is written window by window, which Beam requires to name its number of files
     def sharded[D](w: FileIO.Write[D, GenericRecord]): FileIO.Write[D, GenericRecord] = if (job.streaming) w.withNumShards(1) else w
     job.output.format match {
+      case "parquet" if job.output.partitionBy.nonEmpty =>
+        // partitioned as a team partitions files with Beam: a dynamic write by Hive-style folders (HivePartitions)
+        data.apply("Write", sharded(FileIO.writeDynamic[String, GenericRecord]()
+          .by(HivePartitions.by[GenericRecord](job.output.partitionBy: _*))
+          .withNaming(HivePartitions.naming(".parquet"))
+          .withDestinationCoder(org.apache.beam.sdk.coders.StringUtf8Coder.of())
+          .via(ParquetIO.sink(out))
+          .to(destination)))
       case "parquet" =>
         data.apply("Write", sharded(FileIO.write[GenericRecord]().via(ParquetIO.sink(out)).to(destination).withSuffix(".parquet")))
       case "csv" if job.output.csvOptions.nonEmpty =>

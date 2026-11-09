@@ -91,7 +91,10 @@ object Conformance {
             case Expectation.Stopped(mentioning) => Expected.Stopped(mentioning)
             case Expectation.Reject(types) =>
               val excused = Scenarios.partialExcuses.get(scenario.id).filter(e => capabilities.supportOf(e.capability) == Support.Partial)
-              Expected.RejectExactly(types -- excused.fold(Set.empty[String])(_.violationTypes))
+              val held = types -- excused.fold(Set.empty[String])(_.violationTypes)
+              if (Scenarios.partialRefusals.get(scenario.id).exists(r => capabilities.supportOf(r.capability) == Support.Partial))
+                Expected.RejectExactlyOrUnverifiable(held)
+              else Expected.RejectExactly(held)
           })
     }
   }
@@ -101,6 +104,10 @@ object Conformance {
   object Expected {
     case object Pass extends Expected
     final case class RejectExactly(types: Set[String]) extends Expected
+
+    /** `RejectExactly(types)`, or a refusal as unverifiable alone (`UNVERIFIABLE_WRITE`): a partial adapter's fail-closed answer
+      * to a scenario it cannot tell (`Scenarios.partialRefusals`). */
+    final case class RejectExactlyOrUnverifiable(types: Set[String]) extends Expected
 
     /** The adapter declared a capability the contract needs unsupported: it must reject with
       * `UNSUPPORTED_CONTRACT_FEATURE` (other violations may accompany it). */
@@ -140,6 +147,11 @@ object Conformance {
         else Some(s"expected the write to be blocked with exactly ${show(types)}, got ${show(r.violationTypes)}")
       case (Expected.RejectExactly(types), _: ScenarioOutcome.Passed) =>
         Some(s"expected the write to be blocked with ${show(types)}, but it was allowed - a requirement went unchecked")
+      case (Expected.RejectExactlyOrUnverifiable(types), r: ScenarioOutcome.Rejected) =>
+        if (r.violationTypes == types || r.violationTypes == Set(ViolationType.UnverifiableWrite)) None
+        else Some(s"expected the write to be blocked with exactly ${show(types)}, or refused as unverifiable alone, got ${show(r.violationTypes)}")
+      case (Expected.RejectExactlyOrUnverifiable(types), _: ScenarioOutcome.Passed) =>
+        Some(s"expected the write to be blocked with ${show(types)}, or refused as unverifiable, but it was allowed - a requirement went unchecked")
       case (Expected.RejectedAsUnsupported, r: ScenarioOutcome.Rejected) =>
         if (r.violationTypes.contains(ViolationType.UnsupportedContractFeature)) None
         else Some(s"the adapter declares a needed capability unsupported, so it must block with UNSUPPORTED_CONTRACT_FEATURE; got ${show(r.violationTypes)}")

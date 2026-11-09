@@ -284,6 +284,33 @@ class ConformanceKitSpec extends AnyFunSuite {
     }
   }
 
+  // --- partial refusals ---------------------------------------------------------------------------
+
+  test("a scenario a partial adapter may refuse as unverifiable: either answer conforms for it, neither for anyone else") {
+    assert(Scenarios.partialRefusals.keySet.subsetOf(Scenarios.all.map(_.id).toSet))
+    assert(Scenarios.partialRefusals.values.forall(_.why.trim.nonEmpty))
+    val silentPartial = declaring(Map(
+      "check.partitioning" -> (("partial", Some("some writes state no save mode"))),
+      "reporting.notifications" -> (("unsupported", Some("publishes nothing")))
+    ))
+    val overwrite = scenario("partition-overwrite-mode-mismatch")
+    val types = overwrite.expect.asInstanceOf[Expectation.Reject].violationTypes
+    val expected = Conformance.expectationFor(overwrite, silentPartial).fold(r => fail(r), identity)
+    assert(expected == Conformance.Expected.RejectExactlyOrUnverifiable(types))
+    def verdict(outcome: ScenarioOutcome) = Conformance.judge(expected, outcome, silentPartial, None, Analysis(), 1)
+    assert(verdict(new RecordingSink().rejected(types)) == ScenarioVerdict.Conforms)
+    assert(verdict(new RecordingSink().rejected(Set(ViolationType.UnverifiableWrite))) == ScenarioVerdict.Conforms)
+    assert(verdict(new RecordingSink().rejected(types + ViolationType.UnverifiableWrite)).isInstanceOf[ScenarioVerdict.Diverges], "alone")
+    assert(verdict(new RecordingSink().rejected(Set(ViolationType.OutputLocationMismatch))).isInstanceOf[ScenarioVerdict.Diverges])
+    assert(verdict(new RecordingSink().passed).isInstanceOf[ScenarioVerdict.Diverges])
+    // an adapter that supports the capability is held to the violations, and another scenario is never relaxed
+    assert(Conformance.expectationFor(overwrite, ReferenceAdapter.declared) == Right(Conformance.Expected.RejectExactly(types)))
+    val unpartitioned = scenario("partitioned-output-written-unpartitioned")
+    assert(Conformance.expectationFor(unpartitioned, silentPartial).exists(_.isInstanceOf[Conformance.Expected.RejectExactly]))
+    // the catalogue forecasts the violations, the answer an adapter that can tell gives
+    assert(ScenarioCatalogue.forecast(overwrite, silentPartial) == ScenarioCatalogue.Forecast.Blocks(types))
+  }
+
   test("the relaxed scenario is judged on what remains: the location mismatch alone conforms, a pass does not") {
     // an adapter that publishes no events, so the verdict alone is judged
     val silent = declaring(

@@ -170,20 +170,114 @@ class SparkPartitioningSpec extends ConnectorSpecBase {
 
   // --- Delta ---------------------------------------------------------------------------------------
 
-  test("a Delta .save(path) given .partitionBy is checked; one with none is refused as unverifiable, not passed") {
+  test("a Delta .save(path) given .partitionBy is checked against the declared keys") {
     val out = at("delta_out")
     withContract(partitioned(out, List("region"), format = "delta")) {
       frame().write.format("delta").mode("overwrite").partitionBy("region").save(out)
       val List(v) = refused(frame().write.format("delta").mode("overwrite").partitionBy("id").save(out)).result.violations
       assert(v.violationType == ViolationType.OutputPartitioningMismatch)
-      // an append with no .partitionBy keeps the table's partitioning, which the write does not state
-      val List(u) = refused(frame().write.format("delta").mode("append").save(out)).result.violations
-      assert(u.violationType == ViolationType.UnverifiableWrite)
-      assert(u.message.contains("Output 'report' declares partition keys (region)") && u.message.contains("SaveIntoDataSourceCommand"))
-      assert(u.remediation.contains(".partitionBy(...)"))
     }
-    // with no partition keys declared, the same write is checked as before
-    withContract(partitioned(out, Nil, format = "delta"))(frame().write.format("delta").mode("append").save(out))
+  }
+
+  test("a Delta .save(path) given no .partitionBy is partitioned as its table already is, as Delta writes it") {
+    val out = at("delta_existing")
+    frame().write.format("delta").mode("overwrite").partitionBy("region").save(out)
+    assert(PartitioningSupport.deltaTablePartitionColumns(out).contains(List("region")))
+    withContract(partitioned(out, List("region"), format = "delta")) {
+      frame().write.format("delta").mode("append").save(out)
+      frame().write.format("delta").mode("overwrite").save(out)
+    }
+    withContract(partitioned(out, List("id"), format = "delta")) {
+      val List(v) = refused(frame().write.format("delta").mode("append").save(out)).result.violations
+      assert((v.violationType, v.expected, v.actual) == ((ViolationType.OutputPartitioningMismatch, Some("id"), Some("region"))))
+    }
+    // and the overwrite mode is the write's, for a dynamic overwrite of the table's partitions
+    withContract(partitioned(out, List("region"), "    partitionOverwriteMode: dynamic", format = "delta")) {
+      frame().write.format("delta").mode("overwrite").option("partitionOverwriteMode", "dynamic").save(out)
+      val List(v) = refused(frame().write.format("delta").mode("overwrite").save(out)).result.violations
+      assert((v.expected, v.actual) == ((Some("dynamic overwrite"), Some("static overwrite"))))
+    }
+    assert(PartitioningSupport.deltaTablePartitionColumns(out).contains(List("region")), "every write above kept the layout")
+  }
+
+  test("a Delta .save(path) with no .partitionBy creates an unpartitioned table, and an overwrite with overwriteSchema makes one") {
+    val fresh = at("delta_new")
+    assert(PartitioningSupport.deltaTablePartitionColumns(fresh).contains(Nil), "no table yet")
+    withContract(partitioned(fresh, List("region"), format = "delta")) {
+      val List(v) = refused(frame().write.format("delta").mode("overwrite").save(fresh)).result.violations
+      assert((v.violationType, v.actual) == ((ViolationType.OutputPartitioningMismatch, Some("none"))))
+    }
+    // what Delta really does with overwriteSchema and no .partitionBy: the table it leaves is unpartitioned
+    val replaced = at("delta_replaced")
+    frame().write.format("delta").mode("overwrite").partitionBy("region").save(replaced)
+    frame().write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(replaced)
+    assert(PartitioningSupport.deltaTablePartitionColumns(replaced).contains(Nil))
+    frame().write.format("delta").mode("overwrite").option("overwriteSchema", "true").partitionBy("region").save(replaced)
+    withContract(partitioned(replaced, List("region"), format = "delta")) {
+      val List(v) = refused(frame().write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(replaced)).result.violations
+      assert(v.actual.contains("none"))
+      frame().write.format("delta").mode("append").option("overwriteSchema", "true").save(replaced) // an append replaces no schema
+    }
+  }
+
+  test("the partition columns of a location no Delta log can be opened at are not known") {
+    assert(PartitioningSupport.deltaTablePartitionColumns("").isEmpty, "not a path at all")
+    assert(PartitioningSupport.deltaSave("", Some("append"), Map.empty).isEmpty)
+  }
+
+  // --- streaming -----------------------------------------------------------------------------------
+
+  /** A folder of the frame's rows to stream from, written before any contract is active. */
+  private lazy val streamInput: String = { val in = at("stream_in"); frame().write.mode("overwrite").parquet(in); in }
+
+  private def streamInto(format: String, out: String, partitionBy: Seq[String] = Nil): Unit = {
+    val writer = spark.readStream.schema(frame().schema).parquet(streamInput).writeStream.format(format)
+      .option("checkpointLocation", at(s"checkpoint_${out.hashCode}_${partitionBy.mkString}"))
+      .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+    val partitioned = if (partitionBy.isEmpty) writer else writer.partitionBy(partitionBy: _*)
+    partitioned.start(out).awaitTermination()
+  }
+
+  test("a stream into a file sink or a Delta sink is checked against the declared keys: the sink's, else the Delta table's") {
+    streamInput
+    val files = at("stream_files")
+    withContract(partitioned(files, List("region")))(streamInto("parquet", files, Seq("region")))
+    val unpartitioned = at("stream_files_2")
+    withContract(partitioned(unpartitioned, List("region"))) {
+      val List(v) = refused(streamInto("parquet", unpartitioned)).result.violations
+      assert((v.violationType, v.actual) == ((ViolationType.OutputPartitioningMismatch, Some("none"))))
+    }
+    val delta = at("stream_delta")
+    frame().write.format("delta").partitionBy("region").save(delta)
+    withContract(partitioned(delta, List("region"), format = "delta")) {
+      streamInto("delta", delta, Seq("region"))
+      streamInto("delta", delta) // the table's own partitioning
+    }
+    withContract(partitioned(delta, List("id"), format = "delta")) {
+      assert(refused(streamInto("delta", delta)).result.violations.map(_.actual) == List(Some("region")))
+    }
+  }
+
+  /** A stream handed to `foreachBatch`, whose sink (a V1 one) says nothing of how the function lays its writes out. */
+  private def streamToFunction(): Unit = {
+    streamInput
+    spark.readStream.schema(frame().schema).parquet(streamInput).writeStream
+      .foreachBatch((batch: org.apache.spark.sql.DataFrame, _: Long) => ())
+      .option("checkpointLocation", at("checkpoint_foreach")).trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+      .start().awaitTermination()
+  }
+
+  test("a stream into a memory sink is unpartitioned; one into foreachBatch states nothing, so a partitioned output refuses it") {
+    streamInput
+    withContract(partitioned("MemorySink", List("region"), format = "memory")) {
+      val types = refused(spark.readStream.schema(frame().schema).parquet(streamInput).writeStream.format("memory").queryName("partitioned_memory")
+        .start().awaitTermination()).result.violations.map(v => v.violationType -> v.actual)
+      assert(types.contains(ViolationType.OutputPartitioningMismatch -> Some("none")), types)
+    }
+    withContract(partitioned("anywhere", List("region"))) {
+      val List(v) = refused(streamToFunction()).result.violations
+      assert(v.violationType == ViolationType.UnverifiableWrite && v.message.contains("WriteToStream"))
+    }
   }
 
   test("a Delta table write states its table's partitioning (V2): an append is checked against the declared keys") {
@@ -199,10 +293,8 @@ class SparkPartitioningSpec extends ConnectorSpecBase {
   }
 
   test("an invalid contract is reported as invalid, not as an unverifiable partitioning") {
-    val out = at("delta_invalid")
-    frame().write.format("delta").mode("overwrite").partitionBy("region").save(out)
-    val invalid = partitioned(out, List("region"), format = "delta").replace("id: partitioning", "id: \" \"")
-    val types = refused(withContract(invalid)(frame().write.format("delta").mode("append").save(out))).result.violations.map(_.violationType)
+    val invalid = partitioned("anywhere", List("region")).replace("id: partitioning", "id: \" \"")
+    val types = refused(withContract(invalid)(streamToFunction())).result.violations.map(_.violationType)
     assert(types.nonEmpty && !types.contains(ViolationType.UnverifiableWrite), types)
   }
 

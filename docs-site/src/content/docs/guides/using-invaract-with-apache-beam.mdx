@@ -193,6 +193,12 @@ deployment keeps its data; declare an absolute location to pin one.
   `WRITE_EMPTY` are `append`, `overwrite`, `error`; the table is in the `bigquery` catalog). No
   other Beam write has a save mode, so a contract that declares one for a file, Kafka or JDBC
   output has the write refused as unverifiable.
+- **Partitioning**: a write to one folder is unpartitioned, a `FileIO.writeDynamic()` by
+  `HivePartitions` is partitioned by its keys, and a BigQuery write by its time-partitioning column;
+  any other partitioned write is refused when the output declares partition keys. See
+  [Partition Outputs](/guides/partitioning-outputs/#write-it-from-beam).
+- **CSV options**: a `CsvIO` write, and a text read `CsvIO.parseRows` parses, are held to the
+  output's and input's [CSV options](/guides/csv-options/#what-beam-jobs-are-held-to).
 - **Reads Invaract can see but not locate**: a BigQuery query, a JDBC query over more than one
   table, a Kafka topic pattern, file patterns the job computes, or a source Invaract does not
   know. A declared input such a read might be is reported as unverifiable, not missing, and the

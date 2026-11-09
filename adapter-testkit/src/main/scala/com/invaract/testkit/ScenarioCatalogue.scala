@@ -47,6 +47,7 @@ object ScenarioCatalogue {
       case Left(reason)                                     => Forecast.Skipped(reason)
       case Right(Conformance.Expected.Pass)                 => Forecast.Allows
       case Right(Conformance.Expected.RejectExactly(types)) => Forecast.Blocks(types)
+      case Right(Conformance.Expected.RejectExactlyOrUnverifiable(types)) => Forecast.Blocks(types)
       case Right(Conformance.Expected.RejectedAsUnsupported) => Forecast.RefusesAsUnsupported
       case Right(Conformance.Expected.Stopped(mentioning))  => Forecast.Stops(mentioning)
     }

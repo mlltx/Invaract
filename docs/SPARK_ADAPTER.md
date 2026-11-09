@@ -421,12 +421,20 @@ dynamic when some partition column is not fixed by `staticPartitions`); a conver
 insert takes this path, and Spark puts `partitionOverwriteMode=dynamic` on the converted
 relation's options, so it reports dynamic, which `HiveConnectorSpec` confirms against the
 data a real overwrite leaves; `CreateDataSourceTableAsSelectCommand` (the new table's
-`partitionColumnNames`, static); `SaveIntoDataSourceCommand` only when the job gave
-`.partitionBy(...)` (`__partition_columns`; the overwrite mode as for a file write); and
+`partitionColumnNames`, static); `SaveIntoDataSourceCommand` when the job gave
+`.partitionBy(...)` (`__partition_columns`; the overwrite mode as for a file write), or, for a
+Delta `.save(path)` given none, what Delta writes with (`PartitioningSupport.deltaSave`): the table's
+own partition columns read from its log (`DeltaLog.forTable(...).update()`, by reflection, the
+`update$default$N` arguments whatever the release names them), none for a table not created yet,
+and none for an overwrite with `overwriteSchema`, which Delta really leaves unpartitioned
+(`SparkPartitioningSpec` reads the log after one); a streaming write (`PartitioningSupport.streamSink`):
+a `DeltaSink`'s `partitionColumns`, else the table's as above, a `FileStreamSink`'s
+`partitionColumnNames`, or a V2 sink table's identity transforms (a memory sink has none), but
+never a V1 `Sink`'s empty default (`foreachBatch`, console, Kafka), which says nothing; and
 the V2 writes, from `Table.partitioning()` (or a CTAS/RTAS's own `partitioning`) when every
 transform is an identity on one column (`OverwritePartitionsDynamic` dynamic, the rest
-static). Everything else (streaming, an unconverted `InsertIntoHiveTable`, Hive CTAS, a
-`.save(path)` with no `.partitionBy`, a derived transform, row-level DML) leaves it `None`,
+static). Everything else (another streaming sink, an unconverted `InsertIntoHiveTable`, Hive CTAS, a
+non-Delta `.save(...)` with no `.partitionBy`, a derived transform, row-level DML) leaves it `None`,
 and `ContractEnforcementRule.verifyOrThrow` refuses such a write onto an output that
 declares partition keys with `UNVERIFIABLE_WRITE` (`PartitioningSupport.refusal`, after
 the contract is held to be valid) rather than let the core's both-sides-known rule pass it

@@ -222,11 +222,15 @@ private[sparkadapter] object WriteCommandSupport {
         partitionColumns = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY)
           .map(DataSourceUtils.decodePartitioningColumns(_).toList)
           .getOrElse(Nil),
-        // Only a write given `.partitionBy(...)` says how it is partitioned: with
-        // none, an append to an existing Delta table keeps the table's own
-        // partitioning, which this command does not carry.
-        partitioning = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY).map { encoded =>
-          WritePartitioning(DataSourceUtils.decodePartitioningColumns(encoded).toList, PartitioningSupport.configuredMode(cmd.options))
+        // A write given `.partitionBy(...)` says how it is partitioned; a Delta
+        // write given none is partitioned as Delta decides from the table's own
+        // log (PartitioningSupport.deltaSave). Any other source given none: unknown.
+        partitioning = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY) match {
+          case Some(encoded) =>
+            Some(WritePartitioning(DataSourceUtils.decodePartitioningColumns(encoded).toList, PartitioningSupport.configuredMode(cmd.options)))
+          case None if SparkPlanAdapter.formatOf(cmd.dataSource).contains("delta") =>
+            PartitioningSupport.deltaSave(location, SparkPlanAdapter.saveModeOf(cmd.mode), cmd.options)
+          case None => None
         }
       )
   }
@@ -342,7 +346,10 @@ private[sparkadapter] object WriteCommandSupport {
         // reach the same metadata without a live `SparkSession` this
         // case doesn't have (unlike `SparkAdapterListener.deltaVersionOf`,
         // which does).
-        partitionColumns = ws.catalogTable.map(_.partitionColumnNames.toList).getOrElse(Nil)
+        partitionColumns = ws.catalogTable.map(_.partitionColumnNames.toList).getOrElse(Nil),
+        // what the sink itself says (PartitioningSupport.streamSink): a Delta or
+        // file sink's partition columns, or a V2 table's
+        partitioning = PartitioningSupport.streamSink(ws.sink, location)
       )
   }
 
