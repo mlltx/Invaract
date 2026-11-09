@@ -281,6 +281,7 @@ class PythonStepsSpec extends AnyFunSuite {
     assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvWrite, """{"header": "true"}""")).contains(Map("header" -> "true")))
     assert(PythonSteps.csvOptions(step("apache_beam.io.textio._TextSink", """{"delimiter": ";"}""")).isEmpty, "another class's item")
     assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, """{"header": true}""")).isEmpty, "not text")
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, """{"delimiter": ";", "header": true}""")).isEmpty, "not all text")
     assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, "[1, 2]")).isEmpty, "not a mapping")
     assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, "{")).isEmpty, "not readable")
     assert(PythonSteps.csvOptions(BeamStep("S", "x", Nil, Nil, Map.empty, Nil)).isEmpty)
