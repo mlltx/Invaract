@@ -199,6 +199,8 @@ def main(out):
         job(p)
         proto = p.to_runner_api()
         if getattr(job, "stated", False):
+            # the package is built, not installed, in CI: take it from this checkout
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from invaract_beam import pandas_csv
             proto = pandas_csv.annotate(p, proto)
         for transform in proto.components.transforms.values():

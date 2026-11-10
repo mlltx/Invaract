@@ -527,7 +527,7 @@ class BeamTextFormatsSpec extends AnyFunSuite {
       val p = pipeline
       csvRows(p, skip, CSVFormat.DEFAULT.withHeader("id", "amount").withDelimiter('|').withAllowDuplicateHeaderNames(false))
         .apply("Out", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
-      BeamTranslator.translate(p).writes.head.formatOptions
+      BeamTranslator.translate(p).writes.head.formatOptions.map { case (location, o) => withoutDrive(location) -> o }
     }
     val parsed = Map("delimiter" -> "|", "encoding" -> "UTF-8", "quote" -> "\"", "escape" -> "", "nullValue" -> "")
     assert(options(1)("/data/in/orders") == parsed + ("header" -> "true"))
@@ -567,14 +567,14 @@ class BeamTextFormatsSpec extends AnyFunSuite {
         |version: "1.0.0"
         |outputs:
         |  - name: report
-        |    location: /data/out/report
+        |    location: out/report
         |    format: csv
         |    csv: { delimiter: ";", header: true }
         |    schema: { fields: [ { name: id, type: long }, { name: amount, type: long } ] }
         |""".stripMargin)
     def job(format: CSVFormat) = {
       val p = pipeline
-      parsedJson(p).apply("Csv", CsvIO.writeRows("/data/out/report", format.withHeader("id", "amount")))
+      parsedJson(p).apply("Csv", CsvIO.writeRows("out/report", format.withHeader("id", "amount")))
       p
     }
     InvaractBeam.enforce(contract).verify(job(CSVFormat.DEFAULT.withDelimiter(';')))
