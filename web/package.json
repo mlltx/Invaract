@@ -10,7 +10,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "next": "16.4.3",
+    "next": "16.4.5",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
@@ -20,7 +20,7 @@
     "@types/react-dom": "^19.3.0",
     "typescript": "^5.3.0",
     "eslint": "^10.14.0",
-    "eslint-config-next": "16.4.3"
+    "eslint-config-next": "16.4.5"
   },
   "overrides": {
     "minimatch": "11.0.4"
