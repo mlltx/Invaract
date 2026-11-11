@@ -1,0 +1,22 @@
+id: readiness_check
+version: "1.0.0"
+inputs:
+  - name: load_status
+    type: DATA_ASSET
+    location: data/control/load_status
+    format: parquet
+    schema:
+      fields:
+        - { name: dataset,       type: string }
+        - { name: business_date, type: string }
+        - { name: status,        type: string }
+outputs:
+  - name: report_ready
+    type: CONTROL
+    location: data/control/report_ready
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: dataset, type: string }
+        - { name: ready,   type: boolean }

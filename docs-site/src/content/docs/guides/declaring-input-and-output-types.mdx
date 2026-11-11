@@ -110,6 +110,47 @@ declaring `type` stays optional; an `Enforce`-mode `require_dataset_type` policy
 contract that doesn't declare one, the same way any other org-policy violation does — see
 [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/).
 
+## Keep a readiness check's tables out of your data assets
+
+A readiness check reads a control table (say `load_status`, which records what has
+loaded) and writes a signal that tells downstream jobs the data is ready. Neither is a data
+product, and neither should be catalogued or shared as one. Declare both `CONTROL`:
+
+```yaml
+id: readiness_check
+version: "1.0.0"
+inputs:
+  - name: load_status
+    location: data/control/load_status
+    type: CONTROL
+    schema:
+      fields:
+        - { name: dataset,       type: string }
+        - { name: business_date, type: string }
+        - { name: status,        type: string }
+outputs:
+  - name: report_ready
+    location: data/control/report_ready
+    type: CONTROL
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: dataset, type: string }
+        - { name: ready,   type: boolean }
+```
+
+A declaration is only as good as whoever writes it, so a platform team enforces it with the
+organizational policy, listing its approved control tables in `controlTables`:
+
+- `require_dataset_type` refuses a dataset that declares no type.
+- `require_control_registration` refuses a `CONTROL` dataset that isn't in the list.
+- `require_registered_control_type` refuses a dataset that *is* in the list but isn't
+  declared `CONTROL`, so no contract can call `load_status` a `DATA_ASSET`.
+
+See [The catalogue decides in both directions](/reference/org-policy-format/#the-catalogue-decides-in-both-directions)
+for the policy and the message a misclassified contract gets. All three are checked when a
+job starts, on every engine, before it reads or writes anything.
+
 ## Enable role-consistency checking
 
 Declaring a type is one thing; Invaract can also check whether your transformation's own

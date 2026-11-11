@@ -1063,9 +1063,12 @@ Same three-layer split as the contract model itself, all in `contract/`
   again, mirrored exactly, for `typeGuarantees.enabled`/
   `customTypeGuaranteeTypes` against `TypeGuaranteeType`; a `controlTables`
   entry whose `reviewBy` has already passed (informational, mirroring an
-  expired exemption exactly); `controlTables` non-empty with no
-  `require_control_registration` rule attached anywhere in the document
-  (almost always a forgotten rule, not intentional). See "Custom policy
+  expired exemption exactly); `controlTables` non-empty with neither a
+  `require_control_registration` nor a `require_registered_control_type`
+  rule attached anywhere in the document (almost always a forgotten rule,
+  not intentional); a `require_registered_control_type` rule in a document
+  with no `controlTables` (it can never find anything, since each layer is
+  evaluated on its own). See "Custom policy
   types" below for the `customPolicyTypes` pair, "Type guarantee checks"
   under "Input and Output Types" above for the `typeGuarantees` pair, and
   "Control table registration" below for `controlTables`.
@@ -1075,13 +1078,14 @@ Same three-layer split as the contract model itself, all in `contract/`
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
   warnViolations)`. Every rule — built-in or custom — is evaluated through
   the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
-  checks `builtinEvaluators` (ten of the eleven built-in types, each an
+  checks `builtinEvaluators` (ten of the twelve built-in types, each an
   ordinary `CustomPolicyEvaluator` compiled into this module) before
   falling back to `policy.customPolicyTypes` for a `ruleType` outside that
   set — see "Custom policy types" below for the full mechanism, and its
   own note on why a built-in type always wins a naming collision. The
-  remaining built-in type, `require_control_registration`, is special-cased in
-  `evaluateRule` ahead of that dispatch instead, since it needs
+  remaining two, `require_control_registration` and
+  `require_registered_control_type`, are special-cased in
+  `evaluateRule` ahead of that dispatch instead, since they need
   `policy.controlTables` — data no `CustomPolicyEvaluator` can see through
   `evaluate(contract, rule)` alone — see "Control table registration"
   below.
@@ -1197,6 +1201,13 @@ grow to cover:
   this out gradually needs. Unlike every other type in this list, this one
   isn't dispatched through `builtinEvaluators` (see "`DatasetPolicy` vs.
   `ContractPolicy`" below).
+- **`require_registered_control_type`** (no properties) — the other
+  direction of `require_control_registration`: a dataset whose location
+  matches an active `controlTables` entry must be declared `type:
+  CONTROL`. Declared `DATA_ASSET` or `SOURCE`, or with no type at all, it is
+  a violation. See "Control table registration" below. Like
+  `require_control_registration`, it is special-cased in `evaluateRule`
+  rather than dispatched through `builtinEvaluators`.
 - **`require_extension_if`** (required `ifKey`/`thenKey`, optional
   `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
   only once the contract already satisfies `ifKey` (optionally pinned to
@@ -1227,15 +1238,15 @@ rather than a silent no-op).
 `InterpretedPolicy` is split into two sub-traits, reflecting the two
 different granularities a policy rule can check at. This is a
 *classification*, not `OrgPolicyEvaluator`'s dispatch mechanism — every
-`DatasetPolicy`/`ContractPolicy` type but one is its own
+`DatasetPolicy`/`ContractPolicy` type but two is its own
 `CustomPolicyEvaluator` in `builtinEvaluators` (see "Custom policy types"
 below), and it's that evaluator's own body, not a shared branch keyed off
 this split, that decides whether to narrow to `scopedDatasets` or check
-the contract as a whole. The one exception, `require_control_registration`,
-is still a `DatasetPolicy` by this classification (it narrows to
-`scopedDatasets` exactly like the rest), but `evaluateRule` special-cases
-its dispatch ahead of `builtinEvaluators` rather than giving it a map
-entry — see "Control table registration" below for why. The trait split
+the contract as a whole. The two exceptions, `require_control_registration`
+and `require_registered_control_type`, are still `DatasetPolicy`s by this
+classification (they narrow to `scopedDatasets` exactly like the rest), but
+`evaluateRule` special-cases their dispatch ahead of `builtinEvaluators`
+rather than giving them map entries — see "Control table registration" below for why. The trait split
 remains useful regardless: it's what a reader (or `OrgPolicyValidator`, via
 `PolicyType.ContractLevelTypes`) uses to know which shape a given
 built-in type is, without re-deriving it from each evaluator's own body:
@@ -1243,7 +1254,7 @@ built-in type is, without re-deriving it from each evaluator's own body:
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
   `field_naming_convention`, `require_format`, `require_dataset_description`,
   `require_dataset_type`, `forbid_control_sensitivity_tags`,
-  `require_control_registration` and `require_absolute_location`. Each narrows to `scopedDatasets(contract,
+  `require_control_registration`, `require_registered_control_type` and `require_absolute_location`. Each narrows to `scopedDatasets(contract,
   rule)` (`datasetsInScope(contract, rule.scope)`, further filtered by
   `rule.when`) and checks each dataset independently, producing a
   `PolicyViolation` with `dataset = Some(name)` per offending dataset.
@@ -1266,7 +1277,7 @@ that was never about any one dataset.
 
 ### Custom policy types (`CustomPolicyEvaluator`)
 
-The eleven built-in types above are deliberately closed — but an
+The twelve built-in types above are deliberately closed — but an
 organization's own policy vocabulary isn't limited to them. `OrgPolicy`
 carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
 a `PolicyRule.ruleType` this document uses to the fully-qualified class
@@ -1296,12 +1307,12 @@ with zero change to any governed job's own source.
 There is nothing special about *most* built-in types' evaluation
 mechanism — `OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
 `builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering ten
-of the eleven built-in types, each an ordinary `CustomPolicyEvaluator`, built
+of the twelve built-in types, each an ordinary `CustomPolicyEvaluator`, built
 via the private `interpreted` helper — see that method's own doc for why —
 compiled into this module) before ever consulting `customPolicyTypes`.
-The eleventh, `require_control_registration`, needs `OrgPolicy.controlTables`
-— data the `CustomPolicyEvaluator` trait has no way to receive — so
-`evaluateRule` checks for it by name before ever reaching this map; see
+The other two, `require_control_registration` and `require_registered_control_type`,
+need `OrgPolicy.controlTables` — data the `CustomPolicyEvaluator` trait has no
+way to receive — so `evaluateRule` checks for them by name before ever reaching this map; see
 "Control table registration" below. This is why
 a `customPolicyTypes` key that collides with a built-in type is inert; the
 built-in lookup always wins (`OrgPolicyValidator` warns on this, not
@@ -1439,8 +1450,9 @@ case class ControlTableRegistration(
 maintain it purely as a browsable catalogue of every known control table,
 with zero effect on any contract, until it attaches the policy rule that
 actually checks it. `OrgPolicyValidator` warns (not errors) when
-`controlTables` is non-empty but no `require_control_registration` rule
-is attached anywhere in the document — almost always a forgotten rule,
+`controlTables` is non-empty but neither a `require_control_registration`
+nor a `require_registered_control_type` rule is attached anywhere in the
+document — almost always a forgotten rule,
 not an intentional documentation-only choice, but never fatal on its own.
 
 **`require_control_registration`** (see "Policy types" above for its full
@@ -1503,6 +1515,41 @@ special-cases `require_control_registration` by name, ahead of the ordinary
 keeps this a real `PolicyRule` type (mode, scope, when, exemptions, all
 for free) rather than growing its own parallel subsystem the way
 `typeGuarantees` needed to for a genuinely cross-contract concern.
+
+**`require_registered_control_type`** is the same catalogue read the
+other way round. `require_control_registration` only ever looks at a
+dataset already declared `CONTROL`, so on its own it cannot stop a
+contract from declaring an approved control table something else: a
+readiness check's status table declared `DATA_ASSET` (and so catalogued and
+shared as a data product), or declared nothing at all. This rule checks
+every dataset in scope whose location matches an active `controlTables`
+entry, and refuses one not declared `CONTROL`:
+
+```yaml
+controlTables:
+  - { location: control/load_status, owner: data-platform, requiredFields: [dataset, business_date, status] }
+  - { location: control/report_ready, owner: data-platform, purpose: "Says the daily report is ready." }
+
+policies:
+  - { id: control-table-registry, type: require_control_registration }
+  - { id: registered-is-control, type: require_registered_control_type }
+```
+
+With both attached, the catalogue — which only the policy's owner can edit
+— is the authority in both directions: a `CONTROL` dataset must be in it,
+and a dataset in it must be `CONTROL`. "Matches" and "active" mean exactly
+what they mean for `require_control_registration` (the same
+backslash-normalized comparison and `reviewBy` expiry, through one shared
+helper, so the two rules can never disagree about whether a location is
+registered). A dataset at a location the catalogue does not hold is never in
+scope, and an unregistered `CONTROL` dataset is `require_control_registration`'s
+concern, not this one's. Like every policy rule, it reads only the
+`controlTables` of its own document: in a layered policy, put the catalogue
+and this rule in the same layer (`OrgPolicyValidator` warns when the rule's
+document has no `controlTables`). It is a new type rather than a property of
+`require_control_registration` so that no existing policy changes meaning
+when Invaract is upgraded, and so `InterpretedPolicy.RequireControlRegistration`'s
+binary shape stays as it is.
 
 ### Policy layering
 
@@ -1715,10 +1762,11 @@ absent:
   registered id — but nothing consumes it to evaluate a cross-contract
   rule yet; this remains real, unbuilt work, just no longer blocked on
   the registry itself existing.
-- **Registration proves declaration, not behavior** — `require_control_registration`
-  and `forbid_control_sensitivity_tags` both check the *declared* shape of
-  a `CONTROL` dataset (is it registered, does its schema carry the right
-  fields, does it avoid sensitive tags); neither traces what the real
+- **Registration proves declaration, not behavior** — `require_control_registration`,
+  `require_registered_control_type` and `forbid_control_sensitivity_tags` all check what a
+  contract *declares* (is a `CONTROL` dataset registered, is a registered one
+  declared `CONTROL`, does its schema carry the right fields, does it avoid
+  sensitive tags); none of them traces what the real
   transformation actually *does* with the data. `spark-adapter`'s
   `RoleConsistencyVerifier` (see "Role-consistency checks" under "Input
   and Output Types" above) is the one check in this feature that proves

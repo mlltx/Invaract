@@ -41,6 +41,11 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     // a contract that breaks the policy is refused when the run opens; one that keeps it opens and is checked
     assertCase("org-policy-refused")
     assertCase("org-policy-satisfied")
+    // the platform's controlTables decide what is a control table, both ways: a CONTROL dataset it does not list is refused,
+    // and so is a dataset at a location it lists that is declared anything but CONTROL (here, a DATA_ASSET)
+    val refusal = assertCase("org-policy-control-tables").replies.head.toString
+    assert(refusal.contains("'control-registered' declares dataset 'report_ready' CONTROL"))
+    assert(refusal.contains("dataset 'load_status' must be declared CONTROL, but the contract declares it DATA_ASSET"))
   }
 
   test(LocationRefs) {

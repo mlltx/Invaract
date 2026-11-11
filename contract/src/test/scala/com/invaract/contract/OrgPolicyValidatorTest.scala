@@ -234,6 +234,36 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(!result.warnings.exists(_.message.contains("purely documentary")))
   }
 
+  test("controlTables with entries AND only a require_registered_control_type policy produces no 'documentary' warning") {
+    val policy = OrgPolicy(
+      "1.0",
+      policies = List(PolicyRule("registered-control-type", PolicyType.RequireRegisteredControlType, Map.empty)),
+      controlTables = List(ControlTableRegistration(location = "control.watermark", owner = "team-a"))
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid && result.warnings.isEmpty)
+  }
+
+  test("require_registered_control_type with no controlTables in its document is a Warning naming the rule") {
+    val policy = OrgPolicy(
+      "1.0",
+      policies = List(
+        PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty),
+        PolicyRule("registered-control-type", PolicyType.RequireRegisteredControlType, Map.empty)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    val List(warning) = result.warnings
+    assert(warning.path == "policies[1]")
+    assert(warning.message.contains("'registered-control-type'") && warning.message.contains("no controlTables in this document"))
+  }
+
+  test("require_control_registration with no controlTables is not warned about: it still refuses every CONTROL dataset") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty)))
+    assert(OrgPolicyValidator.validate(policy).warnings.isEmpty)
+  }
+
   test("an empty controlTables list produces no 'documentary' warning either") {
     val policy = OrgPolicy("1.0")
     val result = OrgPolicyValidator.validate(policy)

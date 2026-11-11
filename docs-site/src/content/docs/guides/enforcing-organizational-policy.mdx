@@ -46,7 +46,7 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Eleven policy types are interpreted today, all listed in
+2. Twelve policy types are interpreted today, all listed in
    [Reference → Organizational Policy Format](/reference/org-policy-format/#policy-types); the
    ones most policies start from are below. That's not everything an organization needs,
    though: see [Write your own policy type](#write-your-own-policy-type) below for a type
@@ -546,11 +546,18 @@ policies:
   - id: control-table-registry
     type: require_control_registration
     description: "Every CONTROL dataset must be pre-approved and match its registered shape."
+  - id: registered-is-control
+    type: require_registered_control_type
+    description: "A dataset at a registered control table's location must be declared CONTROL."
 ```
+
+The second rule is the same list read the other way round: a contract can't declare an
+approved control table a `DATA_ASSET` (or leave its `type` off) to have it treated as a data
+product. See [The catalogue decides in both directions](/reference/org-policy-format/#the-catalogue-decides-in-both-directions).
 
 ## Write your own policy type
 
-The eleven built-in types cover a lot of ground, but they're a closed set — an
+The twelve built-in types cover a lot of ground, but they're a closed set — an
 organization's own vocabulary ("every dataset must carry an `approvedBy` extension
 matching one of these three names," "every output's location must fall under one of
 these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a

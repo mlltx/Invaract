@@ -1,0 +1,7 @@
+version: "1.0"
+# The platform's list of approved control tables: the readiness check's own signal is not in it yet.
+controlTables:
+  - { location: data/control/load_status, owner: data-platform, requiredFields: [dataset, business_date, status] }
+policies:
+  - { id: control-registered, type: require_control_registration }
+  - { id: registered-is-control, type: require_registered_control_type }

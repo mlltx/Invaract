@@ -158,6 +158,23 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireControlRegistration(false)))
   }
 
+  test("parse should decode require_registered_control_type, which takes no properties") {
+    val yaml =
+      """version: "1.0"
+        |controlTables:
+        |  - { location: control/load_status, owner: data-platform }
+        |policies:
+        |  - id: registered-control-type
+        |    type: require_registered_control_type
+        |    scope: inputs
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    val rule = policy.policies.head
+    assert(rule.ruleType == PolicyType.RequireRegisteredControlType && rule.scope == PolicyScope.Inputs)
+    assert(rule.interpret.contains(InterpretedPolicy.RequireRegisteredControlType))
+    assert(OrgPolicyValidator.validate(policy).issues.isEmpty)
+  }
+
   test("require_control_registration's 'requireRegistration' also tolerates a quoted 'true'/'false' string") {
     val yaml =
       """version: "1.0"
