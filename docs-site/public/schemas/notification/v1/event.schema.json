@@ -8,7 +8,8 @@
     { "$ref": "#/$defs/WriteEvent" },
     { "$ref": "#/$defs/JobSummaryEvent" },
     { "$ref": "#/$defs/ContractInferenceEvent" },
-    { "$ref": "#/$defs/DryRunSummaryEvent" }
+    { "$ref": "#/$defs/DryRunSummaryEvent" },
+    { "$ref": "#/$defs/CodeScanEvent" }
   ],
   "$defs": {
     "Envelope": {
@@ -253,6 +254,73 @@
         "mergeConflicts": { "type": "array", "items": { "type": "string" } },
         "job": { "$ref": "#/$defs/JobInfo" },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Same as on ContractInferenceEvent: the contract metadata (spark.invaract.contract.metadata.*), also present in mergedContractYaml's extensions." }
+      }
+    },
+    "CodeFinding": {
+      "description": "One call a code scan found in the job's own source that reads or writes data, or opens a connection, outside Invaract.",
+      "type": "object",
+      "required": [
+        "id", "code", "category", "rule", "path", "line", "column", "endLine", "endColumn", "call", "resolved", "scope", "snippet",
+        "target", "detail", "allowed", "reason", "message"
+      ],
+      "properties": {
+        "id": { "type": "string", "description": "Identifies the call across runs: built from the file, the rule, the function it is in and the call, not its line, so it stays the same when lines above it move." },
+        "code": { "type": "string", "description": "The scanner's code: IVR001 (read), IVR002 (write), IVR003 (connection), IVR004 (SQL on files)." },
+        "category": { "type": "string", "description": "read, write, connect or sql." },
+        "rule": { "type": "string", "description": "The rule that matched, such as pandas-read, frame-write, open-write-mode, database-connect or file-sql." },
+        "path": { "type": "string", "description": "The file, relative to the job's working folder when it is inside it." },
+        "line": { "type": "integer", "description": "1-based line the call starts on." },
+        "column": { "type": "integer", "description": "1-based column the call starts at." },
+        "endLine": { "type": "integer" },
+        "endColumn": { "type": "integer", "description": "1-based column just after the call's last character." },
+        "call": { "type": "string", "description": "The called expression as written, such as pd.read_csv." },
+        "resolved": { "type": ["string", "null"], "description": "The name it stands for through the file's imports (pandas.read_csv); null for a method of a value (df.to_parquet)." },
+        "scope": { "type": "string", "description": "The function or class it is in (Loader.load), or <module>." },
+        "snippet": { "type": "string", "description": "The whole call on one line (at most 200 characters), with any password in a URL masked." },
+        "target": { "type": ["string", "null"], "description": "The path or URL it names, when the source spells one out; never set for a connection or SQL." },
+        "detail": { "type": ["string", "null"], "description": "What made it count when the name alone does not: an open's mode, the SQL keyword." },
+        "allowed": { "type": "boolean", "description": "True when the job's own # invaract: allow marker keeps the call: an exception, reported but never refused." },
+        "reason": { "type": ["string", "null"], "description": "What the marker says after it." },
+        "message": { "type": "string" }
+      }
+    },
+    "CodeScanEvent": {
+      "description": "A scan of the job's own source code for reads and writes made outside Invaract (Python jobs with INVARACT_LINT on): once when the run starts, and again when it finishes if the job imported more of its own code meanwhile.",
+      "allOf": [{ "$ref": "#/$defs/Envelope" }],
+      "type": "object",
+      "required": [
+        "status", "phase", "mode", "refused", "scanner", "files", "counts", "findings", "findingsOmitted", "errors", "durationMs",
+        "contract", "metadata", "runId", "job"
+      ],
+      "properties": {
+        "eventType": { "const": "CODE_SCAN" },
+        "status": { "type": "string", "description": "FINDINGS (a call not explained by a marker); else NOT_SCANNED (a file of the job could not be read, or none was); else EXCEPTIONS (only calls a marker keeps) or CLEAN. More may be added." },
+        "phase": { "type": "string", "description": "START (before the job reads anything) or FINISH (code the job imported while it ran)." },
+        "mode": { "type": "string", "description": "REPORT or ENFORCE." },
+        "refused": { "type": "boolean", "description": "Whether this scan refused the run: enforcing, with a call not explained or nothing scanned. The run's CONTRACT_VALIDATION event then carries one UNGOVERNED_DATA_ACCESS violation per call." },
+        "scanner": { "type": "string", "description": "The scanner and its version, such as invaract-lint 0.1.0." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned." },
+        "counts": {
+          "type": "object",
+          "description": "Every finding by category (read, write, connect, sql): findings not explained, and exceptions a marker keeps.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["findings", "exceptions"],
+            "properties": { "findings": { "type": "integer" }, "exceptions": { "type": "integer" } }
+          }
+        },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/CodeFinding" }, "description": "Each finding, those not explained first; at most 1000." },
+        "findingsOmitted": { "type": "integer", "description": "How many findings were not listed (counted in counts)." },
+        "errors": {
+          "type": "array",
+          "description": "Files that could not be read or parsed.",
+          "items": { "type": "object", "required": ["path", "message"], "properties": { "path": { "type": "string" }, "message": { "type": "string" } } }
+        },
+        "durationMs": { "type": "integer" },
+        "contract": { "type": ["string", "null"], "description": "The contract the run enforces, as id@version; null in a dry run." },
+        "metadata": { "type": "object" },
+        "runId": { "type": ["string", "null"] },
+        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }] }
       }
     }
   }

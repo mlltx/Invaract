@@ -3960,6 +3960,15 @@ first written: one field's value compared against *another field on the same row
       holds the JVM and native checkers to the same refusal. Open, from the classification review:
       a readiness kind for outputs (`readinessFor`), publishing a readiness signal only after the
       assets it names, and cross-contract `CONTROL`-vs-`DATA_ASSET` contradictions in the lint.
+- [x] **Follow-up: Python jobs scan their own code when they start (`INVARACT_LINT`)** (`pythonio-adapter`,
+      `verification-core`, the lint): `report` publishes a `CODE_SCAN` event with every read or write the job's own code
+      makes around the package (where it starts and ends, the function it is in, the call and what it resolves to, the
+      rule, the path it names, the marker's reason, an id stable across edits); `enforce` also refuses the run before it
+      reads anything, one `UNGOVERNED_DATA_ACCESS` per call no `# invaract: allow` explains, and scans modules imported
+      while it runs before anything is published. A file it cannot parse, or none at all, leaves an enforced run not
+      checked. invaract-lint gained the rich findings, `scan()`/`Scan` and `--format json`. See docs/PYTHONIO_ADAPTER.md,
+      "The lint at run time". Open: the run-time strict mode (an audit hook refusing file writes outside staging), whose
+      cost and sharing with the lint are weighed separately.
 
 ---
 

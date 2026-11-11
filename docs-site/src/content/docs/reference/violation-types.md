@@ -60,6 +60,7 @@ that sets them, so a consumer can group or route findings without special-casing
 | `RULE_UNVERIFIABLE_DML` | write | — | — / operation kind | — |
 | `ORG_POLICY_VIOLATION` | dataset, when named | — | — | policy id |
 | `UNVERIFIABLE_WRITE` | — | — | — / command class | — |
+| `UNGOVERNED_DATA_ACCESS` | — | — | — / file, line and column, and the call | scanner code (`IVR001`–`IVR004`) |
 | `UNSUPPORTED_CONTRACT_FEATURE` | — | — | capability / `unsupported by <adapter>` | — |
 | `INVALID_CONTRACT` | — | — | — | — |
 
@@ -178,6 +179,7 @@ verified write is structurally wrong. See
 | Type | Meaning |
 |---|---|
 | `UNVERIFIABLE_WRITE` | Something may write or change data, but Invaract can't check it, so it's rejected rather than let through. On Spark: a command-shaped plan that isn't on the known-safe list and doesn't translate to a recognized write. On Beam: a step that ends the pipeline without being a recognized write, or a write that doesn't state what the contract asks of it (its columns, format or save mode). The remediation says what to do in the engine's own terms. |
+| `UNGOVERNED_DATA_ACCESS` | The job's own code reads or writes data, or opens a connection, without going through Invaract, so none of the checks would see it. Raised for Python jobs run with `INVARACT_LINT=enforce`: one per call the code scan found that no `# invaract: allow` marker explains, when the run starts (before it reads anything), or when it finishes for code the job imported while it ran (before anything is published). `actual` says where the call is and what it says (`jobs/load.py:4:14 pd.read_parquet('data/in/orders')`), and `rule` the scanner's code for it. The run's `CODE_SCAN` event lists every finding in full. See [Scan a Python job's code when it starts](/guides/using-invaract-with-python/#scan-the-jobs-code-when-it-starts). |
 | `RULE_UNVERIFIABLE_DML` | The plan is genuinely row-level DML of a kind the active contract declares a rule for, but Invaract couldn't extract the fact that rule needs (e.g. Iceberg's merge-on-read `UPDATE`). |
 | `INVALID_CONTRACT` | The contract itself is structurally unsound (e.g. no declared outputs) — caught before any plan is checked against it. |
 | `UNSUPPORTED_CONTRACT_FEATURE` | The contract relies on something the engine adapter in use declares it cannot verify (a catalog requirement, a rule, a nested type, a format, ...), so passing the write would represent an unchecked requirement as checked. `expected` is the capability id, e.g. `check.catalogRegistration`; the message gives the adapter's own reason. Remove what needs it from the contract, or use an adapter that supports it — see [Engine Capabilities](/reference/engine-capabilities/). The Spark adapter declares none of the checks a contract can ask for as unsupported, so this does not occur with it today. |

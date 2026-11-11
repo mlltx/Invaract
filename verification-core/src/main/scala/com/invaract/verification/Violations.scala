@@ -5,6 +5,7 @@ package com.invaract.verification
 
 import com.invaract.contract.{DatasetType, Dataset}
 import com.invaract.verification.SchemaChecker.Side
+import com.invaract.verification.notification.CodeFinding
 
 /** The one place a `Violation` is built: a named constructor per kind of finding,
   * so a kind's *shape* (which of `column`/`location`/`expected`/`actual` it fills)
@@ -53,6 +54,7 @@ import com.invaract.verification.SchemaChecker.Side
   * RULE_UNVERIFIABLE_DML                  write     -       - / the operation kind         -
   * ORG_POLICY_VIOLATION                   dataset   -       -                              policy id
   * UNVERIFIABLE_WRITE                     -         -       - / the command class          -
+  * UNGOVERNED_DATA_ACCESS                 -         -       - / where in the code, and the call  the scan's code (IVR001)
   * INVALID_CONTRACT                       -         -       -                              -
   * UNSUPPORTED_CONTRACT_FEATURE           -         -       capability id / unsupported by <adapter>  -
   * }}}
@@ -461,6 +463,37 @@ private[invaract] object Violations {
       s"${operation.problem.capitalize}. It was never checked against contract '$contractRef'.",
       remediation = operation.remediation,
       actual = Some(operation.name)
+    )
+
+  /** A call in the job's own code that reads or writes data, or opens a connection, outside Invaract, which an enforced code
+    * scan found and no `# invaract: allow` marker explains. `actual` is where it is and what it says
+    * (`jobs/load.py:4:14 pd.read_parquet('data/in/orders')`), and `rule` the scan's code for it (`IVR001`); it names no dataset,
+    * since none was declared for it - that is the problem. */
+  def ungovernedDataAccess(finding: CodeFinding): Violation = {
+    val (does, instead) = finding.category match {
+      case "read"    => ("reads data", "Read it with invaract.read(<name>), from an input the contract declares")
+      case "write"   => ("writes data", "Write it with invaract.write(<frame>, <name>), to an output the contract declares")
+      case "connect" => ("opens a database or storage connection", "Read and write through invaract.read and invaract.write instead")
+      case _         => ("runs SQL that reads or writes files", "Read and write the files through invaract.read and invaract.write, and run the SQL on the frames")
+    }
+    Violation(
+      ViolationType.UngovernedDataAccess,
+      s"`${finding.call}` in ${finding.scope} (${finding.location}) $does outside Invaract, so no check sees it " +
+        s"(${finding.code} ${finding.rule}${finding.detail.fold("")(d => s", $d")})",
+      remediation =
+        s"$instead. If it must stay as it is, mark its line `# invaract: allow - <why>`: the exception is then reported with " +
+          "its reason on every run, and no longer refuses it.",
+      actual = Some(s"${finding.location} ${finding.snippet}"),
+      rule = Some(finding.code)
+    )
+  }
+
+  /** The calls an enforced code scan found past the ones listed as violations: counted, not listed. */
+  def ungovernedDataAccessOmitted(count: Int): Violation =
+    Violation(
+      ViolationType.UngovernedDataAccess,
+      s"and $count more call(s) in the job's code that read or write data outside Invaract",
+      remediation = "The run's CODE_SCAN event lists every one, with where it is and why it was found."
     )
 
   /** `capability` is also reported as `expected`, and the declaring adapter as `actual`. `why` is

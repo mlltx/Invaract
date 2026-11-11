@@ -38,6 +38,13 @@ SETTINGS = {
 #: package's own variable, not a setting: it is never forwarded.
 CHECKER = "INVARACT_CHECKER"
 
+#: The package's own variables for scanning the job's code when a run starts (``_codescan``), none of them forwarded: ``off``
+#: (the default), ``report`` or ``enforce``; the files and folders to scan instead of the job's own loaded modules
+#: (comma-separated); and the files and folders to leave out (comma-separated names or globs).
+LINT = "INVARACT_LINT"
+LINT_PATHS = "INVARACT_LINT_PATHS"
+LINT_EXCLUDE = "INVARACT_LINT_EXCLUDE"
+
 
 def variable(name):
     """How the environment spells the setting ``name``: ``orgPolicy`` is ``INVARACT_ORG_POLICY``."""

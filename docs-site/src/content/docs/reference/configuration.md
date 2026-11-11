@@ -93,3 +93,6 @@ These control the Beam wrapper runner itself, not what Invaract checks.
 | Environment variable | What it does |
 |---|---|
 | `INVARACT_CHECKER` | The command that runs the checker, split as a shell would: a native checker, or `java -jar <path>/invaract-pythonio-checker.jar`. Default: the checker the installed package carries (see [Use Invaract with Python Jobs](/guides/using-invaract-with-python/#install-the-package)). |
+| `INVARACT_LINT` | `off` (default), `report` or `enforce`: scan the job's own code with invaract-lint when the run starts (and, for code imported while it runs, when it finishes), and publish a `CODE_SCAN` event; `enforce` refuses the run for a read or write made outside the package that no `# invaract: allow` marker explains (`UNGOVERNED_DATA_ACCESS`). Needs `pip install invaract[lint]`. See [Scan the job's code when it starts](/guides/using-invaract-with-python/#scan-the-jobs-code-when-it-starts). |
+| `INVARACT_LINT_PATHS` | Files and folders to scan instead of the modules the job has loaded, comma-separated. |
+| `INVARACT_LINT_EXCLUDE` | Files and folders the scan leaves out, by name or glob, comma-separated. |

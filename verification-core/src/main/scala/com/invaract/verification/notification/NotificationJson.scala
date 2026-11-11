@@ -120,6 +120,26 @@ object NotificationJson {
         "job" -> e.job.toMap,
         "metadata" -> e.metadata
       )
+    case e: CodeScanEvent =>
+      Map(
+        "eventType" -> e.eventType,
+        "timestamp" -> e.timestamp,
+        "status" -> e.status,
+        "phase" -> e.phase,
+        "mode" -> e.mode,
+        "refused" -> e.refused,
+        "scanner" -> e.scanner,
+        "files" -> e.files,
+        "counts" -> e.counts,
+        "findings" -> e.findings.map(_.toMap),
+        "findingsOmitted" -> e.findingsOmitted,
+        "errors" -> e.errors.map(_.toMap),
+        "durationMs" -> e.durationMs,
+        "contract" -> e.contract,
+        "metadata" -> e.metadata,
+        "runId" -> e.runId,
+        "job" -> e.job.map(_.toMap)
+      )
     case e: DryRunSummaryEvent =>
       Map(
         "eventType" -> e.eventType,

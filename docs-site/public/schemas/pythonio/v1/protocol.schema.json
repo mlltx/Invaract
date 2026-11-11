@@ -16,6 +16,7 @@
         { "$ref": "#/$defs/WriteRequest" },
         { "$ref": "#/$defs/UnverifiableWriteRequest" },
         { "$ref": "#/$defs/WrittenRequest" },
+        { "$ref": "#/$defs/ScanRequest" },
         { "$ref": "#/$defs/FinishRequest" },
         { "$ref": "#/$defs/PublishedRequest" }
       ]
@@ -25,6 +26,7 @@
       "oneOf": [
         { "$ref": "#/$defs/OpenReply" },
         { "$ref": "#/$defs/OkReply" },
+        { "$ref": "#/$defs/ScanReply" },
         { "$ref": "#/$defs/FinishReply" },
         { "$ref": "#/$defs/RefusedReply" },
         { "$ref": "#/$defs/NotCheckedReply" }
@@ -105,6 +107,56 @@
         }
       }
     },
+    "ScanRequest": {
+      "description": "What a scan of the job's own code found (INVARACT_LINT=report or enforce), sent after open, before the job reads anything, and again before finish when the job imported more of its own code while it ran. The checker publishes a CODE_SCAN event. When `enforce` is true and the run enforces a contract, a call no `# invaract: allow` marker explains refuses the run (one UNGOVERNED_DATA_ACCESS violation per call), and a file that could not be scanned, or none scanned at all, leaves it not checked. A dry run is never refused. Answered by a ScanReply, a RefusedReply or a NotCheckedReply.",
+      "type": "object",
+      "required": ["op", "phase", "enforce", "scanner", "files", "findings", "errors"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "const": "scan" },
+        "phase": { "enum": ["start", "finish"], "description": "start: the code loaded when the run opened; finish: code the job imported since." },
+        "enforce": { "type": "boolean", "description": "INVARACT_LINT=enforce: refuse the run for a call not explained." },
+        "scanner": { "type": "string", "minLength": 1, "description": "The scanner and its version, as the event names it: invaract-lint 0.1.0." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned, relative to the job's working folder when inside it." },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/CodeFinding" }, "description": "Every call found, those a marker keeps included (allowed: true)." },
+        "errors": {
+          "type": "array",
+          "description": "Files that could not be read or parsed.",
+          "items": {
+            "type": "object", "required": ["path", "message"], "additionalProperties": false,
+            "properties": { "path": { "type": "string", "minLength": 1 }, "message": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "durationMs": { "$ref": "#/$defs/Count" }
+      }
+    },
+    "CodeFinding": {
+      "description": "One call a scan found: invaract-lint's Finding.to_dict(). Published unchanged in the CODE_SCAN event's findings.",
+      "type": "object",
+      "required": ["id", "code", "category", "rule", "path", "line", "column", "endLine", "endColumn", "call", "scope", "snippet", "allowed", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["read", "write", "connect", "sql"] },
+        "rule": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "line": { "$ref": "#/$defs/Count" },
+        "column": { "$ref": "#/$defs/Count" },
+        "endLine": { "$ref": "#/$defs/Count" },
+        "endColumn": { "$ref": "#/$defs/Count" },
+        "call": { "type": "string", "minLength": 1 },
+        "resolved": { "type": ["string", "null"] },
+        "scope": { "type": "string", "minLength": 1 },
+        "snippet": { "type": "string", "minLength": 1 },
+        "target": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] },
+        "allowed": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+
     "FinishRequest": {
       "description": "The end of the run. Answered by a FinishReply.",
       "type": "object",
@@ -160,6 +212,16 @@
       "required": ["ok"],
       "additionalProperties": false,
       "properties": { "ok": { "const": true } }
+    },
+    "ScanReply": {
+      "description": "The scan was published and does not stop the run: `status` sums it up as the CODE_SCAN event does (any of the four in report mode or a dry run; CLEAN or EXCEPTIONS when enforced).",
+      "type": "object",
+      "required": ["ok", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "const": true },
+        "status": { "enum": ["CLEAN", "EXCEPTIONS", "FINDINGS", "NOT_SCANNED"] }
+      }
     },
     "FinishReply": {
       "description": "The run is over.",

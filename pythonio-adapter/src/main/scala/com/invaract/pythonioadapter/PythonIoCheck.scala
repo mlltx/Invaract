@@ -12,8 +12,8 @@ import com.invaract.verification.{
   VerificationSetup, Violations
 }
 import com.invaract.verification.notification.{
-  CatalogInfo, ContractValidationEvent, InferenceStatus, JobInfo, JobSummaryEvent, NotificationEvent, NotificationJson, NotificationSink, WriteEvent,
-  WriteFieldInfo
+  CatalogInfo, CodeScan, CodeScanEvent, ContractValidationEvent, InferenceStatus, JobInfo, JobSummaryEvent, NotificationEvent,
+  NotificationJson, NotificationSink, WriteEvent, WriteFieldInfo
 }
 import org.slf4j.LoggerFactory
 import java.io.{BufferedReader, InputStreamReader, PrintStream}
@@ -112,6 +112,7 @@ private[pythonioadapter] final class Run {
     case (r: Request.Read, run: Opened)          => read(r, run)
     case (w: Request.Write, run: Opened)         => write(w, run)
     case (w: Request.Written, run: Opened)       => stage(w, run)
+    case (s: Request.Scan, run: Opened)          => scan(s, run)
     case (f: Request.Finish, run: Opened)        => finish(f, run)
   }
 
@@ -235,6 +236,36 @@ private[pythonioadapter] final class Run {
     written :+= location
     staged += s.name -> staged.get(s.name).fold((w, location)) { case (first, at) => (first.copy(schema = nullableInEither(first.schema, w.schema)), at) }
     Map("ok" -> true)
+  }
+
+  /** What a scan of the job's own code found: published as a `CodeScanEvent`, and, when the scan is enforced and the run
+    * enforces a contract, the run refused for each call no `# invaract: allow` marker explains (`UNGOVERNED_DATA_ACCESS`),
+    * or not checked when a file could not be scanned, or none was (nothing could be said for the code). A dry run is never
+    * refused: it reports. */
+  private def scan(s: Request.Scan, run: Opened): Map[String, Any] = {
+    val status = CodeScan.status(s.files.size, s.errors.size, s.findings)
+    val unexplained = s.findings.filterNot(_.allowed)
+    val unscanned =
+      if (s.errors.nonEmpty) Some(s"the job's code could not all be scanned: ${s.errors.map(e => s"${e.path} (${e.message})").mkString("; ")}")
+      else if (s.files.isEmpty) Some("no file of the job's own code was found to scan")
+      else None
+    // a dry run reports: there is no contract to refuse the run by
+    val enforcing = if (s.enforce) run.contract else None
+    val refuses = enforcing.isDefined && (unexplained.nonEmpty || unscanned.isDefined)
+    val listed = CodeScan.listed(s.findings)
+    run.sink.foreach(_.publish(CodeScanEvent(
+      status, s.phase.toUpperCase(java.util.Locale.ROOT), if (s.enforce) "ENFORCE" else "REPORT", refuses, s.scanner, s.files, CodeScan.counts(s.findings),
+      listed, (s.findings.size - listed.size).toLong, s.errors, s.durationMs, System.currentTimeMillis(), run.contract.map(c => s"${c.id}@${c.version}"),
+      run.contract.fold(Map.empty[String, Any])(_.extensions), run.job.runId, Some(run.job)
+    )))
+    (enforcing, unscanned) match {
+      case (Some(_), Some(why)) => notChecked(s"$why, so whether it reads or writes data outside Invaract cannot be said (INVARACT_LINT=enforce)")
+      case (Some(c), None) if unexplained.nonEmpty =>
+        val shown = unexplained.take(MaxScanViolations).map(Violations.ungovernedDataAccess)
+        val more = unexplained.size - shown.size
+        reject(c, VerificationResult.of(s"${c.id}@${c.version}", shown ++ (if (more > 0) List(Violations.ungovernedDataAccessOmitted(more)) else Nil)), JobPlan, run)
+      case _ => Map("ok" -> true, "status" -> status)
+    }
   }
 
   /** The end of the job. A completed run is held to every declared output having been written; in a dry run, the drafts are
@@ -421,6 +452,9 @@ private[pythonioadapter] object Run {
   /** A location the run has read: its columns as read, the format it was read in, the catalog it is registered in (a catalog
     * table's), and the CSV options it was read with. */
   final case class Input(location: String, schema: LogicalSchema, format: Option[String], catalog: Option[CatalogIdentity], csv: Map[String, String])
+
+  /** The most calls an enforced code scan refuses a run for one by one; the rest are counted in one more violation. */
+  val MaxScanViolations = 50
 
   /** The whole job, as far as the checker can see it: the team's code, never inside it. */
   val JobPlan: UnknownPlan = UnknownPlan(PythonIoCheck.JobCode, "Python")

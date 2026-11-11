@@ -405,6 +405,7 @@ A Python job publishes, for each run:
 | The run has passed and an output has been put in place | `WRITE`, one per output |
 | The run has ended, whether it passed, was refused or failed (a contract refused as the run opens, before any of the job's code runs, publishes only its `CONTRACT_VALIDATION`) | `JOB_SUMMARY` |
 | In a dry run: each staged write, then the job's merged draft | `CONTRACT_INFERENCE`, then `DRY_RUN_SUMMARY` (and the `WRITE` events and `JOB_SUMMARY` above) |
+| With `INVARACT_LINT` on: the job's own code scanned as the run starts, and again before it finishes for code imported meanwhile | `CODE_SCAN`, `CLEAN`, `EXCEPTIONS`, `FINDINGS` or `NOT_SCANNED` (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS` per call) |
 
 A `WRITE` event means the data is in place: it is published after every output of the run has been published, never for
 a run that was refused, and never for an output left as it was (`ignore` on an output that already holds data). An output
@@ -479,6 +480,17 @@ The `JOB_SUMMARY` that ends the same run counts its two checks and two writes:
 ```json
 {"checksFailed": 0, "eventType": "JOB_SUMMARY", "timestamp": 1794126525275, "totalViolations": 0, "job": {"engineDetails": {"fastavro": "1.13.1", "pandas": "3.1.0", "polars": "2.1.0", "pyarrow": "26.0.0", "openpyxl": "3.1.5", "duckdb": "2.0.0"}, "name": "main.main", "startTimeMs": 1794126524813, "attributes": {}, "engineVersion": "3.11.17", "runId": "e870109a6b5e41c1", "user": "root", "engine": "pythonio"}, "eventId": "030c8b8bc503b3fb055cc3b807b5c687e6cbc581127979c33b017e23966b9f58", "totalWrites": 2, "durationMs": 462, "metadata": {}, "schemaVersion": 1, "checksPassed": 2, "runId": "e870109a6b5e41c1"}
 ```
+
+A `CODE_SCAN` event says what a scan of the job's own code found ([Scan the job's code when it
+starts](/guides/using-invaract-with-python/#scan-the-jobs-code-when-it-starts)): `status` (`FINDINGS` when a call reads or
+writes data outside the package and no marker explains it; else `NOT_SCANNED` when a file could not be read, or none was;
+else `EXCEPTIONS` when markers keep calls, else `CLEAN`), `phase` (`START`, or `FINISH` for code imported while the job
+ran), `mode` (`REPORT` or `ENFORCE`), whether it `refused` the run, the `scanner` and its version, the `files` scanned,
+`counts` per category (`read`, `write`, `connect`, `sql`) split into `findings` and `exceptions`, every finding (at most
+1,000, those not explained first, with `findingsOmitted` counting the rest; each as [What a finding
+says](/guides/using-invaract-with-python/#what-a-finding-says) describes), the `errors` for files it could not parse, and
+`durationMs`. A `FailureOnlyNotificationSink` passes on every scan but a `CLEAN` one, and a fan-out target's `statuses`
+filter applies to its `status`. The schema's examples include one from a real run (`examples/code-scan.json`).
 
 `invaract.check` publishes nothing: it is the job author's question, not a run.
 
@@ -682,7 +694,8 @@ sink.property.audit.property.path=/var/log/invaract-events.jsonl
 
 An optional `x.statuses=A,B` limits a target to events whose `status` is in the list — for
 [dry-run reporting](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs)'s
-inference statuses, or `PASSED`/`FAILED` on contract checks. An event with no status (a
+inference statuses, `PASSED`/`FAILED` on contract checks, or a Python job's `CODE_SCAN` statuses (`FINDINGS`,
+`NOT_SCANNED`, ...). An event with no status (a
 write, or any summary) always passes. One target failing never stops the others, and a
 target that can't be built fails when the job starts, like any single sink does.
 
@@ -760,8 +773,8 @@ event.
 
 - **`FailureOnlyNotificationSink(delegate)`** forwards only what's worth paging someone
   for: a FAILED `ContractValidationEvent`, and every `JobSummaryEvent` (a summary is
-  already a rate-limited, aggregate signal, not raw noise). PASSED checks and every
-  `WriteEvent` are dropped before reaching `delegate`.
+  already a rate-limited, aggregate signal, not raw noise), and every `CodeScanEvent` but
+  a `CLEAN` one. PASSED checks and every `WriteEvent` are dropped before reaching `delegate`.
 
 Both take the sink to wrap as a constructor argument, so build them directly in code
 around whatever `NotificationSinkFactory.create` returns — they're not something

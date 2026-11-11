@@ -59,7 +59,12 @@ class EventSchemaSpec extends AnyFunSuite {
       "INFERRED_DEGRADED", Some("why"), Some("/out"), Some("id: x\nversion: 0.1.0"), Some("FAILED"), List(violation), List("d"),
       Some(transformation), job, 7L, Map("team" -> "data-eng")
     ),
-    DryRunSummaryEvent(Map("INFERRED" -> 2L, "SKIPPED_UNRECOGNIZED" -> 1L), "MERGED", Some("id: merged"), List("clash"), job, 8L, Map("team" -> "data-eng"))
+    DryRunSummaryEvent(Map("INFERRED" -> 2L, "SKIPPED_UNRECOGNIZED" -> 1L), "MERGED", Some("id: merged"), List("clash"), job, 8L, Map("team" -> "data-eng")),
+    CodeScanEvent(
+      "FINDINGS", "START", "ENFORCE", refused = true, "invaract-lint 0.1.0", List("jobs/load.py"), CodeScan.counts(List(EventSchemaSpec.finding)),
+      List(EventSchemaSpec.finding, EventSchemaSpec.finding.copy(allowed = true, reason = Some("a lookup"))), 2L,
+      List(CodeScanError("jobs/broken.py", "invalid syntax")), 9L, 10L, Some("demo@1.0.0"), Map("owner" -> "team-a"), Some("app-1"), Some(job)
+    )
   )
 
   private val sparseEvents: List[NotificationEvent] = List(
@@ -67,7 +72,11 @@ class EventSchemaSpec extends AnyFunSuite {
     WriteEvent(None, "x", None, None, Nil, 2L, Map.empty),
     JobSummaryEvent(0L, 0L, 0L, 0L, 0L, 0L, Map.empty),
     ContractInferenceEvent("SKIPPED_UNSUPPORTED", None, None, None, None, Nil, Nil, None, JobInfo(), 7L, Map.empty),
-    DryRunSummaryEvent(Map("NO_WRITES_OBSERVED" -> 1L), "NO_DRAFTS", None, Nil, JobInfo(), 8L, Map.empty)
+    DryRunSummaryEvent(Map("NO_WRITES_OBSERVED" -> 1L), "NO_DRAFTS", None, Nil, JobInfo(), 8L, Map.empty),
+    CodeScanEvent(
+      "CLEAN", "FINISH", "REPORT", refused = false, "invaract-lint 0.1.0", Nil, Map.empty, List(EventSchemaSpec.bareFinding), 0L, Nil, 0L, 11L,
+      None, Map.empty
+    )
   )
 
   test("every event type validates against the published schema, with all optionals present and with none") {
@@ -76,7 +85,23 @@ class EventSchemaSpec extends AnyFunSuite {
       assert(problems.isEmpty, s"${event.eventType}: ${problems.mkString("; ")}")
     }
     assert((fullEvents ++ sparseEvents).map(_.eventType).toSet ==
-      Set("CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY", "CONTRACT_INFERENCE", "DRY_RUN_SUMMARY"))
+      Set("CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY", "CONTRACT_INFERENCE", "DRY_RUN_SUMMARY", "CODE_SCAN"))
+  }
+
+  test("a code scan's finding must carry every field, each of its type") {
+    val node = mapper.readTree(NotificationJson.toJson(fullEvents.last)).asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode]
+    assert(EventSchema.errors(node.toString).isEmpty)
+    def finding(edit: com.fasterxml.jackson.databind.node.ObjectNode => Unit) = {
+      val copy = node.deepCopy()
+      edit(copy.get("findings").get(0).asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode])
+      copy.toString
+    }
+    assert(EventSchema.errors(finding(_.remove("id"))).nonEmpty)
+    assert(EventSchema.errors(finding(_.put("line", "four"))).nonEmpty)
+    assert(EventSchema.errors(finding(_.put("allowed", "yes"))).nonEmpty)
+    val counts = node.deepCopy()
+    counts.set[com.fasterxml.jackson.databind.JsonNode]("counts", mapper.readTree("{\"read\": {\"findings\": 1}}"))
+    assert(EventSchema.errors(counts.toString).nonEmpty, "a category without its exceptions count")
   }
 
   test("the checker is not vacuous: it rejects a missing envelope field, a wrong version, an unknown type, and a wrong field type") {
@@ -110,7 +135,7 @@ class EventSchemaSpec extends AnyFunSuite {
     assert(defs.toSet == Set(
       "Envelope", "Violation", "Fingerprint", "OutputFingerprint", "TransformationFingerprint", "DataQualityCheckResult",
       "RoleConformanceCheckResult", "UnverifiableInput", "CatalogInfo", "JobInfo", "ContractValidationEvent", "WriteEvent",
-      "JobSummaryEvent", "ContractInferenceEvent", "DryRunSummaryEvent"
+      "JobSummaryEvent", "ContractInferenceEvent", "DryRunSummaryEvent", "CodeFinding", "CodeScanEvent"
     ))
   }
 
@@ -124,7 +149,7 @@ class EventSchemaSpec extends AnyFunSuite {
       assert(problems.isEmpty, s"${f.getName}: ${problems.mkString("; ")}")
       mapper.readTree(text).get("eventType").asText()
     }.toSet
-    assert(types == Set("CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY", "CONTRACT_INFERENCE", "DRY_RUN_SUMMARY"), s"examples cover only $types")
+    assert(types == Set("CONTRACT_VALIDATION", "WRITE", "JOB_SUMMARY", "CONTRACT_INFERENCE", "DRY_RUN_SUMMARY", "CODE_SCAN"), s"examples cover only $types")
   }
 
   test("schemaVersion is 1 on every event, and NotificationJson.SchemaVersion says so") {
@@ -188,4 +213,16 @@ class EventSchemaSpec extends AnyFunSuite {
     assert(mapper.readTree(NotificationJson.toJson(summary)).get("mergedContractDigest").asText() == sha256("id: merged"))
     assert(mapper.readTree(NotificationJson.toJson(summary.copy(mergedContractYaml = None))).get("mergedContractDigest").isNull)
   }
+}
+
+object EventSchemaSpec {
+
+  /** A finding with every optional field set. */
+  val finding: CodeFinding = CodeFinding(
+    "0123456789abcdef", "IVR001", "read", "pandas-read", "jobs/load.py", 4L, 14L, 4L, 37L, "pd.read_csv", Some("pandas.read_csv"), "load",
+    "pd.read_csv('in.csv')", Some("in.csv"), Some("mode 'w'"), allowed = false, None, "`pd.read_csv` reads data outside invaract"
+  )
+
+  /** A finding with none set. */
+  val bareFinding: CodeFinding = finding.copy(resolved = None, target = None, detail = None, reason = None)
 }

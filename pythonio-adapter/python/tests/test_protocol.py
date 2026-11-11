@@ -96,6 +96,7 @@ def test_a_write_always_says_its_layout_and_a_path_location_is_sent_as_text(tmp_
     _protocol.unverifiable_write("report", "no stream", "out"),
     _protocol.written("report", {"id": 0}, [{"failed": 1, "examples": ["-3"]}]),
     _protocol.finish(True),
+    _protocol.scan("start", True, "invaract-lint 0.1.0", ["job.py"], [], [("broken.py", "invalid syntax")], 3),
 ])
 def test_every_request_the_package_builds_is_one_the_schema_allows(request_):
     assert protocol_errors(request_, "Request") == []
@@ -126,7 +127,7 @@ def test_every_recorded_reply_is_one_the_schema_allows(case):
     replies = _json_lines(os.path.join(CASES, case, "replies.jsonl"))
     for i, (request, reply) in enumerate(zip(requests, replies), 1):
         op = request.get("op") if isinstance(request, dict) else None
-        if op in ("open", "read", "write", "written", "finish", "published"):
+        if op in ("open", "read", "write", "written", "scan", "finish", "published"):
             assert reply_errors(op, reply) == [], f"{case}: reply {i}"
         else:
             # a request with no op the checker knows can only be answered not-checked

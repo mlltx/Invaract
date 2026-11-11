@@ -9,7 +9,8 @@ one of them; the package's tests validate every request sent and every reply rec
 (names, formats, columns and their types, how many empty values each holds); it never carries it.
 
 A run is ``open``, then any number of ``read`` and ``write``/``written`` pairs, then ``finish``, and, when its reply says
-to publish, ``published`` once the package has put the outputs in place.
+to publish, ``published`` once the package has put the outputs in place. With ``INVARACT_LINT`` on, a ``scan`` follows
+``open``, and another may come just before ``finish``.
 """
 import os
 
@@ -52,6 +53,15 @@ def written(name, nulls, checks=None):
     """The end of a staged write: how many empty values each column turned out to hold and, with ``runtimeDataQuality`` on,
     what each of the output's data checks found, in the order ``open``'s reply gave them (``_checks.Evaluation``)."""
     return _present({"op": "written", "name": name, "nulls": nulls, "checks": checks})
+
+
+def scan(phase, enforce, scanner, files, findings, errors, duration_ms):
+    """What a scan of the job's own code found (``_codescan``): at the run's ``start``, or at its ``finish`` for code the job
+    imported meanwhile. ``findings`` are invaract-lint's findings as data (``Finding.to_dict``), the ones a marker keeps
+    included; ``errors`` are ``(path, message)`` for each file it could not read. With ``enforce``, a call no marker explains
+    refuses the run."""
+    return {"op": "scan", "phase": phase, "enforce": enforce, "scanner": scanner, "files": list(files), "findings": list(findings),
+            "errors": [{"path": path, "message": message} for path, message in errors], "durationMs": duration_ms}
 
 
 def finish(completed):

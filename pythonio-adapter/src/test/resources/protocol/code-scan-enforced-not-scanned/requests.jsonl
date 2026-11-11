@@ -1,0 +1,5 @@
+{"op": "open", "protocol": 1, "settings": {"contract": "${CASE}/contract.yaml", "notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "scan", "phase": "start", "enforce": true, "scanner": "invaract-lint 0.1.0", "files": ["jobs/clean.py"], "findings": [], "errors": [{"path": "jobs/broken.py", "message": "invalid syntax (broken.py, line 1)"}], "durationMs": 7}
+{"op": "scan", "phase": "start", "enforce": true, "scanner": "invaract-lint 0.1.0", "files": [], "findings": [], "errors": [], "durationMs": 7}
+{"op": "scan", "phase": "start", "enforce": false, "scanner": "invaract-lint 0.1.0", "files": [], "findings": [], "errors": [], "durationMs": 7}
+{"op": "finish", "completed": false}

@@ -73,6 +73,8 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.invalidInferredContract("outputs", "empty") -> "",
     Violations.orgPolicy("m", "r", Some("gold/out"), "p1") -> "LR",
     Violations.unverifiableWrite(UnverifiableOperation("SomeCommand", "it may write", "fix it"), "c@1.0.0") -> "A",
+    Violations.ungovernedDataAccess(ViolationsSpec.finding("write")) -> "AR",
+    Violations.ungovernedDataAccessOmitted(3) -> "",
     Violations.unsupportedContractFeature("toy", Capability.CheckFormat, "a dataset declares a format", Some("no formats")) -> "EA"
   )
 
@@ -208,6 +210,27 @@ class ViolationsSpec extends AnyFunSuite {
     assert(allViolationTypes.size >= 30, "reflection should find the whole vocabulary")
   }
 
+  test("ungovernedDataAccess says what the call does, where it is, the rule and what to do instead, by category") {
+    val read = Violations.ungovernedDataAccess(ViolationsSpec.finding("read"))
+    assert(read.violationType == ViolationType.UngovernedDataAccess && ViolationType.UngovernedDataAccess == "UNGOVERNED_DATA_ACCESS")
+    assert(read.message == "`pd.read_csv` in load (jobs/load.py:4:14) reads data outside Invaract, so no check sees it (IVR001 pandas-read, mode 'w')")
+    assert(read.remediation.startsWith("Read it with invaract.read(<name>), from an input the contract declares. If it must stay"))
+    assert(read.remediation.contains("`# invaract: allow - <why>`"))
+    assert(read.actual.contains("jobs/load.py:4:14 pd.read_csv('in.csv')") && read.rule.contains("IVR001"))
+    assert(read.location.isEmpty && read.column.isEmpty && read.expected.isEmpty)
+    val withoutDetail = Violations.ungovernedDataAccess(ViolationsSpec.finding("read").copy(detail = None))
+    assert(withoutDetail.message.endsWith("(IVR001 pandas-read)"))
+    val words = List("read", "write", "connect", "sql").map(c => Violations.ungovernedDataAccess(ViolationsSpec.finding(c)))
+    assert(words.map(_.message.split(" outside ")(0).split("\\) ").last) ==
+      List("reads data", "writes data", "opens a database or storage connection", "runs SQL that reads or writes files"))
+    assert(words.map(_.remediation.takeWhile(_ != '.')) == List(
+      "Read it with invaract", "Write it with invaract", "Read and write through invaract", "Read and write the files through invaract"
+    ))
+    val omitted = Violations.ungovernedDataAccessOmitted(3)
+    assert(omitted.message == "and 3 more call(s) in the job's code that read or write data outside Invaract")
+    assert(omitted.remediation.contains("CODE_SCAN event"))
+  }
+
   test("every ViolationType is documented in docs-site's violation-types reference") {
     // Walk up from the working directory: tests run from spark-adapter/, but Stryker4s runs them
     // from a copy of it under target/, one or two levels deeper.
@@ -221,5 +244,17 @@ class ViolationsSpec extends AnyFunSuite {
     val text = Source.fromFile(docs, "UTF-8").mkString
     val undocumented = allViolationTypes.filterNot(t => text.contains(s"`$t`"))
     assert(undocumented.isEmpty, s"ViolationTypes missing from violation-types.md: $undocumented")
+  }
+}
+
+object ViolationsSpec {
+
+  /** A code-scan finding of `category`, as the Python adapter's scan reports one. */
+  def finding(category: String): com.invaract.verification.notification.CodeFinding = {
+    val code = Map("read" -> "IVR001", "write" -> "IVR002", "connect" -> "IVR003", "sql" -> "IVR004")(category)
+    com.invaract.verification.notification.CodeFinding(
+      "0123456789abcdef", code, category, "pandas-read", "jobs/load.py", 4, 14, 4, 37, "pd.read_csv", Some("pandas.read_csv"), "load",
+      "pd.read_csv('in.csv')", Some("in.csv"), Some("mode 'w'"), allowed = false, None, "`pd.read_csv` reads data outside invaract"
+    )
   }
 }

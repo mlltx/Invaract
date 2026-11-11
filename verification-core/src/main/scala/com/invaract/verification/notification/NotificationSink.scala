@@ -510,8 +510,9 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
         lastApplicationId = e.runId.orElse(lastApplicationId)
         lastJob = e.job.orElse(lastJob)
         lastMetadata = e.metadata
-      // a summary isn't itself summarized; dry-run events are not write/check traffic
-      case _: JobSummaryEvent | _: ContractInferenceEvent | _: DryRunSummaryEvent => ()
+      // a summary isn't itself summarized; dry-run events and code scans are not write/check traffic (a scan that
+      // refuses a run is counted through the run's ContractValidationEvent, like any other refusal)
+      case _: JobSummaryEvent | _: ContractInferenceEvent | _: DryRunSummaryEvent | _: CodeScanEvent => ()
     }
     delegate.publish(event)
   }
@@ -566,6 +567,8 @@ class FailureOnlyNotificationSink(delegate: NotificationSink) extends Notificati
     // sink's purposes; the once-per-job dry-run summary, like JobSummaryEvent, always goes.
     case e: ContractInferenceEvent => if (e.status != InferenceStatus.Inferred) delegate.publish(e)
     case e: DryRunSummaryEvent => delegate.publish(e)
+    // a scan that found nothing is routine; one with findings, exceptions or nothing scanned is worth a look
+    case e: CodeScanEvent => if (e.status != CodeScanStatus.Clean) delegate.publish(e)
     case _: WriteEvent => ()
   }
 }
@@ -675,7 +678,7 @@ class RetryingNotificationSink(
   * `sinks` is the ordered list of ids; each id `x` takes `x.class` (required) and
   * `x.property.*` (that sink's own `sink.property.*`, as for any sink). The optional
   * `x.statuses` is a comma-separated allow-list applied to events that carry a
-  * `status` (`ContractInferenceEvent`, `ContractValidationEvent`); every other event,
+  * `status` (`ContractInferenceEvent`, `ContractValidationEvent`, `CodeScanEvent`); every other event,
   * the end-of-job `DryRunSummaryEvent` included, always passes, so a destination
   * that only wants problems still learns that the job ended.
   *
@@ -734,6 +737,7 @@ private[notification] object FanOutNotificationSink {
         event match {
           case e: ContractInferenceEvent => allowed.contains(e.status)
           case e: ContractValidationEvent => allowed.contains(e.status)
+          case e: CodeScanEvent => allowed.contains(e.status)
           case _ => true
         }
     }

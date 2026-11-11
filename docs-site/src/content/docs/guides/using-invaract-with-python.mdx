@@ -395,7 +395,88 @@ line, ideally with the reason:
 lookup = pd.read_csv("lookup/regions.csv")  # invaract: allow - a table shipped with the job, not a dataset
 ```
 
-`invaract-lint --format github jobs/` prints each finding as an annotation on the pull request's diff.
+`invaract-lint --format github jobs/` prints each finding as an annotation on the pull request's diff, with where the call
+starts and ends. `invaract-lint --format json jobs/` prints the whole scan as one JSON object for a report to read: its
+status, the files scanned, counts by category, and every finding (the calls a marker keeps included), each with the
+fields described [below](#what-a-finding-says).
+
+## Scan the job's code when it starts
+
+The lint in CI checks the code in the repository; a platform may also want to know about the code that actually runs.
+`INVARACT_LINT` runs the same scan inside the job, when the run starts, before the job reads anything, and publishes what
+it found as a `CODE_SCAN` event:
+
+| `INVARACT_LINT` | What happens |
+|---|---|
+| `off` (the default) | No scan. |
+| `report` | The job's code is scanned and a `CODE_SCAN` event published; the run goes on whatever it found. |
+| `enforce` | The same, and the run is refused before the job reads anything if a call reads or writes data outside the package and no `# invaract: allow` marker explains it: one `UNGOVERNED_DATA_ACCESS` violation per call. A file it cannot parse, or no file to scan at all, leaves the run not checked (exit status 2): nothing can be said for code that was not read. |
+
+It needs `invaract-lint` installed beside the package (`pip install invaract[lint]`); a run asked to scan without it is
+not checked, never let through unscanned. The job's code is every module loaded when the run starts that is not part of
+Python or an installed package: the script, and the job's own modules it imports. A module the job imports later, while
+it runs, is scanned when the run finishes, before anything is published, so with `enforce` a write hidden in a module
+imported late still stops the run. A platform that knows where a job's code lives can name it instead:
+
+| Variable | What it does |
+|---|---|
+| `INVARACT_LINT_PATHS` | Files and folders to scan instead of the job's loaded modules, comma-separated. |
+| `INVARACT_LINT_EXCLUDE` | Files and folders to leave out, by name or glob, comma-separated (`tests,vendor/*`). |
+
+A job with a `to_parquet` left in a helper, run with `INVARACT_LINT=enforce`, is refused as it starts:
+
+```text
+Why it violates the contract (1 violation):
+  1. [UNGOVERNED_DATA_ACCESS] `df.to_parquet` in backup (jobs/helpers.py:7:5) writes data outside Invaract, so no check sees it (IVR002 frame-write)
+
+How to correct it:
+  1. Write it with invaract.write(<frame>, <name>), to an output the contract declares. If it must stay as it is, mark its line `# invaract: allow - <why>`: the exception is then reported with its reason on every run, and no longer refuses it.
+```
+
+### What a finding says
+
+The `CODE_SCAN` event (and `invaract-lint --format json`) gives each finding enough to locate it, group it and follow it
+across runs. This is the finding above, from the event that run published:
+
+```json
+{
+  "id": "ccc7c1d5e8021501",
+  "code": "IVR002",
+  "category": "write",
+  "rule": "frame-write",
+  "path": "jobs/helpers.py",
+  "line": 7,
+  "column": 5,
+  "endLine": 7,
+  "endColumn": 43,
+  "call": "df.to_parquet",
+  "resolved": null,
+  "scope": "backup",
+  "snippet": "df.to_parquet('backup/report.parquet')",
+  "target": "backup/report.parquet",
+  "detail": null,
+  "allowed": false,
+  "reason": null
+}
+```
+
+- `path`, `line`, `column`, `endLine`, `endColumn`: where the call starts and ends (`endColumn` is just after its last
+  character); `path` is relative to the job's working folder.
+- `scope`: the function or class it is in (`Loader.load`), or `<module>`.
+- `code` and `category`: `IVR001` read, `IVR002` write, `IVR003` connection, `IVR004` SQL on files. `rule` says which rule
+  matched (`pandas-read`, `frame-write`, `open-write-mode`, `database-connect`, `file-sql`, ...) and `detail` what made it
+  count when the name alone does not (an `open`'s mode, the SQL keyword).
+- `call` as written, `resolved` the name it stands for through the file's imports (`pandas.read_csv` for `pd.read_csv`;
+  `null` for a method of a frame), `snippet` the whole call on one line, and `target` the path or URL it names when the
+  code spells one out (never for a connection or SQL). A password in a URL is masked in both.
+- `allowed` and `reason`: whether a `# invaract: allow` marker keeps it, and what the marker says after it.
+- `id`: identifies the call across runs. It is built from the file, the rule, the function and the call, not the line, so
+  it stays the same when lines above the call move.
+
+The event also has `status` (`FINDINGS`, `NOT_SCANNED`, `EXCEPTIONS` or `CLEAN`), `counts` by category split into
+findings and exceptions, the `files` scanned, `errors` for files it could not parse, and whether it `refused` the run; see
+[Events from a Python job](/guides/notification-sinks/#events-from-a-python-job). A scan reads the source, not what runs: a
+call reached through a name built at run time (`getattr(pd, "read_csv")`) is not found.
 
 ## The settings
 
@@ -416,6 +497,7 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_RUNTIME_DATA_QUALITY=true` | Check every row the job writes against its outputs' declared value constraints, before anything is published ([Check Data Values at Run Time](/guides/checking-data-values-at-run-time/)). |
 | `INVARACT_REGISTRY_URL`, `INVARACT_REGISTRY_CLIENT_CLASS` | The contract registry. |
 | `INVARACT_CHECKER` | The command that runs the checker, instead of the one the package carries. |
+| `INVARACT_LINT`, `INVARACT_LINT_PATHS`, `INVARACT_LINT_EXCLUDE` | Scan the job's own code when the run starts: `report` or `enforce` ([above](#scan-the-jobs-code-when-it-starts)). |
 
 A read of an input the contract does not declare is always refused, since every read names the input it reads. Every
 setting, with its spelling on the other engines, is in [Configuration Settings](/reference/configuration/).

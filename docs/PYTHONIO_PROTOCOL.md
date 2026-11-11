@@ -32,7 +32,8 @@ carries any of the data.
 ## A run, message by message
 
 A run is one `open`, then any number of `read`s and `write`/`written` pairs, in the order the job makes them, then one
-`finish`, and, when `finish`'s reply says to publish, one `published` once the package has put the outputs in place. This
+`finish`, and, when `finish`'s reply says to publish, one `published` once the package has put the outputs in place.
+With `INVARACT_LINT` on, a `scan` follows `open`, and another may come just before `finish` ([`scan`](#scan)). This
 is the recorded case `passes` (`pythonio-adapter/src/test/resources/protocol/passes`), a job that reads
 two inputs and writes two outputs; `>` is a request, `<` its reply:
 
@@ -109,6 +110,25 @@ an empty value is known only after, since pandas marks every column nullable wha
 A table the package cannot describe (one that offers no Arrow stream) is sent as a `write` with `unverifiable` and no
 columns, and is refused (`UNVERIFIABLE_WRITE`).
 
+### `scan`
+
+Sent when `INVARACT_LINT` is `report` or `enforce`: once right after `open`, before the job reads anything, with what
+invaract-lint found in the job's own code (the modules loaded when the run started, or `INVARACT_LINT_PATHS`); and once
+more just before `finish`, for the job's own modules it imported while it ran, when there are any. It carries the
+`phase` (`start` or `finish`), whether to `enforce`, the `scanner` and its version, the `files` scanned, every finding
+(invaract-lint's `Finding.to_dict()`, the ones a `# invaract: allow` marker keeps included, as `allowed: true`), the
+`errors` for files it could not read, and `durationMs`:
+
+```text
+> {"op": "scan", "phase": "start", "enforce": true, "scanner": "invaract-lint 0.1.0", "files": ["jobs/clean.py", "jobs/helpers.py"], "findings": [{"id": "aaaaaaaaaaaaaaaa", "code": "IVR001", "category": "read", "rule": "pandas-read", "path": "jobs/helpers.py", "line": 5, ..., "allowed": true, "reason": "a lookup table shipped with the job", ...}], "errors": [], "durationMs": 7}
+< {"ok": true, "status": "EXCEPTIONS"}
+```
+
+The checker publishes a `CODE_SCAN` event for it. Enforcing a contract, it refuses the run for each finding not
+`allowed`, one `UNGOVERNED_DATA_ACCESS` violation each (the first 50, and one more counting the rest), and answers
+not-checked when a file could not be read or none was scanned. A dry run is never refused for a scan. The reply's `status`
+is the event's: `FINDINGS`, `NOT_SCANNED`, `EXCEPTIONS` or `CLEAN` (recorded cases `code-scan-*`).
+
 ### `finish`
 
 Sent once, when the job returns (`completed: true`) or raises (`completed: false`). A completed run that never wrote a
@@ -139,7 +159,7 @@ standard input closes, the checker ends the run itself, with its `JOB_SUMMARY`, 
 
 | Reply | Means | The package |
 |---|---|---|
-| `{"ok": true, ...}` | The request passed. `open`'s reply carries the protocol version, the mode and the contract; `finish`'s, `publish`. | goes on |
+| `{"ok": true, ...}` | The request passed. `open`'s reply carries the protocol version, the mode and the contract; `scan`'s, the scan's `status`; `finish`'s, `publish`. | goes on |
 | `{"ok": false, "status": "refused", "violations": [...], "explanation": "..."}` | The contract refused it. `violations` lists the kinds, `explanation` is Invaract's standard message. | raises `ContractViolation` (exit status 1) |
 | `{"ok": false, "status": "not-checked", "reason": "..."}` | It could not be checked: a malformed request, one out of order (a `write` before `open`, a `written` with no `write`, a `published` before `finish`), a contract that cannot be read, an unknown setting, another protocol version. | raises `CheckNotRun` (exit status 2) |
 
@@ -158,6 +178,7 @@ sees a sink). Which event each request leads to:
 | `open` | `CONTRACT_VALIDATION FAILED` when the contract is refused when the run opens (an organisational policy it breaks, a check this adapter cannot make) |
 | `read`, `write` | `CONTRACT_VALIDATION FAILED` when refused; nothing when they pass |
 | `written` | `CONTRACT_VALIDATION`, `PASSED` or `FAILED`; in a dry run, `CONTRACT_INFERENCE` |
+| `scan` | `CODE_SCAN`; and `CONTRACT_VALIDATION FAILED` when an enforced scan refuses the run (`UNGOVERNED_DATA_ACCESS`) |
 | `finish` | `CONTRACT_VALIDATION FAILED` for an output never written (`MISSING_OUTPUT`); in a dry run, `DRY_RUN_SUMMARY`; and, when the run ends here, `JOB_SUMMARY` |
 | `published` | `WRITE` for each output listed, then `JOB_SUMMARY` |
 
