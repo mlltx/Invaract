@@ -260,6 +260,33 @@ class PythonStepsSpec extends AnyFunSuite {
     assert(PythonSteps.read(fixture("pandas_csv").head).exists(_.isInstanceOf[IoRead.Unlocated]))
   }
 
+  test("CSV through pandas, as the wrapper runner hands it to the checker: located csv, with the options pandas uses") {
+    val t = translate("pandas_csv_stated")
+    val w = t.writes.loneElement
+    assert(t.unverifiable.isEmpty)
+    assert((w.location, w.format, reads(w)) == (("data/out/report", Some("csv"), List("data/in/orders.csv"))))
+    assert(w.readFormats == Map("data/in/orders.csv" -> "csv"))
+    assert(w.formatOptions == Map(
+      "data/in/orders.csv" -> Map("delimiter" -> ",", "header" -> "true", "encoding" -> "utf-8", "quote" -> "\"", "escape" -> "", "nullValue" -> "NA"),
+      "data/out/report" -> Map("delimiter" -> "|", "header" -> "false", "encoding" -> "utf-8", "quote" -> "\"", "escape" -> "", "nullValue" -> "")
+    ))
+    assert(w.inputSchemas.map(_._1) == List("data/in/orders.csv") && w.outputSchema.exists(_.fields.map(_.name) == List("id", "amount")),
+      "the rows pandas yields carry their columns")
+  }
+
+  test("CSV options are only what a pandas CSV step states, as a mapping of names to text") {
+    def step(namespace: String, value: String) =
+      BeamStep("S", "x", Nil, Nil, Map("csv_options" -> value), Nil, displayNamespaces = Map("csv_options" -> namespace))
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, """{"delimiter": ";"}""")).contains(Map("delimiter" -> ";")))
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvWrite, """{"header": "true"}""")).contains(Map("header" -> "true")))
+    assert(PythonSteps.csvOptions(step("apache_beam.io.textio._TextSink", """{"delimiter": ";"}""")).isEmpty, "another class's item")
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, """{"header": true}""")).isEmpty, "not text")
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, """{"delimiter": ";", "header": true}""")).isEmpty, "not all text")
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, "[1, 2]")).isEmpty, "not a mapping")
+    assert(PythonSteps.csvOptions(step(PythonSteps.PandasCsvRead, "{")).isEmpty, "not readable")
+    assert(PythonSteps.csvOptions(BeamStep("S", "x", Nil, Nil, Map.empty, Nil)).isEmpty)
+  }
+
   test("a classic template's parameters: the write is refused, and the read is not located") {
     val t = translate("template_job")
     assert(t.writes.isEmpty && t.unverifiable.map(_.operation) == List("a write whose destination is a template parameter (output), known only when the job runs"))

@@ -21,12 +21,15 @@ private[beamadapter] final case class BeamFrontEnd(
 
   /** The check the settings in `config` describe: enforcement of the contract named there, or dry-run mode. Organizational policy
     * is enforced here, once, eagerly - before any pipeline is looked at. The job is named in its events as `config` says
-    * (`VerificationSetup.identify`). */
+    * (`VerificationSetup.identify`), and a dry run's drafts carry the contract metadata it gives (`contractMetadata`). */
   def check(config: ConfigSource, job: JobInfo): BeamCheck =
     AttachSetup.select(config) match {
       case AttachPlan.Enforce(contract, sink) => enforcing(contract, VerificationOptions(), sink, config, job)
       case AttachPlan.DryRun(sink) =>
-        new BeamCheck(None, VerificationOptions(), sink, VerificationSetup.identify(job, config), capabilities, VerificationSetup.trustedSteps(config), advice)
+        new BeamCheck(
+          None, VerificationOptions(), sink, VerificationSetup.identify(job, config), capabilities, VerificationSetup.trustedSteps(config), advice,
+          VerificationSetup.contractMetadata(config)
+        )
     }
 
   /** Enforcement of `contract` under `options`, resolving `ref://` locations, overlaying the settings in `config` and applying

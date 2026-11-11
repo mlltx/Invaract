@@ -408,6 +408,7 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_DRY_RUN=true` | Infer a contract from the job's writes instead of enforcing one ([above](#start-from-a-job-with-no-contract)). |
 | `INVARACT_NOTIFY_CONFIG` | Where the run's events go: each check, each output published, and the run's summary ([Events from a Python job](/guides/notification-sinks/#events-from-a-python-job)). |
 | `INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
+| `INVARACT_CONTRACT_METADATA` | Facts about the contract a dry run drafts, as `key=value` pairs (`owner=orders-team,source=erp`), written into every draft's `extensions` ([Tag the draft](/guides/dry-run-mode/#tag-the-draft-and-link-events-back-to-the-run)). |
 | `INVARACT_LOCATION_MAP` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
 | `INVARACT_LOCATION_URL`, `INVARACT_LOCATION_TOKEN_ENV` | A location service `ref://` locations the map does not hold are asked of, and the name of the variable holding its token ([Or ask a location service](/guides/resolving-dataset-locations/#or-ask-a-location-service)). |
 | `INVARACT_ORG_POLICY`, `INVARACT_ORG_POLICY_OVERLAYS` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |

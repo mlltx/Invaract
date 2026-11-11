@@ -234,6 +234,8 @@ class BeamTranslatorSpec extends AnyFunSuite {
       override def isUnion(step: BeamStep): Boolean = false
       override def textParserFormat(step: BeamStep): Option[String] = None
       override def textFormatterFormat(step: BeamStep): Option[String] = None
+      override def csvOptions(step: BeamStep): Option[Map[String, String]] = None
+      override def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]] = None
       override def recognisesShape(step: BeamStep): Boolean = false
       override def shape(step: BeamStep): Option[SchemaShape] = None
     }

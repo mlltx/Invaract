@@ -58,7 +58,24 @@ class DryRunReportingSpec extends AnyFunSuite {
     assert((e.head.status, e.head.reason, e.head.writeLocation, e.head.contractYaml) == ((InferenceStatus.Inferred, None, Some("out/a"), Some("id: inferred_contract"))))
     assert((e.head.selfCheck, e.head.selfCheckViolations, e.head.diagnostics) == ((Some("PASSED"), Nil, List("checked against its own write"))))
     assert(e.head.job == job)
+    assert(e.head.metadata.isEmpty, "with no contract metadata the event carries none")
     assert(log.lines.isEmpty)
+  }
+
+  test("inference and summary: every event echoes the contract metadata it is given") {
+    val sink = new TestNotificationSink
+    val metadata = Map("owner" -> "orders-team")
+    DryRunReporting.inference(Some(sink), new RecordingLogger().logger, job, InferenceStatus.SkippedUnrecognized, Some("why"), None, None, None, metadata)
+    DryRunReporting.summary(Some(sink), new RecordingLogger().logger, job, Nil, metadata)
+    assert(sink.events.map(_.metadata) == List(metadata, metadata))
+  }
+
+  test("tagged: the draft carries the metadata in its extensions, a key given there taking the draft's own value's place") {
+    val own = draft("out/a").copy(extensions = Map("owner" -> "inferred", "kept" -> 1))
+    assert(DryRunReporting.tagged(own, Map("owner" -> "orders-team", "source" -> "erp")).extensions ==
+      Map("owner" -> "orders-team", "kept" -> 1, "source" -> "erp"))
+    assert(DryRunReporting.tagged(own, Map.empty) == own)
+    assert(DryRunReporting.tagged(own, Map("source" -> "erp")).copy(extensions = own.extensions) == own, "nothing but the extensions changes")
   }
 
   test("inference: with no self-check the event says none") {
@@ -96,6 +113,7 @@ class DryRunReportingSpec extends AnyFunSuite {
     assert(e.head.mergeStatus == MergeStatus.Merged)
     assert(e.head.mergedContractYaml.exists(y => y.contains("out/a") && y.contains("out/b")))
     assert(e.head.job == job)
+    assert(e.head.metadata.isEmpty)
     assert(log.lines.isEmpty)
   }
 

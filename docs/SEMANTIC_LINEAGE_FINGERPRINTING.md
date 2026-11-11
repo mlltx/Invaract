@@ -4,9 +4,10 @@
 `ir`, per §1) implements the canonicalisation/encoding/hashing scheme this
 document specifies, and `spark-adapter` surfaces it per §14. See
 "Implementation notes" at the end of this document for exactly what
-shipped, its real measured mutation-testing score, and what's still
-outstanding (Maven Central publishing, MiMa, and CI wiring for
-`fingerprint` itself — tracked in ROADMAP.md). The design below is
+shipped and its real measured mutation-testing score. Maven Central
+publishing, MiMa and CI wiring for `fingerprint` itself, once outstanding,
+are all in place now (`release.yml`, the `api-compatibility` job and
+`mutation-testing-fingerprint`). The design below is
 otherwise unchanged from the original proposal; treat it as the accurate
 description of what the code does, not a superseded plan.
 

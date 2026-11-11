@@ -512,6 +512,20 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(DryRunReporter.contractMetadataOf(spark).isEmpty)
   }
 
+  test("contractMetadataOf: spark.invaract.contractMetadata gives the same facts as on every engine; a per-key setting wins") {
+    spark.conf.set("spark.invaract.contractMetadata", "owner=platform, source=erp")
+    spark.conf.set(DryRunReporter.ContractMetadataConfPrefix + "owner", "orders-team")
+    try assert(DryRunReporter.contractMetadataOf(spark) == Map("owner" -> "orders-team", "source" -> "erp"))
+    finally spark.conf.unset(DryRunReporter.ContractMetadataConfPrefix + "owner")
+    try assert(DryRunReporter.contractMetadataOf(spark) == Map("owner" -> "platform", "source" -> "erp"))
+    finally spark.conf.unset("spark.invaract.contractMetadata")
+    spark.conf.set("spark.invaract.contractMetadata", "owner")
+    try {
+      val refused = intercept[IllegalArgumentException](DryRunReporter.contractMetadataOf(spark)).getMessage
+      assert(refused == "'spark.invaract.contractMetadata' must be comma-separated key=value pairs ('owner' is not key=value), not 'owner'.")
+    } finally spark.conf.unset("spark.invaract.contractMetadata")
+  }
+
   test("jobInfoOf describes the session, its stable job id, and only the metadata-prefixed conf") {
     spark.conf.set(DryRunReporter.JobIdConfKey, "  stable_job  ")
     spark.conf.set(DryRunReporter.JobMetadataConfPrefix + "team", "data-eng")

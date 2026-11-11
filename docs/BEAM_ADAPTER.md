@@ -76,8 +76,8 @@ backing is not allowed.
 | `check.format` | partial | `output-format-matches`, `output-format-mismatch` |
 | `check.inputFormat` | partial | `input-format-matches`, `input-format-mismatch`; a text read is `text`, or the format of the parser it goes straight to (`JsonToRow` json, `CsvIO.parseRows` csv), and otherwise satisfies a declared `csv`, `json` or `text` (D5, as for writes): `BeamCheckSpec` "a text read satisfies...", `BeamIOSpec` |
 | `check.saveMode` | partial | `output-save-mode-matches`, `output-save-mode-mismatch` (written as BigQuery writes to Beam's in-memory BigQuery); BeamCheckSpec for the refusal of a declared save mode on a write that states none |
-| `check.partitioning` | unsupported | the partitioning scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: a file write's destinations are computed by the pipeline's own code, which the graph does not describe |
-| `check.csvOptions` | unsupported | the CSV option scenarios conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: a TextIO file's delimiter and quoting are the pipeline's own code, and CsvIO's format is not handed to the check |
+| `check.partitioning` | partial | `partitioned-output-matches` (a `HivePartitions` write), `partitioned-output-written-unpartitioned` (`FileIO.write()`), `partition-overwrite-mode-mismatch` (refused as unverifiable: a file write states no save mode, `Scenarios.partialRefusals`); D23; `BeamPartitioningSpec` |
+| `check.csvOptions` | partial | `csv-options-match`, `csv-output-options-mismatch`, `csv-input-options-mismatch` (a `CsvIO.write` and a `TextIO.read().withSkipHeaderLines(n)` parsed by `CsvIO.parseRows`); `BeamIO.csvOptions` reads the Commons CSV format a CsvIO write or parse holds (by reflection: `getCSVFormat`, `getConfigBuilder().csvFormat`, held to every Beam release CI tests), the read's header from the TextIO read; a write or read whose declared dataset names an option no step states (a plain TextIO file, a date or timestamp pattern) is refused (`BeamCheck.unstatedCsvOptions`); `BeamTextFormatsSpec` |
 | `check.catalogRegistration` | partial | `catalog-required-output-unregistered` (a file write), `catalog-required-output-registered` (a BigQuery table); BeamIOSpec for a BigQuery read's catalog identity |
 | `check.runtimeDataQuality` | unsupported | `runtime-data-quality-passes`, `runtime-data-quality-violation-blocks` conform by refusing with `UNSUPPORTED_CONTRACT_FEATURE`: the pipeline is checked before it runs, when no element exists |
 | `rules.dml` | not-applicable | not applicable: no row-level DML |
@@ -297,6 +297,18 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   avoids it; `--tempLocation` must be set either way); files, Kafka, JDBC and Pub/Sub contact nothing. In Python, BigQuery and
   Pub/Sub contact nothing, but a file read checks its pattern matches files when the pipeline is built (`validate=False`
   avoids it). `BeamAttachSpec`/`BeamPythonAttachSpec` "check only", `PortableCheckSpec`, `test_runner.py`.
+- **D23. Decided: partitioning is checked where the pipeline states it, and `HivePartitions` is the one partitioned file write it
+  can read.** Beam has no writer that lays out files by column values; a team writes one with `FileIO.writeDynamic()`, whose
+  destination and naming are its own functions, opaque to the graph. So: a write to one folder (a prefix write whose file
+  names are the constant policy `.to(prefix)` makes, `FileIO.write()`) is unpartitioned; `FileIO.writeDynamic()` with
+  `HivePartitions.by(keys)` and `HivePartitions.naming(suffix)` (a helper this module ships, Spark's folder layout and escaping)
+  is partitioned by its keys, recognised by the classes of `FileIO.Write`'s destination and naming closures (read as its
+  destination is, `getDynamic`/`getDestinationFn`/`getFileNamingFn`); a BigQuery write by the column its stated time
+  partitioning names (`getJsonTimePartitioning`). Any other dynamic destination, or a BigQuery write stating no partitioning
+  (its table may have one already) or one by ingestion time (a pseudo-column), is refused when the output declares keys
+  (`BeamCheck.unstatedPartitioningOf`), and so is a declared `partitionOverwriteMode` on a write with no save mode (a file
+  write: what an overwrite replaces is not stated); the kit accepts that refusal from a partial adapter
+  (`Scenarios.partialRefusals`). Not a reader-side layout: unlike Spark's, the files keep the key columns. `BeamPartitioningSpec`.
 
 ## Friction log
 

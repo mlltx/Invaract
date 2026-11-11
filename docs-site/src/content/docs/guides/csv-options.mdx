@@ -19,9 +19,8 @@ Python jobs that read and write through the `invaract` package are checked, and 
 reads and writes with the declared options itself. Spark jobs are checked too: each CSV read
 and write is held to the options it was given, with Spark's own default standing for any option
 the job leaves unset (a streaming CSV sink is the exception; its options are not checked). Beam
-doesn't check CSV options yet, so it refuses a contract that declares them
-(`UNSUPPORTED_CONTRACT_FEATURE`) rather than let a read or write use other ones unseen. See
-[What Each Engine Checks](/reference/what-each-engine-checks/).
+Java and Beam Python jobs are checked where Beam's CSV transforms say what they use
+([below](#what-beam-jobs-are-held-to)). See [What Each Engine Checks](/reference/what-each-engine-checks/).
 </Aside>
 
 ## Declare the layout
@@ -134,6 +133,34 @@ header false*.
 
 Adding `.option("header", "true")` lets it through. A dry run's draft contract declares the options
 the job set, and `header` always, since engines disagree on its default.
+
+## What Beam jobs are held to
+
+A Beam Java job writes CSV with `CsvIO.writeRows(...)` (or `CsvIO.write(...)`), and reads it with a
+`TextIO.read()` whose lines go straight to `CsvIO.parseRows(...)` (or `CsvIO.parse(...)`). Both carry
+a Commons CSV format, and Invaract holds what it says to the contract: the delimiter, the quote and
+escape characters (none, if the format has none), the text a missing value is written as, and the
+header. A write writes a header line unless its format skips the header record; a read has one when
+its `TextIO.read()` skips a first line (`.withSkipHeaderLines(1)`). Text is UTF-8 both ways.
+
+For an output declared `csv: { delimiter: ";", header: true }`, a job writing with
+`CSVFormat.DEFAULT` (commas) is refused before the pipeline runs: *contract declares the output CSV
+options delimiter ';' but the write uses delimiter ','*.
+
+A Beam Python job reads and writes CSV with pandas, `beam.io.ReadFromCsv(...)` and
+`beam.io.WriteToCsv(...)`, and Invaract holds pandas' options to the contract: `sep` (or `delimiter`),
+the header (a read has one unless the job passes `names=` or `header=None`; a write writes one unless
+`header=False`), `encoding`, `quotechar` (none with `quoting=csv.QUOTE_NONE`), `escapechar`, a write's
+`na_rep`, and a read's missing-value text only when the job sets `keep_default_na=False` and one
+`na_values`. pandas' default stands for each option the job leaves unset. Beam doesn't record these in
+the pipeline it hands to its runner, so the `invaract_beam` runner reads them off the job's transforms
+before the check. A `sep` pandas would guess (`sep=None`) or a regular expression is no delimiter, and
+pandas' `date_format` is not the contract's pattern, so neither is held to the contract.
+
+A plain `TextIO` read or write of CSV lines (`ReadFromText`, `WriteToText` in Python) is the job's own
+code, and a CSV format has no date or timestamp pattern. So a read or write of a dataset that declares an option nothing in the pipeline
+states (a `TextIO.write()` of lines the job joined itself, or a `dateFormat`) is refused as
+unverifiable rather than let through unchecked; the refusal names the options.
 
 ## Related
 

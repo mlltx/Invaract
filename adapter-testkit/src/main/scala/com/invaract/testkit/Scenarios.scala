@@ -901,6 +901,16 @@ object Scenarios {
     )
   )
 
+  /** The scenarios an adapter that declares a capability `partial` may refuse as unverifiable instead (`PartialRefusal`), by id. */
+  val partialRefusals: Map[String, PartialRefusal] = Map(
+    // A Beam file write states no save mode, so nothing says what an overwrite of it replaces: an adapter that cannot tell
+    // refuses a contract that declares it rather than pass the write unchecked.
+    "partition-overwrite-mode-mismatch" -> PartialRefusal(
+      Capability.CheckPartitioning,
+      "a write that states no save mode (a Beam file write) does not say what an overwrite of it replaces, so a declared partitionOverwriteMode cannot be checked"
+    )
+  )
+
   /** The scenarios a partial `check.inputExistence` is excused a `MISSING_INPUT` in, with why: the shape the excuse had before it
     * named its capability (it shipped on main with the Python I/O adapter's milestone 0). Kept so code compiled against that
     * keeps linking; read `partialExcuses`. */

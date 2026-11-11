@@ -3,7 +3,7 @@
 The Java translator is tested against these recordings (beam-adapter/src/test/resources/portable/*.pb), so its unit tests
 need no Python. Re-record them after moving to a new Python SDK release, and let the Java tests say what changed:
 
-    cd "$(mktemp -d)" && python /path/to/beam-adapter/python/tests/record_fixtures.py /path/to/beam-adapter/src/test/resources/portable
+    cd "$(mktemp -d)" && python /path/to/beam-adapter/python/tests/record_fixtures.py /path/to/beam-adapter/src/test/resources/portable [job ...]
 
 The pipelines are built, never run. Paths are relative (data/in/...) so the recordings do not depend on where they were made;
 the script creates the few input files a read checks for when the pipeline is built. Each step's own payload (its pickled
@@ -106,6 +106,16 @@ def pandas_csv(p):
     _ = rows | "WriteCsv" >> beam.io.WriteToCsv("data/out/report")
 
 
+def pandas_csv_stated(p):
+    """The same pandas CSV read and write as the wrapper runner hands them to the checker: with their path and options stated
+    on their steps (invaract_beam.pandas_csv), which the SDK's own portable form leaves pickled."""
+    rows = p | "ReadCsv" >> beam.io.ReadFromCsv("data/in/orders.csv", na_values="NA", keep_default_na=False)
+    _ = rows | "WriteCsv" >> beam.io.WriteToCsv("data/out/report", sep="|", header=False)
+
+
+pandas_csv_stated.stated = True
+
+
 def unlocated_read(p):
     """A read that states no location (CSV through pandas) feeding a write the adapter knows."""
     (p | "ReadCsv" >> beam.io.ReadFromCsv("data/in/orders.csv")
@@ -170,7 +180,7 @@ def example_job(p):
     job.build(p, "data", "out/report")
 
 
-JOBS = [example_job, parquet_job, parquet_dicts, rows_to_text, text_and_avro, bigquery_job, pubsub_job, pandas_csv, unlocated_read, template_job,
+JOBS = [example_job, parquet_job, parquet_dicts, rows_to_text, text_and_avro, bigquery_job, pubsub_job, pandas_csv, pandas_csv_stated, unlocated_read, template_job,
         side_effects, joined, unknown_sources]
 
 
@@ -181,10 +191,18 @@ def main(out):
     with open("data/in/orders.csv", "w") as f:
         f.write("id,amount\n1,2\n")
     os.makedirs(out, exist_ok=True)
+    only = set(sys.argv[2:])
     for job in JOBS:
+        if only and job.__name__ not in only:
+            continue
         p = beam.Pipeline(options=options())
         job(p)
         proto = p.to_runner_api()
+        if getattr(job, "stated", False):
+            # the package is built, not installed, in CI: take it from this checkout
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from invaract_beam import pandas_csv
+            proto = pandas_csv.annotate(p, proto)
         for transform in proto.components.transforms.values():
             transform.spec.payload = b""
         for environment in proto.components.environments.values():

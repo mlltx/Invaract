@@ -603,6 +603,20 @@ def test_a_dry_run_reads_and_writes_where_the_job_says_and_infers_a_contract(mon
     assert (written["contract"], written["location"], written["rowCount"], written["fileCount"]) == (None, "data/out/report", 2, 1)
 
 
+def test_a_platform_puts_its_facts_about_the_contract_in_a_dry_runs_drafts_from_the_environment(monkeypatch):
+    orders_input()
+    notify_to_file(monkeypatch)
+    monkeypatch.setenv("INVARACT_DRY_RUN", "true")
+    monkeypatch.setenv("INVARACT_CONTRACT_METADATA", "owner=orders-team,source=erp")
+    with invaract.run(name="orders_job.main"):
+        invaract.read("orders", location="data/in/orders")
+        invaract.write(REPORT, "report", location="data/out/report")
+    for kind, yaml in (("CONTRACT_INFERENCE", "contractYaml"), ("DRY_RUN_SUMMARY", "mergedContractYaml")):
+        event = event_of(kind)
+        assert event["metadata"] == {"owner": "orders-team", "source": "erp"}
+        assert "owner: orders-team" in event[yaml] and "source: erp" in event[yaml]
+
+
 def test_a_dry_run_read_or_write_with_no_location_is_not_checked(monkeypatch):
     monkeypatch.setenv("INVARACT_DRY_RUN", "true")
     with pytest.raises(invaract.CheckNotRun) as not_run:

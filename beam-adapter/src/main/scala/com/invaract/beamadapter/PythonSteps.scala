@@ -6,6 +6,8 @@ package com.invaract.beamadapter
 import com.invaract.contract.{Formats, LogicalSchema}
 import com.invaract.verification.ArrowSchemas
 
+import scala.collection.JavaConverters._
+
 /** The steps of a pipeline written with Beam's Python SDK, as its portable form describes them (`PortablePipeline`): the one
   * place that knows the Python SDK's class names and display-data keys (docs/BEAM_PYTHON_ADAPTER.md, D3).
   *
@@ -24,6 +26,12 @@ import com.invaract.verification.ArrowSchemas
   */
 private[beamadapter] object PythonSteps extends StepCatalogue {
 
+  /** The namespaces under which the wrapper runner states a pandas CSV read's and write's path and options, which the
+    * portable form leaves pickled (docs/BEAM_PYTHON_ADAPTER.md, D12). */
+  val PandasCsvRead = "invaract_beam.pandas_csv.ReadFromCsv"
+  val PandasCsvWrite = "invaract_beam.pandas_csv.WriteToCsv"
+  private val CsvOptionsKey = "csv_options"
+
   /** The file sources, by class, with their format. */
   val FileSources: Map[String, String] = Map(
     "apache_beam.io.parquetio._ParquetSource" -> Formats.Parquet,
@@ -31,7 +39,9 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
     "apache_beam.io.textio._TextSourceWithFilename" -> Formats.Text,
     "apache_beam.io.avroio._FastAvroSource" -> Formats.Avro,
     "apache_beam.io.avroio._AvroSource" -> Formats.Avro,
-    "apache_beam.io.tfrecordio._TFRecordSource" -> BeamFormats.TFRecord
+    "apache_beam.io.tfrecordio._TFRecordSource" -> BeamFormats.TFRecord,
+    // a pandas CSV read (`ReadFromCsv`): its path and options are stated by the wrapper runner (`invaract_beam.pandas_csv`)
+    PandasCsvRead -> Formats.Csv
   )
 
   /** The file sinks, by class, with their format. */
@@ -40,8 +50,11 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
     "apache_beam.io.textio._TextSink" -> Formats.Text,
     "apache_beam.io.avroio._FastAvroSink" -> Formats.Avro,
     "apache_beam.io.avroio._AvroSink" -> Formats.Avro,
-    "apache_beam.io.tfrecordio._TFRecordSink" -> BeamFormats.TFRecord
+    "apache_beam.io.tfrecordio._TFRecordSink" -> BeamFormats.TFRecord,
+    // a pandas CSV write (`WriteToCsv`), stated the same way
+    PandasCsvWrite -> Formats.Csv
   )
+
 
   private val BigQuerySources = Set("apache_beam.io.gcp.bigquery._CustomBigQuerySource", "apache_beam.io.gcp.bigquery._CustomBigQueryStorageSource")
   private val PubSubSource = "apache_beam.io.gcp.pubsub._PubSubSource"
@@ -128,7 +141,7 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
     step.displayNamespaces.get(FilePattern).flatMap(FileSinks.get).map { format =>
       step.display.get(FilePattern).fold[IoWrite](IoWrite.Unverifiable(s"a $format write whose file pattern is not stated")) { pattern =>
         runtimeParameter(pattern).fold[IoWrite](
-          IoWrite.Located(BeamLocations.folder(prefixOf(pattern)), Some(format), schema = writtenSchema(step, format))
+          IoWrite.Located(BeamLocations.folder(prefixOf(pattern)), Some(format), schema = writtenSchema(step, format), csvOptions = csvOptions(step))
         )(IoWrite.templateParameter)
       }
     }
@@ -177,6 +190,16 @@ private[beamadapter] object PythonSteps extends StepCatalogue {
   override def fileWrite(unit: BeamStep): IoWrite = IoWrite.Unverifiable(s"${unit.name}: not a file write")
   override def textParserFormat(step: BeamStep): Option[String] = None
   override def textFormatterFormat(step: BeamStep): Option[String] = None
+  /** The CSV options of a pandas CSV read or write, as the wrapper runner states them: what pandas reads or writes with, under
+    * the contract's names. Nothing for any other step, or when the statement is not a mapping of names to text. */
+  override def csvOptions(step: BeamStep): Option[Map[String, String]] =
+    step.displayNamespaces.get(CsvOptionsKey).filter(n => n == PandasCsvRead || n == PandasCsvWrite)
+      .flatMap(_ => step.display.get(CsvOptionsKey))
+      .flatMap(json => scala.util.Try(new org.yaml.snakeyaml.Yaml().load[AnyRef](json)).toOption)
+      .collect { case m: java.util.Map[_, _] if m.asScala.forall { case (k, v) => k.isInstanceOf[String] && v.isInstanceOf[String] } =>
+        m.asScala.map { case (k, v) => k.toString -> v.toString }.toMap
+      }
+  override def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]] = None
   override def recognisesShape(step: BeamStep): Boolean = false
   override def shape(step: BeamStep): Option[SchemaShape] = None
 

@@ -341,10 +341,10 @@ and attributes in their own spelling ([Configuration Settings](/reference/config
 
 Two kinds of metadata, kept apart on purpose:
 
-| Conf prefix | Describes | Where it lands |
+| Setting | Describes | Where it lands |
 | --- | --- | --- |
-| `spark.invaract.contract.metadata.<key>=<value>` | The **contract**: owner, team, source system, a ticket. | The draft's `extensions:` block, and every event's `metadata`. |
-| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, dry-run and enforcement alike, and nowhere else. |
+| `spark.invaract.contractMetadata=<key>=<value>,...`, or one `spark.invaract.contract.metadata.<key>=<value>` per key | The **contract**: owner, team, source system, a ticket. | The draft's `extensions:` block, and every dry-run event's `metadata`. |
+| `spark.invaract.jobAttributes=<key>=<value>,...`, or one `spark.invaract.job.metadata.<key>=<value>` per key | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, dry-run and enforcement alike, and nowhere else. |
 
 The run-level facts stay out of the contract because a contract outlives the run: a run id
 in a promoted contract would be stale the next night. The contract-level ones ride in the
@@ -353,8 +353,9 @@ draft, so it arrives already tagged with what it is and who owns it.
 They also link the dry run to what comes after it. When you promote a draft and enforce it,
 Invaract copies a contract's `extensions` into its own events, so the same keys appear in
 `metadata` on every `CONTRACT_VALIDATION` and `WRITE` event of the real runs. Whatever you
-use to find the dry run's events, a key like `owner` or a ticket id, finds those too. Both
-prefixes can be set with `spark-submit --conf`, with no change to the job:
+use to find the dry run's events, a key like `owner` or a ticket id, finds those too. All of
+them can be set with `spark-submit --conf`, with no change to the job (a per-key setting wins
+over the same key in the comma-separated one):
 
 ```bash
   --conf spark.invaract.contract.metadata.owner=orders-team \
@@ -364,6 +365,11 @@ prefixes can be set with `spark-submit --conf`, with no change to the job:
 
 That is what produced the examples above: look at `metadata` and `job.attributes` in each, and
 at the `extensions:` block in `contractYaml`. Values are strings.
+
+Beam and Python jobs tag their drafts the same way, with the comma-separated form in their own
+spelling: `--invaractContractMetadata=owner=orders-team,source_system=crm` on Beam Java,
+`--invaract_contract_metadata=...` on Beam Python, and `INVARACT_CONTRACT_METADATA=...` in a
+Python job's environment ([Configuration Settings](/reference/configuration/#reporting)).
 
 The `DRY_RUN_SUMMARY`'s `mergedContractYaml` is the job's drafts merged exactly as
 [`MergeDraftsCli`](#merging-drafts-from-a-job-with-several-writes) does, named for the job.

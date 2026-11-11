@@ -155,6 +155,7 @@ so a switch is `--invaract_dry_run=true`):
 | `--invaract_dry_run=true` | Infer a contract from the job's writes instead of enforcing one ([Dry-Run Mode](/guides/dry-run-mode/)). |
 | `--invaract_notify_config` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
 | `--invaract_job_id`, `--invaract_job_attributes` | The job's stable identity across runs, and facts about this run as `key=value` pairs (`team=orders,dag=orders_daily`), named by every event's `job`. |
+| `--invaract_contract_metadata` | Facts about the contract a dry run drafts, as `key=value` pairs (`owner=orders-team,source=erp`), written into every draft's `extensions` ([Tag the draft](/guides/dry-run-mode/#tag-the-draft-and-link-events-back-to-the-run)). |
 | `--invaract_location_map` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
 | `--invaract_location_url`, `--invaract_location_token_env` | A location service `ref://` locations the map does not hold are asked of, and the name of the variable holding its token ([Or ask a location service](/guides/resolving-dataset-locations/#or-ask-a-location-service)). |
 | `--invaract_org_policy`, `--invaract_org_policy_overlays` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
@@ -190,18 +191,22 @@ And how the checker is run:
   rows). A write of plain Python dictionaries states no columns: if its output declares columns,
   the write is refused rather than passed unchecked. A `beam.Select` with a computed field has an
   untyped column, which counts as unknown.
-- **Formats** are the sink a write uses. A text write cannot tell CSV from JSON.
+- **Formats** are the sink a write uses. A text write cannot tell CSV from JSON; a pandas CSV write
+  (`WriteToCsv`) is `csv`, held to the contract's [CSV options](/guides/csv-options/#what-beam-jobs-are-held-to).
 - **Save modes**: only a BigQuery write states one (`WRITE_APPEND`, `WRITE_TRUNCATE`,
   `WRITE_EMPTY` are `append`, `overwrite`, `error`). A contract that declares a save mode for a
   file write has that write refused.
 - **Reads that state no location** are still seen, never mistaken for data the job makes:
-  a CSV read through pandas (`ReadFromCsv`), a BigQuery query, a source class Invaract does not
+  a BigQuery query, a source class Invaract does not
   know, files matched by `fileio` (`MatchFiles`, `MatchContinuously`), a classic template's
   parameter. A declared input such a read may be is reported unverifiable rather than missing, and
   with `--invaract_reject_undeclared_inputs=true` the write is refused.
-- **Writes Invaract cannot place** are refused: a CSV write through pandas (`WriteToCsv`),
-  `fileio.WriteToFiles`, a BigQuery write whose table the job computes, a classic template's
-  parameter.
+- **Writes Invaract cannot place** are refused: `fileio.WriteToFiles`, a BigQuery write whose table
+  the job computes, a classic template's parameter.
+- **CSV through pandas** (`ReadFromCsv`, `WriteToCsv`) is located by its path and checked as `csv`
+  with the options pandas uses. Beam doesn't record either in the pipeline it hands to a runner, so
+  `InvaractRunner` reads them off the job's transforms first; a pipeline checked any other way sees
+  a pandas CSV read as unlocated and refuses its write.
 
 ## Steps that end the pipeline
 

@@ -36,6 +36,12 @@ private[beamadapter] trait StepCatalogue {
     * parser. */
   def textParserFormat(step: BeamStep): Option[String]
 
+  /** The CSV options `step` writes or parses with, when it is a `CsvIO` write or parse (`check.csvOptions`). */
+  def csvOptions(step: BeamStep): Option[Map[String, String]]
+
+  /** The CSV options of the text read `read`, whose lines go straight to `parser`, when that is a `CsvIO` parse. */
+  def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]]
+
   /** The format a text write of `step`'s output is in, when `step` turns rows into lines of a known format (`ToJson`). */
   def textFormatterFormat(step: BeamStep): Option[String]
 
@@ -56,6 +62,8 @@ private[beamadapter] object JavaSteps extends StepCatalogue {
   override def isUnion(step: BeamStep): Boolean = BeamIO.isUnion(step)
   override def textParserFormat(step: BeamStep): Option[String] = BeamIO.textParserFormat(step)
   override def textFormatterFormat(step: BeamStep): Option[String] = BeamIO.textFormatterFormat(step)
+  override def csvOptions(step: BeamStep): Option[Map[String, String]] = BeamIO.csvOptions(step)
+  override def csvReadOptions(read: BeamStep, parser: BeamStep): Option[Map[String, String]] = BeamIO.csvReadOptions(read, parser)
   override def recognisesShape(step: BeamStep): Boolean = BeamShapes.recognises(step)
   override def shape(step: BeamStep): Option[SchemaShape] = BeamShapes.of(step)
 }

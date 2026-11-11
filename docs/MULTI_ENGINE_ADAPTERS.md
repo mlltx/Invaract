@@ -413,6 +413,10 @@ Spark's `JobInfo` is `DryRunReporter.jobInfoOf(session)`: `engine = "spark"`, `j
 `attributes` from `spark.invaract.jobAttributes` and `spark.invaract.job.metadata.<key>` (the per-key setting wins);
 Beam's identifies its job in `BeamFrontEnd` (`--invaractJobId`, `--invaract_job_id`, ...), the Python I/O checker at
 `open` (`INVARACT_JOB_ID`, `INVARACT_JOB_ATTRIBUTES`).
+A dry run's drafts are tagged the same way by a third neutral setting, `contractMetadata` (`key=value,...`, read by
+`VerificationSetup.contractMetadata`): `DryRunReporting.tagged` puts it in each draft's `extensions` before the draft is
+written, self-checked or merged, and `DryRunReporting.inference`/`summary` echo it as each dry-run event's `metadata`. Spark
+also reads its older per-key `spark.invaract.contract.metadata.<key>`, which wins for a key set both ways.
 
 **A sink that needs an engine's storage library lives in that engine's adapter.** The core has
 no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a
@@ -449,6 +453,8 @@ divergence naming it, run on a daemon thread of the kit's, so an adapter binds i
 | The adapter declares... | The scenario's expected result |
 |---|---|
 | everything the scenario needs `supported` / `partial` | the neutral verdict, exactly (the same violation types) |
+| a capability `partial` that excuses violations in this scenario (`Scenarios.partialExcuses`) | the neutral rejection without the excused violation types |
+| a capability `partial` that may refuse this scenario instead (`Scenarios.partialRefusals`) | the neutral rejection, or a refusal as unverifiable alone (`UNVERIFIABLE_WRITE`): what the job does is something the engine does not state, and refusing is the fail-closed answer |
 | a capability the scenario's contract relies on `unsupported` (and it `enforcesContract`) | a rejection including `UNSUPPORTED_CONTRACT_FEATURE` - a quiet pass is a failure |
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |

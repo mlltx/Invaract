@@ -170,6 +170,36 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(written.contains("\"CONTRACT_INFERENCE\"") && written.contains("\"jobId\": \"orders_nightly\""))
   }
 
+  test("--invaractContractMetadata goes into every dry-run draft's extensions and every dry-run event, as a platform sets it") {
+    val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true", "--invaractContractMetadata=owner=orders-team, source=erp")
+      .as(classOf[InvaractBeamOptions])
+    val capture = new Capture
+    val p = pipeline
+    ordersToParquet(p, "/data/out/anywhere")
+    // the front end builds the check from the settings: the sink here is the capture, so it is handed in through a dry-run check
+    val metadata = com.invaract.verification.VerificationSetup.contractMetadata(new BeamConfigSource(options))
+    assert(metadata == Map("owner" -> "orders-team", "source" -> "erp"))
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(options), BeamCapabilities.declared,
+      contractMetadata = metadata).verify(p)
+    val Seq(inference) = capture.events.collect { case e: ContractInferenceEvent => e }
+    val Seq(summary) = capture.events.collect { case e: com.invaract.verification.notification.DryRunSummaryEvent => e }
+    assert(inference.metadata == metadata && summary.metadata == metadata)
+    assert(inference.contractYaml.exists(y => y.contains("owner: orders-team") && y.contains("source: erp")))
+    assert(summary.mergedContractYaml.exists(y => y.contains("owner: orders-team") && y.contains("source: erp")))
+    assert(inference.selfCheck.contains(SelfCheckStatus.Passed), "the tagged draft is the one self-checked, and still passes")
+    // and through the front end, which reads it from the settings itself (its events go to the sink the settings name)
+    val dir = java.nio.file.Files.createTempDirectory("invaract-beam-metadata")
+    val events = dir.resolve("events.jsonl")
+    val notify = java.nio.file.Files.write(dir.resolve("notify.properties"),
+      s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${events.toString.replace("\\", "/")}\n".getBytes("UTF-8"))
+    val dryRun = com.invaract.verification.ConfigSource.fromMap(Map("dryRun" -> "true", "notifyConfig" -> notify.toString, "contractMetadata" -> "owner=orders-team"))
+    val drafted = pipeline
+    ordersToParquet(drafted, "/data/out/anywhere")
+    BeamFrontEnd.Java.check(dryRun, InvaractBeam.jobInfoOf(options)).verify(drafted)
+    val written = new String(java.nio.file.Files.readAllBytes(events), "UTF-8")
+    assert(written.contains("\"CONTRACT_INFERENCE\"") && written.contains("\"metadata\": {\"owner\": \"orders-team\"}"))
+  }
+
   // --- dry-run mode ---
 
   test("dry-run mode infers a draft contract from each write it can describe, and enforces nothing") {

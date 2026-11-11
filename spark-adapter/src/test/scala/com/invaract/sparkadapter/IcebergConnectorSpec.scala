@@ -1732,4 +1732,58 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.map(e => e.status -> e.job) == List("PASSED" -> Some(job), "FAILED" -> Some(job)))
   }
+
+  // --- check.partitioning (docs/SPARK_ADAPTER.md, "Partitioning") ---
+
+  private def partitionedIceberg(location: String, keys: List[String], mode: String) = {
+    def field(name: String) = {
+      val position = keys.indexOf(name)
+      val partition = if (position < 0) "" else s", partitioned: true, partitionKeyPosition: ${position + 1}"
+      s"        - { name: $name, type: long$partition }"
+    }
+    s"""id: iceberg_partitioning
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: $location
+       |    format: iceberg
+       |    partitionOverwriteMode: $mode
+       |    schema:
+       |      fields:
+       |${List("id", "region").map(field).mkString("\n")}
+       |""".stripMargin
+  }
+
+  test("check.partitioning: overwritePartitions replaces only the partitions written (dynamic), overwrite the whole table (static)") {
+    val tableName = "local.db.part_mode_tbl"
+    val location = scratchDir.resolve("warehouse").resolve("db").resolve("part_mode_tbl").toString
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, region BIGINT) USING iceberg PARTITIONED BY (region)")
+    def rows = spark.range(2).withColumn("region", col("id"))
+    withContract(partitionedIceberg(location, List("region"), "dynamic")) {
+      rows.writeTo(tableName).overwritePartitions()
+      rows.writeTo(tableName).append()
+      // an INSERT OVERWRITE plans the dynamic overwrite when the session asks for one
+      spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+      try spark.sql(s"INSERT OVERWRITE $tableName SELECT 5L, 1L")
+      finally spark.conf.unset("spark.sql.sources.partitionOverwriteMode")
+      val ex = intercept[ContractViolationException](rows.writeTo(tableName).overwrite(lit(true)))
+      assert(ex.result.violations.map(v => (v.violationType, v.expected, v.actual)) ==
+        List((ViolationType.OutputPartitioningMismatch, Some("dynamic overwrite"), Some("static overwrite"))))
+    }
+    withContract(partitionedIceberg(location, List("id"), "static")) {
+      val ex = intercept[ContractViolationException](rows.writeTo(tableName).append())
+      assert(ex.result.violations.map(v => (v.expected, v.actual)) == List((Some("id"), Some("region"))))
+    }
+  }
+
+  test("check.partitioning: a table partitioned by a derived transform states no partition columns, so a partitioned output refuses it") {
+    val tableName = "local.db.part_bucket_tbl"
+    val location = scratchDir.resolve("warehouse").resolve("db").resolve("part_bucket_tbl").toString
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, region BIGINT) USING iceberg PARTITIONED BY (bucket(4, region))")
+    withContract(partitionedIceberg(location, List("region"), "static")) {
+      val ex = intercept[ContractViolationException](spark.range(2).withColumn("region", col("id")).writeTo(tableName).append())
+      val List(v) = ex.result.violations
+      assert(v.violationType == ViolationType.UnverifiableWrite && v.message.contains("AppendData"))
+    }
+  }
 }

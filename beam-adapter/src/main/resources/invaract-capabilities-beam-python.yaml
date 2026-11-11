@@ -93,9 +93,15 @@ capabilities:
     summary: A pipeline's writes state no partition columns, so a contract that declares partition keys is refused.
     note: A file write's destination folders are computed by the pipeline's own code (a dynamic destination), which the graph does not describe.
   check.csvOptions:
-    status: unsupported
-    summary: A pipeline's CSV reads and writes do not state their options, so a contract that declares CSV options is refused.
-    note: A text file's delimiter and quoting are the pipeline's own code, which the graph does not describe.
+    status: partial
+    summary: "pandas CSV reads and writes (ReadFromCsv, WriteToCsv) are checked against the contract's CSV options. Any other text read or write, and a date or timestamp pattern, states none, so a contract that declares one for it is refused."
+    note: >-
+      The portable form leaves a pandas CSV read's and write's path and options pickled, so the wrapper runner states them
+      from the live transforms (invaract_beam.pandas_csv): the delimiter (not one pandas sniffs or a regular expression), the
+      header, encoding, quote and escape characters, a write's missing-value text, and a read's only when the job turned
+      pandas' own list of them off for one of its own; pandas' default stands for each the job leaves unset. A plain text
+      file's delimiter and quoting are the pipeline's own code, and a strftime date pattern is not the contract's, so a write
+      or read whose declared dataset names an option nothing states is refused as unverifiable rather than passed unchecked.
   check.catalogRegistration:
     status: partial
     summary: "BigQuery tables are checked against the `bigquery` catalog. Files and Pub/Sub have no catalog in Beam, so a requirement on them is never met."

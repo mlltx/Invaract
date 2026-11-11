@@ -91,6 +91,10 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractJobAttributes: String
   def setInvaractJobAttributes(value: String): Unit
 
+  @Description("Facts about the contract a dry run drafts, put in every draft's extensions and every dry-run event's metadata: comma-separated key=value pairs, such as owner=orders-team,source=erp.")
+  def getInvaractContractMetadata: String
+  def setInvaractContractMetadata(value: String): Unit
+
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
   def setInvaractDelegate(value: String): Unit
@@ -146,6 +150,7 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.TrustedSteps           => options.getInvaractTrustedSteps
       case InvaractConf.JobId                  => options.getInvaractJobId
       case InvaractConf.JobAttributes          => options.getInvaractJobAttributes
+      case InvaractConf.ContractMetadata       => options.getInvaractContractMetadata
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 

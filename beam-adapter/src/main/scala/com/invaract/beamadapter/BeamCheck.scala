@@ -3,7 +3,7 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.contract.{Contract, ContractParser, Formats, LogicalSchema, RuleType}
+import com.invaract.contract.{Contract, ContractParser, Dataset, Formats, LogicalSchema, RuleType}
 import com.invaract.ir.{UnknownPlan, Write}
 import com.invaract.verification.{
   AdapterCapabilities, CheckedWrite, ContractInference, DryRunReporting, DryRunSelfCheck, InferredWrite, InputChecker, LocationMatching, OutputChecker, TrustedSteps,
@@ -21,7 +21,8 @@ import scala.util.control.NonFatal
   *
   * It owns the engine-specific half only: translating the pipeline (`BeamTranslator`) and handing each write over, as a
   * `CheckedWrite`, to `VerificationPipeline.verifyWrite`, which does the validation, the verifier order, the events and the
-  * rejection text for every engine alike. In dry-run mode it infers a draft contract from each write instead and enforces nothing.
+  * rejection text for every engine alike. In dry-run mode it infers a draft contract from each write instead and enforces nothing;
+  * `contractMetadata` (the platform's `contractMetadata` setting) goes into every draft's `extensions` and every dry-run event.
   */
 final class BeamCheck private[beamadapter] (
     contract: Option[Contract],
@@ -30,7 +31,8 @@ final class BeamCheck private[beamadapter] (
     job: JobInfo,
     capabilities: Option[AdapterCapabilities],
     trusted: TrustedSteps = TrustedSteps.Nobody,
-    advice: BeamAdvice = BeamAdvice.Java
+    advice: BeamAdvice = BeamAdvice.Java,
+    contractMetadata: Map[String, String] = Map.empty
 ) {
   private val logger = LoggerFactory.getLogger(classOf[BeamCheck])
   private def runId: Option[String] = job.runId
@@ -82,7 +84,11 @@ final class BeamCheck private[beamadapter] (
         caseSensitive = true,
         rowMutation = None,
         lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType),
-        inputFormats = BeamCheck.inputFormatsAsDeclared(c, w)
+        inputFormats = BeamCheck.inputFormatsAsDeclared(c, w),
+        // what a CsvIO write or parse states (check.csvOptions); `refusal` refuses a declared option no step states
+        formatOptions = w.formatOptions,
+        // how the write lays out its data (check.partitioning); `refusal` refuses declared keys a write does not say it keeps
+        partitioning = w.partitioning
       ),
       options,
       sink,
@@ -101,7 +107,10 @@ final class BeamCheck private[beamadapter] (
         LogicalSchema(Nil) -> Some(s"the write to ${w.location} exposes no columns, so the draft declares none for it")
       )(_ -> None)
       try {
-        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema, inputFormats = w.readFormats), w.draftInputs, w.plan)
+        val draft = DryRunReporting.tagged(
+          ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema, w.partitioning, w.formatOptions, w.readFormats), w.draftInputs, w.plan),
+          contractMetadata
+        )
         // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
         val unlocated =
           if (w.unlocatedReads.isEmpty) None
@@ -130,7 +139,7 @@ final class BeamCheck private[beamadapter] (
     }
     // the whole job is known before it runs, so its summary is published straight away rather than when it ends; every draft
     // is merged, a degraded one included (as Spark merges it), so the summary describes every write a draft describes
-    DryRunReporting.summary(sink, logger, job, outcomes)
+    DryRunReporting.summary(sink, logger, job, outcomes, contractMetadata)
     DryRunReporting.flush(sink, logger, BeamCheck.FlushTimeoutMs)
   }
 
@@ -140,7 +149,7 @@ final class BeamCheck private[beamadapter] (
       location: Option[String],
       yaml: Option[String],
       selfCheck: Option[(String, List[Violation], List[String])] = None
-  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck)
+  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck, contractMetadata)
 }
 
 private[beamadapter] object BeamCheck {
@@ -197,12 +206,20 @@ private[beamadapter] object BeamCheck {
     lazy val unknownFormat = if (write.format.isEmpty) declaredFormat(contract, write) else None
     // a file write has no save mode in Beam (it always replaces the files it names): only a BigQuery write states one
     lazy val unknownSaveMode = if (write.plan.saveMode.isEmpty) declaredSaveMode(contract, write) else None
+    // a CSV option the contract declares that no CsvIO step states would pass unchecked (check.csvOptions is partial)
+    lazy val unstatedCsv = unstatedCsvOptions(contract, write)
+    // partition keys a write does not say it keeps, or an overwrite mode a write with no save mode cannot say (check.partitioning)
+    lazy val unstatedPartitioning = unstatedPartitioningOf(contract, write)
     if (write.outputSchema.isEmpty && declaresColumns(contract, write))
       Some(s"a write to ${write.location} whose data exposes no schema (its items are plain objects, not rows with a schema), so its columns cannot be checked")
     else if (unknownFormat.isDefined)
       Some(s"a write to ${write.location} through a sink whose file format cannot be told, while the contract declares '${unknownFormat.get}'")
     else if (unknownSaveMode.isDefined)
       Some(s"a write to ${write.location} that states no save mode (only a BigQuery write does), while the contract declares '${unknownSaveMode.get}'")
+    else if (unstatedCsv.isDefined)
+      unstatedCsv
+    else if (unstatedPartitioning.isDefined)
+      unstatedPartitioning
     else if (options.rejectUndeclaredInputs && write.unlocatedReads.nonEmpty)
       // strict mode promises no read goes undeclared, which cannot be shown for a read whose source is not known
       Some(s"the write to ${write.location} depends on reads whose source cannot be located (${write.unlocatedReads.mkString("; ")}), so an undeclared input cannot be ruled out")
@@ -216,4 +233,37 @@ private[beamadapter] object BeamCheck {
   }
 
   private def ruleTypes(contract: Contract): Set[String] = contract.rules.map(_.ruleType).toSet
+
+  /** Why `write` cannot be held to the partitioning its declared output names: a write whose layout the pipeline does not state
+    * (a dynamic destination other than `HivePartitions`', a BigQuery table with no stated time partitioning), or one that
+    * states no save mode (a file write) while the output declares what an overwrite of it replaces. */
+  def unstatedPartitioningOf(contract: Contract, write: TranslatedWrite): Option[String] =
+    OutputChecker.expectedOutputFor(contract.outputs, write.location).filter(_.partitionKeys.nonEmpty).flatMap { output =>
+      val keys = output.partitionKeys.mkString(", ")
+      if (write.partitioning.isEmpty)
+        Some(s"a write to ${write.location} whose layout the pipeline does not state (its destinations are the job's own code, or its table's partitioning is not stated), while the contract declares it partitioned by $keys")
+      else if (output.partitionOverwriteMode.isDefined && write.plan.saveMode.isEmpty)
+        Some(s"a write to ${write.location} that states no save mode, so what an overwrite of it replaces cannot be told, while the contract declares partitionOverwriteMode '${output.effectivePartitionOverwriteMode}'")
+      else None
+    }
+
+  /** Why `write`, or a read it depends on, cannot be held to the CSV options its declared dataset names: only a `CsvIO` write or
+    * parse states its options (`BeamIO.csvOptions`), and never a date or timestamp pattern, so a text write or read whose lines
+    * are not CSV to Beam would otherwise pass any declared option unseen. A write or read in a format other than text or csv is
+    * left to the format check. */
+  def unstatedCsvOptions(contract: Contract, write: TranslatedWrite): Option[String] = {
+    def unstated(dataset: Dataset, location: String): List[String] =
+      dataset.csv.toList.flatMap(_.declared).map(_._1).filterNot(write.formatOptions.getOrElse(location, Map.empty).contains)
+    def couldBeCsv(format: Option[String]) = format.forall(f => f == Formats.Text || f == Formats.Csv)
+    val output = OutputChecker.expectedOutputFor(contract.outputs, write.location).filter(_ => couldBeCsv(write.format))
+      .map(d => unstated(d, write.location)).filter(_.nonEmpty)
+      .map(names => s"a write to ${write.location} that does not state the CSV options ${names.mkString(", ")} (only a CsvIO write states its options, and never a date or timestamp pattern), while the contract declares them")
+    val declared = InputChecker.Declared(contract.inputs)
+    lazy val input = write.readLocations.distinct.filter(l => couldBeCsv(write.readFormats.get(l))).iterator.flatMap { location =>
+      declared.index.matchingIndicesOf(LocationMatching.namesOf(location, None)).headOption.map(declared.inputs(_)).map(unstated(_, location))
+        .filter(_.nonEmpty)
+        .map(names => s"a read of $location that does not state the CSV options ${names.mkString(", ")} (only a CsvIO parse of the lines a text read yields states its options, and never a date or timestamp pattern), while the contract declares them")
+    }.toList.headOption
+    output.orElse(input)
+  }
 }

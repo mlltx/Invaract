@@ -31,6 +31,7 @@ from apache_beam.metrics.metric import MetricResults
 from apache_beam.options.pipeline_options import GoogleCloudOptions
 from apache_beam.runners.runner import PipelineResult, PipelineRunner, PipelineState, create_runner
 
+from . import pandas_csv
 from .options import SETTINGS, InvaractOptions
 
 _LOG = logging.getLogger(__name__)
@@ -112,7 +113,8 @@ def check(pipeline, options):
     with tempfile.TemporaryDirectory(prefix="invaract-") as folder:
         path = os.path.join(folder, "pipeline.pb")
         with open(path, "wb") as f:
-            f.write(pipeline.to_runner_api().SerializeToString())
+            # with what the portable form leaves out of a pandas CSV read or write stated on its step (pandas_csv)
+            f.write(pandas_csv.annotate(pipeline, pipeline.to_runner_api()).SerializeToString())
         try:
             # the checker's log goes to the job's own standard error; what it prints to standard output is its verdict
             done = subprocess.run(command + checker_arguments(path, options), stdout=subprocess.PIPE, text=True, check=False)

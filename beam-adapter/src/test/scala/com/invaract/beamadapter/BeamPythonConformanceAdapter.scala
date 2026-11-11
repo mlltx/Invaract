@@ -163,7 +163,7 @@ private[beamadapter] object BeamPythonConformanceAdapter {
   /** `job` as `conformance_job.py` reads it. */
   def jobJson(job: ScenarioJob, root: Path, target: String): String = {
     def fields(schema: LogicalSchema) = schema.fields.map(f => Map("name" -> f.name, "type" -> f.dataType.catalogString, "nullable" -> f.nullable))
-    def dataset(input: ScenarioInput) = Map("location" -> input.location, "fields" -> fields(input.schema))
+    def dataset(input: ScenarioInput) = Map("location" -> input.location, "fields" -> fields(input.schema), "csvOptions" -> input.csvOptions)
     def source(s: ColumnSource): Map[String, Any] = s match {
       case ColumnSource.FromInput(i, c)    => Map("kind" -> "FromInput", "input" -> i, "column" -> c)
       case ColumnSource.CastInput(i, c, t) => Map("kind" -> "CastInput", "input" -> i, "column" -> c, "to" -> t.catalogString)
@@ -177,7 +177,10 @@ private[beamadapter] object BeamPythonConformanceAdapter {
       "inputs" -> job.inputs.map(dataset),
       "columns" -> job.columns.map(c => Map("name" -> c.name, "source" -> source(c.source))),
       "outputFields" -> fields(ReferenceAdapter.outputSchema(job)),
-      "output" -> Map("location" -> job.output.location, "format" -> job.output.format, "saveMode" -> job.output.saveMode),
+      "output" -> Map(
+        "location" -> job.output.location, "format" -> job.output.format, "saveMode" -> job.output.saveMode, "csvOptions" -> job.output.csvOptions,
+        "partitionBy" -> job.output.partitionBy
+      ),
       "join" -> job.join.map(j => Map("left" -> j.leftColumn, "right" -> j.rightColumn)),
       "filterColumn" -> job.filterColumn,
       "untranslatableWrite" -> job.untranslatableWrite,

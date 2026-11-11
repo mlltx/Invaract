@@ -90,7 +90,10 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     }
     enforce {
       val result = resultFrame(job, readInputs(scenarioId, job), materialize = job.boundary)
-      val writer = result.write.format(job.output.format).mode(job.output.saveMode).options(job.output.csvOptions)
+      val written = result.write.format(job.output.format).mode(job.output.saveMode).options(job.output.csvOptions)
+        .option(PartitioningSupport.OverwriteModeOption, job.output.partitionOverwriteMode)
+      // `insertInto` refuses any `partitionBy` call, even one with no columns: the table's own partitioning applies there
+      val writer = if (job.output.partitionBy.isEmpty) written else written.partitionBy(job.output.partitionBy: _*)
       job.output.registeredAs match {
         case Some(table) => writer.insertInto(table)
         case None        => writer.save(target)

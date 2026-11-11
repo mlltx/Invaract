@@ -269,6 +269,8 @@ private[sparkadapter] object DryRunReporter {
   /** `spark.invaract.contract.metadata.<key>=<value>` entries become the inferred draft's
     * `extensions` (and every event's `metadata`), prefix stripped: owner, team, source system,
     * a ticket - anything that describes the contract rather than one run of the job.
+    * The engine-neutral `spark.invaract.contractMetadata=<key>=<value>,...` (`InvaractConf.ContractMetadata`)
+    * adds the same kind of fact, as on every engine; for a key set both ways, this per-key setting wins.
     */
   val ContractMetadataConfPrefix = "spark.invaract.contract.metadata."
 
@@ -278,7 +280,8 @@ private[sparkadapter] object DryRunReporter {
       case (key, value) if key.startsWith(prefix) && key.length > prefix.length => key.stripPrefix(prefix) -> value
     }
 
-  def contractMetadataOf(session: SparkSession): Map[String, String] = withPrefix(session, ContractMetadataConfPrefix)
+  def contractMetadataOf(session: SparkSession): Map[String, String] =
+    VerificationSetup.contractMetadata(SparkConfigSource(session)) ++ withPrefix(session, ContractMetadataConfPrefix)
 
   def jobInfoOf(session: SparkSession): JobInfo = {
     val sc = session.sparkContext
