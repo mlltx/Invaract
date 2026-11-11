@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Spark Adapter | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor/design/spark-adapter/"/><link rel="sitemap" href="/Invaract/contributor/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.4"/><meta name="generator" content="Starlight v0.42.8"/><meta property="og:title" content="Spark Adapter"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor/design/spark-adapter/"/><meta property="og:locale" content="en"/><meta property="og:description" content="This document describes the Spark adapter: the bridge from Spark's Catalyst logical plan into the Invaract transformation IR. It's the first concrete fr..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="This document describes the Spark adapter: the bridge from Spark's Catalyst logical plan into the Invaract transformation IR. It's the first concrete fr..."/><script>
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Spark Adapter | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor/design/spark-adapter/"/><link rel="sitemap" href="/Invaract/contributor/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.7"/><meta name="generator" content="Starlight v0.42.9"/><meta property="og:title" content="Spark Adapter"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor/design/spark-adapter/"/><meta property="og:locale" content="en"/><meta property="og:description" content="This document describes the Spark adapter: the bridge from Spark's Catalyst logical plan into the Invaract transformation IR. It's the first concrete fr..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="This document describes the Spark adapter: the bridge from Spark's Catalyst logical plan into the Invaract transformation IR. It's the first concrete fr..."/><script>
 	window.StarlightThemeProvider = (() => {
 		const storedTheme =
 			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
@@ -24,8 +24,8 @@
 			},
 		};
 	})();
-</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor/_astro/common.BZoYT9LC.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
-</style><script type="module" src="/Invaract/contributor/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor/_astro/print.C9eyqPGL.css" media="print"><link rel="stylesheet" href="/Invaract/contributor/_astro/common.BZoYT9LC.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><script type="module" src="/Invaract/contributor/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding: 0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
 	(() => {
 		const openBtn = document.querySelector('button[data-open-modal]');
 		const shortcut = openBtn?.querySelector('kbd');
@@ -492,13 +492,37 @@ being one of <code dir="auto">DataQualityVerdict.{Guaranteed, NotGuaranteed, Vio
 <code dir="auto">SensitivityLineage</code>’s tags, and never affect <code dir="auto">VerificationResult.passed</code>
 on their own; the load-bearing principle is that an <em>absence</em> of proof
 must never look like a failure to a caller only checking <code dir="auto">passed</code>.</p>
-<p><strong>Partitioning is not checked yet.</strong> <code dir="auto">check.partitioning</code> (an output’s declared
-partition keys and <code dir="auto">partitionOverwriteMode</code>, <code dir="auto">OUTPUT_PARTITIONING_MISMATCH</code>) is
-declared unsupported here, so a contract that declares partition keys is refused
-(<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>). Spark’s write commands carry what it needs
-(<code dir="auto">InsertIntoHadoopFsRelationCommand.partitionColumns</code>, Delta’s and Iceberg’s
-partitioning, <code dir="auto">spark.sql.sources.partitionOverwriteMode</code>); handing it to the
-pipeline as <code dir="auto">CheckedWrite.partitioning</code> is the follow-up ROADMAP lists.</p>
+<p><strong>Partitioning.</strong> <code dir="auto">check.partitioning</code> (an output’s declared partition keys and
+<code dir="auto">partitionOverwriteMode</code>, <code dir="auto">OUTPUT_PARTITIONING_MISMATCH</code>) is declared <code dir="auto">partial</code>. Each
+write shape in <code dir="auto">WriteCommandSupport</code> sets <code dir="auto">WriteCommandInfo.partitioning</code>, handed to the
+pipeline as <code dir="auto">CheckedWrite.partitioning</code> (and to a dry run’s <code dir="auto">InferredWrite</code>), only where
+Spark states both the columns and what an overwrite replaces (<code dir="auto">PartitioningSupport</code>):
+<code dir="auto">InsertIntoHadoopFsRelationCommand</code> (its <code dir="auto">partitionColumns</code>, and Spark’s own dynamic rule,
+recomputed from public API because the command’s <code dir="auto">dynamicPartitionOverwrite</code> is
+<code dir="auto">private[sql]</code>: the <code dir="auto">partitionOverwriteMode</code> option, else <code dir="auto">SQLConf.partitionOverwriteMode</code>,
+dynamic when some partition column is not fixed by <code dir="auto">staticPartitions</code>); a converted Hive
+insert takes this path, and Spark puts <code dir="auto">partitionOverwriteMode=dynamic</code> on the converted
+relation’s options, so it reports dynamic, which <code dir="auto">HiveConnectorSpec</code> confirms against the
+data a real overwrite leaves; <code dir="auto">CreateDataSourceTableAsSelectCommand</code> (the new table’s
+<code dir="auto">partitionColumnNames</code>, static); <code dir="auto">SaveIntoDataSourceCommand</code> when the job gave
+<code dir="auto">.partitionBy(...)</code> (<code dir="auto">__partition_columns</code>; the overwrite mode as for a file write), or, for a
+Delta <code dir="auto">.save(path)</code> given none, what Delta writes with (<code dir="auto">PartitioningSupport.deltaSave</code>): the table’s
+own partition columns read from its log (<code dir="auto">DeltaLog.forTable(...).update()</code>, by reflection, the
+<code dir="auto">update$default$N</code> arguments whatever the release names them), none for a table not created yet,
+and none for an overwrite with <code dir="auto">overwriteSchema</code>, which Delta really leaves unpartitioned
+(<code dir="auto">SparkPartitioningSpec</code> reads the log after one); a streaming write (<code dir="auto">PartitioningSupport.streamSink</code>):
+a <code dir="auto">DeltaSink</code>’s <code dir="auto">partitionColumns</code>, else the table’s as above, a <code dir="auto">FileStreamSink</code>’s
+<code dir="auto">partitionColumnNames</code>, or a V2 sink table’s identity transforms (a memory sink has none), but
+never a V1 <code dir="auto">Sink</code>’s empty default (<code dir="auto">foreachBatch</code>, console, Kafka), which says nothing; and
+the V2 writes, from <code dir="auto">Table.partitioning()</code> (or a CTAS/RTAS’s own <code dir="auto">partitioning</code>) when every
+transform is an identity on one column (<code dir="auto">OverwritePartitionsDynamic</code> dynamic, the rest
+static). Everything else (another streaming sink, an unconverted <code dir="auto">InsertIntoHiveTable</code>, Hive CTAS, a
+non-Delta <code dir="auto">.save(...)</code> with no <code dir="auto">.partitionBy</code>, a derived transform, row-level DML) leaves it <code dir="auto">None</code>,
+and <code dir="auto">ContractEnforcementRule.verifyOrThrow</code> refuses such a write onto an output that
+declares partition keys with <code dir="auto">UNVERIFIABLE_WRITE</code> (<code dir="auto">PartitioningSupport.refusal</code>, after
+the contract is held to be valid) rather than let the core’s both-sides-known rule pass it
+unchecked. Tests: <code dir="auto">SparkPartitioningSpec</code> (file source, V1 tables, Delta), and the
+<code dir="auto">check.partitioning</code> tests in <code dir="auto">IcebergConnectorSpec</code> and <code dir="auto">HiveConnectorSpec</code>.</p>
 <p><strong>CSV options.</strong> <code dir="auto">check.csvOptions</code> (a dataset’s declared <code dir="auto">csv:</code> options,
 <code dir="auto">INPUT_CSV_OPTIONS_MISMATCH</code>/<code dir="auto">OUTPUT_CSV_OPTIONS_MISMATCH</code>) is declared <code dir="auto">partial</code>.
 <code dir="auto">CsvOptionsSupport</code> hands the pipeline, as <code dir="auto">CheckedWrite.formatOptions</code> by location, the options of each
@@ -515,6 +539,20 @@ whose default differs between engines (pyarrow reads a header line by default; S
 covered: a streaming CSV sink (<code dir="auto">FileStreamSink</code> keeps its options in a constructor parameter that is not
 a field), whose options are therefore not compared. Tests: <code dir="auto">SparkCsvOptionsSpec</code> (a real session), and
 the <code dir="auto">csv-*</code> conformance scenarios.</p>
+<p><strong>Input formats.</strong> <code dir="auto">check.inputFormat</code> (an input’s declared <code dir="auto">format</code>, <code dir="auto">INPUT_FORMAT_MISMATCH</code>) is declared
+<code dir="auto">supported</code>. <code dir="auto">ContractEnforcementRule</code> hands the pipeline, as <code dir="auto">CheckedWrite.inputFormats</code>, the format of
+every read <code dir="auto">collectInputSchemas</code> finds, by the same location, and a dry run’s draft declares it.
+<code dir="auto">SparkPlanAdapter.readFormatOf</code> names a read the way a write to the same dataset is named, so one contract
+reads the same on both sides: a catalog table by its provider (<code dir="auto">hive</code>, <code dir="auto">delta</code>, <code dir="auto">parquet</code>, …), whichever
+reader Spark plans for it (a Parquet or ORC Hive table read through Spark’s converted file reader is still
+<code dir="auto">hive</code>, as a write to it is); a Delta table read by its path as <code dir="auto">delta</code>, though Spark plans a
+<code dir="auto">HadoopFsRelation</code> over Parquet files for it (recognised by Delta’s file index class); any other file read
+by its file format’s registered short name; a JDBC relation as <code dir="auto">jdbc</code>; a DataSourceV2 table (Iceberg, …)
+by its <code dir="auto">provider</code> property; a streaming source by its data source, whether the job named it
+(<code dir="auto">readStream.format("csv")</code>) or its class. A read of a third-party <code dir="auto">BaseRelation</code> that names no format, or
+a DataSourceV2 table with no <code dir="auto">provider</code> property, reports none and is not compared. Tests:
+<code dir="auto">SparkInputFormatSpec</code> (a real session with Delta), <code dir="auto">HiveConnectorSpec</code>, <code dir="auto">IcebergConnectorSpec</code>, and the
+<code dir="auto">input-format-*</code> conformance scenarios.</p>
 <p><strong>Not the runtime check.</strong> <code dir="auto">VerificationOptions.runtimeDataQuality</code>
 (<code dir="auto">spark.invaract.runtimeDataQuality</code>, capability <code dir="auto">check.runtimeDataQuality</code>)
 holds the <em>rows</em> a write puts in an output to the same constraints, which
@@ -1487,14 +1525,17 @@ reach the merge, which then reports the conflict instead of one silently
 winning.</p>
 <p><strong>Job identity.</strong> <code dir="auto">JobInfo</code> carries the application id, app name, Spark
 version, master, deploy mode, user and start time, plus <code dir="auto">jobId</code>
-(<code dir="auto">spark.invaract.jobId</code>) and <code dir="auto">attributes</code> (every
-<code dir="auto">spark.invaract.job.metadata.&#x3C;key></code>, prefix stripped). <code dir="auto">jobId</code> exists because
+(<code dir="auto">spark.invaract.jobId</code>) and <code dir="auto">attributes</code> (every <code dir="auto">key=value</code> pair in the engine-neutral
+<code dir="auto">spark.invaract.jobAttributes</code>, and every <code dir="auto">spark.invaract.job.metadata.&#x3C;key></code>, prefix stripped,
+which wins for a key set both ways; <code dir="auto">VerificationSetup.identify</code>). <code dir="auto">jobId</code> exists because
 <code dir="auto">spark.app.name</code> is often unique per run under a scheduler, so cannot say
 “the same job as last night”; the fingerprint identifies the transformation
 itself. Metadata is allowlist-by-prefix on purpose - the whole <code dir="auto">SparkConf</code>
 holds credentials. The merged contract’s id is the job id (else the app
 name), sanitized for <code dir="auto">ContractValidator</code>’s id rule.</p>
-<p><strong>Contract metadata versus run metadata.</strong> <code dir="auto">spark.invaract.contract.metadata.&#x3C;key></code> is
+<p><strong>Contract metadata versus run metadata.</strong> Every <code dir="auto">key=value</code> pair in the engine-neutral
+<code dir="auto">spark.invaract.contractMetadata</code> (<code dir="auto">VerificationSetup.contractMetadata</code>), and every
+<code dir="auto">spark.invaract.contract.metadata.&#x3C;key></code> (which wins for a key set both ways), is
 attached to every inferred draft’s <code dir="auto">extensions</code> (<code dir="auto">DryRunReporter.reportInferred</code> tags the
 draft before it is rendered, self-checked or merged, so all three see one contract) and
 echoed as each event’s <code dir="auto">metadata</code>; <code dir="auto">ContractInference.infer</code> itself still returns
@@ -2131,9 +2172,13 @@ resolved literal can never be mistaken for an unresolved reference.</li>
 throwing <code dir="auto">LocationResolutionException</code> on failure) a real id-to-location
 mapping implements. <code dir="auto">StaticMapLocationResolver</code> — built <code dir="auto">fromPropertiesFile</code>
 (the same <code dir="auto">.properties</code> convention <code dir="auto">NotificationConfig</code> already uses) or
-<code dir="auto">fromArgs</code> (<code dir="auto">"id=location"</code> strings) — is the resolver shipped today; an
-<code dir="auto">HttpLocationResolver</code> calling out to a path registry is a planned follow-up
-behind the same trait.</li>
+<code dir="auto">fromArgs</code> (<code dir="auto">"id=location"</code> strings) — and <code dir="auto">HttpLocationResolver</code>, which asks a
+location service (<code dir="auto">GET &#x3C;url>/locations/&#x3C;id></code> answering <code dir="auto">{"location": ...}</code>, an
+optional bearer token read from the environment variable <code dir="auto">locationTokenEnv</code> names)
+are the resolvers shipped. Both live in verification-core, and
+<code dir="auto">VerificationSetup.resolveContractLocations</code> builds them from the neutral settings
+<code dir="auto">locationMap</code>, <code dir="auto">locationUrl</code> and <code dir="auto">locationTokenEnv</code> for every adapter, the map
+asked first.</li>
 <li><code dir="auto">ContractLocationResolution.resolve(contract, resolver)</code> is a pure
 <code dir="auto">Contract => Contract</code> transform — no changes to <code dir="auto">contract</code>’s object model,
 since it’s just <code dir="auto">Dataset.copy(location = ...)</code> wherever <code dir="auto">LocationRef.id</code>
@@ -2162,7 +2207,7 @@ behaves exactly as <code dir="auto">NoOpLocationResolver</code> above describes.
 <li><strong>Explicit, in code</strong> — call <code dir="auto">ContractLocationResolution.resolve</code> yourself,
 with any <code dir="auto">LocationResolver</code>, before passing the contract to <code dir="auto">forContract</code>.
 Needed for a resolver the conf key can’t express (a mapping assembled at
-runtime, a future <code dir="auto">HttpLocationResolver</code>’s endpoint/auth configuration).
+runtime, a service speaking a protocol other than <code dir="auto">HttpLocationResolver</code>’s).
 The two compose freely: a location already resolved to a literal has
 nothing left for <code dir="auto">forContract</code>’s own conf-driven pass to find.</li>
 </ul>
