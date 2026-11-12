@@ -406,6 +406,7 @@ A Python job publishes, for each run:
 | The run has ended, whether it passed, was refused or failed (a contract refused as the run opens, before any of the job's code runs, publishes only its `CONTRACT_VALIDATION`) | `JOB_SUMMARY` |
 | In a dry run: each staged write, then the job's merged draft | `CONTRACT_INFERENCE`, then `DRY_RUN_SUMMARY` (and the `WRITE` events and `JOB_SUMMARY` above) |
 | With `INVARACT_LINT` on: the job's own code scanned as the run starts, and again before it finishes for code imported meanwhile | `CODE_SCAN`, `CLEAN`, `EXCEPTIONS`, `FINDINGS` or `NOT_SCANNED` (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS` per call) |
+| With `INVARACT_STRICT` on: what the job did around the package as it ran, once when the run ends (and, enforcing, at once for a write that is refused) | `CODE_SCAN` with `phase` `RUNTIME`: `CLEAN`, `EXCEPTIONS` or `FINDINGS`, or `NOT_SCANNED` if the watch itself failed (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS`) |
 
 A `WRITE` event means the data is in place: it is published after every output of the run has been published, never for
 a run that was refused, and never for an output left as it was (`ignore` on an output that already holds data). An output
@@ -482,15 +483,20 @@ The `JOB_SUMMARY` that ends the same run counts its two checks and two writes:
 ```
 
 A `CODE_SCAN` event says what a scan of the job's own code found ([Scan the job's code when it
-starts](/guides/using-invaract-with-python/#scan-the-jobs-code-when-it-starts)): `status` (`FINDINGS` when a call reads or
-writes data outside the package and no marker explains it; else `NOT_SCANNED` when a file could not be read, or none was;
-else `EXCEPTIONS` when markers keep calls, else `CLEAN`), `phase` (`START`, or `FINISH` for code imported while the job
-ran), `mode` (`REPORT` or `ENFORCE`), whether it `refused` the run, the `scanner` and its version, the `files` scanned,
-`counts` per category (`read`, `write`, `connect`, `sql`) split into `findings` and `exceptions`, every finding (at most
-1,000, those not explained first, with `findingsOmitted` counting the rest; each as [What a finding
+starts](/guides/using-invaract-with-python/#scan-the-jobs-code-when-it-starts)), or what strict mode saw the job do as it
+ran ([Watch what the job does as it runs](/guides/using-invaract-with-python/#watch-what-the-job-does-as-it-runs)):
+`status` (`FINDINGS` when a call reads or writes data outside the package and no marker explains it; else `NOT_SCANNED`
+when a file could not be read, or none was, or the watch itself failed; else `EXCEPTIONS` when markers keep calls, else
+`CLEAN`), `phase` (`START`, `FINISH` for code imported while the job ran, or `RUNTIME` for what was seen as it ran, which
+scans no file), `mode` (`REPORT` or `ENFORCE`), whether it `refused` the run, the `scanner` and its version
+(`invaract-lint 0.1.0`, or `invaract strict 0.1.0` for `RUNTIME`), the `files` scanned, `counts` per category (`read`,
+`write`, `connect`, `sql`, `process`, `dynamic`) split into `findings` and `exceptions`, every finding (at most 1,000,
+those not explained first, with `findingsOmitted` counting the rest; each as [What a finding
 says](/guides/using-invaract-with-python/#what-a-finding-says) describes), the `errors` for files it could not parse, and
-`durationMs`. A `FailureOnlyNotificationSink` passes on every scan but a `CLEAN` one, and a fan-out target's `statuses`
-filter applies to its `status`. The schema's examples include one from a real run (`examples/code-scan.json`).
+`durationMs`. A `RUNTIME` finding's `target` is what was actually reached (the file written, the `host:port` connected
+to, the program started) and its `detail` starts `seen as the job ran:`. A `FailureOnlyNotificationSink` passes on every
+scan but a `CLEAN` one, and a fan-out target's `statuses` filter applies to its `status`. The schema's examples include
+one from a real run (`examples/code-scan.json`).
 
 `invaract.check` publishes nothing: it is the job author's question, not a run.
 

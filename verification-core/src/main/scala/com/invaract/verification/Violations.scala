@@ -470,15 +470,24 @@ private[invaract] object Violations {
     * (`jobs/load.py:4:14 pd.read_parquet('data/in/orders')`), and `rule` the scan's code for it (`IVR001`); it names no dataset,
     * since none was declared for it - that is the problem. */
   def ungovernedDataAccess(finding: CodeFinding): Violation = {
+    val unseen = "outside Invaract, so no check sees it"
     val (does, instead) = finding.category match {
-      case "read"    => ("reads data", "Read it with invaract.read(<name>), from an input the contract declares")
-      case "write"   => ("writes data", "Write it with invaract.write(<frame>, <name>), to an output the contract declares")
-      case "connect" => ("opens a database or storage connection", "Read and write through invaract.read and invaract.write instead")
-      case _         => ("runs SQL that reads or writes files", "Read and write the files through invaract.read and invaract.write, and run the SQL on the frames")
+      case "read"    => (s"reads data $unseen", "Read it with invaract.read(<name>), from an input the contract declares")
+      case "write"   => (s"writes data $unseen", "Write it with invaract.write(<frame>, <name>), to an output the contract declares")
+      case "connect" => (s"opens a database or storage connection $unseen", "Read and write through invaract.read and invaract.write instead")
+      case "sql" =>
+        (s"runs SQL that reads or writes files $unseen", "Read and write the files through invaract.read and invaract.write, and run the SQL on the frames")
+      case "process" =>
+        ("starts another program, and no check sees what that program reads or writes",
+          "Do the program's work in the job, through invaract.read and invaract.write")
+      case "dynamic" =>
+        ("is code the scan cannot follow (it is built or loaded as the job runs), so what it reads or writes is not known",
+          "Spell the call out, so that the scan can follow it")
+      case _ => (s"reads or writes data $unseen", "Read and write through invaract.read and invaract.write instead")
     }
     Violation(
       ViolationType.UngovernedDataAccess,
-      s"`${finding.call}` in ${finding.scope} (${finding.location}) $does outside Invaract, so no check sees it " +
+      s"`${finding.call}` in ${finding.scope} (${finding.location}) $does " +
         s"(${finding.code} ${finding.rule}${finding.detail.fold("")(d => s", $d")})",
       remediation =
         s"$instead. If it must stay as it is, mark its line `# invaract: allow - <why>`: the exception is then reported with " +

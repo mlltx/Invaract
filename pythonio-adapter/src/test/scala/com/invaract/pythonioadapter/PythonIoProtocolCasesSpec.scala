@@ -156,10 +156,65 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
 
     // a scan the checker cannot read is not checked, and publishes nothing
     assert(scans("code-scan-malformed").isEmpty)
+
+    // another program started, and code the scan cannot follow, refuse the run in their own words
+    val List(others) = scans("code-scan-process-and-dynamic-refused")
+    assert(map(map(others.get("counts"))("process")) == Map("findings" -> 1, "exceptions" -> 0))
+    assert(map(map(others.get("counts"))("dynamic")) == Map("findings" -> 1, "exceptions" -> 0))
+    val words = assertCase("code-scan-process-and-dynamic-refused").replies(1).asInstanceOf[java.util.Map[String, AnyRef]].get("explanation").toString
+    assert(words.contains("`subprocess.run` in export (jobs/export.py:20:5) starts another program, and no check sees what that program reads or writes (IVR005 subprocess)"))
+    assert(words.contains("`getattr` in export (jobs/export.py:24:5) is code the scan cannot follow (it is built or loaded as the job runs), so what it reads or " +
+      "writes is not known (IVR006 dynamic-attribute, a method whose name starts 'to_', the rest built at run time)"))
+  }
+
+  test(StrictMode) {
+    def scans(name: String) = assertCase(name).eventObjects.filter(e => String.valueOf(e.get("eventType")) == "CODE_SCAN")
+    def list(e: java.util.Map[String, AnyRef], key: String) = e.get(key).asInstanceOf[java.util.List[AnyRef]].asScala.toList
+    def map(value: AnyRef) = value.asInstanceOf[java.util.Map[String, AnyRef]].asScala.toMap
+    def reply(name: String, at: Int) = assertCase(name).replies(at).asInstanceOf[java.util.Map[String, AnyRef]].asScala.toMap
+
+    // reported: one event when the run ends, of phase RUNTIME, no file scanned, the calls not explained first
+    val List(reported) = scans("strict-reported")
+    assert(List("status", "phase", "mode", "refused", "scanner").map(reported.get) == List("FINDINGS", "RUNTIME", "REPORT", false, "invaract strict 0.9.0"))
+    assert(list(reported, "files").isEmpty && list(reported, "errors").isEmpty)
+    assert(list(reported, "findings").map(f => map(f)("id")) == List("cccccccccccccccc", "eeeeeeeeeeeeeeee", "dddddddddddddddd"))
+    val wrote = map(list(reported, "findings").head)
+    assert((wrote("call"), wrote("target"), wrote("detail")) ==
+      (("pyarrow.parquet.write_table", "/srv/jobs/backup/report.parquet", "seen as the job ran: wrote /srv/jobs/backup/report.parquet")))
+    // something done with none of the job's code calling it has no line to point at
+    val nowhere = map(list(reported, "findings")(1))
+    assert((nowhere("path"), nowhere("line"), nowhere("scope")) == (("<not in the job's code>", 0, "<thread worker-1>")))
+    assert(map(map(reported.get("counts"))("write")) == Map("findings" -> 2, "exceptions" -> 0))
+    assert(map(map(reported.get("counts"))("process")) == Map("findings" -> 0, "exceptions" -> 1))
+    assert(reply("strict-reported", 1) == Map[String, AnyRef]("ok" -> java.lang.Boolean.TRUE, "status" -> "FINDINGS"))
+
+    // enforced: the one call is refused when it is sent, in the words of a write; what a marker keeps, sent later, is not
+    assert(scans("strict-enforced-refused").map(e => (e.get("phase"), e.get("status"), e.get("mode"), e.get("refused"))) ==
+      List(("RUNTIME", "FINDINGS", "ENFORCE", true), ("RUNTIME", "EXCEPTIONS", "ENFORCE", false)))
+    val refusal = reply("strict-enforced-refused", 1)
+    assert(refusal("status") == "refused" && refusal("violations") == java.util.Arrays.asList("UNGOVERNED_DATA_ACCESS"))
+    assert(refusal("explanation").toString.contains("`pyarrow.parquet.write_table` in export (jobs/export.py:14:5) writes data outside Invaract, so no check " +
+      "sees it (IVR002 pyarrow-write, seen as the job ran: wrote /srv/jobs/backup/report.parquet)"))
+
+    // nothing seen is CLEAN, though no file was scanned (a scan of source that read none is not scanned); a watch that
+    // failed is not checked, in strict mode's name
+    assert(scans("strict-enforced-clean").map(e => (e.get("status"), e.get("refused"), list(e, "files").size)) ==
+      List(("CLEAN", false, 0), ("NOT_SCANNED", true, 0)))
+    assert(reply("strict-enforced-clean", 1) == Map[String, AnyRef]("ok" -> java.lang.Boolean.TRUE, "status" -> "CLEAN"))
+    assert(reply("strict-enforced-clean", 2)("reason") == "the run could not all be watched: <strict mode> (KeyError: 'f_code' while handling open), so " +
+      "whether it reads or writes data outside Invaract cannot be said (INVARACT_STRICT=enforce)")
+
+    // a dry run reports, even asked to enforce
+    val List(dry) = scans("strict-dry-run")
+    assert(List("status", "phase", "mode", "refused", "contract").map(dry.get) == List("FINDINGS", "RUNTIME", "ENFORCE", false, null))
+    assert(Requests.ScanPhases == List("start", "finish", "runtime") && Requests.Runtime == "runtime")
   }
 }
 
 object PythonIoProtocolCasesSpec {
+
+  val StrictMode =
+    "strict mode: what INVARACT_STRICT saw the job do as it ran is a CODE_SCAN event of phase RUNTIME; enforced, a call not explained refuses the run at once, and nothing seen is CLEAN"
 
   val CodeScans =
     "code scans: INVARACT_LINT's scan of the job's code is published as a CODE_SCAN event; enforced, a call not explained refuses the run and a file not scanned leaves it not checked"

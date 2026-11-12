@@ -209,7 +209,7 @@ Everything not listed here is checked in full.
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake; a PostgreSQL or SQLite table is not written partitioned.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg, PostgreSQL and SQLite tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked.
-- [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is not seen as it happens; invaract-lint finds it in the job's code, in CI or, with INVARACT_LINT=enforce, as the run starts, which then refuses the run.
+- [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is found in the job's code by invaract-lint (in CI, or with INVARACT_LINT=enforce as the run starts) and, with INVARACT_STRICT=enforce, stopped as it is about to happen; neither is on unless the platform turns it on.
 
 **Not checked**
 

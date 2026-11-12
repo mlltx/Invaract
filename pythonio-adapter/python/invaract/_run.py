@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 
-from . import _checks, _codescan, _csv, _datasets, _frames, _outputs, _pandas, _protocol
+from . import _checks, _codescan, _csv, _datasets, _frames, _outputs, _pandas, _protocol, _strict
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -50,6 +50,8 @@ class Run:
         self._checker = None
         #: the scanner of the job's own code (INVARACT_LINT), or None
         self._scanner = None
+        #: the watcher of what the job does as it runs (INVARACT_STRICT), or None
+        self._watcher = None
 
     # the run's beginning and end
 
@@ -65,6 +67,7 @@ class Run:
             settings = from_environment(self._default_contract)
             # a check judges one frame, not the job's code
             self._scanner = None if self.checking else _codescan.from_environment()
+            watcher = None if self.checking else _strict.from_environment()
             if self.checking:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
                 settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
@@ -79,6 +82,10 @@ class Run:
             if self._scanner is not None:
                 # before the job reads anything: a refusal here stops it before it starts
                 self._ask(self._scanner.start())
+            if watcher is not None:
+                # from here until the job returns, what it does is watched
+                self._watcher = watcher
+                watcher.start(self)
         except BaseException:
             self._end_unpublished()
             raise
@@ -88,8 +95,13 @@ class Run:
         if self.checking:
             self._end_unpublished()
             return False
+        # the job has returned: the watch ends, and says what it saw that it has not yet said
+        watched = self._watcher.stop() if self._watcher is not None else None
         if exc_type is not None or self._failure is not None:
             # the job failed, or swallowed a refusal: nothing is published, and the run ends refused
+            if watched is not None:
+                with contextlib.suppress(CheckNotRun):
+                    self._checker.ask(watched)
             self._end_unpublished()
             if exc_type is None:
                 raise self._failure
@@ -99,6 +111,9 @@ class Run:
             if late is not None:
                 # the job's own code it imported while it ran, scanned before anything is published
                 self._ask(late)
+            if watched is not None:
+                # what the job did around the package as it ran: enforced, a child process's write refuses the run here
+                self._ask(watched)
         except BaseException:
             self._end_unpublished()
             raise
@@ -131,6 +146,8 @@ class Run:
 
     def _release(self):
         global _current
+        if self._watcher is not None:
+            self._watcher.stop()
         if _current is self:
             _current = None
 

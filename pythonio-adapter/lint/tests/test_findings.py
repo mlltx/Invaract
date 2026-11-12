@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from invaract_lint import CATEGORIES, CONNECT, READ, SQL, WRITE, check_file, check_source, scan_file, scan_source
+from invaract_lint import CATEGORIES, CONNECT, DYNAMIC, PROCESS, READ, SQL, WRITE, check_file, check_source, scan_file, scan_source
 
 
 def one(source, path="<source>"):
@@ -26,10 +26,12 @@ def test_a_finding_as_data_names_every_field():
 
 
 def test_each_code_has_its_category():
-    assert CATEGORIES == {READ: "read", WRITE: "write", CONNECT: "connect", SQL: "sql"}
+    assert CATEGORIES == {READ: "read", WRITE: "write", CONNECT: "connect", SQL: "sql", PROCESS: "process", DYNAMIC: "dynamic"}
+    assert (READ, WRITE, CONNECT, SQL, PROCESS, DYNAMIC) == ("IVR001", "IVR002", "IVR003", "IVR004", "IVR005", "IVR006")
     assert [f.category for f in scan_source(
-        "import pandas as pd, sqlite3\npd.read_csv('a')\ndf.to_csv('b')\nsqlite3.connect('c')\ncon.sql(\"COPY t TO 'd'\")\n"
-    )] == ["read", "write", "connect", "sql"]
+        "import pandas as pd, sqlite3, subprocess\npd.read_csv('a')\ndf.to_csv('b')\nsqlite3.connect('c')\n"
+        "con.sql(\"COPY t TO 'd'\")\nsubprocess.run(['cp', 'a', 'b'])\nexec(code)\n"
+    )] == ["read", "write", "connect", "sql", "process", "dynamic"]
 
 
 def test_a_call_over_several_lines_ends_where_it_ends():
@@ -101,9 +103,9 @@ def test_scope_is_the_function_or_class_a_call_is_in():
     ("Path('a').open('wb')", "path-open-write-mode", "mode 'wb'"),
     ("Path('a').open(mode=m)", "path-open-write-mode", "mode not spelled out"),
     ("con.execute(\"COPY t TO 'a'\")", "file-sql", "COPY"),
-    ("con.execute(\"export   database 'a'\")", "file-sql", "export database"),
-    ("con.sql(\"select * from read_parquet ('a')\")", "file-sql", "read_parquet ("),
-    ("con.sql(\"SELECT * FROM 'a.csv'\")", "file-sql", "FROM '"),
+    ("con.execute(\"export   database 'a'\")", "file-sql", "EXPORT DATABASE"),
+    ("con.sql(\"select * from read_parquet ('a')\")", "file-sql", "read_parquet"),
+    ("con.sql(\"SELECT * FROM 'a.csv'\")", "file-sql", "FROM 'a.csv'"),
 ])
 def test_each_finding_names_its_rule_and_what_made_it_count(source, rule, detail):
     f = one(source)

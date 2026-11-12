@@ -45,6 +45,12 @@ LINT = "INVARACT_LINT"
 LINT_PATHS = "INVARACT_LINT_PATHS"
 LINT_EXCLUDE = "INVARACT_LINT_EXCLUDE"
 
+#: The package's own variables for watching what the job does as it runs (``_strict``), neither of them forwarded: ``off``
+#: (the default), ``report`` or ``enforce``; and what is let through, as comma-separated globs matched against what a
+#: finding reached (a file's path, a ``host:port``, a program's name).
+STRICT = "INVARACT_STRICT"
+STRICT_ALLOW = "INVARACT_STRICT_ALLOW"
+
 
 def variable(name):
     """How the environment spells the setting ``name``: ``orgPolicy`` is ``INVARACT_ORG_POLICY``."""

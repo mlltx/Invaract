@@ -200,12 +200,16 @@ private[pythonioadapter] object Requests {
       checks <- found(m.get("checks"), name)
     } yield Request.Written(name, nulls.toMap, checks)
 
-  /** The phases a scan is made in. */
-  val ScanPhases: List[String] = List("start", "finish")
+  /** The phases a scan is made in: of the job's source when the run starts and when it finishes, and `runtime`, for what
+    * strict mode saw the job do while it ran. */
+  val ScanPhases: List[String] = List("start", "finish", "runtime")
+
+  /** The phase of a scan that read no source: it watched the job run. */
+  val Runtime = "runtime"
 
   private def scan(m: Map[String, AnyRef]): Either[String, Request] =
     for {
-      phase <- text(m, "phase").filter(ScanPhases.contains).toRight(s"a scan must say its phase: ${ScanPhases.mkString(" or ")}")
+      phase <- text(m, "phase").filter(ScanPhases.contains).toRight(s"a scan must say its phase: ${ScanPhases.mkString(", ")}")
       scanner <- text(m, "scanner").toRight("a scan must name its scanner")
       files <- names(m.get("files"), "the files of a scan", "paths")
       findings <- traverse(list(m.get("findings"))) {

@@ -17,6 +17,10 @@ EXCEPTIONS = "exceptions"
 FINDINGS = "findings"
 NOT_SCANNED = "not-scanned"
 
+#: What reading or parsing a file can raise: it is then a file the scan could not read, never a scan that stops. Source
+#: that is not Python, or not text; a file that cannot be opened; code nested too deep to parse or to follow.
+_UNREADABLE = (SyntaxError, ValueError, OSError, RecursionError, MemoryError)
+
 
 @dataclass
 class Scan:
@@ -76,8 +80,8 @@ def scan_files(files):
     for path in files:
         try:
             result.findings.extend(scan_file(path))
-        except (SyntaxError, UnicodeDecodeError, OSError) as e:
-            result.errors.append((path, str(e)))
+        except _UNREADABLE as e:
+            result.errors.append((path, str(e) or type(e).__name__))
             continue
         result.files.append(path)
     return result

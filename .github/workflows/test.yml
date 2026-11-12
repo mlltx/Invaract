@@ -851,7 +851,7 @@ jobs:
   # invaract-lint (pythonio-adapter/lint, milestone 4 of docs/PYTHON_IO_ADAPTER_DESIGN.md): the guard against reads and writes
   # made outside the invaract package. Its tests on the oldest and newest Python it supports, the lint itself over the
   # example job and the conformance job (each a job the package's tests run), and mutation testing with mutmut, held to an
-  # 80% floor (measured 87.9%; the survivors are help texts and equivalent mutants, docs/PYTHONIO_ADAPTER.md).
+  # 80% floor (measured 87.8%; the survivors are help texts and equivalent mutants, docs/PYTHONIO_ADAPTER.md).
   pythonio-lint:
     name: invaract-lint (pythonio-adapter, Python ${{ matrix.python-version }})
     needs: changes

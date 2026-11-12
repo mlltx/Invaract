@@ -238,15 +238,19 @@ private[pythonioadapter] final class Run {
     Map("ok" -> true)
   }
 
-  /** What a scan of the job's own code found: published as a `CodeScanEvent`, and, when the scan is enforced and the run
-    * enforces a contract, the run refused for each call no `# invaract: allow` marker explains (`UNGOVERNED_DATA_ACCESS`),
-    * or not checked when a file could not be scanned, or none was (nothing could be said for the code). A dry run is never
-    * refused: it reports. */
+  /** What a scan of the job's own code found, or (`runtime`) what strict mode saw the job do as it ran: published as a
+    * `CodeScanEvent`, and, when it is enforced and the run enforces a contract, the run refused for each call no
+    * `# invaract: allow` marker explains (`UNGOVERNED_DATA_ACCESS`), or not checked when a file could not be scanned, or none
+    * was (nothing could be said for the code). What was seen as the job ran read no file, so having read none is no fault: it is not
+    * checked only when the watching itself failed. A dry run is never refused: it reports. */
   private def scan(s: Request.Scan, run: Opened): Map[String, Any] = {
-    val status = CodeScan.status(s.files.size, s.errors.size, s.findings)
+    val watched = s.phase == Requests.Runtime
+    val status = if (watched) CodeScan.watched(s.errors.size, s.findings) else CodeScan.status(s.files.size, s.errors.size, s.findings)
     val unexplained = s.findings.filterNot(_.allowed)
+    def failed = s.errors.map(e => s"${e.path} (${e.message})").mkString("; ")
     val unscanned =
-      if (s.errors.nonEmpty) Some(s"the job's code could not all be scanned: ${s.errors.map(e => s"${e.path} (${e.message})").mkString("; ")}")
+      if (watched) { if (s.errors.nonEmpty) Some(s"the run could not all be watched: $failed") else None }
+      else if (s.errors.nonEmpty) Some(s"the job's code could not all be scanned: $failed")
       else if (s.files.isEmpty) Some("no file of the job's own code was found to scan")
       else None
     // a dry run reports: there is no contract to refuse the run by
@@ -259,7 +263,8 @@ private[pythonioadapter] final class Run {
       run.contract.fold(Map.empty[String, Any])(_.extensions), run.job.runId, Some(run.job)
     )))
     (enforcing, unscanned) match {
-      case (Some(_), Some(why)) => notChecked(s"$why, so whether it reads or writes data outside Invaract cannot be said (INVARACT_LINT=enforce)")
+      case (Some(_), Some(why)) =>
+        notChecked(s"$why, so whether it reads or writes data outside Invaract cannot be said (${if (watched) "INVARACT_STRICT" else "INVARACT_LINT"}=enforce)")
       case (Some(c), None) if unexplained.nonEmpty =>
         val shown = unexplained.take(MaxScanViolations).map(Violations.ungovernedDataAccess)
         val more = unexplained.size - shown.size

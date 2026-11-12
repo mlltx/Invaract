@@ -265,8 +265,8 @@
       ],
       "properties": {
         "id": { "type": "string", "description": "Identifies the call across runs: built from the file, the rule, the function it is in and the call, not its line, so it stays the same when lines above it move." },
-        "code": { "type": "string", "description": "The scanner's code: IVR001 (read), IVR002 (write), IVR003 (connection), IVR004 (SQL on files)." },
-        "category": { "type": "string", "description": "read, write, connect or sql." },
+        "code": { "type": "string", "description": "The scanner's code: IVR001 (read), IVR002 (write), IVR003 (connection), IVR004 (SQL on files), IVR005 (another program started), IVR006 (code the scan cannot follow)." },
+        "category": { "type": "string", "description": "read, write, connect, sql, process (another program started) or dynamic (code the scan cannot follow)." },
         "rule": { "type": "string", "description": "The rule that matched, such as pandas-read, frame-write, open-write-mode, database-connect or file-sql." },
         "path": { "type": "string", "description": "The file, relative to the job's working folder when it is inside it." },
         "line": { "type": "integer", "description": "1-based line the call starts on." },
@@ -294,15 +294,15 @@
       ],
       "properties": {
         "eventType": { "const": "CODE_SCAN" },
-        "status": { "type": "string", "description": "FINDINGS (a call not explained by a marker); else NOT_SCANNED (a file of the job could not be read, or none was); else EXCEPTIONS (only calls a marker keeps) or CLEAN. More may be added." },
-        "phase": { "type": "string", "description": "START (before the job reads anything) or FINISH (code the job imported while it ran)." },
+        "status": { "type": "string", "description": "FINDINGS (a call not explained by a marker); else NOT_SCANNED (a file of the job could not be read, or none was; never for RUNTIME, which reads no file); else EXCEPTIONS (only calls a marker keeps) or CLEAN. More may be added." },
+        "phase": { "type": "string", "description": "START (the job's source, before it reads anything), FINISH (source the job imported while it ran) or RUNTIME (what strict mode saw the job do as it ran: each finding is something that happened, with the file, host or program it reached as its target)." },
         "mode": { "type": "string", "description": "REPORT or ENFORCE." },
         "refused": { "type": "boolean", "description": "Whether this scan refused the run: enforcing, with a call not explained or nothing scanned. The run's CONTRACT_VALIDATION event then carries one UNGOVERNED_DATA_ACCESS violation per call." },
-        "scanner": { "type": "string", "description": "The scanner and its version, such as invaract-lint 0.1.0." },
-        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned." },
+        "scanner": { "type": "string", "description": "The scanner and its version, such as invaract-lint 0.1.0, or invaract strict 0.9.0 for RUNTIME." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned; none for RUNTIME." },
         "counts": {
           "type": "object",
-          "description": "Every finding by category (read, write, connect, sql): findings not explained, and exceptions a marker keeps.",
+          "description": "Every finding by category (read, write, connect, sql, process, dynamic): findings not explained, and exceptions a marker keeps.",
           "additionalProperties": {
             "type": "object",
             "required": ["findings", "exceptions"],

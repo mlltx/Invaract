@@ -89,7 +89,8 @@ def test_report_publishes_every_finding_and_the_run_goes_on(scanned):
     assert scan["scanner"] == SCANNER and scan["contract"] == "test_contract@1.0.0"
     assert scan["files"] == [os.path.join("jobs", "clean.py"), os.path.join("jobs", "helpers.py")]
     assert scan["counts"] == {"read": {"findings": 0, "exceptions": 1}, "write": {"findings": 1, "exceptions": 0},
-                              "connect": {"findings": 0, "exceptions": 0}, "sql": {"findings": 0, "exceptions": 0}}
+                              "connect": {"findings": 0, "exceptions": 0}, "sql": {"findings": 0, "exceptions": 0},
+                              "process": {"findings": 0, "exceptions": 0}, "dynamic": {"findings": 0, "exceptions": 0}}
     assert (scan["findingsOmitted"], scan["errors"]) == (0, [])
     found, kept = scan["findings"]  # the call not explained first
     assert (found["path"], found["line"], found["column"], found["scope"], found["code"], found["rule"], found["target"]) == (

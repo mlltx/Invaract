@@ -70,15 +70,30 @@ class CodeScanEventSpec extends AnyFunSuite {
       (("CLEAN", "EXCEPTIONS", "FINDINGS", "NOT_SCANNED")))
   }
 
+  test("the status of what was seen as the job ran: FINDINGS for a call not explained; NOT_SCANNED when the watching failed; else EXCEPTIONS, else CLEAN") {
+    val found = finding("write", allowed = false)
+    val kept = finding("write", allowed = true)
+    assert(CodeScan.watched(0, List(kept, found)) == CodeScanStatus.Findings)
+    assert(CodeScan.watched(1, List(found)) == CodeScanStatus.Findings)
+    assert(CodeScan.watched(0, List(kept)) == CodeScanStatus.Exceptions)
+    // no file is read, so having read none is no fault
+    assert(CodeScan.watched(0, Nil) == CodeScanStatus.Clean)
+    assert(CodeScan.watched(1, Nil) == CodeScanStatus.NotScanned)
+    assert(CodeScan.watched(1, List(kept)) == CodeScanStatus.NotScanned)
+    assert((CodeScanPhase.Start, CodeScanPhase.Finish, CodeScanPhase.Runtime) == (("START", "FINISH", "RUNTIME")))
+  }
+
   test("counts lists every category, each split into findings and exceptions") {
     val found = List(finding("read", allowed = false), finding("read", allowed = false), finding("read", allowed = true), finding("sql", allowed = true))
     assert(CodeScan.counts(found) == Map(
       "read" -> Map("findings" -> 2L, "exceptions" -> 1L),
       "write" -> Map("findings" -> 0L, "exceptions" -> 0L),
       "connect" -> Map("findings" -> 0L, "exceptions" -> 0L),
-      "sql" -> Map("findings" -> 0L, "exceptions" -> 1L)
+      "sql" -> Map("findings" -> 0L, "exceptions" -> 1L),
+      "process" -> Map("findings" -> 0L, "exceptions" -> 0L),
+      "dynamic" -> Map("findings" -> 0L, "exceptions" -> 0L)
     ))
-    assert(CodeScan.Categories == List("read", "write", "connect", "sql"))
+    assert(CodeScan.Categories == List("read", "write", "connect", "sql", "process", "dynamic"))
   }
 
   test("an event lists the calls not explained first, and at most MaxFindings") {

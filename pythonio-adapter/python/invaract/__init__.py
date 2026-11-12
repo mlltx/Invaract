@@ -22,11 +22,14 @@ import functools
 import os
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, TypeVar, Union
 
-from . import _run
+from . import _run, _strict
 from ._run import Run, job
 from .errors import CheckNotRun, ContractViolation
 
 __version__ = "0.1.0"
+
+# with INVARACT_STRICT on, the libraries the job imports after this package are wrapped as they load
+_strict.install_early()
 __all__ = ["job", "run", "read", "write", "check", "reads", "writes", "Run", "ContractViolation", "CheckNotRun"]
 
 #: A contract: a file path, or ``registry://<id>@<version>``.
