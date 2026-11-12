@@ -616,6 +616,138 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
   }
 
+  // -- require_registered_control_type -------------------------------------
+
+  private val registeredTypeRule = PolicyRule("registered-control-type", PolicyType.RequireRegisteredControlType, Map.empty)
+  private def registryPolicy(rule: PolicyRule = registeredTypeRule, entries: List[ControlTableRegistration] =
+      List(ControlTableRegistration("loc/status", owner = "data-platform-team"))): OrgPolicy =
+    OrgPolicy("1.0", List(rule), controlTables = entries)
+  private def typed(name: String, datasetType: Option[DatasetType]): Dataset = dataset(name).copy(datasetType = datasetType)
+
+  test("require_registered_control_type: a registered location declared DATA_ASSET violates, naming the type and the owner") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val List(v) = OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations
+    assert(v.policyId == "registered-control-type" && v.ruleType == PolicyType.RequireRegisteredControlType)
+    assert(v.dataset.contains("status") && v.mode == PolicyMode.Enforce)
+    assert(v.message.contains("'loc/status' is registered") && v.message.contains("owner: data-platform-team"))
+    assert(v.message.contains("must be declared CONTROL, but the contract declares it DATA_ASSET."))
+    assert(v.remediation.contains("type: CONTROL") && v.remediation.contains("remove 'loc/status' from controlTables"))
+  }
+
+  test("require_registered_control_type: a registered location declared SOURCE violates too") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.Source))))
+    val List(v) = OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations
+    assert(v.message.contains("declares it SOURCE"))
+  }
+
+  test("require_registered_control_type: a registered location with no declared type violates") {
+    val c = contract(outputs = List(typed("status", None)))
+    val List(v) = OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations
+    assert(v.message.contains("but the contract declares no type."))
+  }
+
+  test("require_registered_control_type: satisfied when the registered location is declared CONTROL") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.Control))), outputs = List(typed("status", Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations.isEmpty)
+  }
+
+  test("require_registered_control_type: a dataset at a location the catalogue does not hold is never in scope, whatever its type") {
+    val c = contract(
+      inputs = List(typed("orders", Some(DatasetType.DataAsset)), typed("feed", None)),
+      outputs = List(typed("report", Some(DatasetType.DataAsset)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations.isEmpty)
+  }
+
+  test("require_registered_control_type: an unregistered CONTROL dataset is not this rule's concern") {
+    val c = contract(outputs = List(typed("ready", Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations.isEmpty)
+  }
+
+  test("require_registered_control_type: with no catalogue at all, nothing is checked") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(entries = Nil), now).allViolations.isEmpty)
+  }
+
+  test("require_registered_control_type: checks inputs and outputs alike under the default scope, one violation each") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))), outputs = List(typed("status", None)))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(), now).allViolations.size == 2)
+  }
+
+  test("require_registered_control_type: honors scope like any other DatasetPolicy") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))), outputs = List(typed("status", None)))
+    val outputsOnly = registryPolicy(registeredTypeRule.copy(scope = PolicyScope.Outputs))
+    val List(v) = OrgPolicyEvaluator.evaluate(c, outputsOnly, now).allViolations
+    assert(v.message.contains("declares no type"))
+    val inputsOnly = registryPolicy(registeredTypeRule.copy(scope = PolicyScope.Inputs))
+    val List(w) = OrgPolicyEvaluator.evaluate(c, inputsOnly, now).allViolations
+    assert(w.message.contains("declares it DATA_ASSET"))
+  }
+
+  test("require_registered_control_type: honors when like any other DatasetPolicy") {
+    val tagged = dataset("status", fields = List(field("id", tags = Set("pii")))).copy(datasetType = Some(DatasetType.DataAsset))
+    val c = contract(inputs = List(tagged), outputs = List(typed("status", None)))
+    val policy = registryPolicy(registeredTypeRule.copy(when = Some(PolicyCondition("pii"))))
+    val List(v) = OrgPolicyEvaluator.evaluate(c, policy, now).allViolations
+    assert(v.message.contains("declares it DATA_ASSET"))
+  }
+
+  test("require_registered_control_type: an expired registration no longer counts; one active on its reviewBy date still does") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val expired = List(ControlTableRegistration("loc/status", owner = "data-platform-team", reviewBy = Some(now.minusDays(1))))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(entries = expired), now).allViolations.isEmpty)
+    val lastDay = List(ControlTableRegistration("loc/status", owner = "data-platform-team", reviewBy = Some(now)))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(entries = lastDay), now).allViolations.size == 1)
+  }
+
+  test("require_registered_control_type: matches location with backslash normalization, like require_control_registration") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val windows = List(ControlTableRegistration("loc\\status", owner = "data-platform-team"))
+    assert(OrgPolicyEvaluator.evaluate(c, registryPolicy(entries = windows), now).allViolations.size == 1)
+  }
+
+  test("require_registered_control_type: the matching entry, not the first one, names the owner") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val entries = List(
+      ControlTableRegistration("loc/calendar", owner = "calendar-team"),
+      ControlTableRegistration("loc/status", owner = "status-team")
+    )
+    val List(v) = OrgPolicyEvaluator.evaluate(c, registryPolicy(entries = entries), now).allViolations
+    assert(v.message.contains("owner: status-team"))
+  }
+
+  test("require_registered_control_type: Warn mode reports without blocking") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val eval = OrgPolicyEvaluator.evaluate(c, registryPolicy(registeredTypeRule.copy(mode = PolicyMode.Warn)), now)
+    assert(eval.enforceViolations.isEmpty && eval.warnViolations.size == 1 && !eval.hasBlockingViolations)
+  }
+
+  test("require_registered_control_type: a per-contract exemption suppresses the violation") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val policy = registryPolicy().copy(exemptions = List(PolicyExemption(c.id, List("registered-control-type"), reason = "being reclassified")))
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_registered_control_type and require_control_registration together: the catalogue decides in both directions") {
+    val registration = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty)
+    val policy = registryPolicy().copy(policies = List(registration, registeredTypeRule))
+    val c = contract(
+      inputs = List(typed("status", Some(DatasetType.DataAsset))), // registered, not declared CONTROL
+      outputs = List(typed("ready", Some(DatasetType.Control))) // declared CONTROL, not registered
+    )
+    val violations = OrgPolicyEvaluator.evaluate(c, policy, now).allViolations
+    assert(violations.map(v => (v.ruleType, v.dataset.get)).toSet ==
+      Set((PolicyType.RequireRegisteredControlType, "status"), (PolicyType.RequireControlRegistration, "ready")))
+  }
+
+  test("require_registered_control_type: each layer checks against its own controlTables only") {
+    val c = contract(inputs = List(typed("status", Some(DatasetType.DataAsset))))
+    val catalogueOnly = OrgPolicy("1.0", Nil, controlTables = List(ControlTableRegistration("loc/status", owner = "data-platform-team")))
+    val ruleOnly = OrgPolicy("1.0", List(registeredTypeRule))
+    assert(OrgPolicyEvaluator.evaluateLayers(c, List(catalogueOnly, ruleOnly), now).allViolations.isEmpty)
+    assert(OrgPolicyEvaluator.evaluateLayers(c, List(registryPolicy()), now).allViolations.size == 1)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

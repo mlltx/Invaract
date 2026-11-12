@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 
-from . import _checks, _csv, _datasets, _frames, _outputs, _pandas, _protocol
+from . import _checks, _codescan, _csv, _datasets, _frames, _outputs, _pandas, _protocol
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -48,6 +48,8 @@ class Run:
         self._seconds = collections.Counter()
         self._asking = threading.Lock()
         self._checker = None
+        #: the scanner of the job's own code (INVARACT_LINT), or None
+        self._scanner = None
 
     # the run's beginning and end
 
@@ -61,6 +63,8 @@ class Run:
         try:
             _exit_status_on_check_not_run()
             settings = from_environment(self._default_contract)
+            # a check judges one frame, not the job's code
+            self._scanner = None if self.checking else _codescan.from_environment()
             if self.checking:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
                 settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
@@ -72,6 +76,9 @@ class Run:
                                   f"{reply.get('protocol', 'unknown')}, and this package version {_protocol.VERSION}: install the "
                                   f"invaract package and its checker from the same release")
             self.mode, self.contract = reply["mode"], reply.get("contract")
+            if self._scanner is not None:
+                # before the job reads anything: a refusal here stops it before it starts
+                self._ask(self._scanner.start())
         except BaseException:
             self._end_unpublished()
             raise
@@ -87,6 +94,14 @@ class Run:
             if exc_type is None:
                 raise self._failure
             return False
+        try:
+            late = self._scanner.finish() if self._scanner is not None else None
+            if late is not None:
+                # the job's own code it imported while it ran, scanned before anything is published
+                self._ask(late)
+        except BaseException:
+            self._end_unpublished()
+            raise
         try:
             if self._ask(_protocol.finish(completed=True)).get("publish"):
                 self._publish()

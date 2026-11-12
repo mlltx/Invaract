@@ -1,0 +1,5 @@
+{"contract": {"id": "orders_report", "inputs": [{"fields": [], "format": "parquet", "location": "data/in/orders", "name": "orders"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": false, "reason": "the job's code could not all be scanned: jobs/broken.py (invalid syntax (broken.py, line 1)), so whether it reads or writes data outside Invaract cannot be said (INVARACT_LINT=enforce)", "status": "not-checked"}
+{"ok": false, "reason": "no file of the job's own code was found to scan, so whether it reads or writes data outside Invaract cannot be said (INVARACT_LINT=enforce)", "status": "not-checked"}
+{"ok": true, "status": "NOT_SCANNED"}
+{"ok": true, "publish": false}

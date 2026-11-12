@@ -1,0 +1,16 @@
+{"ok": false, "reason": "the run must be opened first", "status": "not-checked"}
+{"contract": {"id": "orders_report", "inputs": [{"fields": [], "format": "parquet", "location": "data/in/orders", "name": "orders"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": false, "reason": "a scan must say its phase: start or finish", "status": "not-checked"}
+{"ok": false, "reason": "a scan must say its phase: start or finish", "status": "not-checked"}
+{"ok": false, "reason": "a scan must name its scanner", "status": "not-checked"}
+{"ok": false, "reason": "the files of a scan must be a list of paths, not 'jobs/a.py'", "status": "not-checked"}
+{"ok": false, "reason": "each finding of a scan must be a JSON object, not 'df.to_csv'", "status": "not-checked"}
+{"ok": false, "reason": "a finding's category must be one of read, write, connect, sql", "status": "not-checked"}
+{"ok": false, "reason": "a finding of a scan has no scope", "status": "not-checked"}
+{"ok": false, "reason": "the line of a finding of a scan must be a count, not '-1'", "status": "not-checked"}
+{"ok": false, "reason": "a finding of a scan must say whether it is allowed, as true or false, not 'no'", "status": "not-checked"}
+{"ok": false, "reason": "the error of a scan for 'jobs/broken.py' must say what it was", "status": "not-checked"}
+{"ok": false, "reason": "each error of a scan must name its file", "status": "not-checked"}
+{"ok": false, "reason": "each error of a scan must be a JSON object, not 'jobs/broken.py'", "status": "not-checked"}
+{"ok": false, "reason": "the duration of a scan must be a count, not '-3'", "status": "not-checked"}
+{"ok": true, "publish": false}

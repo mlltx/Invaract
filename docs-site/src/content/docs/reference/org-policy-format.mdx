@@ -80,7 +80,7 @@ controlTables:
 | `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
 | `customPolicyTypes` | no | Maps a `type:` name outside the built-in set to a `CustomPolicyEvaluator` class — see [Custom policy types](#custom-policy-types). |
 | `typeGuarantees` | no | Configures cross-contract type guarantee checks (`data_asset_schema_consistency`/`data_asset_downstream_consumption`, and any registered custom check) — see [Type guarantees](#type-guarantees). Unlike every other field here, only `CrossContractLintCli --org-policy` consults this one; `OrgPolicyEvaluator`/`ContractEnforcementRule` never do, since it governs a check across many contracts, not one contract at a time. |
-| `controlTables` | no | The org-owned catalogue of known `CONTROL`-declared datasets, checked by `require_control_registration` — see [Keep a CONTROL table honest](#keep-a-control-table-honest). |
+| `controlTables` | no | The org-owned catalogue of known `CONTROL`-declared datasets, checked by `require_control_registration` and `require_registered_control_type` — see [Keep a CONTROL table honest](#keep-a-control-table-honest). |
 
 ## Policy rule fields (`policies[]`)
 
@@ -109,6 +109,7 @@ contract's own `rules:` entries work.
 | `require_dataset_type` | `types` (optional) | The dataset declares a `type` ([`DATA_ASSET`/`SOURCE`/`CONTROL`](/guides/declaring-input-and-output-types/)) at all; if `types` is also set (a single string or a list), the declared type must additionally be one of them. |
 | `forbid_control_sensitivity_tags` | `tags` (optional, defaults to `[pii, financial]`) | A dataset already declared `type: CONTROL` must not carry any schema field (recursing into nested structs) tagged with one of `tags`. A dataset with no declared type, or declared `DATA_ASSET`/`SOURCE`, is never in scope — see [Keep a CONTROL table honest](#keep-a-control-table-honest) below. |
 | `require_control_registration` | `requireRegistration` (optional, defaults to `true`) | A dataset already declared `type: CONTROL` must match a `location` entry in the top-level `controlTables` catalogue, and once matched, its schema must carry every field that entry's `requiredFields` names. `requireRegistration: false` skips the "must be registered at all" half but still enforces conformance against any entry that does match. See [Keep a CONTROL table honest](#keep-a-control-table-honest) below. |
+| `require_registered_control_type` | *(none)* | The other direction of `require_control_registration`: a dataset whose `location` matches an active `controlTables` entry must be declared `type: CONTROL`. Declared `DATA_ASSET` or `SOURCE`, or with no `type`, it is a violation. A dataset at a location the catalogue doesn't hold is never in scope. See [The catalogue decides in both directions](#the-catalogue-decides-in-both-directions) below. |
 | `require_absolute_location` | `catalogs` (optional) | The dataset's `location` names one place on its own: a URL (`s3://bucket/orders`) or a path from the root (`/data/orders`), not a relative location (`orders`, `sales/orders`) that matches any location ending in it. With `catalogs` (a single name or a list, e.g. `spark_catalog`), a table named in full from one of them (`spark_catalog/gold/orders`) is allowed too. See [Allow only absolute locations](#allow-only-absolute-locations) below. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
@@ -265,6 +266,50 @@ The rule has one knob for how far to take it — `requireRegistration`, default 
 A registration can lapse, too: give it a `reviewBy` date (identical semantics to an
 exemption's own) and a stale entry stops counting as registered — the dataset falls
 back to unregistered, forcing periodic re-approval rather than a one-time rubber stamp.
+
+#### The catalogue decides in both directions
+
+`require_control_registration` only looks at datasets already declared `CONTROL`, so on
+its own it can't stop a contract from calling an approved control table something else.
+The table a readiness check decides from, declared `DATA_ASSET`, would be catalogued and
+shared as if it were a data product. `require_registered_control_type` closes that: every
+dataset whose `location` is in `controlTables` must be declared `CONTROL`.
+
+```yaml
+controlTables:
+  - location: data/control/load_status
+    owner: data-platform
+    requiredFields: [dataset, business_date, status]
+  - location: data/control/report_ready
+    owner: data-platform
+    purpose: "Says the daily report is ready."
+
+policies:
+  - id: control-registered
+    type: require_control_registration   # a CONTROL dataset must be in the list
+  - id: registered-is-control
+    type: require_registered_control_type  # a dataset in the list must be CONTROL
+```
+
+With both attached, only whoever owns the policy decides what is a control table. A
+readiness check whose contract declares `load_status` a `DATA_ASSET` is refused before it
+reads anything:
+
+```
+[ORG_POLICY_VIOLATION] organizational policy 'registered-is-control': 'data/control/load_status' is registered in the org's controlTables as a control table (owner: data-platform), so dataset 'load_status' must be declared CONTROL, but the contract declares it DATA_ASSET.
+```
+
+The same happens for a dataset there declared `SOURCE`, or with no `type` at all, as an
+input or an output. A location matches an entry, and an entry lapses at its `reviewBy`,
+exactly as for `require_control_registration`. The rule takes no properties; `scope`,
+`when`, `mode` and exemptions work as for any rule.
+
+<Aside type="caution" title="Keep the list and the rule in the same document">
+Each policy document is evaluated on its own, so a rule only sees the `controlTables` of
+the document it is in. If you split your policy into [layers](#policy-layering), put
+`controlTables` and both rules in the same layer. `OrgPolicyValidator` warns when a
+`require_registered_control_type` rule's document has no `controlTables`.
+</Aside>
 
 <Aside type="tip" title="A catalogue, not just a gate">
 Because `controlTables` is a plain top-level list, it doubles as a browsable inventory of

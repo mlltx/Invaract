@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
 """The command line: which files it checks, what it prints, and the exit status a CI step or pre-commit hook acts on."""
+import json
 import os
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import textwrap
 
 import pytest
 
+from invaract_lint import __version__
 from invaract_lint.cli import main, python_files
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -81,8 +83,8 @@ def test_github_format_annotates_each_finding(tmp_path, capsys):
     write(tmp_path, {"job.py": "import pandas as pd\npd.read_csv('a')\n"})
     status, lines, _ = run(capsys, "--format", "github", str(tmp_path))
     assert status == 1
-    assert lines == [f"::error file={tmp_path}/job.py,line=2,col=1,title=IVR001::`pd.read_csv` reads data outside invaract: "
-                     "read it with invaract.read(<name>), or mark the line `# invaract: allow`"]
+    assert lines == [f"::error file={tmp_path}/job.py,line=2,col=1,endLine=2,endColumn=17,title=IVR001::`pd.read_csv` reads data "
+                     "outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`"]
 
 
 def test_a_file_that_cannot_be_parsed_is_reported_and_the_rest_still_checked(tmp_path, capsys):
@@ -147,10 +149,43 @@ def test_excludes_from_the_command_line_by_name_or_by_path(tmp_path, capsys):
     assert [os.path.relpath(line.split(":")[0], tmp_path) for line in lines] == ["job.py", os.path.join("other", "sub", "keep.py")]
 
 
-def test_the_format_is_text_or_github_and_nothing_else(tmp_path, capsys):
+def test_the_format_is_text_github_or_json_and_nothing_else(tmp_path, capsys):
     write(tmp_path, {"job.py": "df.to_csv('a')\n"})
     status, lines, _ = run(capsys, "--format", "text", str(tmp_path))
     assert status == 1 and ": IVR002 " in lines[0]
     with pytest.raises(SystemExit) as usage:
-        main(["--format", "json", str(tmp_path)])
+        main(["--format", "sarif", str(tmp_path)])
     assert usage.value.code == 2
+
+
+def test_json_format_prints_the_whole_scan_with_the_calls_a_marker_keeps(tmp_path, capsys):
+    write(tmp_path, {"a.py": "import pandas as pd\npd.read_csv('in.csv')  # invaract: allow - a lookup\n",
+                     "b.py": "def save(df):\n    df.to_csv('out.csv')\n"})
+    status, lines, err = run(capsys, "--format", "json", str(tmp_path))
+    report = json.loads("\n".join(lines))
+    assert status == 1 and err.strip() == "1 read(s) or write(s) outside invaract"
+    assert report["scanner"] == {"name": "invaract-lint", "version": __version__}
+    assert report["status"] == "findings"
+    assert report["files"] == [str(tmp_path / "a.py"), str(tmp_path / "b.py")]
+    assert report["counts"]["read"] == {"findings": 0, "exceptions": 1}
+    assert report["counts"]["write"] == {"findings": 1, "exceptions": 0}
+    assert [(f["path"], f["line"], f["code"], f["allowed"], f["reason"], f["scope"], f["target"]) for f in report["findings"]] == [
+        (str(tmp_path / "a.py"), 2, "IVR001", True, "a lookup", "<module>", "in.csv"),
+        (str(tmp_path / "b.py"), 2, "IVR002", False, None, "save", "out.csv"),
+    ]
+    assert report["errors"] == []
+
+
+def test_json_format_lists_a_file_it_could_not_parse_and_exits_2(tmp_path, capsys):
+    write(tmp_path, {"broken.py": "def (:\n"})
+    status, lines, err = run(capsys, "--format", "json", str(tmp_path))
+    report = json.loads("\n".join(lines))
+    assert status == 2 and "broken.py: cannot be checked" in err
+    assert report["status"] == "not-scanned" and report["files"] == []
+    assert [e["path"] for e in report["errors"]] == [str(tmp_path / "broken.py")] and report["errors"][0]["message"]
+
+
+def test_a_clean_folder_in_json_exits_0(tmp_path, capsys):
+    write(tmp_path, {"job.py": "import invaract\ninvaract.read('orders')\n"})
+    status, lines, err = run(capsys, "--format", "json", str(tmp_path))
+    assert (status, err, json.loads("\n".join(lines))["status"]) == (0, "", "clean")

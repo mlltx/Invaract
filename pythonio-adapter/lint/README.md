@@ -20,7 +20,7 @@ jobs/orders/main.py:8:5: IVR002 `paid.merge(load.customers(), on='customer_id').
 4 read(s) or write(s) outside invaract
 ```
 
-It exits 0 when it finds nothing, 1 when it finds something, and 2 when a file cannot be read or parsed.
+It exits 0 when it finds nothing, 1 when it finds something not marked, and 2 when a file cannot be read or parsed.
 
 | Code | Flags |
 |---|---|
@@ -42,6 +42,26 @@ lookup = pd.read_csv("lookup/regions.csv")  # invaract: allow - a table shipped 
 **What it does not do.** It checks only that such calls are present, which a syntax tree answers reliably; it does not try to
 work out what they do. Names reached dynamically (`getattr(pd, "read_csv")`, `__import__`) are not followed: it guards the
 ordinary way of writing a job, not one built to get around it.
+
+**As data**, `--format json` prints the whole scan as one JSON object: its `status` (`findings`, `not-scanned`,
+`exceptions` or `clean`), the `files` scanned, `counts` per category split into `findings` and `exceptions`, every finding
+(the ones a marker keeps included, as `allowed: true`) and the `errors` for files it could not parse. Each finding has:
+
+| Field | What it says |
+|---|---|
+| `path`, `line`, `column`, `endLine`, `endColumn` | Where the call starts and ends (`endColumn` is just after its last character). |
+| `code`, `category`, `rule`, `detail` | `IVR001`-`IVR004` and its word (`read`, `write`, `connect`, `sql`); the rule that matched (`pandas-read`, `frame-write`, `open-write-mode`, `database-connect`, `file-sql`, ...); and what made it count when the name alone does not (`mode 'w'`, `COPY`). |
+| `call`, `resolved`, `scope` | The call as written, the name it stands for through the imports (`pandas.read_csv`; `null` for a frame's method), and the function or class it is in (`Loader.load`, or `<module>`). |
+| `snippet`, `target` | The whole call on one line, and the path or URL it names when the code spells one out (never for a connection or SQL). A password in a URL is masked in both. |
+| `allowed`, `reason` | Whether a `# invaract: allow` marker keeps it, and what the marker says after it. |
+| `id` | Identifies the call across runs: built from the file, the rule, the function and the call, not the line. |
+
+From Python, `scan_source`/`scan_file` return every finding and `check_source`/`check_file` the ones not marked; `scan(paths)`
+returns a `Scan` with `status`, `counts()` and `to_dict()`.
+
+**When a job runs**, the `invaract` package can run this scan itself as the run starts, publish the result as a `CODE_SCAN`
+event, and, with `INVARACT_LINT=enforce`, refuse the job for a call no marker explains: see the package's user guide,
+"Scan the job's code when it starts". Install the two together with `pip install invaract[lint]`.
 
 **In CI**, `--format github` prints each finding as an annotation on the pull request's diff:
 

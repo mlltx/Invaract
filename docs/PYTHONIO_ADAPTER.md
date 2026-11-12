@@ -309,6 +309,35 @@ Milestone 4 (design section 7) is `invaract-lint`, the main guard against reads 
     the same as `"utf-8"`, and the default path label `"<source>"` is only a name.
   - CI's `pythonio-lint` job runs the tests and lints the example and conformance jobs. It also runs `mutmut` with an 80% floor.
 
+### The lint at run time: `INVARACT_LINT` (2026-11-11)
+
+The same scan, run by the package when a run starts, so the code that runs is checked, not only the code in the
+repository, and the result reaches the run's events:
+
+- **What it scans.** Every module loaded when the run opens that is not Python's own (the standard library and its
+  start-up hooks, such as Debian's `/etc/python3.x/sitecustomize.py`), an installed package's, the package's or the
+  lint's (`_codescan.job_files`), or the paths `INVARACT_LINT_PATHS` names; `INVARACT_LINT_EXCLUDE` leaves some out. A
+  module the job imports while it runs is scanned before `finish`, so a write hidden in a late import still stops an
+  enforced run before anything is published. The modes are the package's own variables, not neutral settings: scanning
+  Python source is this adapter's, and a neutral setting would make every other adapter declare it inapplicable.
+- **What it reports.** A `scan` request (docs/PYTHONIO_PROTOCOL.md) carries every finding as invaract-lint's
+  `Finding.to_dict()`: where it starts and ends, the function it is in, the call as written and as resolved through the
+  imports, the rule that matched and why, the path it names, the marker's reason, and an `id` that survives lines moving.
+  The checker publishes it unchanged in a `CODE_SCAN` event (verification-core's `CodeScanEvent`, an engine-neutral
+  event a Beam Python scan could publish too), with `CodeScan.status` and `counts` computed on the checker's side.
+- **What it refuses.** With `enforce` and a contract: each finding no marker explains is an `UNGOVERNED_DATA_ACCESS`
+  violation (the first 50 named, the rest counted), refused before the job reads anything; a file the lint could not
+  parse, or no file at all, is not checked (nothing can be said for code that was not read). `CLEAN` and `EXCEPTIONS` are
+  claimed only for a scan that read every file. A dry run reports and never refuses.
+- **The lint, for it.** `Finding` gained `end_line`/`end_col`, `resolved`, `scope`, `rule`, `detail`, `snippet`,
+  `target` (with any password in a URL masked) and `allowed`/`reason`; `scan_source`/`scan_file` return every finding,
+  marked or not (`check_*` still returns the unmarked ones); `scan`/`scan_files` return a `Scan` with its `status`,
+  `counts` and `to_dict()`; and `--format json` prints that, with the GitHub format now giving each call's end. 146
+  pytest tests; `mutmut` kills 492 of 531 mutants (92.7%), the survivors help texts and equivalent mutants.
+- **Tests.** `python/tests/test_codescan.py` (25: in-process runs over named paths, and whole jobs in their own process
+  for what a run finds by itself and what it imports late), the recorded cases `code-scan-*` (JVM and native), and
+  `CodeScanEventSpec`/`ViolationsSpec`/`EventSchemaSpec` in verification-core.
+
 ## Milestone 5: the user guide and the release
 
 Milestone 5 (design section 10) is the user guide and what a release needs:

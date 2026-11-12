@@ -23,7 +23,11 @@ SCHEMAS = os.path.join(PYTHON, os.pardir, os.pardir, "docs-site", "public", "sch
 PROTOCOL_SCHEMA = os.path.join(SCHEMAS, "pythonio", "v1", "protocol.schema.json")
 EVENT_SCHEMA = os.path.join(SCHEMAS, "notification", "v1", "event.schema.json")
 
+#: invaract-lint's source, beside the package: what INVARACT_LINT runs (``_codescan``), importable without installing it.
+LINT_SOURCE = os.path.abspath(os.path.join(PYTHON, os.pardir, "lint"))
+
 sys.path.insert(0, PYTHON)
+sys.path.insert(1, LINT_SOURCE)
 
 from invaract import _checker  # noqa: E402  (after the path is set)
 
@@ -33,6 +37,7 @@ UNCHECKED_ASK = _checker.Checker.ask
 #: The replies each request may get, by its ``op``: its own, or a refusal, or not checked.
 REPLIES = {
     "open": "OpenReply", "read": "OkReply", "write": "OkReply", "written": "OkReply", "finish": "FinishReply", "published": "OkReply",
+    "scan": "ScanReply",
 }
 
 

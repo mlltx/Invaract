@@ -95,6 +95,12 @@ object ViolationType {
     */
   val UnverifiableWrite = "UNVERIFIABLE_WRITE"
 
+  /** The job's own code reads or writes data, or opens a connection, without going through Invaract, so the checks never
+    * see it: one per call a code scan found that no `# invaract: allow` marker explains, when the scan is enforced
+    * (`notification.CodeScanEvent`; the Python adapter's `INVARACT_LINT=enforce`). Raised when the run starts, or, for code
+    * the job imported while it ran, when it finishes - before anything is published either way. */
+  val UngovernedDataAccess = "UNGOVERNED_DATA_ACCESS"
+
   /** Not produced by `StructuralVerifier` itself — `ContractEnforcementRule`
     * produces this when `ContractValidator.validate` finds the contract
     * itself structurally unsound (e.g. no declared outputs) before any

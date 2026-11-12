@@ -245,6 +245,20 @@ object PolicyType {
     */
   val RequireControlRegistration = "require_control_registration"
 
+  /** The other direction of `RequireControlRegistration`: a dataset whose location matches an active `OrgPolicy.controlTables`
+    * entry must be declared `CONTROL`. `require_control_registration` stops a contract calling something a control table that
+    * the platform has not approved; this stops a contract calling an approved control table anything else - a `DATA_ASSET`
+    * (so it would be catalogued and shared as a data product), a `SOURCE`, or nothing at all. Together they make the
+    * catalogue, which only the policy owner can edit, the authority on what is a control table, in both directions.
+    *
+    * No properties. Locations are matched exactly as `RequireControlRegistration` matches them (`CrossContractValidator.normalize`),
+    * and a lapsed entry (`ControlTableRegistration.isActive`) no longer counts. `scope`/`when` narrow which datasets are
+    * checked, as for any `DatasetPolicy`. Like `RequireControlRegistration`, it needs `controlTables`, so
+    * `OrgPolicyEvaluator.evaluateRule` evaluates it ahead of the ordinary dispatch; it sees only the `controlTables` of the
+    * policy document (layer) it is in.
+    */
+  val RequireRegisteredControlType = "require_registered_control_type"
+
   /** Every dataset's location must name one place on its own: a URL (`s3://bucket/orders`) or a path from the root
     * (`/data/orders`), never a relative location (`orders`, `sales/orders`), which matches any location ending in it and
     * so cannot tell two teams' `.../orders` apart (`Locations.isAbsolute`). Optional `catalogs`: catalog names (e.g.
@@ -266,6 +280,7 @@ object PolicyType {
     RequireDatasetType,
     ForbidControlSensitivityTags,
     RequireControlRegistration,
+    RequireRegisteredControlType,
     RequireAbsoluteLocation
   )
 
@@ -350,6 +365,10 @@ object InterpretedPolicy {
     *   `ruleType`.
     */
   case class RequireControlRegistration(requireRegistration: Boolean) extends DatasetPolicy
+
+  /** No properties: see `PolicyType.RequireRegisteredControlType`. Like `RequireControlRegistration`, the `controlTables` it
+    * is checked against are not part of the rule, so `OrgPolicyEvaluator.evaluateRule` supplies them. */
+  case object RequireRegisteredControlType extends DatasetPolicy
 
   /** @param catalogs catalog names a location may start with instead of being absolute (a table named in full); empty
     *   when the rule sets none. */
@@ -466,6 +485,8 @@ case class PolicyRule(
         case None      => Some(InterpretedPolicy.RequireControlRegistration(requireRegistration = true))
         case Some(raw) => PolicyRule.parseBoolean(raw).map(InterpretedPolicy.RequireControlRegistration)
       }
+    case PolicyType.RequireRegisteredControlType =>
+      Some(InterpretedPolicy.RequireRegisteredControlType)
     case PolicyType.RequireExtensionIf =>
       for {
         ifKey <- properties.get("ifKey").map(String.valueOf)

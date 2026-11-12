@@ -469,3 +469,137 @@ case class DryRunSummaryEvent(
 ) extends NotificationEvent {
   val eventType: String = "DRY_RUN_SUMMARY"
 }
+
+/** A code scan of the job: what a scanner found in the job's own source code that reads or writes data, or opens a connection,
+  * without going through Invaract - the reads and writes the checks never see. The Python adapter publishes one when a run
+  * starts with `INVARACT_LINT` on (the scanner is `invaract-lint`), and another when it finishes if the job imported more of
+  * its own code while it ran (`phase`).
+  *
+  * `status` sums the scan up (`CodeScanStatus`): `FINDINGS` when a call is not explained; else `NOT_SCANNED` when a file of
+  * the job could not be read, or none was, so nothing more can be claimed; else `EXCEPTIONS` when a call is kept by the job's
+  * own marker (`# invaract: allow`, with the reason it gives), else `CLEAN`. `mode` is `REPORT` or `ENFORCE`, and `refused` says whether this scan
+  * refused the run (enforcing, with a call not explained, or nothing scanned): the run's `ContractValidationEvent` then
+  * carries one `UNGOVERNED_DATA_ACCESS` violation per such call.
+  *
+  * `counts` covers every finding, by category (`read`, `write`, `connect`, `sql`), split into `findings` (not explained) and
+  * `exceptions`. `findings` lists each one (`CodeFinding`) - at most `CodeScan.MaxFindings`, the calls not explained first;
+  * `findingsOmitted` says how many more there were. `files` are the files scanned, and `errors` the ones that could not be
+  * read or parsed. It is a scan of the source, not a trace of what ran: a call reached by a name built at run time is not seen.
+  */
+case class CodeScanEvent(
+  status: String,
+  phase: String,
+  mode: String,
+  refused: Boolean,
+  scanner: String,
+  files: List[String],
+  counts: Map[String, Map[String, Long]],
+  findings: List[CodeFinding],
+  findingsOmitted: Long,
+  errors: List[CodeScanError],
+  durationMs: Long,
+  timestamp: Long,
+  contract: Option[String],
+  metadata: Map[String, Any],
+  runId: Option[String] = None,
+  job: Option[JobInfo] = None
+) extends NotificationEvent {
+  val eventType: String = "CODE_SCAN"
+}
+
+/** One call a code scan found: where it starts and ends (`path`, 1-based `line`/`column`, and `endColumn` just after its
+  * last character), what it is (`call` as written, `resolved` through the file's imports, the function or class it is in as
+  * `scope`, the whole call as `snippet`, the place it names as `target` when the source spells one out), which rule matched
+  * (`code` such as `IVR002`, `category`, `rule`, and `detail` when the name alone does not say why), and whether the job's own
+  * marker keeps it (`allowed`, with its `reason`). `id` identifies the call across runs: it does not change when lines above
+  * it move. A password in a URL is never in `snippet` or `target`.
+  */
+final case class CodeFinding(
+  id: String,
+  code: String,
+  category: String,
+  rule: String,
+  path: String,
+  line: Long,
+  column: Long,
+  endLine: Long,
+  endColumn: Long,
+  call: String,
+  resolved: Option[String],
+  scope: String,
+  snippet: String,
+  target: Option[String],
+  detail: Option[String],
+  allowed: Boolean,
+  reason: Option[String],
+  message: String
+) {
+  def location: String = s"$path:$line:$column"
+
+  def toMap: Map[String, Any] =
+    Map(
+      "id" -> id,
+      "code" -> code,
+      "category" -> category,
+      "rule" -> rule,
+      "path" -> path,
+      "line" -> line,
+      "column" -> column,
+      "endLine" -> endLine,
+      "endColumn" -> endColumn,
+      "call" -> call,
+      "resolved" -> resolved,
+      "scope" -> scope,
+      "snippet" -> snippet,
+      "target" -> target,
+      "detail" -> detail,
+      "allowed" -> allowed,
+      "reason" -> reason,
+      "message" -> message
+    )
+}
+
+/** A file a code scan could not read or parse, and why. */
+final case class CodeScanError(path: String, message: String) {
+  def toMap: Map[String, Any] = Map("path" -> path, "message" -> message)
+}
+
+/** `CodeScanEvent.status`. */
+object CodeScanStatus {
+  val Clean = "CLEAN"
+  val Exceptions = "EXCEPTIONS"
+  val Findings = "FINDINGS"
+  val NotScanned = "NOT_SCANNED"
+}
+
+/** What a code scan's findings add up to, the same way whichever adapter scanned. */
+object CodeScan {
+
+  /** The categories a finding can have, in the order `counts` lists them. */
+  val Categories: List[String] = List("read", "write", "connect", "sql")
+
+  /** The most findings a `CodeScanEvent` lists; the rest are counted, in `counts` and `findingsOmitted`. */
+  val MaxFindings = 1000
+
+  /** `CodeScanStatus` for a scan that read `filesScanned` files, could not read `unreadable` more, and found `findings`: a call
+    * not explained is `FINDINGS` whatever else is true; otherwise `CLEAN` or `EXCEPTIONS` is claimed only for a scan that read
+    * every file and at least one, and anything less is `NOT_SCANNED`. */
+  def status(filesScanned: Int, unreadable: Int, findings: List[CodeFinding]): String =
+    if (findings.exists(!_.allowed)) CodeScanStatus.Findings
+    else if (unreadable > 0 || filesScanned == 0) CodeScanStatus.NotScanned
+    else if (findings.nonEmpty) CodeScanStatus.Exceptions
+    else CodeScanStatus.Clean
+
+  /** Every category, with how many findings in it are not explained (`findings`) and how many a marker keeps (`exceptions`). */
+  def counts(findings: List[CodeFinding]): Map[String, Map[String, Long]] =
+    Categories.map { category =>
+      val in = findings.filter(_.category == category)
+      category -> Map("findings" -> in.count(!_.allowed).toLong, "exceptions" -> in.count(_.allowed).toLong)
+    }.toMap
+
+  /** The findings an event lists: the calls not explained first, then the ones a marker keeps, at most `MaxFindings`. */
+  def listed(findings: List[CodeFinding]): List[CodeFinding] = {
+    val (unexplained, kept) = findings.partition(!_.allowed)
+    (unexplained ++ kept).take(MaxFindings)
+  }
+}

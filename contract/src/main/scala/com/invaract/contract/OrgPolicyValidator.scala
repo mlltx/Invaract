@@ -180,13 +180,28 @@ object OrgPolicyValidator {
     // the rule that actually checks it, not an intentional "documentation
     // only" choice. Worth surfacing, the same "likely mistake, not fatal"
     // treatment every other maybe-dead-config Warning in this file gets.
-    if (policy.controlTables.nonEmpty && !policy.policies.exists(_.ruleType == PolicyType.RequireControlRegistration)) {
+    val controlTableRules = Set(PolicyType.RequireControlRegistration, PolicyType.RequireRegisteredControlType)
+    if (policy.controlTables.nonEmpty && !policy.policies.exists(rule => controlTableRules(rule.ruleType))) {
       issues += ValidationIssue(
         ValidationSeverity.Warning,
         "controlTables",
         s"controlTables has ${policy.controlTables.size} entr${if (policy.controlTables.size == 1) "y" else "ies"} " +
-          "but no require_control_registration policy is attached - the catalogue is purely documentary until one is"
+          "but no require_control_registration or require_registered_control_type policy is attached - the " +
+          "catalogue is purely documentary until one is"
       )
+    }
+    // The other way round: require_registered_control_type checks datasets against this document's own controlTables
+    // (each layer is evaluated on its own), so with none here it can never find anything - most likely the catalogue was
+    // put in another layer. (require_control_registration with none is not inert: every CONTROL dataset is unregistered.)
+    if (policy.controlTables.isEmpty) {
+      policy.policies.zipWithIndex.filter(_._1.ruleType == PolicyType.RequireRegisteredControlType).foreach { case (rule, idx) =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          s"policies[$idx]",
+          s"Policy '${rule.id}' (require_registered_control_type) has no controlTables in this document to check " +
+            "against - each policy document (layer) is evaluated on its own, so put the catalogue in the same document"
+        )
+      }
     }
 
     ValidationResult(issues.result())

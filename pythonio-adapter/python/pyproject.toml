@@ -24,6 +24,8 @@ excel = ["openpyxl>=3.1"]
 postgres = ["adbc-driver-postgresql>=1.2", "adbc-driver-manager>=1.2"]
 # SQLite tables, through ADBC
 sqlite = ["adbc-driver-sqlite>=1.2", "adbc-driver-manager>=1.2"]
+# scanning the job's own code when a run starts (INVARACT_LINT)
+lint = ["invaract-lint>=0.1"]
 # the package's own tests (CONTRIBUTING.md): the protocol and event schemas are checked with jsonschema
 test = ["pytest>=7", "jsonschema>=4.0", "pandas>=2.2", "polars>=1.0"]
 

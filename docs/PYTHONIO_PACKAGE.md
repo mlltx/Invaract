@@ -28,7 +28,8 @@ From the top down:
 | `_run` | A run's lifecycle (`Run`: open, read, write, publish or discard, finish), `invaract.check`, `@invaract.job`. The only module that talks to the checker. | everything below |
 | `_protocol` | Every request the package sends, built in one place, and the protocol version. | |
 | `_checker` | The checker process: finding its command (`INVARACT_CHECKER`, the bundled native program, the bundled jar with Java), starting it, one request and reply at a time. | `_settings` |
-| `_settings` | The `INVARACT_*` settings forwarded to the checker by their neutral names. | |
+| `_settings` | The `INVARACT_*` settings forwarded to the checker by their neutral names, and the package's own variables (`INVARACT_CHECKER`, `INVARACT_LINT*`). | |
+| `_codescan` | `INVARACT_LINT`: which files are the job's own code, scanning them with invaract-lint (an optional dependency, `invaract[lint]`) at the run's start and, for modules imported since, at its finish, and the `scan` request. | `_protocol`, `_settings` |
 | `_frames` | Tables in and out: what `write` is handed, as an Arrow stream; what `read` returns, as the frame library asked for; counting empty values. | `_pandas` |
 | `_pandas` | pandas' own conversions: a frame written as the contract declares where that changes no value, named index levels, `dtype_backend`, the notes a refusal carries. | `_types` |
 | `_checks` | Runtime data quality: each output's data checks, evaluated over every batch staged. | |

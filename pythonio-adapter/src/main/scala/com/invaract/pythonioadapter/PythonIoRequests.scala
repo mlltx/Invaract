@@ -6,6 +6,7 @@ package com.invaract.pythonioadapter
 import com.invaract.contract.{LogicalField, LogicalType, PartitionOverwriteModes}
 import com.invaract.ir.CatalogIdentity
 import com.invaract.verification.{ArrowSchemas, ConfigSource, InvaractConf, WritePartitioning}
+import com.invaract.verification.notification.{CodeFinding, CodeScan, CodeScanError}
 import org.yaml.snakeyaml.{LoaderOptions, Yaml}
 import org.yaml.snakeyaml.constructor.SafeConstructor
 import java.util.{List => JList, Map => JMap}
@@ -57,6 +58,20 @@ private[pythonioadapter] object Request {
 
   /** One data check's outcome: how many rows broke it, and some of the values they held. */
   final case class Found(failed: Long, examples: List[String])
+
+  /** What a scan of the job's own code found (`INVARACT_LINT`, run by the package): at the run's `start`, or at its `finish`
+    * for code the job imported while it ran. `enforce` asks the checker to refuse the run for a call no marker explains;
+    * `scanner` names the scanner and its version. `files` were scanned, `findings` are every call found in them (`allowed` for
+    * those a `# invaract: allow` marker keeps), and `errors` the files that could not be read or parsed. */
+  final case class Scan(
+      phase: String,
+      enforce: Boolean,
+      scanner: String,
+      files: List[String],
+      findings: List[CodeFinding],
+      errors: List[CodeScanError],
+      durationMs: Long
+  ) extends Request
 
   /** The end of a run: `completed` is false when the job itself failed, so nothing is published. */
   final case class Finish(completed: Boolean) extends Request
@@ -122,7 +137,8 @@ private[pythonioadapter] object Requests {
       case Some("written")   => written(m)
       case Some("finish")    => Right(Request.Finish(m.get("completed").forall(_ == java.lang.Boolean.TRUE)))
       case Some("published") => published(m)
-      case other             => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written, finish or published")
+      case Some("scan")      => scan(m)
+      case other             => Left(s"unknown op ${other.fold("(none)")(o => s"'$o'")}: expected open, read, write, written, scan, finish or published")
     }
 
   private def open(m: Map[String, AnyRef]): Either[String, Request] = {
@@ -183,6 +199,56 @@ private[pythonioadapter] object Requests {
       nulls <- traverse(section(m, "nulls").toList) { case (column, n) => count(n, s"the empty values of column '$column' of '$name'").map(column -> _) }
       checks <- found(m.get("checks"), name)
     } yield Request.Written(name, nulls.toMap, checks)
+
+  /** The phases a scan is made in. */
+  val ScanPhases: List[String] = List("start", "finish")
+
+  private def scan(m: Map[String, AnyRef]): Either[String, Request] =
+    for {
+      phase <- text(m, "phase").filter(ScanPhases.contains).toRight(s"a scan must say its phase: ${ScanPhases.mkString(" or ")}")
+      scanner <- text(m, "scanner").toRight("a scan must name its scanner")
+      files <- names(m.get("files"), "the files of a scan", "paths")
+      findings <- traverse(list(m.get("findings"))) {
+        case f: JMap[_, _] => finding(asMap(f))
+        case other         => Left(s"each finding of a scan must be a JSON object, not '$other'")
+      }
+      errors <- traverse(list(m.get("errors"))) {
+        case e: JMap[_, _] =>
+          val error = asMap(e)
+          for {
+            path <- text(error, "path").toRight("each error of a scan must name its file")
+            message <- text(error, "message").toRight(s"the error of a scan for '$path' must say what it was")
+          } yield CodeScanError(path, message)
+        case other => Left(s"each error of a scan must be a JSON object, not '$other'")
+      }
+      duration <- optionalCount(m, "durationMs", "the duration of a scan")
+    } yield Request.Scan(phase, m.get("enforce").contains(java.lang.Boolean.TRUE), scanner, files, findings, errors, duration.getOrElse(0L))
+
+  /** One finding of a scan, every field the event carries; `resolved`, `target`, `detail` and `reason` may be absent. */
+  private def finding(m: Map[String, AnyRef]): Either[String, CodeFinding] = {
+    def required(key: String) = text(m, key).toRight(s"a finding of a scan has no $key")
+    def number(key: String) = count(m.getOrElse(key, null), s"the $key of a finding of a scan")
+    for {
+      id <- required("id")
+      code <- required("code")
+      category <- required("category").filterOrElse(CodeScan.Categories.contains, s"a finding's category must be one of ${CodeScan.Categories.mkString(", ")}")
+      rule <- required("rule")
+      path <- required("path")
+      line <- number("line")
+      column <- number("column")
+      endLine <- number("endLine")
+      endColumn <- number("endColumn")
+      call <- required("call")
+      scope <- required("scope")
+      snippet <- required("snippet")
+      message <- required("message")
+      allowed <- m.get("allowed") match {
+        case Some(b: java.lang.Boolean) => Right(b.booleanValue)
+        case other                      => Left(s"a finding of a scan must say whether it is allowed, as true or false, not '${other.orNull}'")
+      }
+    } yield CodeFinding(id, code, category, rule, path, line, column, endLine, endColumn, call, text(m, "resolved"), scope, snippet, text(m, "target"),
+      text(m, "detail"), allowed, text(m, "reason"), message)
+  }
 
   private def published(m: Map[String, AnyRef]): Either[String, Request] =
     m.get("outputs") match {

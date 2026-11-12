@@ -41,6 +41,11 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     // a contract that breaks the policy is refused when the run opens; one that keeps it opens and is checked
     assertCase("org-policy-refused")
     assertCase("org-policy-satisfied")
+    // the platform's controlTables decide what is a control table, both ways: a CONTROL dataset it does not list is refused,
+    // and so is a dataset at a location it lists that is declared anything but CONTROL (here, a DATA_ASSET)
+    val refusal = assertCase("org-policy-control-tables").replies.head.toString
+    assert(refusal.contains("'control-registered' declares dataset 'report_ready' CONTROL"))
+    assert(refusal.contains("dataset 'load_status' must be declared CONTROL, but the contract declares it DATA_ASSET"))
   }
 
   test(LocationRefs) {
@@ -108,9 +113,56 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
       assert(String.valueOf(yaml).contains("owner: orders-team") && String.valueOf(yaml).contains("source: erp"), yaml)
     }
   }
+
+  test(CodeScans) {
+    def scans(name: String) = assertCase(name).eventObjects.filter(e => String.valueOf(e.get("eventType")) == "CODE_SCAN")
+    def list(e: java.util.Map[String, AnyRef], key: String) = e.get(key).asInstanceOf[java.util.List[AnyRef]].asScala.toList
+    def map(value: AnyRef) = value.asInstanceOf[java.util.Map[String, AnyRef]].asScala.toMap
+
+    // reported: the run goes on and publishes; the event says everything the package sent, unexplained calls first
+    val List(reported) = scans("code-scan-reported")
+    assert(List("status", "phase", "mode", "refused", "scanner").map(reported.get) == List("FINDINGS", "START", "REPORT", false, "invaract-lint 0.1.0"))
+    assert(list(reported, "files") == List("jobs/clean.py", "jobs/helpers.py") && reported.get("durationMs") == 7 && reported.get("findingsOmitted") == 0)
+    assert(list(reported, "findings").map(f => map(f)("id")) == List("bbbbbbbbbbbbbbbb", "aaaaaaaaaaaaaaaa"))
+    val kept = map(list(reported, "findings")(1))
+    assert((kept("allowed"), kept("reason"), kept("scope"), kept("resolved"), kept("target")) ==
+      ((true, "a lookup table shipped with the job", "lookup", "pandas.read_csv", "lookups/regions.csv")))
+    assert(map(map(reported.get("counts"))("read")) == Map("findings" -> 0, "exceptions" -> 1))
+    assert(map(map(reported.get("counts"))("write")) == Map("findings" -> 1, "exceptions" -> 0))
+    assert(reported.get("contract") == "orders_report@1.0.0" && map(reported.get("metadata")) == Map("owner" -> "orders-team"))
+    assert(map(reported.get("job"))("engine") == PythonIoCheck.Engine && reported.get("runId") == "run-1")
+
+    // enforced: refused for each call not explained, fifty by name and the rest counted; the one a marker keeps is not one
+    val List(refused) = scans("code-scan-enforced-refused")
+    assert(List("status", "mode", "refused").map(refused.get) == List("FINDINGS", "ENFORCE", true) && list(refused, "findings").size == 52)
+    val explanation = assertCase("code-scan-enforced-refused").replies(1).asInstanceOf[java.util.Map[String, AnyRef]].get("explanation").toString
+    assert(explanation.contains("(51 violations)") && explanation.contains("jobs/helpers.py:59:5") && !explanation.contains("jobs/helpers.py:60:5"))
+    assert(explanation.contains("and 1 more call(s) in the job's code") && !explanation.contains("pd.read_csv"))
+    assert(Run.MaxScanViolations == 50)
+
+    // enforced with only exceptions, then code the job imported later: neither refuses
+    assert(scans("code-scan-enforced-exceptions").map(e => (e.get("phase"), e.get("status"), e.get("refused"))) ==
+      List(("START", "EXCEPTIONS", false), ("FINISH", "CLEAN", false)))
+
+    // enforced, a file it could not scan or no file at all: not checked, and the event says so; reported, it says so too
+    val unscanned = scans("code-scan-enforced-not-scanned")
+    assert(unscanned.map(e => (e.get("status"), e.get("refused"), e.get("mode"))) ==
+      List(("NOT_SCANNED", true, "ENFORCE"), ("NOT_SCANNED", true, "ENFORCE"), ("NOT_SCANNED", false, "REPORT")))
+    assert(list(unscanned.head, "errors").map(map) == List(Map("path" -> "jobs/broken.py", "message" -> "invalid syntax (broken.py, line 1)")))
+
+    // a dry run reports, even asked to enforce: there is no contract to refuse it by
+    val List(dry) = scans("code-scan-dry-run")
+    assert(List("status", "mode", "refused", "contract").map(dry.get) == List("FINDINGS", "ENFORCE", false, null))
+
+    // a scan the checker cannot read is not checked, and publishes nothing
+    assert(scans("code-scan-malformed").isEmpty)
+  }
 }
 
 object PythonIoProtocolCasesSpec {
+
+  val CodeScans =
+    "code scans: INVARACT_LINT's scan of the job's code is published as a CODE_SCAN event; enforced, a call not explained refuses the run and a file not scanned leaves it not checked"
 
   val OrganizationalPolicy =
     "organizational policy: a contract that breaks INVARACT_ORG_POLICY is refused when the run opens, before the job's code runs; one that keeps it opens"

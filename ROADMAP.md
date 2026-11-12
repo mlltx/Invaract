@@ -3944,6 +3944,31 @@ first written: one field's value compared against *another field on the same row
       Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
       weakly). Open: redaction of locations/schemas in events; the receiving contract
       repository (separate repo).
+- [x] **Follow-up: `controlTables` decides in both directions (`require_registered_control_type`)**
+      (`contract`): `require_control_registration` refused a `CONTROL` dataset the platform had
+      not registered, but nothing refused a registered control table declared anything else, so
+      a readiness check's status table could be declared `DATA_ASSET` and be catalogued and
+      shared as a data product. The new policy type (no properties) refuses a dataset at an
+      active `controlTables` location not declared `CONTROL` (`DATA_ASSET`, `SOURCE`, or no type),
+      matching locations and expiry through the same helper as `require_control_registration`.
+      A new type, not a property of the old one, so no existing policy changes meaning and
+      `InterpretedPolicy.RequireControlRegistration` keeps its binary shape. `OrgPolicyValidator`
+      warns when the rule's document has no `controlTables` (each layer is evaluated on its own).
+      Python jobs: `pythonio-adapter/python/tests/test_classification.py` runs a readiness check
+      (reads a control table, writes a readiness signal) as a real job against the checker, under
+      a policy with every classification rule, and the recorded case `org-policy-control-tables`
+      holds the JVM and native checkers to the same refusal. Open, from the classification review:
+      a readiness kind for outputs (`readinessFor`), publishing a readiness signal only after the
+      assets it names, and cross-contract `CONTROL`-vs-`DATA_ASSET` contradictions in the lint.
+- [x] **Follow-up: Python jobs scan their own code when they start (`INVARACT_LINT`)** (`pythonio-adapter`,
+      `verification-core`, the lint): `report` publishes a `CODE_SCAN` event with every read or write the job's own code
+      makes around the package (where it starts and ends, the function it is in, the call and what it resolves to, the
+      rule, the path it names, the marker's reason, an id stable across edits); `enforce` also refuses the run before it
+      reads anything, one `UNGOVERNED_DATA_ACCESS` per call no `# invaract: allow` explains, and scans modules imported
+      while it runs before anything is published. A file it cannot parse, or none at all, leaves an enforced run not
+      checked. invaract-lint gained the rich findings, `scan()`/`Scan` and `--format json`. See docs/PYTHONIO_ADAPTER.md,
+      "The lint at run time". Open: the run-time strict mode (an audit hook refusing file writes outside staging), whose
+      cost and sharing with the lint are weighed separately.
 
 ---
 

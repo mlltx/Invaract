@@ -156,18 +156,19 @@ object OrgPolicyEvaluator {
       .sortBy(_.reviewBy.get.toEpochDay)
   }
 
-  /** `require_control_registration` is special-cased here, ahead of the
+  /** `require_control_registration` and `require_registered_control_type`
+    * (its other direction) are special-cased here, ahead of the
     * ordinary `resolveEvaluator`/`CustomPolicyEvaluator` dispatch every
-    * other `ruleType` goes through: evaluating it needs `controlTables`
+    * other `ruleType` goes through: evaluating them needs `controlTables`
     * (`OrgPolicy`'s own field), which the `CustomPolicyEvaluator` trait's
     * `evaluate(contract, rule)` signature has no way to receive — the same
     * reason `typeGuarantees` isn't a `PolicyRule` type at all, but a
     * separate document-level mechanism (`TypeGuaranteeValidator`). Unlike
-    * `typeGuarantees`, this one still fits the ordinary per-contract,
+    * `typeGuarantees`, these still fit the ordinary per-contract,
     * `PolicyMode`/`PolicyExemption`-covered rule shape closely enough to
-    * stay a real `PolicyType`/`PolicyRule` rather than growing its own
-    * parallel subsystem — it just needs one extra piece of `OrgPolicy`
-    * threaded through to it.
+    * stay real `PolicyType`s/`PolicyRule`s rather than growing their own
+    * parallel subsystem — they just need one extra piece of `OrgPolicy`
+    * threaded through to them.
     */
   private def evaluateRule(
       contract: Contract,
@@ -184,6 +185,9 @@ object OrgPolicyEvaluator {
           controlDatasetsInScope(contract, rule).flatMap(checkRequireControlRegistration(rule, _, controlTables, requireRegistration, now))
         case _ => Nil // malformed properties - OrgPolicyValidator's job to report, the same total/safe convention every other type follows
       }
+    } else if (rule.ruleType == PolicyType.RequireRegisteredControlType) {
+      // no properties, so nothing can be malformed: every dataset in scope is checked
+      scopedDatasets(contract, rule).flatMap(checkRequireRegisteredControlType(rule, _, controlTables, now))
     } else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
 
   /** Looks up the `CustomPolicyEvaluator` that evaluates `ruleType` — a
@@ -203,7 +207,7 @@ object OrgPolicyEvaluator {
       customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
     }
 
-  /** Ten of `PolicyType.All`'s eleven built-in types, each an ordinary
+  /** Ten of `PolicyType.All`'s twelve built-in types, each an ordinary
     * `CustomPolicyEvaluator` — the identical trait a third party's own
     * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
     * about a built-in type's *evaluation* is privileged anymore; what
@@ -213,10 +217,10 @@ object OrgPolicyEvaluator {
     * version of this method had (a hardcoded match on `InterpretedPolicy`,
     * split by `DatasetPolicy`/`ContractPolicy` — see that trait's own doc,
     * still accurate as a *classification* even though evaluation no
-    * longer branches on it directly here). The tenth,
-    * `PolicyType.RequireControlRegistration`, is the one exception:
-    * `evaluateRule` special-cases it directly, ahead of this map, since it
-    * needs `OrgPolicy.controlTables` — data no `CustomPolicyEvaluator` can
+    * longer branches on it directly here). The other two,
+    * `PolicyType.RequireControlRegistration` and `RequireRegisteredControlType`,
+    * are the exceptions: `evaluateRule` special-cases them directly, ahead of
+    * this map, since they need `OrgPolicy.controlTables` — data no `CustomPolicyEvaluator` can
     * receive through `evaluate(contract, rule)` alone. See that method's
     * own doc.
     *
@@ -533,8 +537,7 @@ object OrgPolicyEvaluator {
       requireRegistration: Boolean,
       now: LocalDate
   ): List[PolicyViolation] = {
-    val datasetLocation = CrossContractValidator.normalize(dataset.location)
-    controlTables.find(r => r.isActive(now) && CrossContractValidator.normalize(r.location) == datasetLocation) match {
+    activeRegistration(dataset, controlTables, now) match {
       case None =>
         if (!requireRegistration) Nil
         else
@@ -572,6 +575,40 @@ object OrgPolicyEvaluator {
         }
     }
   }
+
+  /** The active (`isActive(now)`) `controlTables` entry whose location is `dataset`'s, compared after
+    * `CrossContractValidator.normalize` - what "registered" means to both `require_control_registration` and
+    * `require_registered_control_type`, so the two rules never disagree about whether a location is in the catalogue. */
+  private def activeRegistration(dataset: Dataset, controlTables: List[ControlTableRegistration], now: LocalDate): Option[ControlTableRegistration] = {
+    val datasetLocation = CrossContractValidator.normalize(dataset.location)
+    controlTables.find(r => r.isActive(now) && CrossContractValidator.normalize(r.location) == datasetLocation)
+  }
+
+  /** A dataset at a registered control-table location (`activeRegistration`) that is not declared `CONTROL` - declared
+    * `DATA_ASSET` or `SOURCE`, or with no type at all. A dataset at a location the catalogue does not hold, and a `CONTROL`
+    * one at a location it does, are fine (whether an unregistered `CONTROL` dataset is allowed is
+    * `require_control_registration`'s question, not this one's). */
+  private def checkRequireRegisteredControlType(
+      rule: PolicyRule,
+      dataset: Dataset,
+      controlTables: List[ControlTableRegistration],
+      now: LocalDate
+  ): List[PolicyViolation] =
+    activeRegistration(dataset, controlTables, now).filterNot(_ => dataset.datasetType.contains(DatasetType.Control)).toList.map {
+      registration =>
+        val declared = dataset.datasetType.fold("declares no type")(t => s"declares it ${t.name}")
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)}: '${dataset.location}' is registered in the org's " +
+            s"controlTables as a control table (owner: ${registration.owner}), so dataset '${dataset.name}' must be " +
+            s"declared CONTROL, but the contract $declared.",
+          s"Declare dataset '${dataset.name}' 'type: CONTROL', or ask the org policy owner to remove " +
+            s"'${dataset.location}' from controlTables if it is no longer a control table."
+        )
+    }
 
   /** Whether `contract.extensions` declares `key` at all - and, if `value`
     * is set, that the declared value equals it exactly (case-sensitive:
