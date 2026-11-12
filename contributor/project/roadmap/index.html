@@ -4026,6 +4026,31 @@ the dry run; run-level facts stay on <code dir="auto">spark.invaract.job.metadat
 Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
 weakly). Open: redaction of locations/schemas in events; the receiving contract
 repository (separate repo).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: <code dir="auto">controlTables</code> decides in both directions (<code dir="auto">require_registered_control_type</code>)</strong>
+(<code dir="auto">contract</code>): <code dir="auto">require_control_registration</code> refused a <code dir="auto">CONTROL</code> dataset the platform had
+not registered, but nothing refused a registered control table declared anything else, so
+a readiness check’s status table could be declared <code dir="auto">DATA_ASSET</code> and be catalogued and
+shared as a data product. The new policy type (no properties) refuses a dataset at an
+active <code dir="auto">controlTables</code> location not declared <code dir="auto">CONTROL</code> (<code dir="auto">DATA_ASSET</code>, <code dir="auto">SOURCE</code>, or no type),
+matching locations and expiry through the same helper as <code dir="auto">require_control_registration</code>.
+A new type, not a property of the old one, so no existing policy changes meaning and
+<code dir="auto">InterpretedPolicy.RequireControlRegistration</code> keeps its binary shape. <code dir="auto">OrgPolicyValidator</code>
+warns when the rule’s document has no <code dir="auto">controlTables</code> (each layer is evaluated on its own).
+Python jobs: <code dir="auto">pythonio-adapter/python/tests/test_classification.py</code> runs a readiness check
+(reads a control table, writes a readiness signal) as a real job against the checker, under
+a policy with every classification rule, and the recorded case <code dir="auto">org-policy-control-tables</code>
+holds the JVM and native checkers to the same refusal. Open, from the classification review:
+a readiness kind for outputs (<code dir="auto">readinessFor</code>), publishing a readiness signal only after the
+assets it names, and cross-contract <code dir="auto">CONTROL</code>-vs-<code dir="auto">DATA_ASSET</code> contradictions in the lint.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: Python jobs scan their own code when they start (<code dir="auto">INVARACT_LINT</code>)</strong> (<code dir="auto">pythonio-adapter</code>,
+<code dir="auto">verification-core</code>, the lint): <code dir="auto">report</code> publishes a <code dir="auto">CODE_SCAN</code> event with every read or write the job’s own code
+makes around the package (where it starts and ends, the function it is in, the call and what it resolves to, the
+rule, the path it names, the marker’s reason, an id stable across edits); <code dir="auto">enforce</code> also refuses the run before it
+reads anything, one <code dir="auto">UNGOVERNED_DATA_ACCESS</code> per call no <code dir="auto"># invaract: allow</code> explains, and scans modules imported
+while it runs before anything is published. A file it cannot parse, or none at all, leaves an enforced run not
+checked. invaract-lint gained the rich findings, <code dir="auto">scan()</code>/<code dir="auto">Scan</code> and <code dir="auto">--format json</code>. See docs/PYTHONIO_ADAPTER.md,
+“The lint at run time”. Open: the run-time strict mode (an audit hook refusing file writes outside staging), whose
+cost and sharing with the lint are weighed separately.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>

@@ -1201,9 +1201,12 @@ exemption simply stops applying, per “Exemptions” below); a
 again, mirrored exactly, for <code dir="auto">typeGuarantees.enabled</code>/
 <code dir="auto">customTypeGuaranteeTypes</code> against <code dir="auto">TypeGuaranteeType</code>; a <code dir="auto">controlTables</code>
 entry whose <code dir="auto">reviewBy</code> has already passed (informational, mirroring an
-expired exemption exactly); <code dir="auto">controlTables</code> non-empty with no
-<code dir="auto">require_control_registration</code> rule attached anywhere in the document
-(almost always a forgotten rule, not intentional). See “Custom policy
+expired exemption exactly); <code dir="auto">controlTables</code> non-empty with neither a
+<code dir="auto">require_control_registration</code> nor a <code dir="auto">require_registered_control_type</code>
+rule attached anywhere in the document (almost always a forgotten rule,
+not intentional); a <code dir="auto">require_registered_control_type</code> rule in a document
+with no <code dir="auto">controlTables</code> (it can never find anything, since each layer is
+evaluated on its own). See “Custom policy
 types” below for the <code dir="auto">customPolicyTypes</code> pair, “Type guarantee checks”
 under “Input and Output Types” above for the <code dir="auto">typeGuarantees</code> pair, and
 “Control table registration” below for <code dir="auto">controlTables</code>.</li>
@@ -1211,13 +1214,14 @@ under “Input and Output Types” above for the <code dir="auto">typeGuarantees
 covers for <code dir="auto">contract.id</code>) and splits the resulting <code dir="auto">PolicyViolation</code>s by
 <code dir="auto">PolicyMode</code> into <code dir="auto">OrgPolicyEvaluation(enforceViolations, warnViolations)</code>. Every rule — built-in or custom — is evaluated through
 the identical <code dir="auto">CustomPolicyEvaluator</code> interface: <code dir="auto">resolveEvaluator</code>
-checks <code dir="auto">builtinEvaluators</code> (ten of the eleven built-in types, each an
+checks <code dir="auto">builtinEvaluators</code> (ten of the twelve built-in types, each an
 ordinary <code dir="auto">CustomPolicyEvaluator</code> compiled into this module) before
 falling back to <code dir="auto">policy.customPolicyTypes</code> for a <code dir="auto">ruleType</code> outside that
 set — see “Custom policy types” below for the full mechanism, and its
 own note on why a built-in type always wins a naming collision. The
-remaining built-in type, <code dir="auto">require_control_registration</code>, is special-cased in
-<code dir="auto">evaluateRule</code> ahead of that dispatch instead, since it needs
+remaining two, <code dir="auto">require_control_registration</code> and
+<code dir="auto">require_registered_control_type</code>, are special-cased in
+<code dir="auto">evaluateRule</code> ahead of that dispatch instead, since they need
 <code dir="auto">policy.controlTables</code> — data no <code dir="auto">CustomPolicyEvaluator</code> can see through
 <code dir="auto">evaluate(contract, rule)</code> alone — see “Control table registration”
 below.
@@ -1332,6 +1336,12 @@ entry that <em>does</em> match — the loose-vs-strict knob a platform rolling
 this out gradually needs. Unlike every other type in this list, this one
 isn’t dispatched through <code dir="auto">builtinEvaluators</code> (see “<code dir="auto">DatasetPolicy</code> vs.
 <code dir="auto">ContractPolicy</code>” below).</li>
+<li><strong><code dir="auto">require_registered_control_type</code></strong> (no properties) — the other
+direction of <code dir="auto">require_control_registration</code>: a dataset whose location
+matches an active <code dir="auto">controlTables</code> entry must be declared <code dir="auto">type: CONTROL</code>. Declared <code dir="auto">DATA_ASSET</code> or <code dir="auto">SOURCE</code>, or with no type at all, it is
+a violation. See “Control table registration” below. Like
+<code dir="auto">require_control_registration</code>, it is special-cased in <code dir="auto">evaluateRule</code>
+rather than dispatched through <code dir="auto">builtinEvaluators</code>.</li>
 <li><strong><code dir="auto">require_extension_if</code></strong> (required <code dir="auto">ifKey</code>/<code dir="auto">thenKey</code>, optional
 <code dir="auto">ifValue</code>/<code dir="auto">thenValue</code>) — a conditional counterpart to <code dir="auto">require_extension</code>:
 only once the contract already satisfies <code dir="auto">ifKey</code> (optionally pinned to
@@ -1359,15 +1369,15 @@ rather than a silent no-op).</p>
 <p><code dir="auto">InterpretedPolicy</code> is split into two sub-traits, reflecting the two
 different granularities a policy rule can check at. This is a
 <em>classification</em>, not <code dir="auto">OrgPolicyEvaluator</code>’s dispatch mechanism — every
-<code dir="auto">DatasetPolicy</code>/<code dir="auto">ContractPolicy</code> type but one is its own
+<code dir="auto">DatasetPolicy</code>/<code dir="auto">ContractPolicy</code> type but two is its own
 <code dir="auto">CustomPolicyEvaluator</code> in <code dir="auto">builtinEvaluators</code> (see “Custom policy types”
 below), and it’s that evaluator’s own body, not a shared branch keyed off
 this split, that decides whether to narrow to <code dir="auto">scopedDatasets</code> or check
-the contract as a whole. The one exception, <code dir="auto">require_control_registration</code>,
-is still a <code dir="auto">DatasetPolicy</code> by this classification (it narrows to
-<code dir="auto">scopedDatasets</code> exactly like the rest), but <code dir="auto">evaluateRule</code> special-cases
-its dispatch ahead of <code dir="auto">builtinEvaluators</code> rather than giving it a map
-entry — see “Control table registration” below for why. The trait split
+the contract as a whole. The two exceptions, <code dir="auto">require_control_registration</code>
+and <code dir="auto">require_registered_control_type</code>, are still <code dir="auto">DatasetPolicy</code>s by this
+classification (they narrow to <code dir="auto">scopedDatasets</code> exactly like the rest), but
+<code dir="auto">evaluateRule</code> special-cases their dispatch ahead of <code dir="auto">builtinEvaluators</code>
+rather than giving them map entries — see “Control table registration” below for why. The trait split
 remains useful regardless: it’s what a reader (or <code dir="auto">OrgPolicyValidator</code>, via
 <code dir="auto">PolicyType.ContractLevelTypes</code>) uses to know which shape a given
 built-in type is, without re-deriving it from each evaluator’s own body:</p>
@@ -1375,7 +1385,7 @@ built-in type is, without re-deriving it from each evaluator’s own body:</p>
 <li><strong><code dir="auto">DatasetPolicy</code></strong> — <code dir="auto">require_catalog</code>, <code dir="auto">require_field</code>,
 <code dir="auto">field_naming_convention</code>, <code dir="auto">require_format</code>, <code dir="auto">require_dataset_description</code>,
 <code dir="auto">require_dataset_type</code>, <code dir="auto">forbid_control_sensitivity_tags</code>,
-<code dir="auto">require_control_registration</code> and <code dir="auto">require_absolute_location</code>. Each narrows to <code dir="auto">scopedDatasets(contract, rule)</code> (<code dir="auto">datasetsInScope(contract, rule.scope)</code>, further filtered by
+<code dir="auto">require_control_registration</code>, <code dir="auto">require_registered_control_type</code> and <code dir="auto">require_absolute_location</code>. Each narrows to <code dir="auto">scopedDatasets(contract, rule)</code> (<code dir="auto">datasetsInScope(contract, rule.scope)</code>, further filtered by
 <code dir="auto">rule.when</code>) and checks each dataset independently, producing a
 <code dir="auto">PolicyViolation</code> with <code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
 <li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code> and <code dir="auto">require_extension_if</code>
@@ -1395,7 +1405,7 @@ would join <code dir="auto">ContractPolicy</code>, not <code dir="auto">DatasetP
 adding one doesn’t force a dataset-shaped evaluation path onto a check
 that was never about any one dataset.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="custom-policy-types-custompolicyevaluator">Custom policy types (<code dir="auto">CustomPolicyEvaluator</code>)</h3><a class="sl-anchor-link" href="#custom-policy-types-custompolicyevaluator"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Custom policy types (CustomPolicyEvaluator)”</span></a></div>
-<p>The eleven built-in types above are deliberately closed — but an
+<p>The twelve built-in types above are deliberately closed — but an
 organization’s own policy vocabulary isn’t limited to them. <code dir="auto">OrgPolicy</code>
 carries a fifth field, <code dir="auto">customPolicyTypes: Map[String, String]</code>, mapping
 a <code dir="auto">PolicyRule.ruleType</code> this document uses to the fully-qualified class
@@ -1418,12 +1428,12 @@ with zero change to any governed job’s own source.</p>
 <p>There is nothing special about <em>most</em> built-in types’ evaluation
 mechanism — <code dir="auto">OrgPolicyEvaluator.resolveEvaluator</code> looks <code dir="auto">ruleType</code> up in
 <code dir="auto">builtinEvaluators</code> (a <code dir="auto">Map[String, CustomPolicyEvaluator]</code> covering ten
-of the eleven built-in types, each an ordinary <code dir="auto">CustomPolicyEvaluator</code>, built
+of the twelve built-in types, each an ordinary <code dir="auto">CustomPolicyEvaluator</code>, built
 via the private <code dir="auto">interpreted</code> helper — see that method’s own doc for why —
 compiled into this module) before ever consulting <code dir="auto">customPolicyTypes</code>.
-The eleventh, <code dir="auto">require_control_registration</code>, needs <code dir="auto">OrgPolicy.controlTables</code>
-— data the <code dir="auto">CustomPolicyEvaluator</code> trait has no way to receive — so
-<code dir="auto">evaluateRule</code> checks for it by name before ever reaching this map; see
+The other two, <code dir="auto">require_control_registration</code> and <code dir="auto">require_registered_control_type</code>,
+need <code dir="auto">OrgPolicy.controlTables</code> — data the <code dir="auto">CustomPolicyEvaluator</code> trait has no
+way to receive — so <code dir="auto">evaluateRule</code> checks for them by name before ever reaching this map; see
 “Control table registration” below. This is why
 a <code dir="auto">customPolicyTypes</code> key that collides with a built-in type is inert; the
 built-in lookup always wins (<code dir="auto">OrgPolicyValidator</code> warns on this, not
@@ -1546,8 +1556,9 @@ gets.</li>
 maintain it purely as a browsable catalogue of every known control table,
 with zero effect on any contract, until it attaches the policy rule that
 actually checks it. <code dir="auto">OrgPolicyValidator</code> warns (not errors) when
-<code dir="auto">controlTables</code> is non-empty but no <code dir="auto">require_control_registration</code> rule
-is attached anywhere in the document — almost always a forgotten rule,
+<code dir="auto">controlTables</code> is non-empty but neither a <code dir="auto">require_control_registration</code>
+nor a <code dir="auto">require_registered_control_type</code> rule is attached anywhere in the
+document — almost always a forgotten rule,
 not an intentional documentation-only choice, but never fatal on its own.</p>
 <p><strong><code dir="auto">require_control_registration</code></strong> (see “Policy types” above for its full
 <code dir="auto">PolicyType</code> doc) is the rule that turns the catalogue into an actual
@@ -1587,6 +1598,31 @@ special-cases <code dir="auto">require_control_registration</code> by name, ahea
 keeps this a real <code dir="auto">PolicyRule</code> type (mode, scope, when, exemptions, all
 for free) rather than growing its own parallel subsystem the way
 <code dir="auto">typeGuarantees</code> needed to for a genuinely cross-contract concern.</p>
+<p><strong><code dir="auto">require_registered_control_type</code></strong> is the same catalogue read the
+other way round. <code dir="auto">require_control_registration</code> only ever looks at a
+dataset already declared <code dir="auto">CONTROL</code>, so on its own it cannot stop a
+contract from declaring an approved control table something else: a
+readiness check’s status table declared <code dir="auto">DATA_ASSET</code> (and so catalogued and
+shared as a data product), or declared nothing at all. This rule checks
+every dataset in scope whose location matches an active <code dir="auto">controlTables</code>
+entry, and refuses one not declared <code dir="auto">CONTROL</code>:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="yaml"><code><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">controlTables</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">control/load_status</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">owner</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data-platform</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">requiredFields</span><span style="--0:#D6DEEB;--1:#403F53">: [</span><span style="--0:#ECC48D;--1:#3B61B0">dataset</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#ECC48D;--1:#3B61B0">business_date</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#ECC48D;--1:#3B61B0">status</span><span style="--0:#D6DEEB;--1:#403F53">] }</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">control/report_ready</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">owner</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">data-platform</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">purpose</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">Says the daily report is ready.</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">policies</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">id</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">control-table-registry</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">require_control_registration</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- { </span><span style="--0:#7FDBCA;--1:#111111">id</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">registered-is-control</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">require_registered_control_type</span><span style="--0:#D6DEEB;--1:#403F53"> }</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="controlTables:  - { location: control/load_status, owner: data-platform, requiredFields: [dataset, business_date, status] }  - { location: control/report_ready, owner: data-platform, purpose: &#x22;Says the daily report is ready.&#x22; }policies:  - { id: control-table-registry, type: require_control_registration }  - { id: registered-is-control, type: require_registered_control_type }"><div></div></button></div></figure></div>
+<p>With both attached, the catalogue — which only the policy’s owner can edit
+— is the authority in both directions: a <code dir="auto">CONTROL</code> dataset must be in it,
+and a dataset in it must be <code dir="auto">CONTROL</code>. “Matches” and “active” mean exactly
+what they mean for <code dir="auto">require_control_registration</code> (the same
+backslash-normalized comparison and <code dir="auto">reviewBy</code> expiry, through one shared
+helper, so the two rules can never disagree about whether a location is
+registered). A dataset at a location the catalogue does not hold is never in
+scope, and an unregistered <code dir="auto">CONTROL</code> dataset is <code dir="auto">require_control_registration</code>’s
+concern, not this one’s. Like every policy rule, it reads only the
+<code dir="auto">controlTables</code> of its own document: in a layered policy, put the catalogue
+and this rule in the same layer (<code dir="auto">OrgPolicyValidator</code> warns when the rule’s
+document has no <code dir="auto">controlTables</code>). It is a new type rather than a property of
+<code dir="auto">require_control_registration</code> so that no existing policy changes meaning
+when Invaract is upgraded, and so <code dir="auto">InterpretedPolicy.RequireControlRegistration</code>’s
+binary shape stays as it is.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="policy-layering">Policy layering</h3><a class="sl-anchor-link" href="#policy-layering"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Policy layering”</span></a></div>
 <p>A single <code dir="auto">OrgPolicy</code> document is still the whole model — nothing about its
 shape changes for layering. What’s new is composing <em>several</em> of them: an
@@ -1779,10 +1815,11 @@ organization at once. That registry now exists
 registered id — but nothing consumes it to evaluate a cross-contract
 rule yet; this remains real, unbuilt work, just no longer blocked on
 the registry itself existing.</li>
-<li><strong>Registration proves declaration, not behavior</strong> — <code dir="auto">require_control_registration</code>
-and <code dir="auto">forbid_control_sensitivity_tags</code> both check the <em>declared</em> shape of
-a <code dir="auto">CONTROL</code> dataset (is it registered, does its schema carry the right
-fields, does it avoid sensitive tags); neither traces what the real
+<li><strong>Registration proves declaration, not behavior</strong> — <code dir="auto">require_control_registration</code>,
+<code dir="auto">require_registered_control_type</code> and <code dir="auto">forbid_control_sensitivity_tags</code> all check what a
+contract <em>declares</em> (is a <code dir="auto">CONTROL</code> dataset registered, is a registered one
+declared <code dir="auto">CONTROL</code>, does its schema carry the right fields, does it avoid
+sensitive tags); none of them traces what the real
 transformation actually <em>does</em> with the data. <code dir="auto">spark-adapter</code>’s
 <code dir="auto">RoleConsistencyVerifier</code> (see “Role-consistency checks” under “Input
 and Output Types” above) is the one check in this feature that proves
