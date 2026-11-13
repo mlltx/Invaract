@@ -1,0 +1,99 @@
+{
+  "eventType": "CODE_SCAN",
+  "scanner": "invaract-lint 0.1.0",
+  "refused": false,
+  "timestamp": 1794436874510,
+  "phase": "START",
+  "job": {
+    "engineDetails": {
+      "fastavro": "1.13.1",
+      "pandas": "3.1.0",
+      "polars": "2.1.0",
+      "pyarrow": "26.0.0",
+      "openpyxl": "3.1.5",
+      "duckdb": "2.0.0"
+    },
+    "name": "jobs.main.main",
+    "startTimeMs": 1794436874377,
+    "attributes": {},
+    "engineVersion": "3.11.17",
+    "runId": "2b8cee26c08e4974",
+    "user": "root",
+    "engine": "pythonio"
+  },
+  "errors": [],
+  "eventId": "2b0d8360aae3ee371d5754984eba4550cb84ec9e7f4ccee8e4615c93900f5ca5",
+  "files": [
+    "jobs/__init__.py",
+    "jobs/helpers.py",
+    "jobs/main.py"
+  ],
+  "findings": [
+    {
+      "allowed": false,
+      "path": "jobs/helpers.py",
+      "line": 7,
+      "snippet": "df.to_parquet('backup/report.parquet')",
+      "scope": "backup",
+      "endColumn": 43,
+      "rule": "frame-write",
+      "reason": null,
+      "code": "IVR002",
+      "id": "ccc7c1d5e8021501",
+      "resolved": null,
+      "endLine": 7,
+      "category": "write",
+      "message": "`df.to_parquet` writes data outside invaract: write it with invaract.write(<frame>, <name>), or mark the line `# invaract: allow`",
+      "column": 5,
+      "target": "backup/report.parquet",
+      "detail": null,
+      "call": "df.to_parquet"
+    },
+    {
+      "allowed": true,
+      "path": "jobs/helpers.py",
+      "line": 4,
+      "snippet": "pd.read_csv('lookups/regions.csv')",
+      "scope": "lookup",
+      "endColumn": 46,
+      "rule": "pandas-read",
+      "reason": "a lookup table shipped with the job",
+      "code": "IVR001",
+      "id": "e461807ca80314a3",
+      "resolved": "pandas.read_csv",
+      "endLine": 4,
+      "category": "read",
+      "message": "`pd.read_csv` reads data outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`",
+      "column": 12,
+      "target": "lookups/regions.csv",
+      "detail": null,
+      "call": "pd.read_csv"
+    }
+  ],
+  "durationMs": 1,
+  "findingsOmitted": 0,
+  "status": "FINDINGS",
+  "mode": "REPORT",
+  "metadata": {},
+  "counts": {
+    "read": {
+      "findings": 0,
+      "exceptions": 1
+    },
+    "write": {
+      "findings": 1,
+      "exceptions": 0
+    },
+    "connect": {
+      "findings": 0,
+      "exceptions": 0
+    },
+    "sql": {
+      "findings": 0,
+      "exceptions": 0
+    }
+  },
+  "schemaVersion": 1,
+  "runId": "2b8cee26c08e4974",
+  "contract": "orders_report@1.0.0"
+}
