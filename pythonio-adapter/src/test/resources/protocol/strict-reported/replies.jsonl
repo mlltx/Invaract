@@ -1,0 +1,3 @@
+{"contract": {"id": "orders_report", "inputs": [{"fields": [], "format": "parquet", "location": "data/in/orders", "name": "orders"}], "outputs": [{"fields": [{"name": "region", "required": true, "type": "string"}, {"name": "total", "required": true, "type": "long"}], "format": "parquet", "location": "data/out/report", "name": "report", "saveMode": "overwrite"}], "version": "1.0.0"}, "mode": "enforce", "ok": true, "protocol": 1}
+{"ok": true, "status": "FINDINGS"}
+{"ok": true, "publish": false}

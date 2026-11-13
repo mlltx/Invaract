@@ -220,12 +220,21 @@ class ViolationsSpec extends AnyFunSuite {
     assert(read.location.isEmpty && read.column.isEmpty && read.expected.isEmpty)
     val withoutDetail = Violations.ungovernedDataAccess(ViolationsSpec.finding("read").copy(detail = None))
     assert(withoutDetail.message.endsWith("(IVR001 pandas-read)"))
-    val words = List("read", "write", "connect", "sql").map(c => Violations.ungovernedDataAccess(ViolationsSpec.finding(c)))
-    assert(words.map(_.message.split(" outside ")(0).split("\\) ").last) ==
-      List("reads data", "writes data", "opens a database or storage connection", "runs SQL that reads or writes files"))
-    assert(words.map(_.remediation.takeWhile(_ != '.')) == List(
-      "Read it with invaract", "Write it with invaract", "Read and write through invaract", "Read and write the files through invaract"
+    val words = List("read", "write", "connect", "sql", "process", "dynamic", "another").map(c => Violations.ungovernedDataAccess(ViolationsSpec.finding(c)))
+    assert(words.map(_.message.stripPrefix("`pd.read_csv` in load (jobs/load.py:4:14) ").replaceAll(" \\(IVR00\\d pandas-read, mode 'w'\\)$", "")) == List(
+      "reads data outside Invaract, so no check sees it",
+      "writes data outside Invaract, so no check sees it",
+      "opens a database or storage connection outside Invaract, so no check sees it",
+      "runs SQL that reads or writes files outside Invaract, so no check sees it",
+      "starts another program, and no check sees what that program reads or writes",
+      "is code the scan cannot follow (it is built or loaded as the job runs), so what it reads or writes is not known",
+      "reads or writes data outside Invaract, so no check sees it"
     ))
+    assert(words.map(_.remediation.takeWhile(_ != '.')) == List(
+      "Read it with invaract", "Write it with invaract", "Read and write through invaract", "Read and write the files through invaract",
+      "Do the program's work in the job, through invaract", "Spell the call out, so that the scan can follow it", "Read and write through invaract"
+    ))
+    assert(words.forall(_.remediation.contains("`# invaract: allow - <why>`")))
     val omitted = Violations.ungovernedDataAccessOmitted(3)
     assert(omitted.message == "and 3 more call(s) in the job's code that read or write data outside Invaract")
     assert(omitted.remediation.contains("CODE_SCAN event"))
@@ -251,7 +260,8 @@ object ViolationsSpec {
 
   /** A code-scan finding of `category`, as the Python adapter's scan reports one. */
   def finding(category: String): com.invaract.verification.notification.CodeFinding = {
-    val code = Map("read" -> "IVR001", "write" -> "IVR002", "connect" -> "IVR003", "sql" -> "IVR004")(category)
+    val code = Map("read" -> "IVR001", "write" -> "IVR002", "connect" -> "IVR003", "sql" -> "IVR004", "process" -> "IVR005", "dynamic" -> "IVR006")
+      .getOrElse(category, "IVR000")
     com.invaract.verification.notification.CodeFinding(
       "0123456789abcdef", code, category, "pandas-read", "jobs/load.py", 4, 14, 4, 37, "pd.read_csv", Some("pandas.read_csv"), "load",
       "pd.read_csv('in.csv')", Some("in.csv"), Some("mode 'w'"), allowed = false, None, "`pd.read_csv` reads data outside invaract"

@@ -1,0 +1,15 @@
+id: orders_report
+version: "1.0.0"
+extensions:
+  owner: orders-team
+inputs:
+  - { name: orders, location: data/in/orders, format: parquet }
+outputs:
+  - name: report
+    location: data/out/report
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - { name: region, type: string, required: true }
+        - { name: total,  type: long,   required: true }

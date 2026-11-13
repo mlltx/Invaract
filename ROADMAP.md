@@ -3967,8 +3967,21 @@ first written: one field's value compared against *another field on the same row
       reads anything, one `UNGOVERNED_DATA_ACCESS` per call no `# invaract: allow` explains, and scans modules imported
       while it runs before anything is published. A file it cannot parse, or none at all, leaves an enforced run not
       checked. invaract-lint gained the rich findings, `scan()`/`Scan` and `--format json`. See docs/PYTHONIO_ADAPTER.md,
-      "The lint at run time". Open: the run-time strict mode (an audit hook refusing file writes outside staging), whose
-      cost and sharing with the lint are weighed separately.
+      "The lint at run time".
+- [x] **Follow-up: the lint made hard to get around, and strict mode (`INVARACT_STRICT`)** (`pythonio-adapter`,
+      `verification-core`, the lint). Measured against a corpus, the lint missed 52 of 54 ways of writing a read or write
+      other than the plain call and flagged 16 of 28 pieces of ordinary code; it now reads the code as Python does
+      (`resolver.py`: scopes, aliases, references, values held in memory or in the temporary folder), from a catalogue of
+      what reads and writes (`catalogue.py`) and a reader of SQL (`sqltext.py`), and reports what it cannot follow
+      (`IVR005` another program, `IVR006` code built at run time) instead of passing it. Strict mode watches the run:
+      Python's audit events for every file opened to write, moved or deleted, every SQLite database, connection and
+      program, and wrappers around pyarrow's, Polars', DuckDB's and deltalake's compiled writers, taken from the same
+      catalogue. `report` publishes a `CODE_SCAN` event of phase `RUNTIME`; `enforce` refuses the write before it happens
+      (`UNGOVERNED_DATA_ACCESS`). `python/tests/strict_matrix.py` holds 152 ways of writing around the package, each run
+      as a real job and held to what each layer says of it; five are seen only by the scan, four only by strict mode,
+      none by neither. See docs/PYTHONIO_ADAPTER.md, "The lint, made hard to get around, and strict mode". Open: reads
+      at run time; wrapping h5py, netCDF4 and the compiled database drivers; watching a spawned worker process; an
+      operating-system guard (a user that can write only where the contract says) for a job written to get around both.
 
 ---
 

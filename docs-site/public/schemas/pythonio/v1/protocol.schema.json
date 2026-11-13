@@ -114,10 +114,10 @@
       "additionalProperties": false,
       "properties": {
         "op": { "const": "scan" },
-        "phase": { "enum": ["start", "finish"], "description": "start: the code loaded when the run opened; finish: code the job imported since." },
-        "enforce": { "type": "boolean", "description": "INVARACT_LINT=enforce: refuse the run for a call not explained." },
-        "scanner": { "type": "string", "minLength": 1, "description": "The scanner and its version, as the event names it: invaract-lint 0.1.0." },
-        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned, relative to the job's working folder when inside it." },
+        "phase": { "enum": ["start", "finish", "runtime"], "description": "start: the code loaded when the run opened; finish: code the job imported since; runtime: what strict mode (INVARACT_STRICT) saw the job do as it ran, for which no file is read." },
+        "enforce": { "type": "boolean", "description": "INVARACT_LINT=enforce (or, for runtime, INVARACT_STRICT=enforce): refuse the run for a call not explained." },
+        "scanner": { "type": "string", "minLength": 1, "description": "The scanner and its version, as the event names it: invaract-lint 0.1.0, or invaract strict 0.9.0 for runtime." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "The files scanned, relative to the job's working folder when inside it; none for runtime." },
         "findings": { "type": "array", "items": { "$ref": "#/$defs/CodeFinding" }, "description": "Every call found, those a marker keeps included (allowed: true)." },
         "errors": {
           "type": "array",
@@ -138,7 +138,7 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "code": { "type": "string", "minLength": 1 },
-        "category": { "enum": ["read", "write", "connect", "sql"] },
+        "category": { "enum": ["read", "write", "connect", "sql", "process", "dynamic"] },
         "rule": { "type": "string", "minLength": 1 },
         "path": { "type": "string", "minLength": 1 },
         "line": { "$ref": "#/$defs/Count" },

@@ -338,6 +338,79 @@ repository, and the result reaches the run's events:
   for what a run finds by itself and what it imports late), the recorded cases `code-scan-*` (JVM and native), and
   `CodeScanEventSpec`/`ViolationsSpec`/`EventSchemaSpec` in verification-core.
 
+### The lint, made hard to get around, and strict mode: `INVARACT_STRICT` (2026-11-12)
+
+Two questions were put to the lint as it stood: what ordinary code does it flag that it should not, and what way of
+writing a read or write does it miss. Measured against a corpus of each, it missed 52 of 54 ways of writing a read or
+write other than the plain call (an alias, a function passed to `map`, `getattr`, a star import, `gzip.open`, `os.rename`,
+`subprocess`, SQL kept in a variable, ...) and flagged 16 of 28 pieces of ordinary code (a write to a `BytesIO`, an
+in-memory database, a column called `copy` in SQL, a helper module's own `to_csv`, ...). It matched names; it now reads
+the code.
+
+- **The lint is three parts.** `catalogue.py` holds what reads, writes and connects, as data: the rules by qualified
+  name, the openers and where their mode is, the frame and path methods, what is certainly not data at rest (buffers, the
+  console, the temporary folder). `resolver.py` says what the names in a file stand for, scope by scope as Python
+  resolves them: imports, aliases, parameters and locals that hide an import, `global`/`nonlocal`, class bodies,
+  comprehensions; what a value certainly is (a buffer, a scratch path, a DuckDB connection); and the text of a string
+  through the names it is assigned to. It works each name out once, so a name rebound a thousand times
+  (`frame = frame.merge(...)`, `sql = sql + "..."`) costs no more for it, and it keeps its own list of what is left to
+  visit, so code nested however deep is walked without Python's recursion limit coming into it. `sqltext.py` reads SQL:
+  the statements and table functions that reach files, found in the SQL's own words and never inside its quoted values,
+  quoted names or comments, and where SQL built at run time leaves a statement or a table name open.
+- **It fails closed.** What it cannot follow it reports: `IVR006` (`dynamic`) for `exec`/`eval`, `getattr` and imports by
+  a name built at run time, and native code; `IVR005` (`process`) for another program started. A function referred to and
+  not called (`map(pd.read_csv, paths)`, a default argument, a dict of writers) is found where it is referred to. A mode,
+  flag or SQL statement the source does not spell out counts as a write. A file it cannot parse, or cannot follow, is
+  listed as not scanned and never stops the scan.
+- **Its tests** are corpora, so each case is a line: `test_evasions.py` (every way of writing a read or write it must
+  find, with the rule it must find it by), `test_legitimate.py` (ordinary code it must leave alone), `test_resolver.py`,
+  `test_sqltext.py`, `test_catalogue.py`, and `test_robustness.py` (the whole standard library scanned without a failure,
+  files Python cannot read, code of unusual shape under a time limit). 909 pytest tests, run in CI on Python 3.10 and
+  3.13; `mutmut` kills 1,820 of 2,073 mutants (87.8%; the floor is 80%), the survivors being help texts, the limit on how
+  deep an expression is followed, and equivalent mutants.
+
+Strict mode is the second layer, for what reading source cannot show.
+
+- **How it sees a write.** Python raises an audit event (`sys.addaudithook`) for every file opened, renamed, deleted,
+  linked or truncated, every SQLite database opened, every socket connected and every program started; that covers
+  everything written through Python's own `open`. pyarrow, Polars, DuckDB and deltalake write from compiled code and
+  raise none, so each of their writers is wrapped: `_strict` asks the lint's catalogue which names in a module write
+  (`catalogue.writer_names`, `frame_writer_names`, `SQL_RUNNERS`, `OPENERS`), so the scan and the watch share one list and
+  a writer added to it is covered by both. A function is replaced where it lives and in every module that holds it under
+  a name of its own (`from pyarrow.parquet import write_table`); a Python class has its `__init__` wrapped in place; a
+  compiled class (`pyarrow.csv.CSVWriter`, `pa.OSFile`) is replaced by a subclass that `isinstance` treats as the
+  original. A library imported after the package is wrapped as it loads (a `sys.meta_path` hook). On DuckDB the wrapper
+  reads the SQL about to run with the lint's `sqltext`, so the statement that actually runs is judged, however it was
+  built; on SQLite, the database's own authorizer reports `ATTACH` and `VACUUM INTO` before they run. DuckDB looks for
+  the frames its SQL names among its caller's variables, so its wrappers call it from a frame that has them.
+- **Whose write it is.** Walking out from where it happened, the first frame that is the package's own makes it the
+  package's (it wrote on the job's behalf); the first that is the job's own places it there, with the call's own extent
+  (`co_positions`, Python 3.11 and later). Code with no file (`exec`) is placed at the job's line that ran it. A write
+  with none of the job's code on the stack (a thread handed a library's writer as its target) is still a finding, said
+  to be outside the job's code. The job's own code is what the scan takes it to be (`_codescan`): a job installed as
+  a package beside its libraries is, to both, a library, and its writes are reported without a line.
+- **What is no finding.** A scratch file in the temporary folder, `__pycache__`, the user's cache folder, the null
+  device; a writer handed a buffer or a file Python itself opened (which was seen then). A `# invaract: allow` marker on
+  any line of the call keeps it, and `INVARACT_STRICT_ALLOW` lets through what it names.
+- **Enforcing.** A finding no marker explains is sent at once as a `scan` of phase `runtime` with `enforce`; the checker
+  refuses the run, and the refusal is raised from the audit hook or the wrapper, before the write. It is raised again
+  each time the same call is tried, since `zipfile` and `shutil.copytree` try again on an `OSError`. The run keeps the
+  refusal, so a job that catches it is refused when it ends, and nothing is published. A forked child cannot use its
+  parent's pipe to the checker: it raises a refusal of its own and leaves what it saw in a file its parent reads when
+  the run ends. A failure of the watch itself is listed (`errors`), and, enforced, leaves the run not checked.
+- **What it cannot see**, each pinned by a test that runs it: reads; a pyarrow filesystem object's own methods; a
+  compiled function kept in a table before the package was imported; native code; what a program it reported goes on to
+  do; what the job does before its run opens or after it ends. The scan reports each of these in the source.
+- **Tests.** `python/tests/strict_matrix.py` lists 152 ways of writing around the package, each as code that
+  really does it, with what each layer must say of it. `test_strict.py` runs them all in one job reporting and one
+  enforcing, as real processes against a real checker, and holds each by name to what strict mode says, what the scan
+  says, that the write happened when reported and did not when enforced, and that none gets past both layers. It also
+  runs what a job does that must raise nothing, and one job at a time for markers, the allow-list, the refusal's words,
+  a swallowed refusal, a dry run, a failed job, a failed watch, and that a password or a program's arguments are never
+  published. `test_strict_unit.py` holds the parts, runs in this process with every request checked against the
+  protocol's schema, and fails when an installed pyarrow, Polars or DuckDB offers a writer the catalogue does not name.
+  The recorded cases `strict-*` and `code-scan-process-and-dynamic-refused` hold the checker (JVM and native).
+
 ## Milestone 5: the user guide and the release
 
 Milestone 5 (design section 10) is the user guide and what a release needs:

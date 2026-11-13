@@ -177,11 +177,14 @@ capabilities:
       (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
   failClosed.unverifiableWrites:
     status: partial
-    summary: "A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is not seen as it happens; invaract-lint finds it in the job's code, in CI or, with INVARACT_LINT=enforce, as the run starts, which then refuses the run."
+    summary: "A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is found in the job's code by invaract-lint (in CI, or with INVARACT_LINT=enforce as the run starts) and, with INVARACT_STRICT=enforce, stopped as it is about to happen; neither is on unless the platform turns it on."
     note: >-
       A table invaract.write cannot read as Arrow (it offers no __arrow_c_stream__) is refused as unverifiable, never written
-      unchecked. A write made around the package is invisible to the checker as it happens; invaract-lint is the guard against
-      those (docs/PYTHON_IO_ADAPTER_DESIGN.md), run in CI, or by the package itself when the run starts (INVARACT_LINT:
-      report publishes a CODE_SCAN event, enforce also refuses the run with UNGOVERNED_DATA_ACCESS for a call no marker
-      explains, before the job reads anything, and again before it publishes for code it imported meanwhile). A scan reads
-      the source, so a write reached through a name built at run time is still not seen.
+      unchecked. A write made around the package is invisible to the checker itself; two guards find it. invaract-lint reads
+      the job's code (docs/PYTHON_IO_ADAPTER_DESIGN.md), in CI or by the package when the run starts (INVARACT_LINT: report
+      publishes a CODE_SCAN event, enforce also refuses the run with UNGOVERNED_DATA_ACCESS for a call no marker explains,
+      before the job reads anything, and again before it publishes for code it imported meanwhile). Strict mode watches the
+      run (INVARACT_STRICT): a file opened to write, a compiled library's writer, SQL that reaches files, a connection or
+      another program is reported as a CODE_SCAN event of phase RUNTIME and, enforced, refused before it happens. Both are
+      off unless set, and what strict mode cannot see (reads, compiled code it does not wrap, another program's own writes)
+      is listed in docs/PYTHONIO_ADAPTER.md.

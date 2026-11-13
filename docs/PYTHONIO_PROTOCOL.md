@@ -33,7 +33,8 @@ carries any of the data.
 
 A run is one `open`, then any number of `read`s and `write`/`written` pairs, in the order the job makes them, then one
 `finish`, and, when `finish`'s reply says to publish, one `published` once the package has put the outputs in place.
-With `INVARACT_LINT` on, a `scan` follows `open`, and another may come just before `finish` ([`scan`](#scan)). This
+With `INVARACT_LINT` on, a `scan` follows `open`, and another may come just before `finish`; with `INVARACT_STRICT` on, a
+`scan` of phase `runtime` comes before `finish`, and, enforcing, one whenever a write is refused ([`scan`](#scan)). This
 is the recorded case `passes` (`pythonio-adapter/src/test/resources/protocol/passes`), a job that reads
 two inputs and writes two outputs; `>` is a request, `<` its reply:
 
@@ -115,7 +116,7 @@ columns, and is refused (`UNVERIFIABLE_WRITE`).
 Sent when `INVARACT_LINT` is `report` or `enforce`: once right after `open`, before the job reads anything, with what
 invaract-lint found in the job's own code (the modules loaded when the run started, or `INVARACT_LINT_PATHS`); and once
 more just before `finish`, for the job's own modules it imported while it ran, when there are any. It carries the
-`phase` (`start` or `finish`), whether to `enforce`, the `scanner` and its version, the `files` scanned, every finding
+`phase` (`start` or `finish`; `runtime` is strict mode's, below), whether to `enforce`, the `scanner` and its version, the `files` scanned, every finding
 (invaract-lint's `Finding.to_dict()`, the ones a `# invaract: allow` marker keeps included, as `allowed: true`), the
 `errors` for files it could not read, and `durationMs`:
 
@@ -128,6 +129,23 @@ The checker publishes a `CODE_SCAN` event for it. Enforcing a contract, it refus
 `allowed`, one `UNGOVERNED_DATA_ACCESS` violation each (the first 50, and one more counting the rest), and answers
 not-checked when a file could not be read or none was scanned. A dry run is never refused for a scan. The reply's `status`
 is the event's: `FINDINGS`, `NOT_SCANNED`, `EXCEPTIONS` or `CLEAN` (recorded cases `code-scan-*`).
+
+With `INVARACT_STRICT` on, the same request carries what the package saw the job do as it ran, with `phase` `runtime`,
+the `scanner` `invaract strict <version>`, and no `files` (none is read). Each finding is something that happened: its
+`call` is the function that did it (`pyarrow.parquet.write_table`, `open`, `socket.connect`), its `target` what it
+reached, and its place the line of the job's code that led to it (`line` 0 and a `path` in angle brackets when none of
+the job's code was on the stack). Reporting, one is sent when the job returns or fails. Enforcing, one is also sent the
+moment a write no marker explains is about to be made, carrying that one finding; the refusal that comes back is what the
+package raises in place of the write. For this phase, having scanned no file is no fault: nothing seen is `CLEAN`, and
+only `errors` (the watch itself failed) make it `NOT_SCANNED` and, enforced, not checked (recorded cases `strict-*`).
+
+```text
+> {"op": "scan", "phase": "runtime", "enforce": true, "scanner": "invaract strict 0.9.0", "files": [], "findings": [{"id": "cccccccccccccccc", "code": "IVR002", "category": "write", "rule": "pyarrow-write", "path": "jobs/export.py", "line": 14, ..., "call": "pyarrow.parquet.write_table", "target": "/srv/jobs/backup/report.parquet", "detail": "seen as the job ran: wrote /srv/jobs/backup/report.parquet", "allowed": false, ...}], "errors": [], "durationMs": 0}
+< {"ok": false, "status": "refused", "violations": ["UNGOVERNED_DATA_ACCESS"], "explanation": "..."}
+```
+
+A finding's `category` is `read`, `write`, `connect`, `sql`, `process` (another program started) or `dynamic` (code the
+scan cannot follow); any other is not checked.
 
 ### `finish`
 

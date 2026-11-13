@@ -92,7 +92,9 @@ def test_not_flagged(source):
 
 
 def test_a_rebound_open_is_not_the_builtin():
-    assert found("from gzip import open\nopen('a', 'w')") == []
+    assert found("from helpers import open\nopen('a', 'w')") == []
+    # an opener by another module is still an opener
+    assert found("from gzip import open\nopen('a', 'w')") == [(WRITE, "open")]
 
 
 def test_an_allow_comment_on_any_line_of_the_call_keeps_it():

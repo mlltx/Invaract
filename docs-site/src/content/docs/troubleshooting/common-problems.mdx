@@ -241,6 +241,28 @@ The message says why:
 | `Invaract has nowhere to read '...' from` / `Invaract has nowhere to write '...'` | In a dry run, every read and write needs its `location=` ([Start from a job with no contract](/guides/using-invaract-with-python/#start-from-a-job-with-no-contract)). |
 | `Invaract could not describe the table handed to invaract.write('...')` | `invaract.write` takes a pandas, Polars or DuckDB frame, a Polars LazyFrame, or a pyarrow Table or RecordBatchReader. |
 
+## Python jobs: strict mode reports a file the job is meant to write
+
+With `INVARACT_STRICT` on, every file the job opens to write outside the invaract package is a finding, and that
+includes files that are not datasets: a log (`logging.FileHandler("job.log")`), a status page, a marker file. With
+`enforce`, the job is refused where it opens the file:
+
+```text
+[UNGOVERNED_DATA_ACCESS] `open` in main (job.py:10:15) writes data outside Invaract, so no check sees it (IVR002 open-write-mode, seen as the job ran: opened /srv/jobs/orders/job.log to write (mode 'a'))
+```
+
+Say that it is expected, in one of two ways. For one job, mark the line that opens it, with the reason:
+
+```python
+handler = logging.FileHandler("job.log")  # invaract: allow - the job's own log
+```
+
+For every job on a platform, name what is let through in `INVARACT_STRICT_ALLOW` (patterns matched against the file's
+path, comma-separated): `INVARACT_STRICT_ALLOW=*.log,logs/*`. Either way the file is still reported, as an exception
+with its reason, so the list of what jobs write around their contracts stays visible. A scratch file in the temporary
+folder is never a finding: use `tempfile` for working files. See [Watch what the job does as it
+runs](/guides/using-invaract-with-python/#watch-what-the-job-does-as-it-runs).
+
 ## Beam: a check-only run in CI fails before Invaract runs
 
 Beam validates some steps itself before handing the pipeline to any runner, including in a

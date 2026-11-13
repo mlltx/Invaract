@@ -564,6 +564,14 @@ final case class CodeScanError(path: String, message: String) {
   def toMap: Map[String, Any] = Map("path" -> path, "message" -> message)
 }
 
+/** `CodeScanEvent.phase`: a scan of the job's source when the run starts, and of what it imported since when it finishes;
+  * and what was seen of the job's writes while it ran. */
+object CodeScanPhase {
+  val Start = "START"
+  val Finish = "FINISH"
+  val Runtime = "RUNTIME"
+}
+
 /** `CodeScanEvent.status`. */
 object CodeScanStatus {
   val Clean = "CLEAN"
@@ -576,7 +584,7 @@ object CodeScanStatus {
 object CodeScan {
 
   /** The categories a finding can have, in the order `counts` lists them. */
-  val Categories: List[String] = List("read", "write", "connect", "sql")
+  val Categories: List[String] = List("read", "write", "connect", "sql", "process", "dynamic")
 
   /** The most findings a `CodeScanEvent` lists; the rest are counted, in `counts` and `findingsOmitted`. */
   val MaxFindings = 1000
@@ -585,8 +593,14 @@ object CodeScan {
     * not explained is `FINDINGS` whatever else is true; otherwise `CLEAN` or `EXCEPTIONS` is claimed only for a scan that read
     * every file and at least one, and anything less is `NOT_SCANNED`. */
   def status(filesScanned: Int, unreadable: Int, findings: List[CodeFinding]): String =
+    watched(if (filesScanned == 0) unreadable + 1 else unreadable, findings)
+
+  /** `CodeScanStatus` for what was seen while the job ran, `unwatched` being how many times the watching itself failed (no
+    * file is read, so reading none is no fault): `FINDINGS` for a call not explained; else `NOT_SCANNED` when some of the run
+    * went unwatched; else `EXCEPTIONS` when a marker keeps a call, else `CLEAN`. */
+  def watched(unwatched: Int, findings: List[CodeFinding]): String =
     if (findings.exists(!_.allowed)) CodeScanStatus.Findings
-    else if (unreadable > 0 || filesScanned == 0) CodeScanStatus.NotScanned
+    else if (unwatched > 0) CodeScanStatus.NotScanned
     else if (findings.nonEmpty) CodeScanStatus.Exceptions
     else CodeScanStatus.Clean
 

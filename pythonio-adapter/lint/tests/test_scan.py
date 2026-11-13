@@ -40,6 +40,8 @@ def test_counts_by_category_split_findings_from_exceptions():
         "write": {"findings": 0, "exceptions": 1},
         "connect": {"findings": 0, "exceptions": 0},
         "sql": {"findings": 0, "exceptions": 0},
+        "process": {"findings": 0, "exceptions": 0},
+        "dynamic": {"findings": 0, "exceptions": 0},
     }
 
 

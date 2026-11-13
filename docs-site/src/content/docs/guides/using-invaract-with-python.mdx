@@ -386,10 +386,25 @@ jobs/orders/main.py:8:5: IVR002 `paid.merge(load.customers(), on='customer_id').
 ```
 
 It exits 0 when it finds nothing, 1 when it finds something, and 2 when a file cannot be parsed, so it can gate a CI
-build or a pre-commit hook. It flags reads (`IVR001`) and writes (`IVR002`) through pandas, Polars, pyarrow and DuckDB,
-database and storage connections (`IVR003`), and SQL that reads or writes files (`IVR004`), matching each call by the
-name it resolves to through the file's imports, so an alias is no way around it. A call kept on purpose is marked on its
-line, ideally with the reason:
+build or a pre-commit hook. What it finds:
+
+| Code | What it is |
+|---|---|
+| `IVR001` | A read: pandas, Polars, pyarrow, DuckDB, numpy and other libraries' readers. |
+| `IVR002` | A write: those libraries' writers, `open` and the other openers (`gzip.open`, `zipfile.ZipFile`, `os.open`, ...) in a mode that writes, a `Path`'s writers, and copies, moves and deletes (`shutil`, `os.rename`, ...). |
+| `IVR003` | A connection: a database driver, `sqlalchemy`, a cloud or storage client, an HTTP client. |
+| `IVR004` | SQL that reads or writes files: `COPY`, `ATTACH`, `read_parquet(...)`, a file named after `FROM`. |
+| `IVR005` | Another program started (`subprocess`, `os.system`): what it reads and writes, nothing here sees. |
+| `IVR006` | Code the scan cannot follow: `exec` and `eval`, `getattr` and imports by a name built at run time, native code loaded with `ctypes`. |
+
+It reads the code as Python does, so writing the call another way is no way around it: a function under another name
+(`reader = pd.read_csv`), one passed on without being called (`map(pd.read_csv, paths)`), one looked up by a name that is
+spelled out (`getattr(pd, "read_csv")`), and a mode or a SQL statement kept in a variable are all found. Where it cannot
+tell what a line does, it says so (`IVR006`) and does not guess. What is certainly not data at rest is left alone: a
+buffer in memory (`io.BytesIO()`), the console, a scratch file in the temporary folder, a database in memory, and a
+function of the job's own that happens to be called `open` or `to_csv`.
+
+A call kept on purpose is marked on its line, ideally with the reason:
 
 ```python
 lookup = pd.read_csv("lookup/regions.csv")  # invaract: allow - a table shipped with the job, not a dataset
@@ -463,9 +478,10 @@ across runs. This is the finding above, from the event that run published:
 - `path`, `line`, `column`, `endLine`, `endColumn`: where the call starts and ends (`endColumn` is just after its last
   character); `path` is relative to the job's working folder.
 - `scope`: the function or class it is in (`Loader.load`), or `<module>`.
-- `code` and `category`: `IVR001` read, `IVR002` write, `IVR003` connection, `IVR004` SQL on files. `rule` says which rule
-  matched (`pandas-read`, `frame-write`, `open-write-mode`, `database-connect`, `file-sql`, ...) and `detail` what made it
-  count when the name alone does not (an `open`'s mode, the SQL keyword).
+- `code` and `category`: `IVR001` `read`, `IVR002` `write`, `IVR003` `connect`, `IVR004` `sql`, `IVR005` `process`, `IVR006`
+  `dynamic`. `rule` says which rule matched (`pandas-read`, `frame-write`, `open-write-mode`, `database-connect`,
+  `file-sql`, ...) and `detail` what made it count when the name alone does not (an `open`'s mode, the SQL keyword, or
+  that the function is passed on and not called there).
 - `call` as written, `resolved` the name it stands for through the file's imports (`pandas.read_csv` for `pd.read_csv`;
   `null` for a method of a frame), `snippet` the whole call on one line, and `target` the path or URL it names when the
   code spells one out (never for a connection or SQL). A password in a URL is masked in both.
@@ -475,8 +491,107 @@ across runs. This is the finding above, from the event that run published:
 
 The event also has `status` (`FINDINGS`, `NOT_SCANNED`, `EXCEPTIONS` or `CLEAN`), `counts` by category split into
 findings and exceptions, the `files` scanned, `errors` for files it could not parse, and whether it `refused` the run; see
-[Events from a Python job](/guides/notification-sinks/#events-from-a-python-job). A scan reads the source, not what runs: a
-call reached through a name built at run time (`getattr(pd, "read_csv")`) is not found.
+[Events from a Python job](/guides/notification-sinks/#events-from-a-python-job).
+
+A scan reads the source, not what runs. It does not see what a line it could not follow (`IVR006`) went on to do, SQL
+handed to a function that runs it on a connection made elsewhere, or code the job fetches and runs. Strict mode, below,
+watches the run itself.
+
+## Watch what the job does as it runs
+
+`INVARACT_STRICT` watches the job while it runs. A write made around the package is seen when it happens, however the
+code that made it is written, and with `enforce` it is stopped before it happens:
+
+| `INVARACT_STRICT` | What happens |
+|---|---|
+| `off` (the default) | Nothing is watched. |
+| `report` | What the job does around the package is recorded, and published as one `CODE_SCAN` event (phase `RUNTIME`) when the run ends; the run goes on. |
+| `enforce` | The same, and a write no marker explains is refused where it is about to be made: the call raises `ContractViolation`, the file is not written, nothing the run staged is published, and the run ends with exit status 1 even if the job catches the error. |
+
+It needs `invaract-lint` installed beside the package (`pip install invaract[lint]`), because the list of what counts as
+a write is the lint's: one list, used by the scan and by the watch. What it sees:
+
+- every file Python opens to write, and every rename, delete, link and truncation: this is how `open`, pandas
+  (`to_csv`, `to_json`, `to_pickle`, `to_excel`), numpy, `json`, `csv`, `pickle`, `zipfile` and `shutil` write;
+- every write by pyarrow, Polars, DuckDB and deltalake, whose writers are compiled (`pq.write_table`,
+  `df.write_parquet`, `sink_parquet`, `write_deltalake`, and pandas' `to_parquet` through them);
+- SQL that reaches files, on DuckDB (`COPY ... TO`, `EXPORT DATABASE`, `ATTACH`, whatever the code that built the
+  statement looks like) and on SQLite (`ATTACH`, `VACUUM INTO`);
+- a SQLite or DuckDB database file opened, a network connection made from Python, and another program started.
+
+Each is placed at the line of the job's own code that led to it, and reported in the same shape as a scan's finding,
+with what it reached as its `target`. The scan and the watch are meant to be used together. This helper hides its write
+from the scan, which says only that it cannot follow the line; a reviewer marked it as harmless:
+
+```python
+def backup(df, kind):
+    writer = getattr(df, "to_" + kind)  # invaract: allow - reviewed: only ever called with "html" for the status page
+    writer(f"backup/report.{kind}")
+```
+
+Run with `INVARACT_LINT=enforce` and `INVARACT_STRICT=enforce`, and called with `"parquet"`, the job passes the scan (the
+marker explains the line) and is refused when it tries to write:
+
+```text
+Why it violates the contract (1 violation):
+  1. [UNGOVERNED_DATA_ACCESS] `pyarrow.OSFile` in backup (jobs/helpers.py:3:5) writes data outside Invaract, so no check sees it (IVR002 open-write-mode, seen as the job ran: opened backup/report.parquet to write (mode 'wb'))
+```
+
+The file is not written, and the event says what was about to happen:
+
+```json
+{
+  "code": "IVR002",
+  "category": "write",
+  "rule": "open-write-mode",
+  "path": "jobs/helpers.py",
+  "line": 3,
+  "column": 5,
+  "call": "pyarrow.OSFile",
+  "scope": "backup",
+  "snippet": "writer(f\"backup/report.{kind}\")",
+  "target": "backup/report.parquet",
+  "detail": "seen as the job ran: opened backup/report.parquet to write (mode 'wb')",
+  "allowed": false
+}
+```
+
+### What is let through
+
+A write the invaract package makes for the job is the package's own, and is never a finding. Neither is a scratch file
+in the temporary folder, Python's own bytecode files (`__pycache__`), or anything in the user's cache folder
+(`~/.cache`), where libraries keep what they can rebuild. Beyond that:
+
+- a `# invaract: allow - <why>` marker on the call keeps it, as it does for the scan; it is reported as an exception,
+  with the reason;
+- `INVARACT_STRICT_ALLOW` names what the platform lets through for every job, as comma-separated patterns (`*` matches
+  anything) matched against what was reached: a file by its full path or its path from the working folder (`logs/*`,
+  `*.log`), a connection as `host:port` (`metrics.internal:*`), a program by its name (`gzip`). Each is reported as an
+  exception, with the pattern as the reason.
+
+A log file is the usual case: `logging.FileHandler("job.log")` opens a file to write, which strict mode reports until
+`INVARACT_STRICT_ALLOW=*.log` (or a marker on the line) says it is expected.
+
+### What it cannot see
+
+Strict mode watches writes, connections and programs, in the Python process, during the run. It does not see:
+
+- **reads**: opening a file to read is too ordinary to report (every import does it). Reads around the package are the
+  scan's to find (`IVR001`);
+- **what another program does**: starting one is reported (`subprocess`, `os.system`, a `multiprocessing` worker started
+  with `spawn`), and with `enforce` refused, but once started it is not watched. A child made with `fork` stays watched;
+- **compiled code it does not wrap**: a pyarrow filesystem object's own methods (`fs.open_output_stream(...)` written
+  to by hand), a database driver that connects from compiled code (psycopg, pyodbc), libraries other than those listed
+  above that write without Python's `open` (h5py, netCDF4), and a C library called through `ctypes`. The scan reports
+  each of these in the source (`IVR002`, `IVR003`, `IVR006`);
+- **what happens outside the run**: code that runs as the job's modules are imported, before the run opens, or in an
+  `atexit` hook after it ends. The scan reads that code like any other;
+- **a compiled writer saved in a variable or a table before the invaract package was imported**: import `invaract`
+  before the libraries the job writes with, and nothing is missed this way.
+
+Every one of these is covered by a test that runs it as a real job, so the list is what is true of this release, not a
+guess. A job written to get around both the scan and the watch, by its own author, can only be stopped by what the
+process is allowed to do: run it as a user that can write only where its contract says.
 
 ## The settings
 

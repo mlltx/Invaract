@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2024 Invaract Contributors
+"""The SQL reader: which statements reach files, and where SQL built at run time could."""
+import pytest
+
+from invaract_lint.sqltext import UNKNOWN, built, file_access
+
+GAP = UNKNOWN
+
+
+@pytest.mark.parametrize("sql,reached", [
+    ("COPY orders TO 'out.parquet' (FORMAT PARQUET)", "COPY"),
+    ("copy orders from 'in.csv'", "COPY"),
+    ("COPY (SELECT * FROM t) TO 'x.csv'", "COPY"),
+    ("COPY main.orders TO 'x'", "COPY"),
+    ('COPY "my table" TO \'x\'', "COPY"),
+    ("COPY INTO t FROM @stage", "COPY"),
+    ("  \n COPY t TO 'x'", "COPY"),
+    ("SET threads = 2; COPY t TO 'x'", "COPY"),
+    ("-- export\nCOPY t\nTO 'x'", "COPY"),
+    (f"COPY {GAP} TO '{GAP}'", "COPY"),
+    (f"COPY t {GAP} {GAP}", "COPY"),
+    (f"COPY {GAP}", "COPY"),
+    ("COPY {} TO '{}'", "COPY"),
+    ("COPY %s TO '%s'", "COPY"),
+    ("COPY %(table)s TO %(path)s", "COPY"),
+    ("ATTACH 'other.db' AS other", "ATTACH"),
+    ("ATTACH DATABASE 'other.db' AS other", "ATTACH"),
+    ("attach if not exists 'x.db'", "ATTACH"),
+    ("ATTACH ? AS other", "ATTACH"),
+    ("ATTACH $1 AS other", "ATTACH"),
+    ("ATTACH :path AS other", "ATTACH"),
+    (f"ATTACH {GAP}", "ATTACH"),
+    ("ATTACH {path} AS x", "ATTACH"),
+    ("EXPORT DATABASE 'dir'", "EXPORT DATABASE"),
+    ("IMPORT DATABASE 'dir'", "EXPORT DATABASE"),
+    ("VACUUM INTO 'backup.db'", "VACUUM INTO"),
+    ("VACUUM main INTO 'backup.db'", "VACUUM INTO"),
+    ("LOAD DATA INFILE 'x.csv' INTO TABLE t", "LOAD DATA INFILE"),
+    ("LOAD DATA LOCAL INFILE 'x.csv' INTO TABLE t", "LOAD DATA INFILE"),
+    ("SELECT * FROM t INTO OUTFILE '/tmp/x.csv'", "INTO OUTFILE"),
+    ("SELECT a INTO DUMPFILE '/tmp/x' FROM t", "INTO OUTFILE"),
+    ("SELECT * FROM read_parquet('data/*.parquet')", "read_parquet"),
+    ("SELECT * FROM READ_CSV_AUTO('a.csv')", "read_csv_auto"),
+    ("select * from read_json ('a.json')", "read_json"),
+    ("CREATE TABLE t AS SELECT * FROM parquet_scan('a')", "parquet_scan"),
+    ("SELECT * FROM delta_scan('s3://b/t')", "delta_scan"),
+    ("SELECT * FROM iceberg_scan('t')", "iceberg_scan"),
+    ("SELECT * FROM sniff_csv('a.csv')", "sniff_csv"),
+    ("SELECT * FROM 'data/in/orders.csv'", "FROM 'data/in/orders.csv'"),
+    ("SELECT * FROM 'orders.parquet'", "FROM 'orders.parquet'"),
+    ("SELECT * FROM'orders.PARQUET'", "FROM 'orders.PARQUET'"),
+    ("SELECT * FROM t JOIN 's3://bucket/k' USING (id)", "FROM 's3://bucket/k'"),
+    ("SELECT * FROM 'folder\\\\file'", "FROM 'folder\\\\file'"),
+    ("SELECT * FROM 'part-*'", "FROM 'part-*'"),
+    (f"SELECT * FROM '{GAP}'", "FROM '...'"),
+    (f"SELECT * FROM '{GAP}/orders'", "FROM '.../orders'"),
+    ("SELECT * FROM '{}'", "FROM '{}'"),
+    ("SELECT * FROM '%s'", "FROM '%s'"),
+    ("SELECT 1; SELECT * FROM 'a.csv'", "FROM 'a.csv'"),
+    ("SELECT 'it''s' , x FROM 'a.csv'", "FROM 'a.csv'"),
+])
+def test_sql_that_reaches_files(sql, reached):
+    assert file_access(sql) == reached
+
+
+@pytest.mark.parametrize("sql", [
+    "",
+    "SELECT 1",
+    "SELECT copy, attach FROM t",
+    "SELECT * FROM t WHERE note = 'COPY t TO x'",
+    "INSERT INTO log VALUES ('copy failed', 'ATTACH ''x''')",
+    "SELECT 1 -- COPY t TO 'x'",
+    "/* ATTACH 'x.db' */ SELECT 1",
+    'SELECT "copy to" FROM t',
+    "SELECT `read_parquet(` FROM t",
+    "SELECT EXTRACT(year FROM '2026-01-01'::date)",
+    "SELECT TRIM(BOTH 'x' FROM 'xabcx')",
+    "SELECT * FROM t WHERE region = 'data/emea'",
+    "SELECT * FROM analytics.orders",
+    "SELECT * FROM t JOIN u USING (id)",
+    "SELECT * FROM 'orders'",
+    "copy > 3",
+    "copy in @wanted",
+    "copy",
+    "attach == 1",
+    "attach",
+    "ALTER TABLE t ATTACH PARTITION p FOR VALUES IN (1)",
+    "VACUUM",
+    "VACUUM ANALYZE t",
+    "LOAD 'httpfs'",
+    "INSERT INTO outfile VALUES (1)",
+    "SELECT read_parquet FROM t",
+    "SELECT already_read_parquet('x')",
+    "UPDATE t SET copy = 1",
+    "DETACH other",
+    "EXPORT",
+    f"SELECT * FROM t WHERE id = {GAP}",
+    "SELECT * FROM t WHERE id = %s AND name = %(name)s",
+    "SELECT {} FROM t",
+])
+def test_sql_that_does_not(sql):
+    assert file_access(sql) is None
+
+
+@pytest.mark.parametrize("sql,where", [
+    (GAP, "statement"),
+    (f"  {GAP} INTO t VALUES (1)", "statement"),
+    (f"SELECT 1; {GAP}", "statement"),
+    ("{}", "statement"),
+    ("{query}", "statement"),
+    ("%s", "statement"),
+    ("%(query)s", "statement"),
+    (f"SELECT * FROM {GAP}", "table"),
+    (f"SELECT * FROM {GAP} WHERE x > 1", "table"),
+    (f"SELECT * FROM t JOIN {GAP} USING (id)", "table"),
+    (f"select * from\n  {GAP}", "table"),
+    ("SELECT * FROM {}", "table"),
+    ("SELECT * FROM {table}", "table"),
+    ("SELECT * FROM %s", "table"),
+    ("SELECT * FROM %(table)s", "table"),
+    (f"SELECT 1; SELECT * FROM {GAP}", "table"),
+    (f"SELECT * FROM {GAP}; {GAP}", "statement"),
+    ("", None),
+    ("SELECT 1", None),
+    (f"SELECT * FROM t WHERE x > {GAP}", None),
+    (f"SELECT {GAP} FROM t", None),
+    (f"SELECT * FROM t LIMIT {GAP}", None),
+    (f"SELECT * FROM t{GAP}", None),
+    (f"SELECT * FROM t WHERE note = 'FROM {GAP}'", None),
+    (f"SELECT 1 -- FROM {GAP}", None),
+    ("SELECT * FROM t WHERE id = %s", None),
+    ("SELECT '{}' FROM t", None),
+    ("SELECT x FROM t WHERE y = 100 % 7", None),
+    ("SELECT * FROM t WHERE j = {fn now()}", None),
+])
+def test_where_built_sql_could_reach_files(sql, where):
+    assert built(sql) == where
