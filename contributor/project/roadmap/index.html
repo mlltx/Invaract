@@ -4049,8 +4049,21 @@ rule, the path it names, the marker’s reason, an id stable across edits); <cod
 reads anything, one <code dir="auto">UNGOVERNED_DATA_ACCESS</code> per call no <code dir="auto"># invaract: allow</code> explains, and scans modules imported
 while it runs before anything is published. A file it cannot parse, or none at all, leaves an enforced run not
 checked. invaract-lint gained the rich findings, <code dir="auto">scan()</code>/<code dir="auto">Scan</code> and <code dir="auto">--format json</code>. See docs/PYTHONIO_ADAPTER.md,
-“The lint at run time”. Open: the run-time strict mode (an audit hook refusing file writes outside staging), whose
-cost and sharing with the lint are weighed separately.</li>
+“The lint at run time”.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: the lint made hard to get around, and strict mode (<code dir="auto">INVARACT_STRICT</code>)</strong> (<code dir="auto">pythonio-adapter</code>,
+<code dir="auto">verification-core</code>, the lint). Measured against a corpus, the lint missed 52 of 54 ways of writing a read or write
+other than the plain call and flagged 16 of 28 pieces of ordinary code; it now reads the code as Python does
+(<code dir="auto">resolver.py</code>: scopes, aliases, references, values held in memory or in the temporary folder), from a catalogue of
+what reads and writes (<code dir="auto">catalogue.py</code>) and a reader of SQL (<code dir="auto">sqltext.py</code>), and reports what it cannot follow
+(<code dir="auto">IVR005</code> another program, <code dir="auto">IVR006</code> code built at run time) instead of passing it. Strict mode watches the run:
+Python’s audit events for every file opened to write, moved or deleted, every SQLite database, connection and
+program, and wrappers around pyarrow’s, Polars’, DuckDB’s and deltalake’s compiled writers, taken from the same
+catalogue. <code dir="auto">report</code> publishes a <code dir="auto">CODE_SCAN</code> event of phase <code dir="auto">RUNTIME</code>; <code dir="auto">enforce</code> refuses the write before it happens
+(<code dir="auto">UNGOVERNED_DATA_ACCESS</code>). <code dir="auto">python/tests/strict_matrix.py</code> holds 152 ways of writing around the package, each run
+as a real job and held to what each layer says of it; five are seen only by the scan, four only by strict mode,
+none by neither. See docs/PYTHONIO_ADAPTER.md, “The lint, made hard to get around, and strict mode”. Open: reads
+at run time; wrapping h5py, netCDF4 and the compiled database drivers; watching a spawned worker process; an
+operating-system guard (a user that can write only where the contract says) for a job written to get around both.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
