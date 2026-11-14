@@ -471,7 +471,7 @@ then closed or written down as not closable.
   neither) and 26 pieces of ordinary code; `test_strict.py` runs them as real jobs on Python 3.10 with the oldest
   libraries and 3.13 with the newest. `test_strict_unit.py` fails when an installed library offers a reader, writer or
   filesystem method the catalogue does not name, or names its path parameter differently. The lint has over 260 evasion
-  cases and over 110 legitimate ones.
+  cases and over 110 legitimate ones (1,005 tests); `mutmut` kills 1,958 of 2,214 mutants (88.4%; the floor is 80%).
 
 ## Milestone 5: the user guide and the release
 

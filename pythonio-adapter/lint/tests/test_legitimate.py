@@ -27,6 +27,10 @@ CASES = [
                                                 "sys.modules.pop('my_plugin', None)"),
     case("a module imported by a name spelled out", "import importlib\nimportlib.import_module('invaract')\nimportlib.import_module('json')"),
     case("a class used as a type", "import pyarrow.parquet as pq\ndef f(x: pq.ParquetFile) -> pq.ParquetFile:\n    assert isinstance(x, pq.ParquetFile)\n    return x"),
+    case("a reader's attribute used as a type", "import pyarrow.parquet as pq\ndef f(w: pq.ParquetWriter.Kind) -> pq.ParquetFile.Kind:\n"
+                                                "    assert isinstance(w, pq.ParquetWriter.Kind)\n    return w"),
+    case("the package's own class used as a type", "import invaract\ndef f(run: invaract._run.Run) -> None:\n    assert isinstance(run, invaract._run.Run)"),
+    case("__call__ of a function that is no reader", "import json\njson.dumps.__call__({})\nhelper.__call__(df)"),
     case("a module of the job's own named like a private one", "import jobs._helpers\njobs._helpers.clean(df)\nfrom jobs import _shared\n_shared.x = 1"),
     case("read from a text buffer", "import io, pandas as pd\npd.read_csv(io.StringIO(text))"),
     case("read from a named buffer", "import io, pandas as pd\nbuf = io.BytesIO(payload)\npd.read_parquet(buf)"),

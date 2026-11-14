@@ -22,10 +22,14 @@ ALLOW = re.compile(r"#\s*invaract:\s*allow\b(?P<reason>.*)")
 _LONGEST = 200
 #: A password in a URL (``postgresql://user:secret@host``): never copied into a finding, which may be published.
 _PASSWORD = re.compile(r"(\w[\w+.-]*://[^/\s:@'\"]+):[^@\s/'\"]+@")
-#: A secret given by name, in a connection string (``password=secret``, ``PWD=secret;``) or as a keyword argument
-#: (``password='secret'``): its value is never copied either.
-_SECRET = re.compile(r"\b((?:password|passwd|pwd|secret|token|api_?key|access_?key|secret_?key|sas_?token|account_?key)\s*=\s*)"
-                     r"(?:'[^']*'|\"[^\"]*\"|[^\s;,&)'\"]+)", re.IGNORECASE)
+#: The names a secret is given by, and a piece of text as Python source writes it.
+_NAMED = r"\b((?:password|passwd|pwd|secret|token|api_?key|access_?key|secret_?key|sas_?token|account_?key)\s*=\s*)"
+_TEXT = r"(?:'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")"
+#: A secret given by name in a connection string (``password=secret``, ``PWD=secret;``): its value is never copied either.
+_SECRET = re.compile(_NAMED + r"(?:'[^']*'|\"[^\"]*\"|[^\s;,&)'\"]+)", re.IGNORECASE)
+#: In Python source, a secret given as a keyword argument's text (``password='secret'``).
+_SECRET_ARGUMENT = re.compile(_NAMED + _TEXT, re.IGNORECASE)
+_TEXT_IN_CODE = re.compile(_TEXT)
 
 
 @dataclass(frozen=True)
@@ -103,16 +107,17 @@ def allowed_lines(source):
     return lines
 
 
-def _mask_in_code(found):
-    """``password=`` and its value masked, in Python source: a value that is text, or is inside text (a connection string),
-    is a secret; one that is a name or a call (``password=password``) holds none to copy, and says where it comes from."""
-    value = found.group(0)[len(found.group(1)):]
-    quotes_before = found.string.count("'", 0, found.start()) + found.string.count('"', 0, found.start())
-    return found.group(1) + "***" if quotes_before % 2 or value[:1] in "'\"" else found.group(0)
+def _mask_in_code(source):
+    """Python source with every secret given by name masked. A secret is a value that is text (``password='secret'``) or
+    is inside text (a connection string); a value that is a name or a call (``password=password``) holds none to copy,
+    and says where the secret comes from."""
+    source = _SECRET_ARGUMENT.sub(r"\1***", source)
+    return _TEXT_IN_CODE.sub(lambda text: _SECRET.sub(r"\1***", text.group(0)), source)
 
 
 def short(text, code=False):
     """``text`` with any password masked (in a URL, or given by name), cut to ``_LONGEST`` characters. ``code`` says the text
     is Python source, where what follows ``password=`` may be a name and no secret."""
-    text = _SECRET.sub(_mask_in_code if code else r"\1***", _PASSWORD.sub(r"\1:***@", text))
+    text = _PASSWORD.sub(r"\1:***@", text)
+    text = _mask_in_code(text) if code else _SECRET.sub(r"\1***", text)
     return text if len(text) <= _LONGEST else text[:_LONGEST - 1] + "\u2026"

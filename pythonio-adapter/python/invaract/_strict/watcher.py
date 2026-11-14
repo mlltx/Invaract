@@ -147,10 +147,12 @@ class Watcher:
                                              f"checked ({STRICT}=enforce)")
 
     def in_forked_child(self):
-        """This process is a fork of the watched one: what it sees from here is left for its parent."""
-        self._child = True
-        self._found = {}
+        """This process is a fork of the watched one: what it sees from here is left for its parent, when its parent has a
+        run open to pick it up. A fork made before any run opened goes on keeping what it sees for its own run."""
         self._lock = threading.RLock()
+        if self._spill is not None:
+            self._child = True
+            self._found = {}
 
     def _take_over(self, earlier):
         """Makes what an earlier watcher of this process saw before the run opened this run's."""

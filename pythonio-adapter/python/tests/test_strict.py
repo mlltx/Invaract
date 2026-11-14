@@ -583,6 +583,17 @@ def test_a_worker_process_started_afresh_is_reported_and_so_is_what_it_wrote(job
         "seen as the job ran: opened evade/backup.out to write (mode 'w'), in a child process"]
 
 
+def test_a_fork_made_before_any_run_opens_keeps_what_it_sees_for_its_own_run(job):
+    """A server that forks its workers before any of them opens a run: each worker's run reports what that worker did."""
+    early = ("import invaract\npid = os.fork()\nif pid:\n    os.waitpid(pid, 0)\n    os._exit(0)\n"
+             "open('evade/in-the-worker.out', 'w').write('x')")
+    ran = job("pass", strict="report", before=[early])
+    [found] = ran.findings("RUNTIME")
+    assert (found["target"], found["detail"]) == (
+        "evade/in-the-worker.out", "seen before the run opened: opened evade/in-the-worker.out to write (mode 'w')")
+    assert ran.scans("RUNTIME")[0]["errors"] == []
+
+
 def test_a_process_that_is_not_watched_leaves_nothing_behind_for_the_next_run(job):
     """The file child processes leave their findings in is the run's own: it is gone when the run ends."""
     ran = job("pid = os.fork()\nif pid == 0:\n    open(p, 'w').write('x')\n    os._exit(0)\nos.waitpid(pid, 0)", strict="report")
