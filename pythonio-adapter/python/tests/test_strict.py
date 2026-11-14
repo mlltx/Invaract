@@ -265,7 +265,7 @@ def test_every_finding_is_placed_in_the_jobs_code_or_said_to_be_outside_it(repor
 
 
 def test_the_matrix_is_broad():
-    assert len(TECHNIQUES) > 140
+    assert len(TECHNIQUES) > 220
     unseen_at_run_time = sorted(t.name for t in TECHNIQUES if t.runtime is None)
     assert unseen_at_run_time == ["compiled-writer-kept-in-a-tuple-before-the-run", "filesystem-made-before-the-run",
                                   "read-pyarrow-a-file-it-mapped-itself", "the-function-dug-out-of-its-wrapper", "written-after-the-run",

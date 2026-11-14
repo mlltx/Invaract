@@ -398,9 +398,9 @@ Strict mode is the second layer, for what reading source cannot show.
   refusal, so a job that catches it is refused when it ends, and nothing is published. A forked child cannot use its
   parent's pipe to the checker: it raises a refusal of its own and leaves what it saw in a file its parent reads when
   the run ends. A failure of the watch itself is listed (`errors`), and, enforced, leaves the run not checked.
-- **What it cannot see**, each pinned by a test that runs it: reads; a pyarrow filesystem object's own methods; a
-  compiled function kept in a table before the package was imported; native code; what a program it reported goes on to
-  do; what the job does before its run opens or after it ends. The scan reports each of these in the source.
+- **What it could not see** at this point, each pinned by a test that ran it: reads; a pyarrow filesystem object's own
+  methods; a compiled function kept in a table before the package was imported; native code; what a program it reported
+  goes on to do; what the job does before its run opens or after it ends. Most of these were closed in the pass below.
 - **Tests.** `python/tests/strict_matrix.py` lists 152 ways of writing around the package, each as code that
   really does it, with what each layer must say of it. `test_strict.py` runs them all in one job reporting and one
   enforcing, as real processes against a real checker, and holds each by name to what strict mode says, what the scan
@@ -410,6 +410,68 @@ Strict mode is the second layer, for what reading source cannot show.
   published. `test_strict_unit.py` holds the parts, runs in this process with every request checked against the
   protocol's schema, and fails when an installed pyarrow, Polars or DuckDB offers a writer the catalogue does not name.
   The recorded cases `strict-*` and `code-scan-process-and-dynamic-refused` hold the checker (JVM and native).
+
+### Closing what Python lets be closed, and making it easy to extend (2026-11-14)
+
+The list of what strict mode could not see was the next question: which of those can be closed from inside the Python
+process at all. Each was probed first (does Python raise an event; can the function be replaced; what does it cost),
+then closed or written down as not closable.
+
+- **Strict mode is a package now** (`invaract/_strict/`), each module one job: `events` (Python's audit events, each read
+  as what the job did), `judges` (what a wrapped call is about to do, from its arguments), `wrapping` (the hooks, and the
+  wrappers the catalogue asks for), `placing` (whose doing it is, and where), `watcher` (one watch). Adding to it is a
+  line in a table: `events.EVENTS`, the lint's catalogue, or `wrapping.OTHERS`.
+  [PYTHONIO_LINT_AND_STRICT.md](PYTHONIO_LINT_AND_STRICT.md) is the recipe.
+- **Reads are watched.** Every reader the catalogue names is wrapped (pandas, numpy, Polars, pyarrow, DuckDB, deltalake,
+  pyreadstat, and the openers of scientific files), and judged by the path, URL or open file it is handed
+  (`catalogue.SOURCES` names the parameters). A buffer, text that is the data itself, a scratch file, and a file under an
+  installed package's own folder are no finding. A plain `open` to read stays unreported: every import does it.
+- **More libraries.** h5py, netCDF4, PyTables and pyreadstat write and read from compiled code and raise no event, so
+  they joined `COMPILED`; `dbm` is in `COMPILED_STANDARD`. Every database driver in `DRIVERS` has its `connect`
+  wrapped, and is reported by driver and host, never by its connection string.
+- **pyarrow's filesystems.** A filesystem class cannot be changed, so each is replaced by a subclass whose reading and
+  writing methods are watched and which `isinstance` treats as the original; `from_uri` gives the watched local one, and
+  reports a remote one (whose methods are compiled) as a connection.
+- **Native code.** Python raises `ctypes.dlopen` and `ctypes.dlsym`; libraries use `ctypes` for their own ends (Polars
+  checks the CPU with it), so such an event counts only when the job's own code called `ctypes` itself
+  (`Seen.direct`, decided by the frame just outside the `ctypes` package). `cffi`'s `dlopen` is wrapped the same way.
+  Loading a compiled module raises `import` with its file: one that is the job's own is reported, at the import that
+  loaded it; those loaded before anything watched are listed when the run opens.
+- **Other interpreters.** An audit hook added from Python is its interpreter's own: a file opened in a sub-interpreter
+  raised nothing. Making one and running code in one are now themselves findings (`_interpreters`,
+  `_xxsubinterpreters`), and the scan reports them too.
+- **Before the run, and in other processes.** With `INVARACT_STRICT` set, a watcher is in place from `import invaract`:
+  what the job does before its run opens is that run's finding ("seen before the run opened"), and an enforced run is
+  refused as it opens. A run sets `INVARACT_STRICT_SPILL` for the processes it starts: a Python child that imports the
+  package leaves what it sees in that file, as a forked child already did, and enforces on its own.
+  `_posixsubprocess.fork_exec` is wrapped for the processes `multiprocessing` starts without `subprocess`.
+- **References taken before the wrapping.** A compiled function cannot be changed in place, so a reference a job took
+  before importing the package was the original. When a run opens, whatever refers to a wrapped original (a dict, a
+  list, a closure, a default argument, an attribute) is given its wrapper (`gc.get_referrers`, about 8 ms). A tuple
+  cannot be changed: that case stays the scan's.
+- **Tampering.** A wrapper no longer leads to what it wraps (no `__wrapped__`), so `inspect.unwrap` and decorators that
+  copy it do not step around the watch. When a run ends it checks that it is still the watcher and that no wrapped
+  place holds its original again; if not, the event says the watch was taken off, and an enforced run is not checked.
+  The scan has a `tampering` rule for code that reaches into `invaract._*`, takes the function under a reader or
+  writer by one of its attributes, or walks the process's objects (`gc.get_objects`).
+- **False alarms found on the way**, each by a real job: `platform.uname()` runs `uname` (so `import h5py` started a
+  program), now recognised as Python asking the system about itself, by the module that asks and the program asked for
+  (`placing.PROBES`); `pd.read_clipboard(";")` took its separator for a path; a function many modules hold was named by
+  whichever module loaded first (`pandas.io.parsers.readers.read_csv`), and is now named by the shortest.
+- **Secrets.** A secret given by name (`password=...`, `PWD=...;`, `token='...'`) is masked in a finding's snippet,
+  target and detail, as a password in a URL was.
+- **The lint, simpler.** `findings.py` holds what a finding is, the marker and the masking; `checker.py` is the scan
+  alone, its chain of special cases a table (`_SPECIAL`) and three named steps.
+- **What is left**, each pinned by a matrix case with `runtime=None`: a pyarrow filesystem object made before the package
+  was imported; a compiled writer kept in a tuple before it was; a reader handed a file pyarrow mapped itself; a
+  compiled function dug out of its wrapper's closure; and what runs before `import invaract` or after the run ends. The
+  scan sees each. Not closable from inside Python at all: what another program does once started, and what compiled
+  code of the job's own does.
+- **Tests.** `strict_matrix.py` has 226 techniques (six seen only by the scan, seven only by strict mode, none by
+  neither) and 26 pieces of ordinary code; `test_strict.py` runs them as real jobs on Python 3.10 with the oldest
+  libraries and 3.13 with the newest. `test_strict_unit.py` fails when an installed library offers a reader, writer or
+  filesystem method the catalogue does not name, or names its path parameter differently. The lint has over 260 evasion
+  cases and over 110 legitimate ones.
 
 ## Milestone 5: the user guide and the release
 

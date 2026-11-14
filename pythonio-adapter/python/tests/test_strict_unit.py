@@ -532,8 +532,8 @@ def test_every_wrapped_reader_says_what_it_reads_from_by_a_parameter_the_catalog
     pytest.importorskip("polars")
     pytest.importorskip("duckdb")
     import pandas  # noqa: F401 - its readers are wrapped as it loads
-    # what reads from no place: the clipboard, a callback, a message already in memory
-    no_place = ("read_clipboard", "scan_external_reader", "read_record_batch", "read_schema", "read_message")
+    # what reads from no place: the clipboard, a callback, a message already in memory, a query (seen by its connection)
+    no_place = ("read_clipboard", "scan_external_reader", "read_record_batch", "read_schema", "read_message", "read_gbq")
     unnamed = {call: parameters for call, parameters in wrapped_in_the_loaded_libraries("IVR001").items()
                if parameters and not set(parameters) & catalogue.SOURCES and not call.endswith(no_place)}
     assert unnamed == {}, "add the parameter that names the source to invaract-lint's catalogue (SOURCES)"

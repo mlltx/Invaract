@@ -51,10 +51,17 @@ lookup = pd.read_csv("lookup/regions.csv")  # invaract: allow - a table shipped 
 
 **What it cannot follow, it reports.** It never runs the code, so a call reached through a name built at run time
 (`getattr(df, "to_" + kind)`), an import by such a name, `exec` and `eval`, and native code are each a finding of their own
-(`IVR006`): the scan fails closed, and a reviewer decides. What it does not see at all is what such a line then goes on to
-do, SQL handed to a function that runs it on a connection made elsewhere, and code the job fetches and runs. The
-`invaract` package's strict mode (`INVARACT_STRICT`) watches the run for those, using this package's `catalogue.py` as its
-list of what writes.
+(`IVR006`): the scan fails closed, and a reviewer decides. So are code run in another interpreter and code that reaches
+under the checks themselves: into the `invaract` package's own parts, or to the function underneath a library's reader or
+writer (rule `tampering`). What it does not see at all is what such a line then goes on to do, SQL handed to a function
+that runs it on a connection made elsewhere, and code the job fetches and runs. The `invaract` package's strict mode
+(`INVARACT_STRICT`) watches the run for those, using this package's `catalogue.py` as its list of what reads and writes.
+
+**A password is never copied into a finding**: one in a URL (`postgresql://user:***@host`) or given by name
+(`password=***`) is masked.
+
+**Adding a library or an edge case** is a line in `catalogue.py` and a line in each test corpus:
+[docs/PYTHONIO_LINT_AND_STRICT.md](../../docs/PYTHONIO_LINT_AND_STRICT.md).
 
 **As data**, `--format json` prints the whole scan as one JSON object: its `status` (`findings`, `not-scanned`,
 `exceptions` or `clean`), the `files` scanned, `counts` per category split into `findings` and `exceptions`, every finding

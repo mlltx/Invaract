@@ -3979,9 +3979,21 @@ first written: one field's value compared against *another field on the same row
       catalogue. `report` publishes a `CODE_SCAN` event of phase `RUNTIME`; `enforce` refuses the write before it happens
       (`UNGOVERNED_DATA_ACCESS`). `python/tests/strict_matrix.py` holds 152 ways of writing around the package, each run
       as a real job and held to what each layer says of it; five are seen only by the scan, four only by strict mode,
-      none by neither. See docs/PYTHONIO_ADAPTER.md, "The lint, made hard to get around, and strict mode". Open: reads
-      at run time; wrapping h5py, netCDF4 and the compiled database drivers; watching a spawned worker process; an
-      operating-system guard (a user that can write only where the contract says) for a job written to get around both.
+      none by neither. See docs/PYTHONIO_ADAPTER.md, "The lint, made hard to get around, and strict mode".
+- [x] **Follow-up: closing what Python lets be closed** (`pythonio-adapter`: the package and the lint). Strict mode now
+      also watches reads through the libraries' readers; h5py, netCDF4, PyTables, pyreadstat and `dbm`; every database
+      driver's `connect`; pyarrow's filesystems; native code the job calls itself (`ctypes`, `cffi`) and its own
+      compiled modules; sub-interpreters; what the job does between importing the package and opening its run; and
+      the Python processes it starts. A reference to a compiled writer taken before the package was imported is given
+      its wrapper when the run opens. A wrapper no longer leads to what it wraps, a run whose watch was taken off says
+      so and, enforced, is not checked, and the scan reports code that reaches under the checks (`tampering`). A
+      secret given by name is masked in findings. Strict mode is a package of small modules driven by the lint's
+      catalogue, the lint's checker is split and tabled, and docs/PYTHONIO_LINT_AND_STRICT.md is the recipe for adding
+      a library or an edge case. `strict_matrix.py` holds 226 techniques, run as real jobs on the oldest and newest
+      supported Python: six seen only by the scan, seven only by strict mode, none by neither. See
+      docs/PYTHONIO_ADAPTER.md, "Closing what Python lets be closed". Open: an operating-system guard (a user that can
+      write only where the contract says) for what cannot be closed from inside Python: another program once started,
+      and the job's own compiled code.
 
 ---
 

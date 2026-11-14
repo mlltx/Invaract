@@ -247,7 +247,7 @@ FILESYSTEM_WRITES = STREAM_WRITES | {"move"}
 SOURCES = frozenset({
     "source", "path", "filepath_or_buffer", "path_or_buf", "path_or_buffer", "io", "file", "fname", "filename", "filename_or_obj",
     "filepath", "where", "path_or_paths", "input_file", "metadata_path", "table_uri", "con", "connection", "uri", "file_glob",
-    "file_globs", "filename_path", "file_path", "table_identifier",
+    "file_globs", "filename_path", "file_path", "table_identifier", "name", "py_f",
 })
 
 
