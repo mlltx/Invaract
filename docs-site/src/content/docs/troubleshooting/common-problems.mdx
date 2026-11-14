@@ -263,6 +263,22 @@ with its reason, so the list of what jobs write around their contracts stays vis
 folder is never a finding: use `tempfile` for working files. See [Watch what the job does as it
 runs](/guides/using-invaract-with-python/#watch-what-the-job-does-as-it-runs).
 
+## Python jobs: strict mode reports a file the job reads
+
+With `INVARACT_STRICT` on, data read with a library's reader instead of `invaract.read` is a finding, and that includes
+files that are not the job's inputs: a lookup table shipped with the job, a list of holidays. With `enforce`, the job is
+refused where it reads the file:
+
+```text
+[UNGOVERNED_DATA_ACCESS] `pandas.read_csv` in regions (jobs/load.py:5:12) reads data outside Invaract, so no check sees it (IVR001 pandas-read, seen as the job ran: read lookup/regions.csv)
+```
+
+If the file is data the job depends on, declare it as an input in the contract and read it with `invaract.read`: that
+is what the finding is for. If it is not a dataset, say so in one of the two ways above: a marker on the line
+(`# invaract: allow - a table shipped with the job`), or a pattern in `INVARACT_STRICT_ALLOW` (`lookup/*`). A plain
+`open(path)` to read is never reported, nor is a read from a buffer in memory or from a scratch file in the temporary
+folder.
+
 ## Beam: a check-only run in CI fails before Invaract runs
 
 Beam validates some steps itself before handing the pipeline to any runner, including in a

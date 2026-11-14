@@ -6,7 +6,8 @@ not marked ``# invaract: allow``, ``scan_source`` and ``scan_file`` for every ca
 __version__ = "0.1.0"
 
 from .catalogue import CATEGORIES, CONNECT, DYNAMIC, PROCESS, READ, SQL, WRITE  # noqa: E402
-from .checker import Finding, allowed_lines, check_file, check_source, scan_file, scan_source, short  # noqa: E402
+from .checker import check_file, check_source, scan_file, scan_source  # noqa: E402
+from .findings import Finding, allowed_lines, short  # noqa: E402
 from .scan import CLEAN, EXCEPTIONS, FINDINGS, NOT_SCANNED, Scan, python_files, scan, scan_files  # noqa: E402
 
 __all__ = ["check_source", "check_file", "scan_source", "scan_file", "scan", "scan_files", "python_files", "Scan", "Finding", "READ", "WRITE",

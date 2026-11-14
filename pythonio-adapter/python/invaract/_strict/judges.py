@@ -34,15 +34,16 @@ class Reached:
     rule: Optional[str] = None
 
 
-def _named(args, kwargs, parameters, names):
-    """The arguments that may say where a call reads or writes: the ones whose parameter is among ``names``, or the first
-    argument when the function has no such parameter (or Python cannot say its parameters: then the first two)."""
+def _named(args, kwargs, parameters, names, first=True):
+    """The arguments that may say where a call reads or writes: the ones whose parameter is among ``names``. Where Python
+    cannot say the function's parameters, the first two; where it can and none is among ``names``, the first argument if
+    ``first`` (a writer's destination comes first when it has no name the catalogue knows) and none otherwise."""
     if parameters is None:
         chosen = list(args[:2])
     elif any(name in names for name in parameters):
         chosen = [value for name, value in zip(parameters, args) if name in names]
     else:
-        chosen = list(args[:1])
+        chosen = list(args[:1]) if first or not parameters else []
     return chosen + [value for key, value in kwargs.items() if key in names]
 
 
@@ -89,7 +90,8 @@ def source(args, kwargs, parameters=None):
     """What a reader's call reads from. A path or address among the arguments that may say (the first of a list of them)
     is it, and so is a file Python opened, by its name; a buffer, bytes, text that is the data itself, or a connection
     (reported where it was made) is no read of data at rest."""
-    for candidate in _named(args, kwargs, parameters, _state.lint.catalogue.SOURCES):
+    # a reader none of whose parameters names a source reads from none (the clipboard; a callback)
+    for candidate in _named(args, kwargs, parameters, _state.lint.catalogue.SOURCES, first=False):
         for one in (candidate[:1] if isinstance(candidate, (list, tuple)) else [candidate]):
             where = _read_from(one)
             if where is not None:
@@ -181,6 +183,10 @@ def child_process(args):
     worker started with ``spawn``)."""
     name = program(args[0] if args else None)
     return f"started {name}", name
+
+
+def another_interpreter(args):
+    return "ran code in another Python interpreter of this process, where nothing is watched", None
 
 
 def native_library(args):

@@ -389,9 +389,32 @@ TECHNIQUES = [
       NATIVE, NATIVE, effect=False),
     T("native-code-cffi", "import cffi\nffi = cffi.FFI()\nffi.cdef('void *fopen(const char *, const char *); int fclose(void *);')\n"
       "libc = ffi.dlopen(None)\nlibc.fclose(libc.fopen(p.encode(), b'w'))", NATIVE, NATIVE, needs="cffi"),
-    T("native-code-the-jobs-own-compiled-module", "import importlib.util, shutil\norigin = importlib.util.find_spec('_lsprof').origin\n"
+    # a compiled module of Python's own, copied to where it is the job's: whichever this Python keeps as a file
+    T("native-code-the-jobs-own-compiled-module", "import importlib, importlib.util, shutil\n"
+      "specs = [importlib.util.find_spec(name) for name in ('_lsprof', '_crypt', 'xxlimited', '_dbm')]\n"
+      "origin = [spec.origin for spec in specs if spec and spec.origin and os.path.isfile(spec.origin)][0]\n"
+      "name = os.path.basename(origin).split('.')[0]\n"
       "os.makedirs(scratch + '/native', exist_ok=True)\nshutil.copy(origin, scratch + '/native')\nsys.path.insert(0, scratch + '/native')\n"
-      "sys.modules.pop('_lsprof', None)\ntry:\n    import _lsprof\nfinally:\n    sys.path.remove(scratch + '/native')", NATIVE, FILE, effect=False),
+      "sys.modules.pop(name, None)\ntry:\n    importlib.import_module(name)\nfinally:\n    sys.path.remove(scratch + '/native')",
+      NATIVE, FILE, effect=False),
+
+    T("native-code-another-interpreter", "try:\n    import _interpreters as interpreters\nexcept ImportError:\n    import _xxsubinterpreters as interpreters\n"
+      "other = interpreters.create()\ninterpreters.run_string(other, 'open(%r, \"w\").write(\"x\")' % os.path.abspath(p))\n"
+      "interpreters.destroy(other)", DYNAMIC_CODE, DYNAMIC_CODE),
+
+    # --- reaching under the watch -----------------------------------------------------------------------------------------------
+    T("unwrapped-by-inspect", "import inspect\ninspect.unwrap(pq.write_table)(table, p)", PYARROW, PYARROW),
+    T("unwrapped-by-functools", "import functools\n@functools.wraps(pq.write_table)\ndef mine(*args):\n    return mine.__wrapped__(*args)\nmine(table, p)",
+      PYARROW, PYARROW),
+    T("a-python-function-dug-out-of-its-wrapper", "def dig(function):\n    for cell in function.__closure__ or ():\n        inner = cell.cell_contents\n"
+      "        if getattr(inner, '__name__', '') == 'write_table':\n            return inner\n"
+      "        found = dig(inner) if getattr(inner, '__closure__', None) else None\n        if found:\n            return found\n"
+      "dig(pq.write_table)(table, p)", PYARROW, PYARROW),   # what it finds is Python that makes a ParquetWriter, which is watched too
+    T("the-function-dug-out-of-its-wrapper", "import pyarrow.csv\ndef dig(function):\n    for cell in function.__closure__ or ():\n"
+      "        inner = cell.cell_contents\n        if getattr(inner, '__name__', '') == 'write_csv':\n            return inner\n"
+      "        found = dig(inner) if getattr(inner, '__closure__', None) else None\n        if found:\n            return found\n"
+      "dig(pyarrow.csv.write_csv)(table, p)", None, PYARROW,
+      why="the library's own function, dug out of the wrapper that watches it, is not watched: the scan reports the function handed over"),
 
     # --- what strict mode cannot see: the scan must ----------------------------------------------------------------------------
     T("written-as-the-job-is-imported", "pass", None, OPEN, before="open('evade/written-as-the-job-is-imported.out', 'w').write('x')",
@@ -429,8 +452,8 @@ LEGITIMATE = {
                                      "buf = io.BytesIO()\npq.write_table(table, buf)\npq.read_table(io.BytesIO(buf.getvalue()))\n"
                                      "pq.read_table(pa.BufferReader(buf.getvalue()))\npd.read_parquet(io.BytesIO(buf.getvalue()))\n"
                                      "saved = io.BytesIO()\nnp.save(saved, np.arange(3))\nnp.load(io.BytesIO(saved.getvalue()))",
-    "reads the files a library ships": "np.genfromtxt(os.path.join(os.path.dirname(os.__file__), 'this.py'), dtype=str, delimiter='\\x00', comments=None)\n"
-                                       "pd.read_csv(os.path.join(os.path.dirname(os.__file__), 'this.py'), sep='\\x00', header=None, engine='python')",
+    "reads the files a library ships": "np.genfromtxt(os.path.join(os.path.dirname(os.__file__), 'this.py'), dtype=str, delimiter='\\t', comments=None)\n"
+                                       "pd.read_csv(os.path.join(os.path.dirname(os.__file__), 'this.py'), sep='\\t', header=None, quoting=3)",
     "reads through the package": "invaract.read('orders')",
     "uses a pyarrow filesystem on scratch files": "import pyarrow.fs as pafs\nlocal = pafs.LocalFileSystem()\n"
                                                   "assert isinstance(local, pafs.LocalFileSystem) and isinstance(local, pafs.FileSystem)\n"

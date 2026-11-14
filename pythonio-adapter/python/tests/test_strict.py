@@ -268,7 +268,8 @@ def test_the_matrix_is_broad():
     assert len(TECHNIQUES) > 140
     unseen_at_run_time = sorted(t.name for t in TECHNIQUES if t.runtime is None)
     assert unseen_at_run_time == ["compiled-writer-kept-in-a-tuple-before-the-run", "filesystem-made-before-the-run",
-                                  "read-pyarrow-a-file-it-mapped-itself", "written-after-the-run", "written-as-the-job-is-imported"]
+                                  "read-pyarrow-a-file-it-mapped-itself", "the-function-dug-out-of-its-wrapper", "written-after-the-run",
+                                  "written-as-the-job-is-imported"]
 
 
 # --- what must raise nothing ------------------------------------------------------------------------------------------------
@@ -587,6 +588,58 @@ def test_a_process_that_is_not_watched_leaves_nothing_behind_for_the_next_run(jo
     ran = job("pid = os.fork()\nif pid == 0:\n    open(p, 'w').write('x')\n    os._exit(0)\nos.waitpid(pid, 0)", strict="report")
     assert ran.status == 0 and [f["detail"].endswith(", in a child process") for f in ran.findings("RUNTIME")] == [True]
     assert not [name for name in os.listdir(os.path.join(os.path.dirname(ran.folder), "scratch")) if name.startswith("invaract-strict-")]
+
+
+# --- a job that takes the watch off --------------------------------------------------------------------------------------------
+
+SWITCH_OFF = "invaract._strict._state.watcher = None\npq.write_table(table, p)"
+PUT_BACK = ("import pyarrow.csv\npyarrow.csv.write_csv = invaract._strict.wrapping.original_of(pyarrow.csv.write_csv)\n"
+            "pyarrow.csv.write_csv(table, p)")
+
+
+@pytest.mark.parametrize("body,undone", [(SWITCH_OFF, "the watch itself"), (PUT_BACK, "pyarrow.csv.write_csv")], ids=["switched off", "put back"])
+def test_a_job_that_takes_the_watch_off_is_said_not_to_have_been_watched_and_the_scan_names_the_line(job, body, undone):
+    ran = job(body, strict="report", lint="report")
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert ran.exists("evade/backup.out"), "nothing saw the write: that is what the run then says"
+    [watched] = ran.scans("RUNTIME")
+    assert watched["status"] == "NOT_SCANNED" and watched["findings"] == []
+    assert watched["errors"] == [{"path": "<strict mode>", "message": f"the job took the watch off {undone}: what it did after that was not seen"}]
+    tampering = [f for f in ran.findings("START") if f["rule"] == "tampering"]
+    assert [(f["category"], f["scope"]) for f in tampering] == [("dynamic", "t_backup")]
+    assert "reaches into the invaract package's own parts" in tampering[0]["detail"]
+
+
+@pytest.mark.parametrize("body", [SWITCH_OFF, PUT_BACK], ids=["switched off", "put back"])
+def test_enforced_a_job_that_takes_the_watch_off_is_not_checked_and_publishes_nothing(job, body):
+    ran = job(body, strict="enforce")
+    assert ran.status == 2, ran.stderr[-2000:]
+    assert "Invaract's strict mode was switched off while the job ran" in ran.stderr and "so the run is not checked" in ran.stderr
+    assert not ran.published()
+
+
+def test_enforced_with_the_scan_a_job_that_would_take_the_watch_off_never_starts(job):
+    ran = job(SWITCH_OFF, strict="enforce", lint="enforce")
+    assert ran.status == 1 and "UNGOVERNED_DATA_ACCESS" in ran.stderr and "tampering" in ran.stderr
+    assert ran.outcome == {} and not ran.exists("evade/backup.out") and not ran.published()
+
+
+def test_the_watch_is_back_for_the_next_run_after_a_job_took_it_off(job):
+    after = ("with invaract.run('contract.yaml'):\n    invaract.write(invaract.read('orders'), 'report')\n"
+             "    pyarrow.csv.write_csv(table, 'evade/second.out')\n")
+    ran = job(PUT_BACK, strict="report", after=after, before=["import pyarrow.csv"])
+    assert ran.status == 0, ran.stderr[-2000:]
+    first, second = ran.scans("RUNTIME")
+    assert first["status"] == "NOT_SCANNED" and [(f["rule"], f["target"]) for f in second["findings"]] == [("pyarrow-write", "evade/second.out")]
+
+
+def test_a_library_function_put_back_that_writes_through_a_watched_one_is_still_seen(job):
+    """pyarrow's ``write_table`` is Python that makes a ``ParquetWriter``, which is watched too: taking the watch off the
+    first leaves the second, and the run says both what it saw and that the watch was taken off."""
+    ran = job("pq.write_table = invaract._strict.wrapping.original_of(pq.write_table)\npq.write_table(table, p)", strict="report")
+    [watched] = ran.scans("RUNTIME")
+    assert [(f["rule"], f["call"], f["target"]) for f in watched["findings"]] == [("pyarrow-write", "pyarrow.parquet.ParquetWriter", "evade/backup.out")]
+    assert [e["message"] for e in watched["errors"]] == ["the job took the watch off pyarrow.parquet.write_table: what it did after that was not seen"]
 
 
 # --- native code -----------------------------------------------------------------------------------------------------------------

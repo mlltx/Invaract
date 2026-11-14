@@ -13,10 +13,8 @@ lives and in every module that holds it under a name of its own; a class has its
 Python lets a class be changed, else in a subclass that takes its place; a filesystem class is replaced by a subclass
 whose reading and writing methods are watched.
 
-To watch something the catalogue cannot describe (a function of the standard library, a hook after the call): add it to
-``OTHERS``.
+To watch something the catalogue cannot describe (a function of the standard library): add its module to ``OTHERS``.
 """
-import functools
 import gc
 import importlib.abc
 import importlib.util
@@ -25,6 +23,7 @@ import os
 import sys
 import threading
 import types
+import dataclasses
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -39,11 +38,19 @@ _installed = False
 _installing = threading.Lock()
 #: Each wrapped function that other modules may hold under a name of their own: ``id(original) -> (original, wrapper)``.
 _replaced = {}
-#: The wrappers' own references to their originals (a closure cell, ``__wrapped__``): never rebound.
+#: The wrappers' own references to their originals (their closure cells): never rebound.
 _own = set()
+#: Every place something was wrapped, and what was there: ``(owner, attribute, original, call)``.
+_places = []
+#: What a finding calls each wrapper's function, by the wrapper's identity: a one-item list, so that a shorter name found
+#: later (``pandas.read_csv`` after ``pandas.io.parsers.readers.read_csv``) takes the longer one's place.
+_shown = {}
+#: What each wrapper wraps, by the wrapper's identity. A wrapper does not lead to it by any attribute of its own
+#: (``__wrapped__``): code that unwraps functions as a matter of course would otherwise step around the watch.
+_originals = {}
 
+#: The mark of a wrapper, and of a class whose construction or methods are watched.
 WATCHED = "__invaract_watched__"
-ORIGINAL = "__invaract_original__"
 
 
 @dataclass(frozen=True)
@@ -53,9 +60,9 @@ class Watch:
 
     ``method``: it is a method, so its first argument is the object and no part of what the judge reads. ``as_caller``: it
     looks at the code that calls it (DuckDB finds the frames its SQL names among its caller's variables), so it is called
-    from a frame that has the caller's variables. ``after``: called with what the call returned, when a run is watching.
-    ``direct``: it counts only when the job's own code called it (``_state.Seen.direct``). ``everywhere``: other modules
-    that hold it under their own name are given the wrapper too."""
+    from a frame that has the caller's variables. ``after``: given what the call returned, it returns what the caller gets
+    (whether or not a run is watching). ``direct``: it counts only when the job's own code called it
+    (``_state.Seen.direct``)."""
 
     call: str
     code: str
@@ -65,7 +72,6 @@ class Watch:
     as_caller: bool = False
     after: Optional[Callable] = None
     direct: Optional[str] = None
-    everywhere: bool = True
 
 
 def install(lint):
@@ -106,9 +112,14 @@ def wrap_loaded():
     if _state.lint is None:
         return
     for name, module in list(sys.modules.items()):
-        if module is not None and (_state.lint.catalogue.watched_library(name) or name in OTHERS or name in _state.lint.catalogue.FILESYSTEMS):
+        if module is not None and _holds_something_to_wrap(name):
             wrap_module(module)
     _rebind_modules()
+
+
+def _holds_something_to_wrap(name):
+    catalogue = _state.lint.catalogue
+    return catalogue.watched_library(name) or name in catalogue.FILESYSTEMS or name in OTHERS
 
 
 def wrap_module(module):
@@ -166,20 +177,39 @@ def _classes(namespace, names):
     return [namespace[name] for name in names if isinstance(namespace.get(name), type)]
 
 
-def _standard_library(module):
-    """What is wrapped in Python's own modules: how a process is started when nothing else reports it, and ``cffi``'s way
-    of loading a native library (which raises no event, where ``ctypes`` does)."""
-    lint, name = _state.lint, module.__name__
-    if name == "_posixsubprocess":
-        # subprocess keeps its own name for it, and raises an event of its own: only what calls it here is new
-        yield module, "fork_exec", Watch("a child process", lint.PROCESS, "subprocess", judges.always(judges.child_process), everywhere=False)
-    if name == "cffi.api" and isinstance(getattr(module, "FFI", None), type):
-        yield module.FFI, "dlopen", Watch("cffi.FFI.dlopen", lint.DYNAMIC, "native-code", judges.always(judges.native_library),
+def _child_processes(module):
+    """``_posixsubprocess.fork_exec``: how Python starts a process when it raises no event for it."""
+    yield module, "fork_exec", Watch("a child process", _state.lint.PROCESS, "subprocess", _started_unreported)
+
+
+def _started_unreported(args, kwargs, parameters=None):
+    """A process started by ``fork_exec`` that no event of Python's reports: one ``subprocess`` starts is reported by
+    ``subprocess``'s own event, so only another caller's is new (``multiprocessing`` starting a worker afresh)."""
+    caller = sys._getframe(2)  # this judge, the wrapper, then whoever called fork_exec
+    if caller.f_code.co_filename == getattr(sys.modules.get("subprocess"), "__file__", None):
+        return None
+    return judges.always(judges.child_process)(args, kwargs)
+
+
+def _other_interpreters(module):
+    """Python's hook for what code does is each interpreter's own: code run in another interpreter of the process is seen
+    by nothing, so making one and running code in one are themselves what is reported."""
+    for function in sorted({"create", "exec", "call", "run_string", "run_func"} & set(vars(module))):
+        yield module, function, Watch(f"{module.__name__}.{function}", _state.lint.DYNAMIC, "dynamic-code",
+                                      judges.always(judges.another_interpreter))
+
+
+def _cffi(module):
+    """``cffi``'s way of loading a native library, which raises no event (``ctypes`` does)."""
+    if isinstance(getattr(module, "FFI", None), type):
+        yield module.FFI, "dlopen", Watch("cffi.FFI.dlopen", _state.lint.DYNAMIC, "native-code", judges.always(judges.native_library),
                                           method=True, direct="cffi")
 
 
 #: Modules outside the catalogue's libraries that hold something to wrap: each gives its ``(owner, attribute, Watch)``.
-OTHERS = {"_posixsubprocess": _standard_library, "cffi.api": _standard_library}
+#: To watch a function the catalogue cannot describe, add its module here.
+OTHERS = {"_posixsubprocess": _child_processes, "_interpreters": _other_interpreters, "_xxsubinterpreters": _other_interpreters,
+          "cffi.api": _cffi}
 
 
 # how it is wrapped
@@ -188,8 +218,11 @@ def _apply(owner, attribute, watch):
     """Wraps ``owner.attribute``, or notes why it could not be (``UNWATCHED``)."""
     original = vars(owner).get(attribute) if isinstance(owner, type) else None
     original = getattr(owner, attribute, None) if original is None else original
-    if original is None or isinstance(original, types.ModuleType) or hasattr(original, ORIGINAL) or getattr(original, WATCHED, False):
-        return  # nothing there, a module that happens to be named like a reader, or wrapped already
+    if original is None or isinstance(original, types.ModuleType):
+        return  # nothing there, or a module that happens to be named like a reader
+    if getattr(original, WATCHED, False):
+        _call_it_by_the_shorter(original, watch.call)  # wrapped already, where another module holds it
+        return
     try:
         if isinstance(original, type):
             _watch_class(owner, attribute, original, watch)
@@ -198,17 +231,43 @@ def _apply(owner, attribute, watch):
         else:
             known = _replaced.get(id(original))
             wrapper = known[1] if known is not None else watched(original, watch)
+            _call_it_by_the_shorter(wrapper, watch.call)
             setattr(owner, attribute, wrapper)
-            if watch.everywhere and not watch.method:
+            _places.append((owner, attribute, original, watch.call))
+            if not watch.method:
                 _replaced[id(original)] = (original, wrapper)
     except (TypeError, AttributeError) as e:
         UNWATCHED[watch.call] = f"{type(e).__name__}: {e}"
+
+
+def _call_it_by_the_shorter(wrapper, call):
+    """A function many modules hold is called, in findings, by the name nearest the top of its library: the one a job
+    most likely wrote."""
+    shown = _shown.get(id(wrapper))
+    if shown is not None and call.count(".") < shown[0].count("."):
+        shown[0] = call
+
+
+def original_of(wrapper):
+    """What a wrapper wraps; ``None`` for anything that is no wrapper."""
+    return _originals.get(id(wrapper))
+
+
+def put_back():
+    """The calls whose wrapper is no longer where it was put because the original is there again: something took the
+    watch off them."""
+    return sorted({call for owner, attribute, original, call in _places if _held(owner, attribute) is original})
+
+
+def _held(owner, attribute):
+    return vars(owner).get(attribute) if isinstance(owner, type) else getattr(owner, attribute, None)
 
 
 def watched(original, watch):
     """``original`` wrapped: a call of it is first judged, and what the judge says it is about to do is accounted for by
     the watcher, which may refuse it. Without a watcher it is the original."""
     parameters = _parameters(original, watch.method)
+    shown = [watch.call]
 
     def call(args, kwargs):
         if not watch.as_caller:
@@ -218,14 +277,12 @@ def watched(original, watch):
         scope[_CALL] = (original, args, kwargs)
         return eval(_CALL_IT, caller.f_globals, scope)  # noqa: S307 - the text is this module's own, never the job's
 
-    @functools.wraps(original)
     def wrapper(*args, **kwargs):
-        watcher = _state.watcher
-        if watcher is None or _state.quiet():
-            return call(args, kwargs)
-        reached = watch.judge(args[1:] if watch.method else args, kwargs, parameters)
-        accounted = reached is not None and watcher.saw(Seen(reached.code or watch.code, reached.rule or watch.rule, watch.call,
-                                                            reached.did, reached.target, reached.paths, watch.direct))
+        watcher, accounted = _state.watcher, False
+        if watcher is not None and not _state.quiet():
+            reached = watch.judge(args[1:] if watch.method else args, kwargs, parameters)
+            accounted = reached is not None and watcher.saw(Seen(reached.code or watch.code, reached.rule or watch.rule, shown[0],
+                                                                reached.did, reached.target, reached.paths, watch.direct))
         if accounted:
             # what it opens on the way is the same read or write
             with _state.inside():
@@ -234,11 +291,26 @@ def watched(original, watch):
             result = call(args, kwargs)
         return watch.after(result) if watch.after is not None else result
 
-    setattr(wrapper, ORIGINAL, original)
-    _own.add(id(wrapper.__dict__))
+    _look_like(wrapper, original)
+    _originals[id(wrapper)] = original
+    _shown[id(wrapper)] = shown
     _own.update(id(cell) for cell in wrapper.__closure__ or ())
     _own.update(id(cell) for cell in call.__closure__ or ())
     return wrapper
+
+
+def _look_like(wrapper, original):
+    """Gives a wrapper its original's name, documentation and signature, and the mark of a wrapper; not the original."""
+    for attribute in ("__module__", "__name__", "__qualname__", "__doc__"):
+        try:
+            setattr(wrapper, attribute, getattr(original, attribute))
+        except (AttributeError, TypeError):
+            pass
+    try:
+        wrapper.__signature__ = inspect.signature(original)
+    except (TypeError, ValueError):
+        pass  # compiled, with no signature Python can read: the wrapper's own says it takes anything
+    setattr(wrapper, WATCHED, True)
 
 
 _CALL = "__invaract_call__"
@@ -260,8 +332,10 @@ def _watch_class(module, attribute, cls, watch):
     else a subclass that watches its construction takes its place in the module."""
     if "__init__" in vars(cls):
         try:
-            cls.__init__ = watched(cls.__init__, _as_method(watch))
+            original = cls.__init__
+            cls.__init__ = watched(original, _as_method(watch))
             setattr(cls, WATCHED, True)
+            _places.append((cls, "__init__", original, watch.call))
             return
         except TypeError:
             pass  # a compiled class: Python does not let it be changed
@@ -280,7 +354,7 @@ def _watch_class(module, attribute, cls, watch):
 
 
 def _as_method(watch):
-    return Watch(watch.call, watch.code, watch.rule, watch.judge, True, watch.as_caller, watch.after, watch.direct, watch.everywhere)
+    return dataclasses.replace(watch, method=True)
 
 
 def _stand_in(cls, members):
@@ -294,7 +368,7 @@ def _stand_in(cls, members):
             return issubclass(subclass, cls)
 
     return Same(cls.__name__, (cls,), {"__module__": cls.__module__, "__qualname__": cls.__qualname__, "__doc__": cls.__doc__,
-                                        WATCHED: True, ORIGINAL: cls, **members})
+                                        WATCHED: True, **members})
 
 
 def _watch_filesystems(module):
@@ -412,8 +486,8 @@ def rebind_everywhere():
     if not originals:
         return
     for holder in gc.get_referrers(*originals):
-        if holder is _replaced or id(holder) in _own:
-            continue
+        if holder is _replaced or holder is _originals or id(holder) in _own:
+            continue  # the wrappers' own way to their originals
         if isinstance(holder, (dict, list)):
             _swap_in(holder)
         elif isinstance(holder, types.CellType):
@@ -443,9 +517,7 @@ class WrapOnImport(importlib.abc.MetaPathFinder):
     _finding = threading.local()
 
     def find_spec(self, fullname, path, target=None):
-        lint = _state.lint
-        wanted = lint is not None and (lint.catalogue.watched_library(fullname) or fullname in OTHERS or fullname in lint.catalogue.FILESYSTEMS)
-        if not wanted or getattr(self._finding, "busy", False):
+        if _state.lint is None or not _holds_something_to_wrap(fullname) or getattr(self._finding, "busy", False):
             return None
         self._finding.busy = True
         try:

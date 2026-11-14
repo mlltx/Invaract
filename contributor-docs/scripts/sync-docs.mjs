@@ -160,6 +160,13 @@ const PAGES = [
     order: 10,
   },
   {
+    src: 'docs/PYTHONIO_LINT_AND_STRICT.md',
+    slug: 'design/pythonio-lint-and-strict',
+    section: 'Design Docs',
+    label: 'Working on the Lint and Strict Mode',
+    order: 10,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

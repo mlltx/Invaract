@@ -270,6 +270,9 @@ class Opened(io.RawIOBase):
     (("[1, 2]",), {}, ["path_or_buf"], None), (("<rows/>",), {}, ["path_or_buffer"], None), (("a,b\n1,2",), {}, ["source"], None),
     (("",), {}, ["source"], None), ((), {}, ["source"], None), (([],), {}, ["path_or_paths"], None),
     ((), {"columns": ["region"]}, ["source", "columns"], None),
+    ((";",), {}, ["sep", "dtype_backend"], None),                                # the clipboard: its first argument is no place
+    (("orders.csv",), {}, [], ("read orders.csv", "orders.csv", ["orders.csv"])),  # compiled, parameters unnamed: the first
+    (("warehouse.orders",), {}, ["table_identifier", "catalog_name"], ("read warehouse.orders", "warehouse.orders", ["warehouse.orders"])),
 ])
 def test_what_a_reader_reads_from(args, kwargs, parameters, expected):
     assert told(judges.source(args, kwargs, parameters)) == expected
@@ -495,7 +498,7 @@ def writers_offered(module):
 
 
 def is_wrapped(thing):
-    return hasattr(thing, "__invaract_original__") or getattr(thing, "__invaract_watched__", False)
+    return getattr(thing, "__invaract_watched__", False)
 
 
 @pytest.mark.parametrize("module", [pa, pq, pyarrow.csv, pyarrow.feather, pyarrow.orc, pyarrow.dataset, pyarrow.fs, pyarrow.ipc],
@@ -506,6 +509,193 @@ def test_every_writer_pyarrow_offers_is_wrapped(module):
     known = {"pyarrow": ["FixedSizeBufferWriter"]}.get(module.__name__, [])
     assert [n for n in unwrapped if n not in known] == [], (
         f"{module.__name__} offers writers strict mode does not wrap: add them to invaract-lint's catalogue")
+
+
+def wrapped_in_the_loaded_libraries(code):
+    """``{call: parameters}`` of every function strict mode wrapped in the libraries loaded here, for one of the catalogue's
+    codes; a class, or a function whose parameters Python cannot say, has ``None``."""
+    found = {}
+    for name, module in list(sys.modules.items()):
+        if module is None or not catalogue.watched_library(name):
+            continue
+        for owner, attribute, watch in wrapping.plan(module):
+            thing = vars(owner).get(attribute) if isinstance(owner, type) else getattr(owner, attribute, None)
+            original = wrapping.original_of(thing)
+            if watch.code == code and watch.rule != "open-write-mode" and original is not None:
+                found[watch.call] = None if isinstance(original, type) else wrapping._parameters(original, watch.method)
+    return found
+
+
+def test_every_wrapped_reader_says_what_it_reads_from_by_a_parameter_the_catalogue_names():
+    """A reader is judged by the argument that names its source. One whose parameters include none the catalogue knows
+    would be taken to read nothing: a library's new reader, or a renamed parameter, shows here."""
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+    import pandas  # noqa: F401 - its readers are wrapped as it loads
+    # what reads from no place: the clipboard, a callback, a message already in memory
+    no_place = ("read_clipboard", "scan_external_reader", "read_record_batch", "read_schema", "read_message")
+    unnamed = {call: parameters for call, parameters in wrapped_in_the_loaded_libraries("IVR001").items()
+               if parameters and not set(parameters) & catalogue.SOURCES and not call.endswith(no_place)}
+    assert unnamed == {}, "add the parameter that names the source to invaract-lint's catalogue (SOURCES)"
+    assert len(wrapped_in_the_loaded_libraries("IVR001")) > 60
+
+
+def test_every_wrapped_writer_says_where_it_writes_by_a_parameter_the_catalogue_names_or_its_first():
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+    # the destination is the first argument, by a name that says nothing (``source``), or it is a callback
+    first = ("pyarrow.output_stream", "sink_batches")
+    unnamed = {call: parameters for call, parameters in wrapped_in_the_loaded_libraries("IVR002").items()
+               if parameters and not set(parameters) & catalogue.DESTINATIONS and not call.endswith(first)}
+    assert unnamed == {}, "add the parameter that names the destination to invaract-lint's catalogue (DESTINATIONS)"
+    assert len(wrapped_in_the_loaded_libraries("IVR002")) > 30
+
+
+def test_pandas_readers_are_wrapped_and_its_writers_are_not():
+    """pandas writes through Python's own ``open``, which is seen by itself; its readers are judged by what they are handed."""
+    import pandas as pd
+    assert is_wrapped(pd.read_csv) and is_wrapped(pd.read_parquet) and is_wrapped(pd.io.parsers.read_csv)
+    assert pd.read_csv is pd.io.parsers.read_csv is pd.io.parsers.readers.read_csv, "one wrapper, wherever it is named"
+    assert not is_wrapped(pd.DataFrame.to_csv) and not is_wrapped(pd.DataFrame.to_parquet)
+    assert pd.read_csv.__name__ == "read_csv" and "filepath_or_buffer" in pd.read_csv.__doc__
+    assert pd.read_csv(io.StringIO("a,b\n1,2")).to_dict("records") == [{"a": 1, "b": 2}]
+
+
+def test_a_function_many_modules_hold_is_called_by_the_name_nearest_the_top_of_its_library(watched):
+    """pandas' ``read_csv`` lives in ``pandas.io.parsers.readers``, and a job writes ``pd.read_csv``."""
+    import pandas as pd
+    watched("report")
+    with open("regions.csv", "w") as f:
+        f.write("region\nnorth\n")
+    with invaract.run("contract.yaml"):
+        invaract.write(report(), "report")
+        pd.read_csv("regions.csv")
+        pd.io.parsers.readers.read_csv("regions.csv")
+    assert [(f["call"], f["rule"], f["target"]) for f in runtime_scans()[0]["findings"]] == [("pandas.read_csv", "pandas-read", "regions.csv")] * 2
+
+
+def test_a_database_drivers_connect_is_wrapped():
+    assert is_wrapped(sqlite3.connect)
+    psycopg2 = pytest.importorskip("psycopg2")
+    assert is_wrapped(psycopg2.connect) and psycopg2.connect.__name__ == "connect"
+    with pytest.raises(psycopg2.OperationalError):
+        psycopg2.connect(host="127.0.0.1", port=9, connect_timeout=1)
+
+
+# --- pyarrow's filesystems ----------------------------------------------------------------------------------------------------------
+
+def test_every_filesystem_pyarrow_offers_is_watched_and_is_still_that_filesystem(tmp_path):
+    offered = [name for name in dir(pyarrow.fs) if name.endswith("FileSystem") and not name.startswith("_")]
+    assert {"FileSystem", "LocalFileSystem", "SubTreeFileSystem", "PyFileSystem"} <= set(offered)
+    assert [name for name in offered if not is_wrapped(getattr(pyarrow.fs, name))] == []
+    local = pyarrow.fs.LocalFileSystem()
+    assert isinstance(local, pyarrow.fs.LocalFileSystem) and isinstance(local, pyarrow.fs.FileSystem)
+    assert issubclass(pyarrow.fs.LocalFileSystem, pyarrow.fs.FileSystem) and not isinstance(local, pyarrow.fs.SubTreeFileSystem)
+    assert pyarrow.fs.LocalFileSystem.__name__ == "LocalFileSystem" and local == pyarrow.fs.LocalFileSystem() and local.type_name == "local"
+    tree = pyarrow.fs.SubTreeFileSystem(str(tmp_path), local)
+    assert isinstance(tree, pyarrow.fs.SubTreeFileSystem) and isinstance(tree.base_fs, pyarrow.fs.FileSystem)
+    with local.open_output_stream(str(tmp_path / "a.bin")) as out:
+        out.write(b"x")
+    assert local.open_input_file(str(tmp_path / "a.bin")).read() == b"x"
+    pq.write_table(TABLE, str(tmp_path / "t.parquet"), filesystem=local)
+    assert pq.read_table(str(tmp_path / "t.parquet"), filesystem=local).equals(TABLE)
+    assert pyarrow.dataset.dataset(str(tmp_path / "t.parquet"), filesystem=tree.base_fs).to_table().equals(TABLE)
+
+
+def test_a_filesystem_found_from_a_local_address_is_the_watched_one(tmp_path):
+    found, path = pyarrow.fs.FileSystem.from_uri(tmp_path.as_uri())
+    assert is_wrapped(type(found)) and isinstance(found, pyarrow.fs.LocalFileSystem) and path == str(tmp_path)
+    found, path = pyarrow.fs.LocalFileSystem.from_uri(str(tmp_path))
+    assert is_wrapped(type(found)) and path == str(tmp_path)
+
+
+def test_every_method_of_a_filesystem_that_reads_or_writes_is_one_the_catalogue_names():
+    """A filesystem's new method that reads or writes would go unwatched: it shows here."""
+    methods = {name for name in dir(pyarrow.fs.FileSystem) if not name.startswith("_")}
+    # what neither reads nor writes data: looking, comparing, naming, and making an empty folder
+    harmless = {"equals", "from_uri", "get_file_info", "normalize_path", "type_name", "create_dir"}
+    assert methods - harmless - catalogue.FILESYSTEM_READS - catalogue.FILESYSTEM_WRITES == set()
+    assert (catalogue.FILESYSTEM_READS | catalogue.FILESYSTEM_WRITES) <= methods
+    assert all(is_wrapped(getattr(pyarrow.fs.LocalFileSystem, name)) for name in catalogue.FILESYSTEM_READS | catalogue.FILESYSTEM_WRITES)
+
+
+# --- references taken before the wrapping -----------------------------------------------------------------------------------------
+
+def test_whatever_holds_a_function_from_before_it_was_wrapped_is_given_the_wrapper():
+    import types
+
+    def original(table, where):
+        return ("wrote", where)
+
+    def close_over(write):
+        return lambda table, where: write(table, where)
+
+    def with_a_default(table, where, write=original):
+        return write(table, where)
+
+    library = types.ModuleType("made_up_library")
+    library.write_thing = original
+    kept = {"dict": {"thing": original}, "list": [original], "closure": close_over(original), "attribute": types.SimpleNamespace(write=original),
+            "tuple": (original,)}
+    watch = wrapping.Watch("made_up_library.write_thing", "IVR002", "library-write", judges.destination)
+    try:
+        wrapping._apply(library, "write_thing", watch)
+        wrapper = library.write_thing
+        assert is_wrapped(wrapper) and wrapping.original_of(wrapper) is original
+        wrapping.rebind_everywhere()
+        assert kept["dict"]["thing"] is wrapper and kept["list"][0] is wrapper and kept["attribute"].write is wrapper
+        assert kept["closure"].__closure__[0].cell_contents is wrapper
+        assert with_a_default.__defaults__ == (wrapper,)
+        assert kept["tuple"][0] is original, "a tuple cannot be changed: the scan is what sees a writer kept in one"
+        # the wrapper still leads to the original, and calls it
+        assert wrapping.original_of(wrapper) is original
+        assert wrapper(TABLE, "x.out") == ("wrote", "x.out") == with_a_default(TABLE, "x.out") == kept["closure"](TABLE, "x.out")
+        wrapping.rebind_everywhere()
+        assert library.write_thing is wrapper and wrapping.original_of(wrapper) is original, "done again, nothing changes"
+        assert wrapping.put_back() == []
+        library.write_thing = original
+        assert wrapping.put_back() == ["made_up_library.write_thing"]
+    finally:
+        wrapping._replaced.pop(id(original), None)
+        wrapping._places[:] = [place for place in wrapping._places if place[0] is not library]
+
+
+def test_a_wrapper_looks_like_what_it_wraps_and_does_not_lead_to_it():
+    """Code that unwraps functions as a matter of course (``inspect.unwrap``, a decorator that copies ``__wrapped__``)
+    would step around the watch if the wrapper led to its original."""
+    import inspect
+    wrapper = pq.write_table
+    original = wrapping.original_of(wrapper)
+    assert original is not None and original is not wrapper and wrapping.original_of(original) is None
+    assert (wrapper.__name__, wrapper.__qualname__, wrapper.__module__, wrapper.__doc__) == (
+        "write_table", original.__qualname__, "pyarrow.parquet.core", original.__doc__)
+    assert inspect.signature(wrapper) == inspect.signature(original) and "where" in inspect.signature(wrapper).parameters
+    assert inspect.unwrap(wrapper) is wrapper and not hasattr(wrapper, "__wrapped__") and not hasattr(wrapper, "__invaract_original__")
+    assert not hasattr(pyarrow.fs.LocalFileSystem, "__invaract_original__")
+    assert all(cell.cell_contents is not None for cell in wrapper.__closure__)
+
+
+def test_wrapping_twice_wraps_once_and_a_module_named_like_a_reader_is_left_alone():
+    import types
+    library = types.ModuleType("made_up_library")
+    library.read_thing = lambda source: source
+    library.scan_options = types.ModuleType("made_up_library.scan_options")
+    watch = wrapping.Watch("made_up_library.read_thing", "IVR001", "library-read", judges.source)
+    original = library.read_thing
+    try:
+        wrapping._apply(library, "read_thing", watch)
+        once = library.read_thing
+        wrapping._apply(library, "read_thing", watch)
+        assert library.read_thing is once and wrapping.original_of(once) is original
+        wrapping._apply(library, "scan_options", watch)
+        wrapping._apply(library, "no_such_thing", watch)
+        assert isinstance(library.scan_options, types.ModuleType) and "made_up_library.read_thing" not in wrapping.UNWATCHED
+        library.fixed = staticmethod(original)
+        wrapping._apply(library, "fixed", wrapping.Watch("made_up_library.fixed", "IVR001", "library-read", judges.source))
+        assert wrapping.UNWATCHED.pop("made_up_library.fixed") == "not a plain function"
+    finally:
+        wrapping._replaced.pop(id(original), None)
+        wrapping._places[:] = [place for place in wrapping._places if place[0] is not library]
 
 
 def test_the_wrapped_writers_are_the_catalogues():
@@ -573,10 +763,15 @@ def test_a_module_imported_after_the_hooks_are_installed_is_wrapped_as_it_loads(
         import importlib, sys, invaract_lint
         from invaract._strict import wrapping
         wrapping.install(invaract_lint)
-        writers = {"pyarrow.orc": "write_table", "pyarrow.feather": "write_feather", "dbm": "open", "dbm.dumb": "open"}
+        writers = {"pyarrow.orc": "write_table", "pyarrow.feather": "write_feather", "dbm": "open", "dbm.dumb": "open",
+                   "multiprocessing.util": "spawnv_passfds"}
+        writers.pop("multiprocessing.util")   # what starts its workers is wrapped where it lives, in _posixsubprocess
+        import _posixsubprocess, subprocess
+        assert getattr(_posixsubprocess.fork_exec, "__invaract_watched__", False)
+        assert subprocess.run([sys.executable, "-c", "pass"]).returncode == 0
         late = sorted(name for name in writers if name not in sys.modules)
         loaded = {name: importlib.import_module(name) for name in late}
-        wrapped = all(hasattr(getattr(module, writers[name]), "__invaract_original__") for name, module in loaded.items())
+        wrapped = all(getattr(getattr(module, writers[name]), "__invaract_watched__", False) for name, module in loaded.items())
         own = all(type(module.__spec__.loader).__name__ != "WrapAfterLoad" for module in loaded.values())
         print("dbm" in late, len(late) >= 2, wrapped, own, wrapping.UNWATCHED)
         """)

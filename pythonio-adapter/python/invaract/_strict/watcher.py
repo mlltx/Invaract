@@ -30,7 +30,6 @@ from .. import _codescan, _protocol
 from .._settings import STRICT, STRICT_ALLOW
 from ..errors import CheckNotRun, ContractViolation
 from . import _state, placing, wrapping
-from ._state import Seen
 
 #: Where a finding with none of the job's code on the stack is said to be.
 NOWHERE = "<not in the job's code>"
@@ -114,10 +113,12 @@ class Watcher:
     def stop(self):
         """Stops watching and returns the ``scan`` request for what was seen and not yet sent, or ``None`` when everything
         was (an enforced run refused on its one finding has nothing more to say)."""
-        if _state.watcher is self:
+        replaced = self._started is not None and _state.watcher is not self
+        if _state.watcher is self or replaced:
             _state.watcher = self._outer
         if self._started is None:
             return None
+        self._check_it_was_watched_throughout(replaced)
         if self._outer_spill is None:
             os.environ.pop(SPILL, None)
         else:
@@ -131,6 +132,19 @@ class Watcher:
             for entry in unsent:
                 entry.sent = True
             return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in unsent], self._errors, elapsed)
+
+    def _check_it_was_watched_throughout(self, replaced):
+        """A job that switched the watch off, or put a library's own function back in a wrapper's place, was not watched
+        from then on: the run says so, and, enforced, is not checked."""
+        undone = (["the watch itself"] if replaced else []) + wrapping.put_back()
+        if not undone:
+            return
+        wrapping.wrap_loaded()
+        said = f"the job took the watch off {', '.join(undone[:5])}{' and more' if len(undone) > 5 else ''}: what it did after that was not seen"
+        self._errors.append(("<strict mode>", said))
+        if self.enforce and self._run is not None and self._run._failure is None:
+            self._run._failure = CheckNotRun(f"Invaract's strict mode was switched off while the job ran ({said}), so the run is not "
+                                             f"checked ({STRICT}=enforce)")
 
     def in_forked_child(self):
         """This process is a fork of the watched one: what it sees from here is left for its parent."""

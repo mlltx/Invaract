@@ -9,6 +9,14 @@ names in a job's source against it, and the invaract package's strict mode, whic
 A rule is a code (``READ`` ... ``DYNAMIC``), a name for reports (``pandas-read``), and a pattern the fully qualified name
 of what the code refers to must match in full (``pandas.read_csv`` for ``pd.read_csv``). Methods of a value the source
 does not say the type of (``df.to_parquet``) are matched by the method's name (``FRAME_WRITES``, ``ALWAYS_WRITE``).
+
+Adding to it (the steps, with the tests each needs, are in docs/PYTHONIO_LINT_AND_STRICT.md):
+
+- a library's reader, writer or ``connect``: its name in the pattern of a rule in ``MODULE_RULES``;
+- a function that opens a file by name and mode: ``OPENERS``;
+- a frame's method that writes: ``FRAME_WRITES``;
+- a library that writes from compiled code, for strict mode to wrap: its top-level name in ``COMPILED``;
+- what is certainly not data at rest, to stop a false alarm: ``IN_MEMORY``, ``CONSOLE``, ``TEMPORARY``.
 """
 import re
 from dataclasses import dataclass
@@ -102,7 +110,12 @@ MODULE_RULES = [
                                  r"|os\.(?:system|popen|startfile|exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?)"
                                  r"|asyncio\.create_subprocess_(?:exec|shell)|pty\.spawn"),
     # code the scan cannot follow
-    _rule("dynamic-code", DYNAMIC, r"exec|eval|runpy\.run_(?:path|module)|importlib\.util\.spec_from_file_location|imp\.load_source"),
+    _rule("dynamic-code", DYNAMIC, r"exec|eval|runpy\.run_(?:path|module)|importlib\.util\.spec_from_file_location|imp\.load_source"
+                                   # code run in another interpreter of the same process, which nothing watches
+                                   r"|(?:_xxsubinterpreters|_interpreters|interpreters|concurrent\.interpreters)\.\w+"
+                                   r"|concurrent\.futures\.InterpreterPoolExecutor"),
+    # every object in the process, a library's own functions among them: how a watched function is reached unwatched
+    _rule("tampering", DYNAMIC, r"gc\.get_(?:objects|referrers|referents)"),
     _rule("native-code", DYNAMIC, r"ctypes\.(?:CDLL|PyDLL|WinDLL|OleDLL|pythonapi(?:\.\w+)?|(?:cdll|pydll|windll|oledll)(?:\.\w+)*)|cffi\.FFI"),
 ]
 
@@ -188,6 +201,13 @@ PATH_METHODS = frozenset({"resolve", "absolute", "expanduser", "with_name", "wit
 SQL_CONNECTIONS = {"duckdb.connect": "duckdb", "sqlite3.connect": "sqlite"}
 
 #: The builtins the scan gives a meaning to; a name the file does not bind resolves to itself when it is one of these.
+#: The parts of the invaract package and of invaract-lint that are their own, not a job's to use (``invaract._strict``):
+#: reaching into them is how the checks could be switched off. ``invaract.__version__`` is no such part.
+INTERNALS = re.compile(r"invaract(?:_lint)?\._(?!_)\w+(?:\.\w+)*")
+#: The attributes of a reader, writer or connection that say what it is and do nothing. Any other attribute of one
+#: (``__closure__``, ``__func__``, a class's ``__mro__``, a method taken from the class) is a use of it.
+DESCRIBES = frozenset({"__doc__", "__name__", "__qualname__", "__module__", "__annotations__", "__signature__", "__text_signature__"})
+
 BUILTINS = frozenset({"open", "exec", "eval", "getattr", "__import__", "vars", "str"})
 
 
@@ -227,7 +247,7 @@ FILESYSTEM_WRITES = STREAM_WRITES | {"move"}
 SOURCES = frozenset({
     "source", "path", "filepath_or_buffer", "path_or_buf", "path_or_buffer", "io", "file", "fname", "filename", "filename_or_obj",
     "filepath", "where", "path_or_paths", "input_file", "metadata_path", "table_uri", "con", "connection", "uri", "file_glob",
-    "file_globs", "filename_path",
+    "file_globs", "filename_path", "file_path", "table_identifier",
 })
 
 
