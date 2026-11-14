@@ -10,7 +10,11 @@ and the names the job defines: ``df`` (a pandas frame), ``table`` (an Arrow tabl
 ``runtime`` is the rule strict mode must report it by as the job runs (``None``: it cannot see it), and ``static`` the rule
 the scan of the source must report it by (``None``: it cannot). Every technique is caught by at least one, and the tests
 hold each to exactly what is written here, so a technique that stops being caught fails by name. ``blocked`` says whether
-enforcing stops the write from happening at all (it does whenever strict mode sees it before it happens)."""
+enforcing stops the write from happening at all (it does whenever strict mode sees it before it happens).
+
+To add a case: add a ``T(...)`` line to the group it belongs to (or a line to ``LEGITIMATE`` for something that must raise
+nothing), run ``pytest tests/test_strict.py -k <its name>``, and write down what each layer says of it. A case neither layer
+catches is a gap to close in invaract-lint's catalogue first (docs/PYTHONIO_LINT_AND_STRICT.md)."""
 import importlib.util
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
@@ -58,6 +62,10 @@ OPEN, FILE, PYARROW, FRAME, SQL, CONNECT, NETWORK, PROCESS = (
     "open-write-mode", "file-operation", "pyarrow-write", "frame-write", "file-sql", "database-connect", "network-connect", "subprocess")
 ALWAYS, DYNAMIC_ATTRIBUTE, DYNAMIC_CODE, DYNAMIC_IMPORT, DYNAMIC_SQL, NATIVE = (
     "always-writes", "dynamic-attribute", "dynamic-code", "dynamic-import", "dynamic-sql", "native-code")
+PANDAS_READ, PYARROW_READ, POLARS_READ, DUCKDB_READ, NUMPY_READ, LIBRARY_READ, LIBRARY_WRITE, STORAGE = (
+    "pandas-read", "pyarrow-read", "polars-read", "duckdb-read", "numpy-read", "library-read", "library-write", "storage-client")
+#: A dataset that exists when the job starts, for the techniques that read around the package.
+ORDERS = "data/in/orders/part-0.parquet"
 
 T = Technique
 
@@ -159,15 +167,40 @@ TECHNIQUES = [
     T("module-alias", "import pyarrow.parquet as parquet_files\nparquet_files.write_table(table, p)", PYARROW, PYARROW),
     T("stream-from-a-filesystem-handed-to-a-writer",
       "import pyarrow.fs as pafs\nwith pafs.LocalFileSystem().open_output_stream(p) as stream:\n    pq.write_table(table, stream)",
-      PYARROW, ALWAYS, blocked=False),
+      ALWAYS, ALWAYS),
     T("filesystem-stream-written-by-hand",
-      "import pyarrow.fs as pafs\nwith pafs.LocalFileSystem().open_output_stream(p) as stream:\n    stream.write(b'x')",
-      None, ALWAYS, why="a pyarrow filesystem object's own methods are compiled and cannot be wrapped"),
+      "import pyarrow.fs as pafs\nwith pafs.LocalFileSystem().open_output_stream(p) as stream:\n    stream.write(b'x')", ALWAYS, ALWAYS),
+    T("filesystem-append-stream", "import pyarrow.fs as pafs\nwith pafs.LocalFileSystem().open_append_stream(p) as stream:\n    stream.write(b'x')",
+      ALWAYS, ALWAYS),
+    T("filesystem-from-a-uri", "import pyarrow.fs as pafs\nfilesystem, where = pafs.FileSystem.from_uri('file://' + os.path.abspath(p))\n"
+      "with filesystem.open_output_stream(where) as stream:\n    stream.write(b'x')", ALWAYS, ALWAYS),
+    T("filesystem-subtree", "import pyarrow.fs as pafs\ntree = pafs.SubTreeFileSystem(os.path.abspath('evade'), pafs.LocalFileSystem())\n"
+      "with tree.open_output_stream(os.path.basename(p)) as stream:\n    stream.write(b'x')", ALWAYS, ALWAYS),
+    T("filesystem-copies-a-file", "import pyarrow.fs as pafs\npafs.LocalFileSystem().copy_file(seed, p)", ALWAYS, ALWAYS),
+    T("filesystem-moves-a-file", "import pyarrow.fs as pafs\npafs.LocalFileSystem().move(seed, p)", ALWAYS, STORAGE),
+    T("filesystem-deletes-a-file", "import pyarrow.fs as pafs\npafs.LocalFileSystem().delete_file(seed)", ALWAYS, ALWAYS),
+    T("filesystem-handed-to-a-writer", "import pyarrow.fs as pafs\npq.write_table(table, os.path.abspath(p), filesystem=pafs.LocalFileSystem())",
+      PYARROW, PYARROW),
+    T("filesystem-remote-from-a-uri", "import pyarrow.fs as pafs\ntry:\n    pafs.FileSystem.from_uri('hdfs://127.0.0.1:9/evade')\n"
+      "except OSError:\n    pass", STORAGE, STORAGE, effect=False),
+    T("filesystem-made-before-the-run", "with FILESYSTEM_MADE_EARLY.open_output_stream(p) as stream:\n    stream.write(b'x')", None, ALWAYS,
+      before="import pyarrow.fs\nFILESYSTEM_MADE_EARLY = pyarrow.fs.LocalFileSystem()",
+      why="a filesystem object made before the package was imported is pyarrow's own compiled one, whose methods cannot be watched"),
     T("writer-kept-in-a-table-before-the-run", "WRITERS_KEPT_EARLY['parquet'](table, p)", PYARROW, PYARROW,
       before="import pyarrow.parquet\nWRITERS_KEPT_EARLY = {'parquet': pyarrow.parquet.write_table}"),
-    T("compiled-writer-kept-in-a-table-before-the-run", "COMPILED_WRITERS_KEPT_EARLY['csv'](table, p)", None, PYARROW,
-      before="import pyarrow.csv\nCOMPILED_WRITERS_KEPT_EARLY = {'csv': pyarrow.csv.write_csv}",
-      why="a compiled function put in a dict before the package was imported is the original: no name leads to its wrapper"),
+    T("compiled-writer-kept-in-a-table-before-the-run", "COMPILED_WRITERS_KEPT_EARLY['csv'](table, p)", PYARROW, PYARROW,
+      before="import pyarrow.csv\nCOMPILED_WRITERS_KEPT_EARLY = {'csv': pyarrow.csv.write_csv}"),
+    T("compiled-writer-kept-in-a-list-before-the-run", "COMPILED_WRITERS_LISTED_EARLY[0](table, p)", PYARROW, PYARROW,
+      before="import pyarrow.csv\nCOMPILED_WRITERS_LISTED_EARLY = [pyarrow.csv.write_csv]"),
+    T("compiled-writer-a-default-argument-before-the-run", "write_with_an_early_default(table, p)", PYARROW, PYARROW,
+      before="import pyarrow.csv\ndef write_with_an_early_default(t, where, write=pyarrow.csv.write_csv):\n    write(t, where)"),
+    T("compiled-writer-closed-over-before-the-run", "CLOSED_OVER_EARLY(table, p)", PYARROW, PYARROW,
+      before="import pyarrow.csv\ndef close_over(write):\n    return lambda t, where: write(t, where)\nCLOSED_OVER_EARLY = close_over(pyarrow.csv.write_csv)"),
+    T("compiled-writer-an-attribute-before-the-run", "HOLDER_MADE_EARLY.write(table, p)", PYARROW, PYARROW,
+      before="import pyarrow.csv, types\nHOLDER_MADE_EARLY = types.SimpleNamespace(write=pyarrow.csv.write_csv)"),
+    T("compiled-writer-kept-in-a-tuple-before-the-run", "COMPILED_WRITERS_IN_A_TUPLE_EARLY[0](table, p)", None, PYARROW,
+      before="import pyarrow.csv\nCOMPILED_WRITERS_IN_A_TUPLE_EARLY = (pyarrow.csv.write_csv,)",
+      why="a compiled function put in a tuple before the package was imported is the original, and a tuple cannot be changed"),
 
     # --- Polars, DuckDB, deltalake ------------------------------------------------------------------------------------------
     T("polars.write_parquet", "import polars as pl\npl.from_arrow(table).write_parquet(p)", FRAME, FRAME, needs="polars"),
@@ -256,6 +289,7 @@ TECHNIQUES = [
       "    os._exit(status)\nos.waitpid(pid, 0)", OPEN, OPEN),
     T("multiprocessing-fork", "import multiprocessing, evade_helper\nprocess = multiprocessing.get_context('fork').Process(target=evade_helper.save, args=(table, p))\n"
       "process.start()\nprocess.join()", PYARROW, PYARROW),
+    T("program-started-through-a-module-that-asks-the-system", "import uuid\nuuid._get_command_stdout('cp', seed, p)", PROCESS, None),
     T("multiprocessing-spawn", "import multiprocessing, evade_helper\nprocess = multiprocessing.get_context('spawn').Process(target=evade_helper.save_plain, args=(p,))\n"
       "process.start()\nprocess.join()", PROCESS, OPEN),
 
@@ -272,10 +306,94 @@ TECHNIQUES = [
       "try:\n    connection.request('PUT', '/upload', body=b'x')\nexcept OSError:\n    pass\nfinally:\n    connection.close()\n    server.close()",
       NETWORK, "http-client", effect=False),
 
-    # --- what strict mode cannot see: the scan must ----------------------------------------------------------------------------
+    T("udp", "import socket\nsender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\ntry:\n    sender.sendto(b'data', ('127.0.0.1', 9))\n"
+      "except OSError:\n    pass\nfinally:\n    sender.close()", NETWORK, None, effect=False,
+      why="the scan names the clients it knows (requests, boto3, ...), not a bare socket"),
+
+    # --- database drivers that connect from compiled code -------------------------------------------------------------------
+    T("psycopg2", "import psycopg2\ntry:\n    psycopg2.connect(host='127.0.0.1', port=9, dbname='sales', connect_timeout=1)\nexcept psycopg2.Error:\n    pass",
+      CONNECT, CONNECT, needs="psycopg2", effect=False),
+    T("psycopg2-connection-string", "import psycopg2\ntry:\n    psycopg2.connect('host=127.0.0.1 port=9 dbname=sales connect_timeout=1')\n"
+      "except psycopg2.Error:\n    pass", CONNECT, CONNECT, needs="psycopg2", effect=False),
+    T("psycopg", "import psycopg\ntry:\n    psycopg.connect('host=127.0.0.1 port=9 dbname=sales connect_timeout=1')\nexcept psycopg.Error:\n    pass",
+      CONNECT, CONNECT, needs="psycopg", effect=False),
+    T("psycopg-from-imported", "from psycopg import connect\ntry:\n    connect('host=127.0.0.1 port=9 dbname=sales connect_timeout=1')\n"
+      "except Exception as e:\n    if type(e).__module__.startswith('invaract'):\n        raise", CONNECT, CONNECT, needs="psycopg", effect=False),
+
+    # --- scientific and statistical files, written and read by compiled code ------------------------------------------------
+    T("h5py", "import h5py\nwith h5py.File(p, 'w') as f:\n    f['total'] = [1, 2]", OPEN, OPEN, needs="h5py"),
+    T("h5py-append", "import h5py\nwith h5py.File(p, 'a') as f:\n    f['total'] = [1, 2]", OPEN, OPEN, needs="h5py"),
+    T("h5py-mode-keyword", "import h5py\nwith h5py.File(name=p, mode='w') as f:\n    f['total'] = [1, 2]", OPEN, OPEN, needs="h5py"),
+    T("netCDF4", "import netCDF4\nnetCDF4.Dataset(p, 'w').close()", OPEN, OPEN, needs="netCDF4"),
+    T("pytables", "import tables\ntables.open_file(p, 'w').close()", OPEN, OPEN, needs="tables"),
+    T("pandas.to_hdf", "df.to_hdf(p, key='report')", OPEN, FRAME, needs="tables"),
+    T("pandas.HDFStore", "with pd.HDFStore(p, 'w') as store:\n    store['report'] = df", OPEN, "pandas-write", needs="tables"),
+    T("pyreadstat.write_sav", "import pyreadstat\npyreadstat.write_sav(df, p)", LIBRARY_WRITE, LIBRARY_WRITE, needs="pyreadstat"),
+    T("pyreadstat.write_dta", "import pyreadstat\npyreadstat.write_dta(df, p)", LIBRARY_WRITE, LIBRARY_WRITE, needs="pyreadstat"),
+    T("pyreadstat.write_xport", "import pyreadstat\npyreadstat.write_xport(df, p)", LIBRARY_WRITE, LIBRARY_WRITE, needs="pyreadstat"),
+    T("dbm.dumb", "import dbm.dumb\nwith dbm.dumb.open(p, 'c') as db:\n    db['a'] = '1'", OPEN, OPEN),
+
+    # --- reads around the package ---------------------------------------------------------------------------------------------
+    T("read-pandas-csv", "pd.read_csv(seed, header=None)", PANDAS_READ, PANDAS_READ, effect=False),
+    T("read-pandas-parquet", f"pd.read_parquet('{ORDERS}')", PANDAS_READ, PANDAS_READ, effect=False),
+    T("read-pandas-an-open-file", "with open(seed) as f:\n    pd.read_csv(f, header=None)", PANDAS_READ, PANDAS_READ, effect=False),
+    T("read-pandas-getattr", "getattr(pd, 'read_' + 'csv')(seed, header=None)", PANDAS_READ, DYNAMIC_ATTRIBUTE, effect=False),
+    T("read-pandas-from-imported", "from pandas import read_csv\nread_csv(seed, header=None)", PANDAS_READ, PANDAS_READ, effect=False),
+    T("read-pandas-kept-before-the-run", "READERS_KEPT_EARLY['csv'](seed, header=None)", PANDAS_READ, PANDAS_READ, effect=False,
+      before="import pandas\nREADERS_KEPT_EARLY = {'csv': pandas.read_csv}"),
+    T("read-pandas-a-url", "import socket\nserver = socket.socket()\nserver.bind(('127.0.0.1', 0))\ntry:\n"
+      "    pd.read_csv('http://127.0.0.1:%d/orders.csv' % server.getsockname()[1])\nexcept OSError:\n    pass\nfinally:\n    server.close()",
+      PANDAS_READ, PANDAS_READ, effect=False),
+    T("read-pyarrow-table", f"pq.read_table('{ORDERS}')", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-a-folder", "pq.read_table('data/in/orders')", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-file", f"pq.ParquetFile('{ORDERS}').read()", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-metadata", f"pq.read_metadata('{ORDERS}')", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-dataset", "import pyarrow.dataset as ds\nds.dataset('data/in/orders').to_table()", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-parquet-dataset", "pq.ParquetDataset('data/in/orders').read()", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-csv", "import pyarrow.csv\npyarrow.csv.read_csv(seed)", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-a-list-of-files", f"pq.read_table(['{ORDERS}'])", PYARROW_READ, PYARROW_READ, effect=False),
+    T("read-pyarrow-filesystem-stream", f"import pyarrow.fs as pafs\nwith pafs.LocalFileSystem().open_input_file('{ORDERS}') as f:\n    f.read()",
+      PYARROW_READ, STORAGE, effect=False),
+    T("read-pyarrow-a-file-it-mapped-itself", f"pq.read_table(pa.memory_map('{ORDERS}'))", None, PYARROW_READ, effect=False,
+      why="a file pyarrow opens or maps to read is a plain file, as one from open() is: a reader is seen by the path it is handed"),
+    T("read-numpy-loadtxt", "np.loadtxt(seed, dtype=str)", NUMPY_READ, NUMPY_READ, effect=False),
+    T("read-numpy-genfromtxt", "np.genfromtxt(seed, dtype=str)", NUMPY_READ, NUMPY_READ, effect=False),
+    T("read-numpy-fromfile", "np.fromfile(seed, dtype='uint8')", NUMPY_READ, NUMPY_READ, effect=False),
+    T("read-polars-parquet", f"import polars as pl\npl.read_parquet('{ORDERS}')", POLARS_READ, POLARS_READ, needs="polars", effect=False),
+    T("read-polars-scan", f"import polars as pl\npl.scan_parquet('{ORDERS}').collect()", POLARS_READ, POLARS_READ, needs="polars", effect=False),
+    T("read-polars-csv", "import polars as pl\npl.read_csv(seed, has_header=False)", POLARS_READ, POLARS_READ, needs="polars", effect=False),
+    T("read-polars-sql", f"import polars as pl\npl.sql(\"select * from read_parquet('{ORDERS}')\").collect()", SQL, SQL, needs="polars", effect=False),
+    T("read-polars-sql-context", f"import polars as pl\npl.SQLContext().execute(\"select * from read_parquet('{ORDERS}')\").collect()",
+      SQL, SQL, needs="polars", effect=False),
+    T("read-duckdb-parquet", f"import duckdb\nduckdb.read_parquet('{ORDERS}').fetchall()", DUCKDB_READ, DUCKDB_READ, needs="duckdb", effect=False),
+    T("read-duckdb-connection", f"import duckdb\ncon = duckdb.connect()\ncon.read_parquet('{ORDERS}').fetchall()\ncon.close()",
+      DUCKDB_READ, DUCKDB_READ, needs="duckdb", effect=False),
+    T("read-duckdb-sql", f"import duckdb\nduckdb.sql(\"select * from read_parquet('{ORDERS}')\").fetchall()", SQL, SQL, needs="duckdb", effect=False),
+    T("read-duckdb-relation-query", f"import duckdb\nduckdb.sql('select 1 as a').query('one', \"select * from one, read_parquet('{ORDERS}')\").fetchall()",
+      SQL, None, needs="duckdb", effect=False),
+    T("read-h5py", "import h5py\ntry:\n    h5py.File(seed, 'r')\nexcept OSError:\n    pass", LIBRARY_READ, LIBRARY_READ, needs="h5py", effect=False),
+    T("read-h5py-default-mode", "import h5py\ntry:\n    h5py.File(seed)\nexcept OSError:\n    pass", LIBRARY_READ, LIBRARY_READ, needs="h5py", effect=False),
+    T("read-netCDF4", "import netCDF4\ntry:\n    netCDF4.Dataset(seed)\nexcept OSError:\n    pass", LIBRARY_READ, LIBRARY_READ, needs="netCDF4", effect=False),
+    T("read-pytables", "import tables\ntry:\n    tables.open_file(seed)\nexcept (OSError, tables.HDF5ExtError):\n    pass", LIBRARY_READ, LIBRARY_READ,
+      needs="tables", effect=False),
+    T("read-pyreadstat", "import pyreadstat\ntry:\n    pyreadstat.read_sav(seed)\nexcept pyreadstat.ReadstatError:\n    pass", LIBRARY_READ, LIBRARY_READ,
+      needs="pyreadstat", effect=False),
+
+    # --- native code ----------------------------------------------------------------------------------------------------------
     T("native-code", "import ctypes\nlibc = ctypes.CDLL(None)\nlibc.fopen.restype = ctypes.c_void_p\n"
-      "handle = libc.fopen(p.encode(), b'w')\nlibc.fclose(ctypes.c_void_p(handle))", None, NATIVE,
-      why="a C library called directly opens the file itself: nothing in Python sees it"),
+      "handle = libc.fopen(p.encode(), b'w')\nlibc.fclose(ctypes.c_void_p(handle))", NATIVE, NATIVE),
+    T("native-code-library-loaded-before-the-run", "LIBC_LOADED_EARLY.fopen.restype = ctypes.c_void_p\n"
+      "handle = LIBC_LOADED_EARLY.fopen(p.encode(), b'w')\nLIBC_LOADED_EARLY.fclose(ctypes.c_void_p(handle))", NATIVE, NATIVE,
+      before="import ctypes\nLIBC_LOADED_EARLY = ctypes.CDLL(None)"),
+    T("native-code-python-itself", "import ctypes\nctypes.pythonapi.Py_GetVersion.restype = ctypes.c_char_p\nctypes.pythonapi.Py_GetVersion()",
+      NATIVE, NATIVE, effect=False),
+    T("native-code-cffi", "import cffi\nffi = cffi.FFI()\nffi.cdef('void *fopen(const char *, const char *); int fclose(void *);')\n"
+      "libc = ffi.dlopen(None)\nlibc.fclose(libc.fopen(p.encode(), b'w'))", NATIVE, NATIVE, needs="cffi"),
+    T("native-code-the-jobs-own-compiled-module", "import importlib.util, shutil\norigin = importlib.util.find_spec('_lsprof').origin\n"
+      "os.makedirs(scratch + '/native', exist_ok=True)\nshutil.copy(origin, scratch + '/native')\nsys.path.insert(0, scratch + '/native')\n"
+      "sys.modules.pop('_lsprof', None)\ntry:\n    import _lsprof\nfinally:\n    sys.path.remove(scratch + '/native')", NATIVE, FILE, effect=False),
+
+    # --- what strict mode cannot see: the scan must ----------------------------------------------------------------------------
     T("written-as-the-job-is-imported", "pass", None, OPEN, before="open('evade/written-as-the-job-is-imported.out', 'w').write('x')",
       why="the run has not opened yet: strict mode watches a run"),
     T("written-after-the-run", "import atexit\natexit.register(lambda: open(p, 'w').write('x'))", None, OPEN,
@@ -303,8 +421,34 @@ assert len(BY_NAME) == len(TECHNIQUES), "two techniques share a name"
 # What a job does that is no write around the package: each must leave strict mode with nothing to say.
 LEGITIMATE = {
     "reads a file": "open(seed).read()\nopen(seed, 'rb').read()\nwith open(seed, encoding='utf-8') as f:\n    f.readline()",
-    "reads with the libraries": "pq.write_table(table, scratch + '/in.parquet')\npq.read_table(scratch + '/in.parquet')\n"
-                                "pd.read_parquet(scratch + '/in.parquet')\npd.read_csv(seed, header=None)",
+    "reads scratch files with the libraries": "pq.write_table(table, scratch + '/in.parquet')\npq.read_table(scratch + '/in.parquet')\n"
+                                              "pd.read_parquet(scratch + '/in.parquet')\npq.ParquetFile(scratch + '/in.parquet').read()\n"
+                                              "import pyarrow.dataset as ds\nds.dataset(scratch + '/in.parquet').to_table()\n"
+                                              "np.save(scratch + '/a.npy', np.arange(3))\nnp.load(scratch + '/a.npy')",
+    "reads data it holds in memory": "import io\npd.read_csv(io.StringIO('a,b\\n1,2'))\npd.read_json(io.StringIO('[{\"a\": 1}]'))\n"
+                                     "buf = io.BytesIO()\npq.write_table(table, buf)\npq.read_table(io.BytesIO(buf.getvalue()))\n"
+                                     "pq.read_table(pa.BufferReader(buf.getvalue()))\npd.read_parquet(io.BytesIO(buf.getvalue()))\n"
+                                     "saved = io.BytesIO()\nnp.save(saved, np.arange(3))\nnp.load(io.BytesIO(saved.getvalue()))",
+    "reads the files a library ships": "np.genfromtxt(os.path.join(os.path.dirname(os.__file__), 'this.py'), dtype=str, delimiter='\\x00', comments=None)\n"
+                                       "pd.read_csv(os.path.join(os.path.dirname(os.__file__), 'this.py'), sep='\\x00', header=None, engine='python')",
+    "reads through the package": "invaract.read('orders')",
+    "uses a pyarrow filesystem on scratch files": "import pyarrow.fs as pafs\nlocal = pafs.LocalFileSystem()\n"
+                                                  "assert isinstance(local, pafs.LocalFileSystem) and isinstance(local, pafs.FileSystem)\n"
+                                                  "with local.open_output_stream(scratch + '/fs.bin') as out:\n    out.write(b'x')\n"
+                                                  "with local.open_input_file(scratch + '/fs.bin') as opened:\n    opened.read()\n"
+                                                  "pq.write_table(table, scratch + '/fs.parquet', filesystem=local)\n"
+                                                  "pq.read_table(scratch + '/fs.parquet', filesystem=local)\n"
+                                                  "local.get_file_info('seed')\nlocal.get_file_info(pafs.FileSelector('seed'))\n"
+                                                  "found, where = pafs.FileSystem.from_uri('file://' + scratch)\n"
+                                                  "assert isinstance(found, pafs.LocalFileSystem) and where == scratch\n"
+                                                  "local.copy_file(scratch + '/fs.bin', scratch + '/fs2.bin')\nlocal.delete_file(scratch + '/fs2.bin')\n"
+                                                  "assert local == pafs.LocalFileSystem() and local.type_name == 'local'",
+    "computes in forked workers": "import multiprocessing\nwith multiprocessing.get_context('fork').Pool(2) as pool:\n"
+                                  "    assert pool.map(abs, [-1, -2]) == [1, 2]",
+    "listens on a socket": "import socket\nserver = socket.socket()\nserver.bind(('127.0.0.1', 0))\nserver.listen(1)\nserver.close()",
+    "imports libraries that use native code themselves": "import ctypes, ctypes.util, uuid, platform, locale\nuuid.uuid1()\nuuid.getnode()\nplatform.platform()\n"
+                                                         "platform.uname().processor\nplatform.architecture()\nctypes.util.find_library('c')\n"
+                                                         "ctypes.c_int(3).value\nctypes.sizeof(ctypes.c_double)\nnp.arange(3).ctypes.data",
     "lists and inspects files": "os.listdir('seed')\nos.path.exists(seed)\nos.stat(seed)\nos.makedirs('made/folder', exist_ok=True)\n"
                                 "from pathlib import Path\nlist(Path('seed').glob('*'))\nPath(seed).read_text()",
     "writes to a buffer": "import io\nbuf = io.BytesIO()\npq.write_table(table, buf)\ndf.to_parquet(io.BytesIO())\ndf.to_csv(io.StringIO())\n"
@@ -328,22 +472,40 @@ LEGITIMATE = {
                        "uuid.uuid4()\nrandom.random()\ndatetime.datetime.now()\nre.compile('a+').match('aa')\nos.environ.get('HOME')\nos.getcwd()",
     "reads an archive": "import gzip, zipfile, io\nbuf = io.BytesIO()\nwith zipfile.ZipFile(buf, 'w') as z:\n    z.writestr('a', 'x')\n"
                         "zipfile.ZipFile(io.BytesIO(buf.getvalue())).read('a')\ngzip.decompress(gzip.compress(b'x'))",
-    "raises and handles an error": "try:\n    open('no/such/file')\nexcept OSError:\n    pass\ntry:\n    pq.read_table('no/such.parquet')\nexcept Exception:\n    pass",
+    "raises and handles an error": "try:\n    open('no/such/file')\nexcept OSError:\n    pass\ntry:\n    pq.read_table(scratch + '/no/such.parquet')\n"
+                                   "except Exception:\n    pass",
     "works on frames": "df.assign(double=df.total * 2).groupby('region').sum()\ndf.rename(columns={'total': 't'})\ndf.replace(1, 2)\n"
                        "table.to_pandas()\ntable.to_pylist()\npa.Table.from_pandas(df)",
 }
 
 #: The same, for the libraries the package does not itself need.
 LEGITIMATE_WITH = {
+    "h5py": {
+        "keeps a scientific file in scratch": "import h5py\nwith h5py.File(scratch + '/a.h5', 'w') as f:\n    f['total'] = [1, 2]\n"
+                                              "with h5py.File(scratch + '/a.h5', 'r') as f:\n    list(f['total'])\n"
+                                              "with h5py.File(scratch + '/core.h5', 'w', driver='core', backing_store=False) as f:\n    f['a'] = [1]\n"
+                                              "assert isinstance(h5py.File(scratch + '/a.h5'), h5py.File)",
+    },
+    "psycopg2": {
+        "imports a database driver and connects to nothing": "import psycopg2, psycopg2.extras, psycopg2.sql\n"
+                                                             "psycopg2.sql.SQL('select {}').format(psycopg2.sql.Literal(1))\npsycopg2.Binary(b'x')",
+    },
     "polars": {
         "works in Polars": "import polars as pl, io\nframe = pl.from_arrow(table)\nframe.write_csv()\nframe.write_json()\nframe.write_parquet(io.BytesIO())\n"
-                           "frame.lazy().filter(pl.col('total') > 1).collect()\nframe.to_pandas()\nframe.to_arrow()",
+                           "frame.lazy().filter(pl.col('total') > 1).collect()\nframe.to_pandas()\nframe.to_arrow()\n"
+                           "pl.sql('select region from frame where total > 1').collect()\n"
+                           "pl.SQLContext(orders=frame).execute('select sum(total) from orders').collect()\n"
+                           "frame.write_parquet(scratch + '/pl.parquet')\npl.read_parquet(scratch + '/pl.parquet')\n"
+                           "pl.scan_parquet(scratch + '/pl.parquet').collect()\npl.read_csv(io.BytesIO(b'a,b\\n1,2'))",
     },
     "duckdb": {
         "queries frames in DuckDB": "import duckdb\nduckdb.sql('select region, sum(total) from df group by region').df()\ncon = duckdb.connect()\n"
                                     "con.register('orders', df)\ncon.execute('select * from orders where total > ?', [1]).fetchall()\n"
                                     "con.execute('create table t as select * from orders')\ncon.sql('select count(*) from t').fetchall()\n"
-                                    "con.execute(\"select 'copy this to that' as note\").fetchall()\nduckdb.sql('select 1 as a').to_df()\ncon.close()",
+                                    "con.execute(\"select 'copy this to that' as note\").fetchall()\nduckdb.sql('select 1 as a').to_df()\n"
+                                    "duckdb.sql('select 1 as a').query('one', 'select a + 1 from one').fetchall()\n"
+                                                                        "duckdb.sql('select 1 as a').write_parquet(scratch + '/d.parquet')\nduckdb.read_parquet(scratch + '/d.parquet').fetchall()\n"
+                                    "con.close()",
     },
 }
 

@@ -4,7 +4,7 @@
 
 Two things read this catalogue, so they cannot disagree about what a write is: the lint (``checker``), which matches the
 names in a job's source against it, and the invaract package's strict mode, which wraps the same names at run time
-(``writer_names``). A new library or function is added here once.
+(``watched_names``, at the end of this file). A new library or function is added here once.
 
 A rule is a code (``READ`` ... ``DYNAMIC``), a name for reports (``pandas-read``), and a pattern the fully qualified name
 of what the code refers to must match in full (``pandas.read_csv`` for ``pd.read_csv``). Methods of a value the source
@@ -48,9 +48,14 @@ def _rule(name, code, pattern):
 _PANDAS = r"(?:modin\.)?pandas(?:\.\w+)*"
 _PYARROW_IO = r"pyarrow\.(?:parquet|csv|feather|json|orc|ipc|dataset)"
 #: Database drivers, by the module their ``connect`` is in.
-_DRIVERS = (r"sqlite3|aiosqlite|psycopg2|psycopg|asyncpg|pymysql|aiomysql|pymssql|pyodbc|cx_Oracle|oracledb|duckdb"
-            r"|mysql\.connector|snowflake\.connector|teradatasql|redshift_connector|trino\.dbapi|pyhive\.hive"
-            r"|databricks\.sql|adbc_driver_\w+\.dbapi")
+DRIVERS = (
+    "sqlite3", "aiosqlite", "psycopg2", "psycopg", "asyncpg", "pymysql", "aiomysql", "MySQLdb", "pymssql", "pyodbc", "cx_Oracle",
+    "oracledb", "duckdb", "mysql.connector", "snowflake.connector", "teradatasql", "redshift_connector", "trino.dbapi",
+    "pyhive.hive", "databricks.sql",
+)
+#: Arrow's database drivers, one module per database: ``adbc_driver_postgresql.dbapi``, ...
+_ADBC = r"adbc_driver_\w+\.dbapi"
+_DRIVERS = "|".join(re.escape(driver) for driver in DRIVERS) + "|" + _ADBC
 
 #: Functions and classes by the qualified name they resolve to. The first rule that matches a name is its rule.
 MODULE_RULES = [
@@ -61,7 +66,7 @@ MODULE_RULES = [
                                               r"|RecordBatchFileReader|RecordBatchStreamReader)|pyarrow\.input_stream"),
     _rule("duckdb-read", READ, r"duckdb\.(?:read_\w+|from_csv_auto|from_parquet)"),
     _rule("numpy-read", READ, r"numpy\.(?:load|loadtxt|genfromtxt|fromfile)"),
-    _rule("library-read", READ, r"(?:dask\.dataframe|cudf|geopandas|vaex|pandas_gbq)\.read_\w+|xarray\.open_\w+|joblib\.load"
+    _rule("library-read", READ, r"(?:dask\.dataframe|cudf|geopandas|vaex|pandas_gbq|pyreadstat)\.read_\w+|xarray\.open_\w+|joblib\.load"
                                 r"|openpyxl\.load_workbook|deltalake\.DeltaTable"),
     # writes
     _rule("pyarrow-write", WRITE, _PYARROW_IO + r"\.(?:write_\w+|new_\w+|ParquetWriter|CSVWriter|ORCWriter|RecordBatchFileWriter"
@@ -69,8 +74,8 @@ MODULE_RULES = [
                                                 r"|pyarrow\.(?:create_memory_map|output_stream)|pyarrow\.fs\.copy_files"),
     _rule("pandas-write", WRITE, _PANDAS + r"\.(?:ExcelWriter|HDFStore)"),
     _rule("numpy-write", WRITE, r"numpy\.(?:save|savez|savez_compressed|savetxt|memmap)"),
-    _rule("library-write", WRITE, r"deltalake\.(?:write_deltalake|convert_to_deltalake)|joblib\.dump|xlsxwriter\.Workbook|h5py\.File"
-                                  r"|pandas_gbq\.to_gbq|shelve\.open"),
+    _rule("library-write", WRITE, r"deltalake\.(?:write_deltalake|convert_to_deltalake)|joblib\.dump|xlsxwriter\.Workbook"
+                                  r"|pandas_gbq\.to_gbq|shelve\.open|pyreadstat\.write_\w+"),
     _rule("file-operation", WRITE, r"shutil\.(?:copy|copy2|copyfile|copytree|move|rmtree|make_archive|unpack_archive)"
                                    r"|os\.(?:rename|renames|replace|remove|unlink|rmdir|removedirs|truncate|link|symlink|mkfifo|mknod)"),
     # connections
@@ -98,7 +103,7 @@ MODULE_RULES = [
                                  r"|asyncio\.create_subprocess_(?:exec|shell)|pty\.spawn"),
     # code the scan cannot follow
     _rule("dynamic-code", DYNAMIC, r"exec|eval|runpy\.run_(?:path|module)|importlib\.util\.spec_from_file_location|imp\.load_source"),
-    _rule("native-code", DYNAMIC, r"ctypes\.(?:CDLL|PyDLL|WinDLL|OleDLL|(?:cdll|pydll|windll|oledll)(?:\.\w+)*)|cffi\.FFI"),
+    _rule("native-code", DYNAMIC, r"ctypes\.(?:CDLL|PyDLL|WinDLL|OleDLL|pythonapi(?:\.\w+)?|(?:cdll|pydll|windll|oledll)(?:\.\w+)*)|cffi\.FFI"),
 ]
 
 #: Functions that open a file, each with where its mode is among its arguments (position, keyword) and the mode letters
@@ -109,9 +114,12 @@ OPENERS = {
     "anyio.open_file": _MODE, "trio.open_file": _MODE, "gzip.open": _MODE, "bz2.open": _MODE, "lzma.open": _MODE,
     "tarfile.open": _MODE, "tarfile.TarFile": _MODE, "tarfile.TarFile.open": _MODE, "zipfile.ZipFile": _MODE,
     "gzip.GzipFile": _MODE, "bz2.BZ2File": _MODE, "lzma.LZMAFile": _MODE, "io.FileIO": _MODE, "os.fdopen": _MODE,
-    "tables.open_file": _MODE, "pyarrow.OSFile": _MODE, "pyarrow.memory_map": _MODE,
-    "dbm.open": (1, "flag", "wcn"), "argparse.FileType": (0, "mode", "wax+"),
+    "tables.open_file": _MODE, "pyarrow.OSFile": _MODE, "pyarrow.memory_map": _MODE, "h5py.File": _MODE, "netCDF4.Dataset": _MODE,
+    "dbm.open": (1, "flag", "wcn"), "dbm.gnu.open": (1, "flag", "wcn"), "dbm.ndbm.open": (1, "flag", "wcn"),
+    "dbm.dumb.open": (1, "flag", "wcn"), "argparse.FileType": (0, "mode", "wax+"),
 }
+#: The openers that open a dataset: opened to read, one is a read (``h5py.File("a.h5")``), where a plain ``open`` is not.
+DATA_OPENERS = frozenset({"tables.open_file", "h5py.File", "netCDF4.Dataset"})
 #: Mode letters that write, for a method called ``open`` on a value (``Path(...).open("w")``).
 WRITE_MODE = "wax+"
 
@@ -130,7 +138,7 @@ FRAME_WRITES = frozenset({
 DESTINATIONS = frozenset({
     "path", "path_or_buf", "excel_writer", "buf", "con", "name", "file", "target", "table_name", "connection", "uri",
     "workbook", "fname", "fid", "where", "sink", "dest", "base_dir", "filename", "table_or_uri", "destination_table",
-    "root_path", "output_file", "destination", "file_name",
+    "root_path", "output_file", "destination", "file_name", "dst_path",
 })
 #: A ``Path``'s writers, whose place is the ``Path`` itself.
 PATH_WRITES = frozenset({"write_text", "write_bytes", "touch", "unlink", "rmdir", "symlink_to", "hardlink_to"})
@@ -148,18 +156,20 @@ PATH_MOVES = frozenset({"rename", "replace"})
 SQL_METHODS = frozenset({"sql", "execute", "executemany", "executescript", "query", "from_query"})
 #: A DuckDB connection's methods that read files.
 DUCKDB_READS = frozenset({"read_parquet", "read_csv", "read_json", "from_parquet", "from_csv_auto"})
+READ_METHODS = DUCKDB_READS
 
 #: The libraries the rules are about, by the first part of their name. A module that is certainly none of them
 #: (``import helpers``) is the job's own: its ``helpers.to_csv(rows)`` is a function of the job's, not a frame's method.
 DATA_LIBRARIES = frozenset({
     "pandas", "modin", "polars", "pyarrow", "duckdb", "numpy", "dask", "cudf", "geopandas", "vaex", "xarray", "pandas_gbq",
-    "deltalake", "joblib", "openpyxl", "xlsxwriter", "h5py", "shelve", "shutil", "os", "io", "builtins", "pathlib",
+    "deltalake", "joblib", "openpyxl", "xlsxwriter", "h5py", "tables", "netCDF4", "pyreadstat", "shelve", "shutil", "os", "io",
+    "builtins", "pathlib",
 })
 
 #: Modules whose attributes, looked up by a name built at run time (``getattr(pd, "read_" + kind)``), may be a reader or
 #: a writer: such a lookup is a finding of its own. numpy is left out: ``getattr(np, dtype)`` is ordinary numeric code.
-DYNAMIC_ROOTS = frozenset({"pandas", "modin", "polars", "pyarrow", "duckdb", "deltalake", "shutil", "os", "builtins", "io",
-                           "subprocess", "sqlite3", "fsspec"})
+DYNAMIC_ROOTS = frozenset({"pandas", "modin", "polars", "pyarrow", "duckdb", "deltalake", "h5py", "tables", "netCDF4", "pyreadstat",
+                           "shutil", "os", "builtins", "io", "subprocess", "sqlite3", "fsspec", "ctypes"})
 #: The start of a method name built at run time that makes ``getattr(frame, name)`` a reader or writer lookup.
 DYNAMIC_METHOD_PREFIXES = ("to_", "write_", "sink_", "read_", "scan_")
 
@@ -189,26 +199,67 @@ def module_rule(qualified):
     return None
 
 
+# --- what the invaract package's strict mode watches as a job runs ----------------------------------------------------------
+#
+# Strict mode sees every file Python itself opens, moves or deletes. What follows is what it must wrap to see the rest.
+# To add a library: name its readers, writers or ``connect`` in MODULE_RULES (or OPENERS) above, and, when its writers are
+# compiled, add it to COMPILED. The scan and the watch then both know it.
+
 #: The libraries whose writers are compiled: they write without Python's own ``open``, so nothing but a wrapper around each
-#: writer sees one happen. Strict mode wraps these (``writer_names``, ``frame_writer_names``, ``SQL_RUNNERS``).
-COMPILED = frozenset({"pyarrow", "polars", "duckdb", "deltalake"})
-#: The classes of those libraries whose methods write a frame (``frame_writer_names``), by module.
+#: writer sees one happen.
+COMPILED = frozenset({"pyarrow", "polars", "duckdb", "deltalake", "h5py", "tables", "netCDF4", "pyreadstat"})
+#: Python's own modules that write from compiled code: the key-value files ``shelve`` keeps its data in.
+COMPILED_STANDARD = frozenset({"dbm"})
+#: The libraries whose readers are wrapped though their writers need not be (they write through Python's ``open``).
+READERS = frozenset({"pandas", "modin", "numpy"})
+#: The classes whose methods write a frame (``frame_writer_names``), by module.
 FRAME_CLASSES = {"polars": ("DataFrame", "LazyFrame"), "duckdb": ("DuckDBPyRelation",)}
 #: The classes whose methods run SQL that can reach files (``SQL_METHODS``), by module; the module's own functions of the
-#: same names run it on a default connection.
-SQL_RUNNERS = {"duckdb": ("DuckDBPyConnection",)}
+#: same names run it too.
+SQL_RUNNERS = {"duckdb": ("DuckDBPyConnection", "DuckDBPyRelation"), "polars": ("SQLContext",)}
+#: The classes whose methods read files by name (``READ_METHODS``), by module.
+READER_CLASSES = {"duckdb": ("DuckDBPyConnection",)}
+#: The modules whose classes are filesystems: reads and writes are their methods (``FILESYSTEM_READS``, ``FILESYSTEM_WRITES``).
+FILESYSTEMS = frozenset({"pyarrow.fs"})
+FILESYSTEM_READS = frozenset({"open_input_stream", "open_input_file"})
+FILESYSTEM_WRITES = STREAM_WRITES | {"move"}
+#: The parameters of a reader that say what it reads from.
+SOURCES = frozenset({
+    "source", "path", "filepath_or_buffer", "path_or_buf", "path_or_buffer", "io", "file", "fname", "filename", "filename_or_obj",
+    "filepath", "where", "path_or_paths", "input_file", "metadata_path", "table_uri", "con", "connection", "uri", "file_glob",
+    "file_globs", "filename_path",
+})
 
 
-def writer_names(module, names):
-    """Of ``names`` (a module's attributes), the ones the catalogue says write, each with its rule: what strict mode wraps
-    in ``module`` so that a write reached by any route is seen. Only writes: reads, connections and the rest are the
-    static scan's."""
+def watched_library(module):
+    """Whether strict mode looks into ``module`` (by its full name) for something to wrap."""
+    root = module.split(".")[0]
+    return root in COMPILED | COMPILED_STANDARD | READERS | _DRIVER_ROOTS or bool(_DRIVER_MODULE.fullmatch(module))
+
+
+_DRIVER_MODULE = re.compile(_DRIVERS)
+_DRIVER_ROOTS = frozenset(driver.split(".")[0] for driver in DRIVERS)
+
+
+def watched_names(module, names):
+    """Of ``names`` (a module's attributes), the ones strict mode wraps in ``module``, each with its rule: every reader; a
+    writer when the library is compiled (any other writes through Python's ``open``, which is seen by itself); and a database
+    driver's ``connect``."""
+    compiled = module.split(".")[0] in COMPILED
     found = {}
     for name in names:
         rule = module_rule(f"{module}.{name}")
-        if rule is not None and rule.code == WRITE:
+        if rule is not None and (rule.code == READ or (rule.code == WRITE and compiled) or rule.name == "database-connect"):
             found[name] = rule
     return found
+
+
+def opener_names(module, names):
+    """Of ``names``, the functions and classes of a compiled library that open a file by name and mode (``OPENERS``), each
+    with where its mode is."""
+    if module.split(".")[0] not in COMPILED | COMPILED_STANDARD:
+        return {}
+    return {name: OPENERS[f"{module}.{name}"] for name in names if f"{module}.{name}" in OPENERS}
 
 
 def frame_writer_names(names):

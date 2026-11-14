@@ -250,9 +250,17 @@ CASES = [
          (WRITE, "library-write"), (READ, "library-read")),
     case("other libraries", "import joblib, h5py, xlsxwriter, openpyxl, xarray as xr, dask.dataframe as dd\njoblib.dump(m, 'a')\njoblib.load('a')\n"
          "h5py.File('b', 'w')\nxlsxwriter.Workbook('c.xlsx')\nopenpyxl.load_workbook('d.xlsx')\nxr.open_dataset('e.nc')\ndd.read_parquet('f')\n"
-         "ds.to_netcdf('g.nc')\ngdf.to_file('h.gpkg')", (WRITE, "library-write"), (READ, "library-read"), (WRITE, "library-write"),
+         "ds.to_netcdf('g.nc')\ngdf.to_file('h.gpkg')", (WRITE, "library-write"), (READ, "library-read"), (WRITE, "open-write-mode"),
          (WRITE, "library-write"), (READ, "library-read"), (READ, "library-read"), (READ, "library-read"), (WRITE, "frame-write"),
          (WRITE, "frame-write")),
+    case("scientific files", "import h5py, netCDF4, tables\nh5py.File('a.h5', 'a')\nh5py.File('a.h5')\nnetCDF4.Dataset('b.nc', 'w')\n"
+         "netCDF4.Dataset('b.nc')\ntables.open_file('c.h5', mode='w')\ntables.open_file('c.h5')\nh5py.File(path, mode)",
+         (WRITE, "open-write-mode"), (READ, "library-read"), (WRITE, "open-write-mode"), (READ, "library-read"),
+         (WRITE, "open-write-mode"), (READ, "library-read"), (WRITE, "open-write-mode")),
+    case("statistics packages' files", "import pyreadstat\npyreadstat.write_sav(df, 'a.sav')\npyreadstat.read_dta('b.dta')",
+         (WRITE, "library-write"), (READ, "library-read")),
+    case("more database drivers", "import MySQLdb, oracledb\nMySQLdb.connect(host=h)\noracledb.connect(dsn=d)", *[(CONNECT, "database-connect")] * 2),
+    case("ctypes through the handle Python keeps", "import ctypes\nctypes.pythonapi.fopen(b'a', b'w')", (DYNAMIC, "native-code")),
 
     # --- connections ----------------------------------------------------------------------------------------------------------------
     case("database drivers", "import sqlite3, psycopg, pymysql, pyodbc, asyncpg, snowflake.connector, mysql.connector\n"

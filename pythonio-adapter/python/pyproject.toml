@@ -33,7 +33,7 @@ test = ["pytest>=7", "jsonschema>=4.0", "pandas>=2.2", "polars>=1.0"]
 Homepage = "https://github.com/mlltx/Invaract"
 
 [tool.setuptools]
-packages = ["invaract"]
+packages = ["invaract", "invaract._strict"]
 
 # what a wheel carries besides the code (.github/scripts/python_wheel.py): the native checker in a platform wheel, the
 # checker jar in the pure-Python one; a source checkout has neither

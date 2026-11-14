@@ -146,6 +146,37 @@ def test_a_password_in_a_url_is_never_copied_into_a_finding():
     assert one("open('s3://bucket/key', 'w')").target == "s3://bucket/key"
 
 
+@pytest.mark.parametrize("call,snippet", [
+    ("psycopg2.connect('host=db.internal dbname=sales password=s3cret')", "psycopg2.connect('host=db.internal dbname=sales password=***')"),
+    ("psycopg2.connect(host='db.internal', password='s3cret')", "psycopg2.connect(host='db.internal', password=***)"),
+    ('psycopg2.connect(host="db.internal", password="s3 cret")', "psycopg2.connect(host='db.internal', password=***)"),
+    ("psycopg2.connect('Server=sql;Database=sales;UID=etl;PWD=s3cret;')", "psycopg2.connect('Server=sql;Database=sales;UID=etl;PWD=***;')"),
+    ("psycopg2.connect(host='db.internal', passwd = 's3cret', port=5432)", "psycopg2.connect(host='db.internal', passwd=***, port=5432)"),
+    ("psycopg2.connect('host=db.internal', token='s3cret', api_key='s3cret', secret_key='s3cret')",
+     "psycopg2.connect('host=db.internal', token=***, api_key=***, secret_key=***)"),
+    # a name holds no secret to copy, and says where the secret comes from
+    ("psycopg2.connect(host='db.internal', password=password)", "psycopg2.connect(host='db.internal', password=password)"),
+    ("psycopg2.connect(host='db.internal', password=os.environ['PGPASSWORD'])", "psycopg2.connect(host='db.internal', password=os.environ['PGPASSWORD'])"),
+    ("psycopg2.connect(host='db.internal', password=self.password)", "psycopg2.connect(host='db.internal', password=self.password)"),
+    # a word that only ends like one is no secret
+    ("psycopg2.connect(host='db.internal', nopassword='x', bypass='y')", "psycopg2.connect(host='db.internal', nopassword='x', bypass='y')"),
+])
+def test_a_secret_given_by_name_is_never_copied_into_a_finding(call, snippet):
+    f = one("import os, psycopg2\n" + call)
+    assert f.snippet == snippet
+    assert "s3cret" not in str(f.to_dict()) and "s3 cret" not in str(f.to_dict())
+
+
+def test_text_that_is_not_code_has_every_secret_given_by_name_masked():
+    from invaract_lint import short
+    assert short("host=db.internal password=s3cret dbname=sales") == "host=db.internal password=*** dbname=sales"
+    assert short("Server=sql;PWD=s3cret;Database=sales") == "Server=sql;PWD=***;Database=sales"
+    assert short("https://api.internal/export?token=s3cret&limit=5") == "https://api.internal/export?token=***&limit=5"
+    assert short("password=name") == "password=***", "outside code there are no names: what follows is the secret"
+    assert short("connect(password=name)", code=True) == "connect(password=name)"
+    assert short("the password is long") == "the password is long"
+
+
 def test_long_text_is_cut_at_200_characters():
     exactly = "a" * 200
     assert one(f"open('{exactly}', 'w')").target == exactly

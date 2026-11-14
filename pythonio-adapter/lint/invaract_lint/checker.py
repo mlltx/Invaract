@@ -52,6 +52,10 @@ REFERENCED = "passed or stored, not called here"
 _LONGEST = 200
 #: A password in a URL (``postgresql://user:secret@host``): never copied into a finding, which may be published.
 _PASSWORD = re.compile(r"(\w[\w+.-]*://[^/\s:@'\"]+):[^@\s/'\"]+@")
+#: A secret given by name, in a connection string (``password=secret``, ``PWD=secret;``) or as a keyword argument
+#: (``password='secret'``): its value is never copied either.
+_SECRET = re.compile(r"\b((?:password|passwd|pwd|secret|token|api_?key|access_?key|secret_?key|sas_?token|account_?key)\s*=\s*)"
+                     r"(?:'[^']*'|\"[^\"]*\"|[^\s;,&)'\"]+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -137,7 +141,7 @@ def scan_source(source, path="<source>"):
             path, node.lineno, node.col_offset + 1, code, ast.unparse(written),
             end_line=node.end_lineno, end_col=node.end_col_offset + 1, resolved=resolved[0] if resolved else None,
             scope=".".join(scan.names.scope_of[id(node)].path()) or "<module>", rule=rule,
-            snippet=short(" ".join(ast.unparse(node).split())),
+            snippet=short(" ".join(ast.unparse(node).split()), code=True),
             target=_target(node, code, rule) if isinstance(node, ast.Call) and detail != REFERENCED else None,
             detail=detail, allowed=bool(reasons),
             reason=next((r for r in reasons if r), None),
@@ -237,7 +241,9 @@ class _Scan:
             opened = call.args[:1] + [k.value for k in call.keywords if k.arg == "fileobj"]
             if opened and all(self.names.kind(o) in (MEMORY, CONSOLE, TEMPORARY) for o in opened):
                 return nothing  # a scratch file, the null device, or an archive built in a buffer
-            return self._opened(_argument(call, position, keyword), "open-write-mode", letters) or nothing
+            written = self._opened(_argument(call, position, keyword), "open-write-mode", letters)
+            # a dataset opened to read is a read; a plain file opened to read is not the scan's to judge
+            return written or ((READ, "library-read", None) if name in catalogue.DATA_OPENERS else nothing)
         if name == "os.open":
             return (None if self._scratch(call.args[:1]) else self._os_open(_argument(call, 1, "flags"))) or nothing
         rule = catalogue.module_rule(name)
@@ -485,7 +491,16 @@ def _target(call, code, rule):
     return short(literal) if literal is not None else None
 
 
-def short(text):
-    """``text`` with any password in a URL masked, cut to ``_LONGEST`` characters."""
-    text = _PASSWORD.sub(r"\1:***@", text)
+def _mask_in_code(found):
+    """``password=`` and its value masked, in Python source: a value that is text, or is inside text (a connection string),
+    is a secret; one that is a name or a call (``password=password``) holds none to copy, and says where it comes from."""
+    value = found.group(0)[len(found.group(1)):]
+    quotes_before = found.string.count("'", 0, found.start()) + found.string.count('"', 0, found.start())
+    return found.group(1) + "***" if quotes_before % 2 or value[:1] in "'\"" else found.group(0)
+
+
+def short(text, code=False):
+    """``text`` with any password masked (in a URL, or given by name), cut to ``_LONGEST`` characters. ``code`` says the text
+    is Python source, where what follows ``password=`` may be a name and no secret."""
+    text = _SECRET.sub(_mask_in_code if code else r"\1***", _PASSWORD.sub(r"\1:***@", text))
     return text if len(text) <= _LONGEST else text[:_LONGEST - 1] + "\u2026"
