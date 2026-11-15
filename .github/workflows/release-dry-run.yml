@@ -1,4 +1,6 @@
 name: Release dry run
+permissions:
+  contents: read
 
 # release.yml publishes six modules to Maven Central when a maintainer pushes a tag, and nothing
 # before that tag exercises the publishing configuration: a broken POM, a missing signing plugin or
