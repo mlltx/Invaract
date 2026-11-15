@@ -1,6 +1,6 @@
 # Python Jobs: Attaching Invaract Without the Annotation (Design)
 
-**Status:** design, not implemented. **Scope:** `pythonio-adapter/python` (the `invaract` package), its wheel, its docs.
+**Status:** design, not implemented. Decisions D-2, R-6b and L-1 confirmed by the owner (2026-11-15, section 15). **Scope:** `pythonio-adapter/python` (the `invaract` package), its wheel, its docs.
 No Scala change in phases 1 to 3. **Builds on:** strict mode and the scan as they are after PR #232
 ([PYTHONIO_ADAPTER.md](PYTHONIO_ADAPTER.md), [PYTHONIO_LINT_AND_STRICT.md](PYTHONIO_LINT_AND_STRICT.md)).
 
@@ -132,7 +132,7 @@ applies: `CheckNotRun` at a run's opening; at process end without a run, the mes
 **D-1.** `INVARACT_AUTO_RUN=true` with `INVARACT_REQUIRE_RUN` set: auto-run decides. Every job process that needs a run
 gets one, so require-run has nothing left to judge. Not an error.
 
-**D-2 (default on).** `INVARACT_ATTACH` defaults to `startup`. A platform that already sets `INVARACT_STRICT` gets the
+**D-2 (default on; confirmed by the owner).** `INVARACT_ATTACH` defaults to `startup`. A platform that already sets `INVARACT_STRICT` gets the
 earlier watch on upgrade: under `enforce`, a job that wrote before `import invaract` and passed before is now refused.
 That is the gap closing, and it must be in the release notes. `INVARACT_ATTACH=import` restores the old behaviour.
 
@@ -281,7 +281,7 @@ Runs once, in the root, after the job's own `atexit` handlers. In order:
    | A run was opened earlier in this process | Unexplained findings remain | `REQUIRE_RUN` | `STRICT` | Outcome |
    |---|---|---|---|---|
    | no | yes (or the watch is explicitly off, R-2) | `report` | any | **R-6a.** Warning on standard error. Status unchanged. |
-   | no | yes (or the watch is explicitly off) | `enforce` | any | **R-6b.** The same message. Status 2. |
+   | no | yes (or the watch is explicitly off) | `enforce` | any | **R-6b (confirmed by the owner).** The same message. Status 2, "not checked". |
    | no | no | any | any | Nothing. |
    | yes | yes | any | `report` | **R-9a (the tail).** Warning: what the job did after its run ended. Status unchanged. |
    | yes | yes | any | `enforce` | **R-9b.** The same message. Status 1: it wrote around the package, after the run could refuse it. |
@@ -324,7 +324,7 @@ process ends with status 2 and the message "Invaract could not tell whether this
 sys.exit(<status>), or start it with python -m invaract". If nothing is staged, unknown is treated as completed (there is
 nothing to publish; only reports are sent).
 
-**L-1 (a limit, to be stated in the user guide).** On Python 3.10 and 3.11, with the start-up hook, a job that uses the
+**L-1 (a limit, accepted by the owner; to be stated in the user guide).** On Python 3.10 and 3.11, with the start-up hook, a job that uses the
 ambient API and ends with a bare `raise SystemExit(<non-zero>)` is taken to have completed, and its outputs are
 published. `sys.exit(<non-zero>)`, any uncaught exception, Python 3.12 or later, and the launcher are all exact. Where
 the platform controls the start command, the launcher is the recommended way to run auto-run jobs for this reason.
@@ -469,12 +469,20 @@ Probes run on this repository's test environments (Python 3.10.20, 3.11.17, 3.13
 | One enum (`manual`/`expect`/`require`/`auto`) instead of two variables | `off`/`report`/`enforce` is the vocabulary users already know from the scan and the watch. |
 | Fall back to a dry run when auto-run has no contract | A forgotten contract would silently stop being enforced. Observing must be asked for (`INVARACT_DRY_RUN=true`). |
 
-## 15. Open points for the owner
+## 15. Decisions and open points
 
-1. **D-2:** is start-up attach on by default acceptable, given it tightens `INVARACT_STRICT=enforce` on upgrade?
-2. **R-6b:** status 2 ("not checked") for a job with no run under `enforce`, rather than 1 ("refused").
-3. **R-2:** the implied watch, and the blunt rule when the watch is explicitly off.
-4. **L-1:** accept, or restrict ambient writes under the hook to Python 3.12 and later (and require the launcher below).
-5. **Phase 4:** whether an event for "touched data, no run" is wanted soon enough to plan the protocol change now.
-6. A per-job **contract map** (one environment, many jobs, each with its own contract) is not designed here: today the
+Decided by the owner on 2026-11-15:
+
+| Point | Decision |
+|---|---|
+| D-2: start-up attach on by default | **On by default.** `INVARACT_ATTACH=import` restores the old behaviour; the release notes must say that `INVARACT_STRICT=enforce` now covers code before `import invaract`. |
+| R-6b: exit status for a job with no run under `INVARACT_REQUIRE_RUN=enforce` | **2, "not checked"**, the status `CheckNotRun` already has. |
+| L-1: a bare `raise SystemExit(<non-zero>)` under the hook on Python 3.10/3.11 | **Accepted and documented.** Ambient writes stay allowed under the hook on every supported version; the user guide recommends the launcher where the platform controls the start command. |
+
+Still open (none blocks phases 1 to 3; an implementer takes the stated default):
+
+1. **R-2:** the implied watch, and the blunt rule when the watch is explicitly off. Default: as written.
+2. **Phase 4:** whether an event for "touched data, no run" is wanted soon enough to plan the protocol change now.
+   Default: not in phases 1 to 3.
+3. A per-job **contract map** (one environment, many jobs, each with its own contract) is not designed here: today the
    scheduler sets `INVARACT_CONTRACT` per job. Worth its own design if platforms cannot.
