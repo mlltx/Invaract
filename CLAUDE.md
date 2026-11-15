@@ -79,7 +79,8 @@ don't present it as something external consumers would bind to.
   `pythonio-adapter` (in progress: the checker for plain Python jobs that read and write through the `invaract`
   package in `pythonio-adapter/python`, built as a GraalVM native program so no Java is needed where jobs run, and
   `invaract-lint` in `pythonio-adapter/lint`, the guard against reads and writes made around the package — see
-  docs/PYTHON_IO_ADAPTER_DESIGN.md and docs/PYTHONIO_ADAPTER.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies and runs the conformance scenarios as real
+  docs/PYTHON_IO_ADAPTER_DESIGN.md and docs/PYTHONIO_ADAPTER.md; adding a library or an edge case to the lint or to the
+  package's strict mode (`INVARACT_STRICT`) follows docs/PYTHONIO_LINT_AND_STRICT.md; CI's `pythonio-native-checker` job holds the native build to the JVM's replies and runs the conformance scenarios as real
   Python jobs, `pythonio-python` runs the package's tests against the native build, and `pythonio-lint` tests the lint)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report

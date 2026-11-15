@@ -406,7 +406,7 @@ A Python job publishes, for each run:
 | The run has ended, whether it passed, was refused or failed (a contract refused as the run opens, before any of the job's code runs, publishes only its `CONTRACT_VALIDATION`) | `JOB_SUMMARY` |
 | In a dry run: each staged write, then the job's merged draft | `CONTRACT_INFERENCE`, then `DRY_RUN_SUMMARY` (and the `WRITE` events and `JOB_SUMMARY` above) |
 | With `INVARACT_LINT` on: the job's own code scanned as the run starts, and again before it finishes for code imported meanwhile | `CODE_SCAN`, `CLEAN`, `EXCEPTIONS`, `FINDINGS` or `NOT_SCANNED` (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS` per call) |
-| With `INVARACT_STRICT` on: what the job did around the package as it ran, once when the run ends (and, enforcing, at once for a write that is refused) | `CODE_SCAN` with `phase` `RUNTIME`: `CLEAN`, `EXCEPTIONS` or `FINDINGS`, or `NOT_SCANNED` if the watch itself failed (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS`) |
+| With `INVARACT_STRICT` on: what the job did around the package as it ran, once when the run ends (and, enforcing, at once for a read or write that is refused) | `CODE_SCAN` with `phase` `RUNTIME`: `CLEAN`, `EXCEPTIONS` or `FINDINGS`, or `NOT_SCANNED` if the watch itself failed or the job switched it off (and, when it refuses the run, a `CONTRACT_VALIDATION` `FAILED` with one `UNGOVERNED_DATA_ACCESS`) |
 
 A `WRITE` event means the data is in place: it is published after every output of the run has been published, never for
 a run that was refused, and never for an output left as it was (`ignore` on an output that already holds data). An output

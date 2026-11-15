@@ -231,7 +231,7 @@ def test_strict_mode_sees_the_write_as_it_happens(technique, reported):
     assert set(technique.rules) & set(rules), (rules, reported.outcome.get(technique.name), reported.stderr[-1500:])
     for f in found:
         assert f["detail"].startswith("seen as the job ran: ") and not f["allowed"]
-        assert f["code"].startswith("IVR00") and f["category"] in ("write", "connect", "sql", "process")
+        assert f["code"].startswith("IVR00") and f["category"] in ("read", "write", "connect", "sql", "process", "dynamic")
 
 
 @pytest.mark.parametrize("technique", TECHNIQUES, ids=lambda t: t.name)
@@ -265,10 +265,11 @@ def test_every_finding_is_placed_in_the_jobs_code_or_said_to_be_outside_it(repor
 
 
 def test_the_matrix_is_broad():
-    assert len(TECHNIQUES) > 140
+    assert len(TECHNIQUES) > 220
     unseen_at_run_time = sorted(t.name for t in TECHNIQUES if t.runtime is None)
-    assert unseen_at_run_time == ["compiled-writer-kept-in-a-table-before-the-run", "filesystem-stream-written-by-hand", "native-code",
-                                  "written-after-the-run", "written-as-the-job-is-imported"]
+    assert unseen_at_run_time == ["compiled-writer-kept-in-a-tuple-before-the-run", "filesystem-made-before-the-run",
+                                  "read-pyarrow-a-file-it-mapped-itself", "the-function-dug-out-of-its-wrapper", "written-after-the-run",
+                                  "written-as-the-job-is-imported"]
 
 
 # --- what must raise nothing ------------------------------------------------------------------------------------------------
@@ -284,7 +285,7 @@ def legitimate():
 
 @pytest.fixture(scope="module")
 def clean(tmp_path_factory):
-    after = "OUTCOME['unwatched'] = sorted(invaract._strict.UNWATCHED.items())\n"
+    after = "OUTCOME['unwatched'] = sorted(invaract._strict.wrapping.UNWATCHED.items())\n"
     return run_job(str(tmp_path_factory.mktemp("clean")), legitimate(), strict="enforce", after=after)
 
 
@@ -461,7 +462,7 @@ def test_off_watches_nothing(job, value):
     assert ran.status == 0 and ran.exists("evade/backup.out") and ran.scans() == []
 
 
-BREAK_THE_WATCH = "def broken(frame):\n    raise KeyError('f_code')\ninvaract._strict._position = broken\n"
+BREAK_THE_WATCH = "def broken(frame):\n    raise KeyError('f_code')\ninvaract._strict.placing.position = broken\n"
 
 
 def test_when_the_watch_itself_fails_a_reporting_run_goes_on_and_says_it_was_not_all_watched(job):
@@ -490,6 +491,184 @@ def test_a_password_in_a_connection_string_is_never_published(job):
     assert "hunter2" not in json.dumps(ran.events)
     assert found["target"] == "postgresql://loader:***@db.internal/warehouse"
     assert found["detail"] == "seen as the job ran: wrote postgresql://loader:***@db.internal/warehouse"
+
+
+def test_a_password_handed_to_a_database_driver_is_never_published(job):
+    pytest.importorskip("psycopg2")
+    body = ("import psycopg2\ntry:\n    psycopg2.connect('host=127.0.0.1 port=9 dbname=sales password=hunter2 connect_timeout=1')\n"
+            "except psycopg2.Error:\n    pass\ntry:\n    psycopg2.connect(host='127.0.0.1', port=9, password='hunter2', connect_timeout=1)\n"
+            "except psycopg2.Error:\n    pass")
+    ran = job(body, strict="report", lint="report")
+    assert "hunter2" not in json.dumps(ran.events)
+    assert [(f["category"], f["rule"], f["target"], f["detail"]) for f in ran.findings("RUNTIME")] == [
+        ("connect", "database-connect", "psycopg2:127.0.0.1", "seen as the job ran: connected to a database through psycopg2 at 127.0.0.1")] * 2
+    assert "password=***" in ran.findings("RUNTIME")[0]["snippet"]
+
+
+# --- before the run opens, and in the processes the job starts ----------------------------------------------------------------------
+
+EARLY = "import invaract\nopen('evade/early.out', 'w').write('x')"
+
+
+def test_what_a_job_does_between_importing_the_package_and_opening_its_run_is_that_runs_finding(job):
+    ran = job("pass", strict="report", before=[EARLY])
+    assert ran.status == 0, ran.stderr[-2000:]
+    [found] = ran.findings("RUNTIME")
+    assert (found["path"], found["scope"], found["rule"], found["target"]) == ("job.py", "<module>", "open-write-mode", "evade/early.out")
+    assert found["detail"] == "seen before the run opened: opened evade/early.out to write (mode 'w')"
+
+
+def test_enforced_a_job_that_wrote_before_its_run_opened_is_refused_as_it_opens(job):
+    ran = job("pass", strict="enforce", before=[EARLY])
+    assert ran.status == 1 and "UNGOVERNED_DATA_ACCESS" in ran.stderr
+    assert "seen before the run opened: opened evade/early.out to write (mode 'w')" in ran.stderr
+    assert ran.outcome == {}, "the job's own code inside the run never started"
+    assert not ran.published()
+    assert [(e["refused"], [f["target"] for f in e["findings"]]) for e in ran.scans("RUNTIME")] == [(True, ["evade/early.out"])]
+
+
+def test_a_marker_keeps_what_a_job_does_before_its_run_opens(job):
+    ran = job("pass", strict="enforce", before=[EARLY + "  # invaract: allow - a lock file"])
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert [(f["allowed"], f["reason"]) for f in ran.findings("RUNTIME")] == [(True, "a lock file")]
+
+
+def test_what_the_platform_lets_through_before_the_run_opens_is_kept_too(job):
+    ran = job("pass", strict="enforce", before=[EARLY], allow="evade/early.*")
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert [(f["allowed"], f["reason"]) for f in ran.findings("RUNTIME")] == [(True, "INVARACT_STRICT_ALLOW lets through evade/early.*")]
+
+
+def test_a_second_run_does_not_report_the_first_runs_findings_and_reports_what_was_done_between_them(job):
+    after = ("open('evade/between.out', 'w').write('x')\nwith invaract.run('contract.yaml'):\n"
+             "    invaract.write(invaract.read('orders'), 'report')\n")
+    ran = job(WRITE, strict="report", after=after)
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert [[(f["target"], f["detail"].split(":")[0]) for f in e["findings"]] for e in ran.scans("RUNTIME")] == [
+        [("evade/backup.out", "seen as the job ran")], [("evade/between.out", "seen before the run opened")]]
+
+
+CHILD = "import sys\nimport invaract\nopen(sys.argv[1], 'w').write('x')\n"
+
+
+def test_a_python_process_the_job_starts_is_watched_too_and_the_run_says_what_it_did(job):
+    ran = job("import subprocess\nsubprocess.run([sys.executable, 'child.py', p], check=True)", strict="report", files={"child.py": CHILD})
+    assert ran.status == 0, ran.stderr[-2000:]
+    found = {f["rule"]: f for f in ran.findings("RUNTIME")}
+    assert sorted(found) == ["open-write-mode", "subprocess"]
+    assert (found["subprocess"]["path"], found["subprocess"]["target"]) == ("job.py", sys.executable)
+    child = found["open-write-mode"]
+    assert (child["path"], child["scope"], child["target"]) == ("child.py", "<module>", "evade/backup.out")
+    assert child["detail"] == "seen as the job ran: opened evade/backup.out to write (mode 'w'), in a child process"
+    assert not [name for name in os.listdir(os.path.join(os.path.dirname(ran.folder), "scratch")) if name.startswith("invaract-strict-")]
+
+
+def test_enforced_a_python_process_the_platform_lets_the_job_start_cannot_write_either(job):
+    ran = job("import subprocess\nOUTCOME['child'] = subprocess.run([sys.executable, 'child.py', p], capture_output=True, text=True).stderr[-600:]",
+              strict="enforce", allow=sys.executable, files={"child.py": CHILD})
+    assert ran.status == 1 and not ran.exists("evade/backup.out") and not ran.published()
+    assert "invaract.errors.ContractViolation" in ran.outcome["child"] and "INVARACT_STRICT=enforce" in ran.outcome["child"]
+    final = ran.scans("RUNTIME")[-1]
+    assert final["refused"] and [(f["rule"], f["path"], f["allowed"]) for f in final["findings"] if f["rule"] == "open-write-mode"] == [
+        ("open-write-mode", "child.py", False)]
+
+
+def test_a_worker_process_started_afresh_is_reported_and_so_is_what_it_wrote(job):
+    body = ("import multiprocessing, evade_helper\nprocess = multiprocessing.get_context('spawn').Process(target=evade_helper.save_plain, args=(p,))\n"
+            "process.start()\nprocess.join()")
+    ran = job(body, strict="report")
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert sorted((f["rule"], f["path"]) for f in ran.findings("RUNTIME")) == [("open-write-mode", "evade_helper.py"), ("subprocess", "job.py")]
+    assert [f["detail"] for f in ran.findings("RUNTIME") if f["path"] == "evade_helper.py"] == [
+        "seen as the job ran: opened evade/backup.out to write (mode 'w'), in a child process"]
+
+
+def test_a_fork_made_before_any_run_opens_keeps_what_it_sees_for_its_own_run(job):
+    """A server that forks its workers before any of them opens a run: each worker's run reports what that worker did."""
+    early = ("import invaract\npid = os.fork()\nif pid:\n    os.waitpid(pid, 0)\n    os._exit(0)\n"
+             "open('evade/in-the-worker.out', 'w').write('x')")
+    ran = job("pass", strict="report", before=[early])
+    [found] = ran.findings("RUNTIME")
+    assert (found["target"], found["detail"]) == (
+        "evade/in-the-worker.out", "seen before the run opened: opened evade/in-the-worker.out to write (mode 'w')")
+    assert ran.scans("RUNTIME")[0]["errors"] == []
+
+
+def test_a_process_that_is_not_watched_leaves_nothing_behind_for_the_next_run(job):
+    """The file child processes leave their findings in is the run's own: it is gone when the run ends."""
+    ran = job("pid = os.fork()\nif pid == 0:\n    open(p, 'w').write('x')\n    os._exit(0)\nos.waitpid(pid, 0)", strict="report")
+    assert ran.status == 0 and [f["detail"].endswith(", in a child process") for f in ran.findings("RUNTIME")] == [True]
+    assert not [name for name in os.listdir(os.path.join(os.path.dirname(ran.folder), "scratch")) if name.startswith("invaract-strict-")]
+
+
+# --- a job that takes the watch off --------------------------------------------------------------------------------------------
+
+SWITCH_OFF = "invaract._strict._state.watcher = None\npq.write_table(table, p)"
+PUT_BACK = ("import pyarrow.csv\npyarrow.csv.write_csv = invaract._strict.wrapping.original_of(pyarrow.csv.write_csv)\n"
+            "pyarrow.csv.write_csv(table, p)")
+
+
+@pytest.mark.parametrize("body,undone", [(SWITCH_OFF, "the watch itself"), (PUT_BACK, "pyarrow.csv.write_csv")], ids=["switched off", "put back"])
+def test_a_job_that_takes_the_watch_off_is_said_not_to_have_been_watched_and_the_scan_names_the_line(job, body, undone):
+    ran = job(body, strict="report", lint="report")
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert ran.exists("evade/backup.out"), "nothing saw the write: that is what the run then says"
+    [watched] = ran.scans("RUNTIME")
+    assert watched["status"] == "NOT_SCANNED" and watched["findings"] == []
+    assert watched["errors"] == [{"path": "<strict mode>", "message": f"the job took the watch off {undone}: what it did after that was not seen"}]
+    tampering = [f for f in ran.findings("START") if f["rule"] == "tampering"]
+    assert [(f["category"], f["scope"]) for f in tampering] == [("dynamic", "t_backup")]
+    assert "reaches into the invaract package's own parts" in tampering[0]["detail"]
+
+
+@pytest.mark.parametrize("body", [SWITCH_OFF, PUT_BACK], ids=["switched off", "put back"])
+def test_enforced_a_job_that_takes_the_watch_off_is_not_checked_and_publishes_nothing(job, body):
+    ran = job(body, strict="enforce")
+    assert ran.status == 2, ran.stderr[-2000:]
+    assert "Invaract's strict mode was switched off while the job ran" in ran.stderr and "so the run is not checked" in ran.stderr
+    assert not ran.published()
+
+
+def test_enforced_with_the_scan_a_job_that_would_take_the_watch_off_never_starts(job):
+    ran = job(SWITCH_OFF, strict="enforce", lint="enforce")
+    assert ran.status == 1 and "UNGOVERNED_DATA_ACCESS" in ran.stderr and "tampering" in ran.stderr
+    assert ran.outcome == {} and not ran.exists("evade/backup.out") and not ran.published()
+
+
+def test_the_watch_is_back_for_the_next_run_after_a_job_took_it_off(job):
+    after = ("with invaract.run('contract.yaml'):\n    invaract.write(invaract.read('orders'), 'report')\n"
+             "    pyarrow.csv.write_csv(table, 'evade/second.out')\n")
+    ran = job(PUT_BACK, strict="report", after=after, before=["import pyarrow.csv"])
+    assert ran.status == 0, ran.stderr[-2000:]
+    first, second = ran.scans("RUNTIME")
+    assert first["status"] == "NOT_SCANNED" and [(f["rule"], f["target"]) for f in second["findings"]] == [("pyarrow-write", "evade/second.out")]
+
+
+def test_a_library_function_put_back_that_writes_through_a_watched_one_is_still_seen(job):
+    """pyarrow's ``write_table`` is Python that makes a ``ParquetWriter``, which is watched too: taking the watch off the
+    first leaves the second, and the run says both what it saw and that the watch was taken off."""
+    ran = job("pq.write_table = invaract._strict.wrapping.original_of(pq.write_table)\npq.write_table(table, p)", strict="report")
+    [watched] = ran.scans("RUNTIME")
+    assert [(f["rule"], f["call"], f["target"]) for f in watched["findings"]] == [("pyarrow-write", "pyarrow.parquet.ParquetWriter", "evade/backup.out")]
+    assert [e["message"] for e in watched["errors"]] == ["the job took the watch off pyarrow.parquet.write_table: what it did after that was not seen"]
+
+
+# --- native code -----------------------------------------------------------------------------------------------------------------
+
+def test_a_library_that_uses_native_code_for_its_own_ends_is_not_the_jobs_doing(job):
+    body = ("import ctypes.util, uuid\nuuid.uuid1()\nimport multiprocessing.sharedctypes\nmultiprocessing.sharedctypes.RawValue('i', 3)\n"
+            "np.ctypeslib.as_ctypes(np.arange(3))")
+    ran = job(body, strict="enforce")
+    assert ran.status == 0, ran.stderr[-2000:]
+    assert ran.findings("RUNTIME") == []
+
+
+def test_native_code_the_job_calls_itself_is_reported_once_with_what_it_loaded(job):
+    ran = job("import ctypes\nlibc = ctypes.CDLL(None)\nlibc.getpid()\nlibc.getpid()", strict="report")
+    found = ran.findings("RUNTIME")
+    assert [(f["category"], f["rule"], f["call"]) for f in found] == [("dynamic", "native-code", "ctypes.dlopen"), ("dynamic", "native-code", "ctypes.dlsym")]
+    assert found[0]["detail"] == "seen as the job ran: loaded the native library this process"
+    assert found[1]["detail"] == "seen as the job ran: looked up the native function getpid"
 
 
 def test_a_program_is_named_and_its_arguments_are_not(job):

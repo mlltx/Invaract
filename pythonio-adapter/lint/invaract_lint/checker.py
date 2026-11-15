@@ -18,102 +18,37 @@ What it finds:
   (``sqltext``), and SQL not spelled out that is run on a DuckDB or SQLite connection;
 - other programs (``IVR005``): ``subprocess``, ``os.system``;
 - code it cannot follow (``IVR006``): ``exec`` and ``eval``, ``getattr`` and imports by a name built at run time, native
-  code loaded with ``ctypes``.
+  code loaded with ``ctypes``, code run in another interpreter, and code that reaches under the checks themselves (into
+  the invaract package's own parts, or to the function under a wrapper).
 
 A function that is passed or stored without being called (``map(pd.read_csv, paths)``) is found where it is referred to,
 and one given another name (``reader = pd.read_csv``) where it is called. What is certainly not data at rest is left alone:
 a buffer in memory (``io.BytesIO()``), the console, a scratch file in the temporary folder, a database in memory.
 
-Each ``Finding`` says where it is (its start and end, the function or class it is in), what it is (as written, the name it
+How a call is judged is ``_Scan._named_call``, top to bottom; what counts is the catalogue's to say, so a new library is
+a line there and no change here. A function whose call needs a reading of its own (``getattr``, ``vars``) is in
+``_SPECIAL``.
+
+Each ``Finding`` (``findings``) says where it is (its start and end, the function or class it is in), what it is (as written, the name it
 resolves to, the rule that matched, the path or mode it names), and whether a ``# invaract: allow`` marker keeps it, with
 the reason the marker gives. ``check_source`` returns the findings not marked; ``scan_source`` returns every one.
 """
 import ast
-import hashlib
-import io
 import re
 import tokenize
-from dataclasses import dataclass
-from typing import Optional
 
 from . import catalogue, sqltext
 from .catalogue import CATEGORIES, CONNECT, DYNAMIC, PROCESS, READ, SQL, WRITE  # noqa: F401  (the codes, importable here)
+from .findings import Finding, allowed_lines, short
 from .resolver import CONSOLE, MEMORY, PATH, TEMPORARY, Names
-
-ALLOW = re.compile(r"#\s*invaract:\s*allow\b(?P<reason>.*)")
 
 #: What a mode looks like (``"w"``, ``"rb+"``), as against a file's name.
 _MODE = re.compile(r"[rwxabtU+]{1,4}")
 
 #: What a finding about a function that is referred to, not called, says of it.
 REFERENCED = "passed or stored, not called here"
-
-#: The longest ``Finding.snippet`` and ``Finding.target``; longer text is cut, with an ellipsis.
-_LONGEST = 200
-#: A password in a URL (``postgresql://user:secret@host``): never copied into a finding, which may be published.
-_PASSWORD = re.compile(r"(\w[\w+.-]*://[^/\s:@'\"]+):[^@\s/'\"]+@")
-
-
-@dataclass(frozen=True)
-class Finding:
-    """A call that reads or writes data outside invaract.
-
-    ``path``, ``line`` and ``col`` (1-based) are where the call starts, ``end_line`` and ``end_col`` where it ends. ``code``
-    is ``IVR001`` to ``IVR004`` (``category`` says it in a word), and ``rule`` names the rule that matched (``pandas-read``,
-    ``open-write-mode``, ...). ``call`` is the called expression as written, ``resolved`` the name it stands for through the
-    file's imports (``pandas.read_csv`` for ``pd.read_csv``; ``None`` for a method of a value, such as ``df.to_parquet``), and
-    ``scope`` the function or class it is in (``Loader.load``; ``<module>`` at the top level). ``end_col`` is the column just
-    after the call's last character. ``snippet`` is the whole call on one line, as Python reads it (so reformatting the source
-    does not change it), and ``target`` the path or URL it names when the source spells it out; ``detail`` says what
-    made it count when the name alone does not (the mode of an ``open``, the SQL keyword). ``allowed`` is true when a
-    ``# invaract: allow`` marker on one of its lines keeps it, and ``reason`` is what the marker says after it. A password
-    in a URL is never copied into ``snippet`` or ``target``.
-    """
-
-    path: str
-    line: int
-    col: int
-    code: str
-    call: str
-    end_line: int = 0
-    end_col: int = 0
-    resolved: Optional[str] = None
-    scope: str = "<module>"
-    rule: str = ""
-    snippet: str = ""
-    target: Optional[str] = None
-    detail: Optional[str] = None
-    allowed: bool = False
-    reason: Optional[str] = None
-
-    @property
-    def category(self):
-        return CATEGORIES[self.code]
-
-    @property
-    def message(self):
-        return f"`{self.call}` {catalogue.WHAT[self.code]}, or mark the line `# invaract: allow`"
-
-    @property
-    def id(self):
-        """A short identifier that stays the same while the call does: from the file, the rule, the function it is in and
-        the call as written, not its line, so a finding keeps its identifier when lines above it are added or removed. Two
-        identical calls in the same function share it."""
-        key = "\0".join((self.path, self.code, self.rule, self.scope, self.snippet))
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-
-    def to_dict(self):
-        """The finding as JSON-ready data, by the names reports and events use."""
-        return {
-            "id": self.id, "code": self.code, "category": self.category, "rule": self.rule, "path": self.path,
-            "line": self.line, "column": self.col, "endLine": self.end_line, "endColumn": self.end_col, "call": self.call,
-            "resolved": self.resolved, "scope": self.scope, "snippet": self.snippet, "target": self.target,
-            "detail": self.detail, "allowed": self.allowed, "reason": self.reason, "message": self.message,
-        }
-
-    def __str__(self):
-        return f"{self.path}:{self.line}:{self.col}: {self.code} {self.message}"
-
+#: What a finding about code that reaches into the invaract package's own parts says of it.
+INTERNALS = "reaches into the invaract package's own parts, which is how its checks could be switched off"
 
 def check_source(source, path="<source>"):
     """The code in ``source`` that reads or writes data outside invaract and is not marked ``# invaract: allow``, in order.
@@ -125,7 +60,7 @@ def scan_source(source, path="<source>"):
     """Everything in ``source`` that reads or writes data outside invaract, marked ``# invaract: allow`` or not
     (``Finding.allowed``), in order. Raises ``SyntaxError`` for source that is not Python."""
     tree = ast.parse(source, filename=path)
-    allowed = _allowed_lines(source)
+    allowed = allowed_lines(source)
     scan = _Scan(tree)
     findings = []
     for node, (code, rule, detail) in scan.matches():
@@ -137,7 +72,7 @@ def scan_source(source, path="<source>"):
             path, node.lineno, node.col_offset + 1, code, ast.unparse(written),
             end_line=node.end_lineno, end_col=node.end_col_offset + 1, resolved=resolved[0] if resolved else None,
             scope=".".join(scan.names.scope_of[id(node)].path()) or "<module>", rule=rule,
-            snippet=short(" ".join(ast.unparse(node).split())),
+            snippet=short(" ".join(ast.unparse(node).split()), code=True),
             target=_target(node, code, rule) if isinstance(node, ast.Call) and detail != REFERENCED else None,
             detail=detail, allowed=bool(reasons),
             reason=next((r for r in reasons if r), None),
@@ -157,22 +92,16 @@ def scan_file(path):
     return scan_source(source, path)
 
 
-def allowed_lines(source):
-    """The lines of ``source`` a ``# invaract: allow`` marker is on, each with the reason written after it (``""`` for
-    none): what keeps a finding on that line."""
-    return _allowed_lines(source)
-
-
-def _allowed_lines(source):
-    lines = {}
-    if "invaract" not in source:
-        return lines  # no marker can be there: skip tokenizing
-    for token in tokenize.generate_tokens(io.StringIO(source).readline):
-        if token.type == tokenize.COMMENT:
-            marker = ALLOW.search(token.string)
-            if marker:
-                lines[token.start[0]] = marker.group("reason").strip(" \t-:,;")
-    return lines
+#: A call that is certainly no read or write: found to be nothing, so no other reading of it is tried.
+_LEFT_ALONE = (None, None, None)
+#: What a value certainly is when it is no data at rest.
+_NOT_AT_REST = (MEMORY, CONSOLE, TEMPORARY)
+#: The functions whose calls have a reading of their own, each with the method of ``_Scan`` that reads it. To teach the
+#: scan another such function, add it here; a function that simply reads, writes or connects goes in the catalogue.
+_SPECIAL = {
+    "getattr": "_getattr", "vars": "_vars", "importlib.import_module": "_imported", "__import__": "_imported",
+    "operator.methodcaller": "_method_by_name", "operator.attrgetter": "_method_by_name", "os.open": "_os_open_call",
+}
 
 
 class _Scan:
@@ -198,8 +127,10 @@ class _Scan:
         for node in self._nodes:
             if isinstance(node, ast.Call):
                 match = self._call(node)
-            elif isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
-                match = self._reference(node)
+            elif isinstance(node, (ast.Name, ast.Attribute)):
+                match = self._internals(node) or (self._reference(node) if isinstance(node.ctx, ast.Load) else None)
+            elif isinstance(node, ast.Subscript):
+                match = self._module_table(node.value, node.slice)
             else:
                 match = None
             if match is not None:
@@ -214,53 +145,101 @@ class _Scan:
             if match is not None:
                 return match if match[0] is not None else None
         if isinstance(call.func, ast.Attribute):
+            if call.func.attr in ("get", "pop", "__getitem__") and call.args:
+                table = self._module_table(call.func.value, call.args[0])
+                if table is not None:
+                    return table
             return self._method_call(call, names)
         return None
 
     def _named_call(self, call, name):
-        """What a call of the function ``name`` is: a match, ``(None, None, None)`` for one that is certainly no read or
-        write (so no other reading of the call is tried), or ``None`` for a name the catalogue does not know."""
-        nothing = (None, None, None)
-        if name == "getattr":
-            return self._getattr(call) or nothing
-        if name in ("importlib.import_module", "__import__"):
-            return self._imported(call) or nothing
+        """What a call of the function ``name`` is: a match, ``_LEFT_ALONE`` for one that is certainly no read or write (so
+        no other reading of the call is tried), or ``None`` for a name the catalogue does not know.
+
+        In order: a function with a reading of its own (``_SPECIAL``); a scratch file made somewhere the call names; an
+        opener, judged by its mode; then the catalogue's rule for the name, unless what the call reads or writes is
+        certainly not data at rest."""
+        special = _SPECIAL.get(name)
+        if special is not None:
+            return getattr(self, special)(call) or _LEFT_ALONE
         if catalogue.TEMPORARY.fullmatch(name) and any(k.arg == "dir" for k in call.keywords):
             return WRITE, "file-operation", "a scratch file made in a folder the call names (dir=), not the temporary folder"
-        if name == "vars":
-            return (self._namespace(call.args[0]) if call.args else None) or nothing
-        if name in ("operator.methodcaller", "operator.attrgetter"):
-            method = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
-            return (WRITE, "frame-write", REFERENCED) if _writes(method) else nothing
         if name in catalogue.OPENERS:
-            position, keyword, letters = catalogue.OPENERS[name]
-            opened = call.args[:1] + [k.value for k in call.keywords if k.arg == "fileobj"]
-            if opened and all(self.names.kind(o) in (MEMORY, CONSOLE, TEMPORARY) for o in opened):
-                return nothing  # a scratch file, the null device, or an archive built in a buffer
-            return self._opened(_argument(call, position, keyword), "open-write-mode", letters) or nothing
-        if name == "os.open":
-            return (None if self._scratch(call.args[:1]) else self._os_open(_argument(call, 1, "flags"))) or nothing
+            return self._opener_call(call, name) or _LEFT_ALONE
         rule = catalogue.module_rule(name)
         if rule is None:
             return None
-        if rule.code == READ and call.args and self.names.kind(call.args[0]) in (MEMORY, CONSOLE, TEMPORARY):
-            return nothing  # read from a buffer in memory, or from a scratch file: not data at rest
-        if rule.code == READ and any(self._memory_database(a) for a in _destinations(call)):
-            return nothing  # read from a database held in memory
-        if rule.code == WRITE and (self._nowhere(call) if rule.name != "file-operation" else self._scratch(call.args)):
-            return nothing
-        if rule.name == "database-connect" and _in_memory_database(call, name):
-            return nothing
-        return rule.code, rule.name, None
+        return _LEFT_ALONE if self._not_at_rest(call, name, rule) else (rule.code, rule.name, None)
+
+    def _opener_call(self, call, name):
+        """A call of an opener (``open``, ``gzip.open``, ``h5py.File``): a write when its mode writes or is not spelled
+        out. Opened to read, a dataset is a read; a plain file is not the scan's to judge."""
+        position, keyword, letters = catalogue.OPENERS[name]
+        opened = call.args[:1] + [k.value for k in call.keywords if k.arg == "fileobj"]
+        if opened and all(self.names.kind(o) in _NOT_AT_REST for o in opened):
+            return None  # a scratch file, the null device, or an archive built in a buffer
+        written = self._opened(_argument(call, position, keyword), "open-write-mode", letters)
+        return written or ((READ, "library-read", None) if name in catalogue.DATA_OPENERS else None)
+
+    def _not_at_rest(self, call, name, rule):
+        """Whether a call the catalogue has a rule for certainly reads or writes no data at rest: a buffer in memory, the
+        console, a scratch file, a database in memory."""
+        if rule.code == READ:
+            return (bool(call.args) and self.names.kind(call.args[0]) in _NOT_AT_REST) or any(self._memory_database(a) for a in _destinations(call))
+        if rule.code == WRITE:
+            return self._scratch(call.args) if rule.name == "file-operation" else self._nowhere(call)
+        return rule.name == "database-connect" and _in_memory_database(call, name)
+
+    def _os_open_call(self, call):
+        return None if self._scratch(call.args[:1]) else self._os_open(_argument(call, 1, "flags"))
+
+    def _vars(self, call):
+        return self._namespace(call.args[0]) if call.args else None
+
+    def _method_by_name(self, call):
+        """``operator.methodcaller("to_csv", path)``: a frame's writer, named in a string."""
+        method = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
+        return (WRITE, "frame-write", REFERENCED) if _writes(method) else None
 
     def _imported(self, call):
         """An import by a name not spelled out cannot be followed, unless what is spelled out places it in a package of
         the job's own (``"jobs.steps." + name``), whose modules are scanned as they are loaded."""
         text, complete = self.names.text(call.args[0]) if call.args else ("", False)
+        if catalogue.INTERNALS.fullmatch(text):
+            return DYNAMIC, "tampering", INTERNALS
         own_package = "." in text and not text.startswith(".") and text.split(".")[0] not in catalogue.DATA_LIBRARIES
         if complete or own_package:
             return None
         return DYNAMIC, "dynamic-import", "the module's name is not spelled out"
+
+    # reaching under the checks
+
+    def _internals(self, node):
+        """A name that stands for one of the invaract package's own parts (``invaract._strict``), read or assigned to: the
+        whole dotted name is judged once."""
+        if id(node) in self._inner or id(node) in self._types or (isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)):
+            return None  # part of a longer name, a type, or a name being given (what it is given is judged where it is read)
+        if any(catalogue.INTERNALS.fullmatch(name) for name in self.names.qualify(node)):
+            return DYNAMIC, "tampering", INTERNALS
+        return None
+
+    def _module_table(self, table, name):
+        """``sys.modules[...]``, ``.get(...)`` and ``.pop(...)`` naming one of the invaract package's modules: the way to its
+        own parts that no import shows."""
+        if "sys.modules" in self.names.qualify(table) and self.names.text(name)[0].startswith(("invaract.", "invaract_lint.")):
+            return DYNAMIC, "tampering", INTERNALS
+        return None
+
+    def _under(self, node):
+        """An attribute of a reader, writer or connection that does more than describe it (``__closure__``, ``__func__``, a
+        method taken from a class): a use of it, by a way no call of its name shows."""
+        if node.attr in catalogue.DESCRIBES or node.attr == "__call__" or id(node) in self._types:
+            return None  # ``f.__call__`` is ``f``, and is judged as it
+        for name in self.names.qualify(node.value):
+            rule = catalogue.module_rule(name)
+            if rule is not None and catalogue.module_rule(f"{name}.{node.attr}") is None:
+                return rule.code, rule.name, f"reached through its attribute `{node.attr}`"
+        return None
 
     def _getattr(self, call):
         """``getattr(x, name)``: with the name spelled out it is the attribute itself, judged as a reference; with a name
@@ -282,6 +261,8 @@ class _Scan:
 
     def _namespace(self, module):
         roots = {q.split(".")[0] for q in self.names.qualify(module)}
+        if roots & {"invaract", "invaract_lint"}:
+            return DYNAMIC, "tampering", INTERNALS
         if roots & catalogue.DYNAMIC_ROOTS:
             return DYNAMIC, "dynamic-attribute", "the module's names, looked up at run time"
         return None
@@ -335,6 +316,9 @@ class _Scan:
     def _reference(self, node, method=None):
         """A function referred to without being called here: found when it is a reader, writer or connection that is then
         passed on or stored, so that no call of it is seen."""
+        under = self._under(node) if isinstance(node, ast.Attribute) and method is None else None
+        if under is not None:
+            return under
         if (id(node) in self._called and method is None) or id(node) in self._inner or id(node) in self._types:
             return None
         for name in self.names.qualify(node):
@@ -404,10 +388,9 @@ class _Scan:
         if candidates and isinstance(candidates[0], ast.Constant) and not isinstance(candidates[0].value, (str, bytes)):
             return call.func.attr in catalogue.FRAME_WRITES if isinstance(call.func, ast.Attribute) else False
         kinds = [self.names.kind(c) for c in candidates]
-        nowhere = (MEMORY, CONSOLE, TEMPORARY)
-        places = [c for c, k in zip(candidates, kinds) if k not in nowhere and (
+        places = [c for c, k in zip(candidates, kinds) if k not in _NOT_AT_REST and (
             k == PATH or isinstance(c, ast.JoinedStr) or (isinstance(c, ast.Constant) and isinstance(c.value, str)))]
-        return not places and any(k in nowhere for k in kinds)
+        return not places and any(k in _NOT_AT_REST for k in kinds)
 
 
 def _type_positions(node):
@@ -483,9 +466,3 @@ def _target(call, code, rule):
         candidates = owner.args[:1] if isinstance(owner, ast.Call) else []
     literal = next((c.value for c in candidates if isinstance(c, ast.Constant) and isinstance(c.value, str)), None)
     return short(literal) if literal is not None else None
-
-
-def short(text):
-    """``text`` with any password in a URL masked, cut to ``_LONGEST`` characters."""
-    text = _PASSWORD.sub(r"\1:***@", text)
-    return text if len(text) <= _LONGEST else text[:_LONGEST - 1] + "\u2026"

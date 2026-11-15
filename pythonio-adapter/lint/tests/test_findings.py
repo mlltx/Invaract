@@ -146,6 +146,48 @@ def test_a_password_in_a_url_is_never_copied_into_a_finding():
     assert one("open('s3://bucket/key', 'w')").target == "s3://bucket/key"
 
 
+@pytest.mark.parametrize("call,snippet", [
+    ("psycopg2.connect('host=db.internal dbname=sales password=s3cret')", "psycopg2.connect('host=db.internal dbname=sales password=***')"),
+    ("psycopg2.connect(host='db.internal', password='s3cret')", "psycopg2.connect(host='db.internal', password=***)"),
+    ('psycopg2.connect(host="db.internal", password="s3 cret")', "psycopg2.connect(host='db.internal', password=***)"),
+    ("psycopg2.connect('Server=sql;Database=sales;UID=etl;PWD=s3cret;')", "psycopg2.connect('Server=sql;Database=sales;UID=etl;PWD=***;')"),
+    ("psycopg2.connect(host='db.internal', passwd = 's3cret', port=5432)", "psycopg2.connect(host='db.internal', passwd=***, port=5432)"),
+    ("psycopg2.connect('host=db.internal', token='s3cret', api_key='s3cret', secret_key='s3cret')",
+     "psycopg2.connect('host=db.internal', token=***, api_key=***, secret_key=***)"),
+    # a name holds no secret to copy, and says where the secret comes from
+    ("psycopg2.connect(host='db.internal', password=password)", "psycopg2.connect(host='db.internal', password=password)"),
+    ("psycopg2.connect(host='db.internal', password=os.environ['PGPASSWORD'])", "psycopg2.connect(host='db.internal', password=os.environ['PGPASSWORD'])"),
+    ("psycopg2.connect(host='db.internal', password=self.password)", "psycopg2.connect(host='db.internal', password=self.password)"),
+    # text with a quote of the other kind inside it, an f-string, and a quote written with a backslash
+    ('psycopg2.connect("it\'s host=db.internal password=s3cret")', 'psycopg2.connect("it\'s host=db.internal password=***")'),
+    ("psycopg2.connect(f'host={host} password=s3cret')", "psycopg2.connect(f'host={host} password=***')"),
+    ("psycopg2.connect('a \\' b', password='s3cret')", "psycopg2.connect(\"a ' b\", password=***)"),
+    ("psycopg2.connect(\"say 'hi'\", password='s3 cret', host='db')", "psycopg2.connect(\"say 'hi'\", password=***, host='db')"),
+    ("psycopg2.connect('host=a', 'password=s3cret', pwd=name)", "psycopg2.connect('host=a', 'password=***', pwd=name)"),
+    ("psycopg2.connect(host='db.internal', password=get_secret('db'))", "psycopg2.connect(host='db.internal', password=get_secret('db'))"),
+    # a word that only ends like one is no secret
+    ("psycopg2.connect(host='db.internal', nopassword='x', bypass='y')", "psycopg2.connect(host='db.internal', nopassword='x', bypass='y')"),
+])
+def test_a_secret_given_by_name_is_never_copied_into_a_finding(call, snippet):
+    f = one("import os, psycopg2\n" + call)
+    assert f.snippet == snippet
+    assert "s3cret" not in str(f.to_dict()) and "s3 cret" not in str(f.to_dict())
+
+
+def test_text_that_is_not_code_has_every_secret_given_by_name_masked():
+    from invaract_lint import short
+    assert short("host=db.internal password=s3cret dbname=sales") == "host=db.internal password=*** dbname=sales"
+    assert short("Server=sql;PWD=s3cret;Database=sales") == "Server=sql;PWD=***;Database=sales"
+    assert short("https://api.internal/export?token=s3cret&limit=5") == "https://api.internal/export?token=***&limit=5"
+    assert short("password=name") == "password=***", "outside code there are no names: what follows is the secret"
+    assert short("connect(password=name)", code=True) == "connect(password=name)"
+    assert short("the password is long") == "the password is long"
+    assert short("pwd='s3 cret' host=db") == "pwd=*** host=db" and short('PWD="s3 cret";UID=etl') == "PWD=***;UID=etl"
+    assert short("postgresql://etl:s3cret@db/sales?password=s3cret") == "postgresql://etl:***@db/sales?password=***"
+    assert short("connect('postgresql://etl:s3cret@db/sales')", code=True) == "connect('postgresql://etl:***@db/sales')"
+    assert short("x" * 200) == "x" * 200 and short("x" * 201) == "x" * 199 + "\u2026"
+
+
 def test_long_text_is_cut_at_200_characters():
     exactly = "a" * 200
     assert one(f"open('{exactly}', 'w')").target == exactly

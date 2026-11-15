@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 Invaract Contributors
-"""Strict mode's parts, in this process: what each thing Python reports is taken to be, where a writer's call writes, what
-the checker is sent (every request held to the protocol's schema, as in every test here), and that the writers the
-installed libraries offer are the ones the lint's catalogue names (so a library's new writer is noticed)."""
+"""Strict mode's parts, in this process: what each thing Python reports is taken to be (``events``), what a wrapped call is
+about to do (``judges``), whose doing it is (``placing``), what the checker is sent (every request held to the protocol's
+schema, as in every test here), and that the readers and writers the installed libraries offer are the ones the lint's
+catalogue names (so a library's new writer is noticed)."""
 import io
 import os
 import socket
@@ -22,18 +23,23 @@ import pytest
 
 import invaract
 import invaract_lint
-from invaract import _strict
+from invaract._strict import _state, events as audit, judges, placing, watcher, wrapping
 from invaract_lint import catalogue
 from conftest import events, notify_to_file, output, write_contract
 
-_strict.install(invaract_lint)
+wrapping.install(invaract_lint)
 
 TABLE = pa.table({"region": ["north"], "total": [1]})
 
 
 def seen(event, *args):
-    found = _strict._EVENTS[event](event, args)
+    found = audit.describe(event, args)
     return None if found is None else (found.code, found.rule, found.did, found.target, list(found.paths))
+
+
+def told(reached):
+    """What a judge said a call is about to do, or ``None`` for a call that is nothing to report."""
+    return reached and (reached.did, reached.target, list(reached.paths))
 
 
 # --- what Python reports -----------------------------------------------------------------------------------------------------
@@ -93,7 +99,7 @@ def test_a_path_given_from_an_open_folder_is_placed_in_that_folder(tmp_path):
         assert seen("os.remove", "/elsewhere/a", folder)[3] == "/elsewhere/a"
     finally:
         os.close(folder)
-    assert _strict._folder_of(999_999) is None
+    assert audit.folder_of(999_999) is None
     assert seen("os.remove", "a", 999_999)[3] == "a"
 
 
@@ -120,6 +126,13 @@ def test_a_network_connection(address, target):
     assert seen("socket.connect", object()) is None
 
 
+@pytest.mark.parametrize("event", ["socket.sendto", "socket.sendmsg"])
+def test_data_sent_with_no_connection_made_is_seen_by_where_it_goes(event):
+    assert seen(event, object(), ("metrics.internal", 8125)) == (
+        "IVR003", "network-connect", "sent data to metrics.internal:8125", "metrics.internal:8125", [])
+    assert seen(event, object(), None) is None      # sent on a connection that was seen when it was made
+
+
 @pytest.mark.parametrize("event,args,program", [
     ("subprocess.Popen", ("/bin/cp", ["cp", "secret-a", "secret-b"], None, None), "/bin/cp"),
     ("subprocess.Popen", (None, ["cp", "secret-a", "secret-b"], None, None), "cp"),
@@ -141,11 +154,35 @@ def test_another_program_started_is_named_and_its_arguments_never_are(event, arg
     assert "secret" not in str(found)
 
 
-def test_every_event_watched_is_one_python_raises_for_a_write_a_connection_or_a_program():
-    assert sorted(_strict._EVENTS) == [
-        "_winapi.CreateProcess", "open", "os.exec", "os.link", "os.posix_spawn", "os.remove", "os.rename", "os.rmdir", "os.spawn",
-        "os.startfile", "os.symlink", "os.system", "os.truncate", "socket.connect", "sqlite3.connect", "subprocess.Popen"]
-    assert set(_strict._CHANGES) == {e for e, describe in _strict._EVENTS.items() if describe is _strict._changed}
+@pytest.mark.parametrize("event,args,did,target", [
+    ("ctypes.dlopen", ("libc.so.6",), "loaded the native library libc.so.6", "libc.so.6"),
+    ("ctypes.dlopen", (None,), "loaded the native library this process", "this process"),
+    ("ctypes.dlsym", (object(), "fopen"), "looked up the native function fopen", "fopen"),
+    ("ctypes.dlsym", (object(), b"fopen"), "looked up the native function fopen", "fopen"),
+])
+def test_native_code_reached_through_ctypes(event, args, did, target):
+    found = audit.describe(event, args)
+    assert (found.code, found.rule, found.did, found.target, found.direct) == ("IVR006", "native-code", did, target, "ctypes")
+
+
+def test_a_compiled_module_is_reported_when_it_is_the_jobs_own(tmp_path):
+    own = str(tmp_path / "fast.cpython-311-x86_64-linux-gnu.so")
+    found = audit.describe("import", ("fast", own, None, None, None))
+    assert (found.code, found.rule, found.target) == ("IVR006", "native-code", own)
+    assert found.did.startswith("loaded the job's own compiled module fast (")
+    assert audit.describe("import", ("pyarrow.lib", pa.lib.__file__, None, None, None)) is None       # an installed package's
+    assert audit.describe("import", ("_decimal", os.path.join(os.path.dirname(os.__file__), "lib-dynload", "_decimal.so"))) is None
+    assert audit.describe("import", ("job_module", None, None, None, None)) is None                   # Python source
+    assert audit.describe("import", ()) is None
+
+
+def test_every_event_watched_is_one_python_raises():
+    assert sorted(audit.EVENTS) == [
+        "_winapi.CreateProcess", "ctypes.dlopen", "ctypes.dlsym", "import", "open", "os.exec", "os.link", "os.posix_spawn", "os.remove",
+        "os.rename", "os.rmdir", "os.spawn", "os.startfile", "os.symlink", "os.system", "os.truncate", "socket.connect",
+        "socket.sendmsg", "socket.sendto", "sqlite3.connect", "subprocess.Popen"]
+    assert set(audit.CHANGES) == {e for e, describe in audit.EVENTS.items() if describe is audit._changed}
+    assert audit.describe("os.chmod", ("a", 0o600, -1)) is None
 
 
 # --- where a writer's call writes ----------------------------------------------------------------------------------------------
@@ -178,14 +215,14 @@ class Stream:
      ("wrote to an open stream (test_strict_unit.Stream)", "<a stream: test_strict_unit.Stream>", [])),
 ])
 def test_where_a_writer_writes(args, kwargs, parameters, expected):
-    assert _strict._destination(args, kwargs, parameters) == expected
+    assert told(judges.destination(args, kwargs, parameters)) == expected
 
 
 def test_a_file_python_opened_is_not_reported_again_when_a_writer_is_handed_it(tmp_path):
     with open(tmp_path / "a.parquet", "wb") as opened:
-        assert _strict._destination((TABLE, opened), {}, ["table", "where"]) is None
+        assert judges.destination((TABLE, opened), {}, ["table", "where"]) is None
     with open(tmp_path / "a.csv", "w") as text:
-        assert _strict._destination((TABLE, text), {}, ["table", "where"]) is None
+        assert judges.destination((TABLE, text), {}, ["table", "where"]) is None
 
 
 @pytest.mark.parametrize("args,kwargs,expected", [
@@ -194,8 +231,51 @@ def test_a_file_python_opened_is_not_reported_again_when_a_writer_is_handed_it(t
     (("a.bin", "rb"), {}, None), (("a.bin",), {}, None), ((), {"mode": "w"}, None), ((7, "w"), {}, None), (("a.bin", 3), {}, None),
 ])
 def test_an_opener_writes_when_its_mode_does(args, kwargs, expected):
-    told = _strict._opener(1, "mode", "wax+")(args, kwargs)
-    assert (told and told[0]) == expected
+    reached = judges.opener(1, "mode", "wax+")(args, kwargs)
+    assert (reached and reached.did) == expected
+    assert reached is None or (reached.code, reached.rule) == (None, None), "a write, as the wrapped opener's own rule says"
+
+
+@pytest.mark.parametrize("args,kwargs,expected", [
+    (("a.h5", "w"), {}, ("opened a.h5 to write (mode 'w')", None)),
+    (("a.h5", "r"), {}, ("read a.h5", "IVR001")),
+    (("a.h5",), {}, ("read a.h5", "IVR001")),
+    (("a.h5",), {"mode": "a"}, ("opened a.h5 to write (mode 'a')", None)),
+    ((), {"mode": "r"}, None), ((7,), {}, None),
+])
+def test_an_opener_of_a_dataset_reads_when_its_mode_does_not_write(args, kwargs, expected):
+    reached = judges.opener(1, "mode", "wax+", reads=True)(args, kwargs)
+    assert (reached and (reached.did, reached.code)) == expected
+    assert reached is None or reached.rule == (None if expected[1] is None else "library-read")
+
+
+class Opened(io.RawIOBase):
+    name = "orders.csv"
+
+
+@pytest.mark.parametrize("args,kwargs,parameters,expected", [
+    (("orders.csv",), {}, ["filepath_or_buffer", "sep"], ("read orders.csv", "orders.csv", ["orders.csv"])),
+    ((), {"path": "orders.parquet"}, ["path", "engine"], ("read orders.parquet", "orders.parquet", ["orders.parquet"])),
+    (("s3://bucket/orders",), {}, ["source"], ("read s3://bucket/orders", "s3://bucket/orders", [])),
+    ((["a.parquet", "b.parquet"],), {}, ["path_or_paths"], ("read a.parquet", "a.parquet", ["a.parquet"])),
+    ((Opened(),), {}, ["filepath_or_buffer"], ("read orders.csv", "orders.csv", ["orders.csv"])),
+    (("select 1", "postgresql://db.internal/sales"), {}, ["sql", "con"],
+     ("read postgresql://db.internal/sales", "postgresql://db.internal/sales", [])),
+    (("orders.npy",), {}, None, ("read orders.npy", "orders.npy", ["orders.npy"])),
+    (("select * from t", object()), {}, ["sql", "con"], None),                   # a connection: reported where it was made
+    ((io.BytesIO(b""),), {}, ["source"], None),
+    ((io.StringIO("a,b"),), {}, ["filepath_or_buffer"], None),
+    ((b"raw bytes",), {}, ["source"], None),
+    (('{"region": "north"}',), {}, ["path_or_buf"], None),                       # text that is the data itself
+    (("[1, 2]",), {}, ["path_or_buf"], None), (("<rows/>",), {}, ["path_or_buffer"], None), (("a,b\n1,2",), {}, ["source"], None),
+    (("",), {}, ["source"], None), ((), {}, ["source"], None), (([],), {}, ["path_or_paths"], None),
+    ((), {"columns": ["region"]}, ["source", "columns"], None),
+    ((";",), {}, ["sep", "dtype_backend"], None),                                # the clipboard: its first argument is no place
+    (("orders.csv",), {}, [], ("read orders.csv", "orders.csv", ["orders.csv"])),  # compiled, parameters unnamed: the first
+    (("warehouse.orders",), {}, ["table_identifier", "catalog_name"], ("read warehouse.orders", "warehouse.orders", ["warehouse.orders"])),
+])
+def test_what_a_reader_reads_from(args, kwargs, parameters, expected):
+    assert told(judges.source(args, kwargs, parameters)) == expected
 
 
 @pytest.mark.parametrize("args,kwargs,reached", [
@@ -204,8 +284,7 @@ def test_an_opener_writes_when_its_mode_does(args, kwargs, expected):
     (("SELECT 1",), {}, None), ((7,), {}, None), ((), {}, None), (("SELECT 'COPY t TO x'",), {}, None),
 ])
 def test_sql_about_to_run(args, kwargs, reached):
-    told = _strict._sql(args, kwargs)
-    assert told == (reached and (f"ran SQL that reads or writes files ({reached})", None, []))
+    assert told(judges.sql(args, kwargs)) == (reached and (f"ran SQL that reads or writes files ({reached})", None, []))
 
 
 @pytest.mark.parametrize("args,kwargs,expected", [
@@ -214,7 +293,88 @@ def test_sql_about_to_run(args, kwargs, reached):
     ((), {}, None), ((":memory:",), {}, None), ((), {"database": ":memory:"}, None), ((":default:",), {}, None), ((":memory:shared",), {}, None),
 ])
 def test_a_database_file_opened_by_a_wrapped_connect(args, kwargs, expected):
-    assert _strict._file_database(args, kwargs) == expected
+    assert told(judges.connection("duckdb")(args, kwargs)) == expected
+    assert judges.connection("sqlite3")((":memory:",), {}) is None
+
+
+@pytest.mark.parametrize("args,kwargs,did,target", [
+    ((), {"host": "db.internal", "password": "hunter2"}, "connected to a database through psycopg2 at db.internal", "psycopg2:db.internal"),
+    (("host=db.internal dbname=sales password=hunter2",), {}, "connected to a database through psycopg2 at db.internal", "psycopg2:db.internal"),
+    (("postgresql://etl:hunter2@db.internal:5432/sales",), {}, "connected to a database through psycopg2 at db.internal", "psycopg2:db.internal"),
+    ((), {"dsn": "Server=sql.internal;Database=sales;PWD=hunter2"}, "connected to a database through psycopg2 at sql.internal", "psycopg2:sql.internal"),
+    ((), {"database": "sales"}, "connected to a database through psycopg2", "psycopg2"),
+    ((), {}, "connected to a database through psycopg2", "psycopg2"),
+])
+def test_a_database_reached_through_a_driver_is_named_by_its_host_and_never_by_its_connection_string(args, kwargs, did, target):
+    reached = judges.connection("psycopg2")(args, kwargs)
+    assert (reached.did, reached.target, reached.paths) == (did, target, ())
+    assert "hunter2" not in str(reached)
+
+
+def test_a_call_that_is_a_finding_whatever_it_is_handed():
+    assert told(judges.always(judges.child_process)(([sys.executable, "-c", "secret"],), {})) == (f"started {sys.executable}", sys.executable, [])
+    assert told(judges.always(judges.native_library)(("libssl.so",), {})) == ("loaded the native library libssl.so", "libssl.so", [])
+    assert told(judges.always(judges.native_library)((), {})) == ("loaded the native library of this process", None, [])
+
+
+# --- whose doing it is ------------------------------------------------------------------------------------------------------------
+
+def test_whose_code_a_file_is(tmp_path):
+    job = tmp_path / "job.py"
+    job.write_text("x = 1\n")
+    assert placing.whose(str(job)) == placing.JOB
+    assert placing.whose(os.__file__) == placing.LIBRARY and placing.whose(pa.__file__) == placing.LIBRARY
+    assert placing.whose(invaract.__file__) == placing.INVARACT and placing.whose(invaract_lint.__file__) == placing.INVARACT
+    assert placing.whose("<frozen importlib._bootstrap>") == placing.LIBRARY
+    assert placing.whose("<string>") == placing.UNPLACED and placing.whose(str(tmp_path / "made-up.py")) == placing.UNPLACED
+
+
+def test_something_is_placed_at_the_jobs_frame_that_led_to_it():
+    whose, frame = placing.place(sys._getframe())
+    assert whose == placing.JOB and frame.f_code.co_name == "test_something_is_placed_at_the_jobs_frame_that_led_to_it"
+    path, line, column, end_line, end_column, scope, snippet = placing.position(frame)
+    assert path.endswith("test_strict_unit.py") and scope == "test_something_is_placed_at_the_jobs_frame_that_led_to_it"
+    assert line == frame.f_lineno - 3 or line <= frame.f_lineno
+
+
+def test_python_asking_the_system_about_itself_is_no_program_the_job_started():
+    """``platform.uname()`` runs ``uname``, and a library that calls it as it is imported makes the job run it."""
+    import platform
+    import subprocess
+    asked = []
+    real = subprocess.check_output
+
+    def spy(command, *args, **kwargs):
+        program = command[0] if isinstance(command, (list, tuple)) else command.split()[0]
+        asked.append((program, placing.is_a_probe(sys._getframe(1), program), placing.is_a_probe(sys._getframe(1), "cp"),
+                      placing.is_a_probe(sys._getframe(1), None)))
+        return real(command, *args, **kwargs)
+
+    subprocess.check_output = spy
+    try:
+        platform._syscmd_file(sys.executable)
+    finally:
+        subprocess.check_output = real
+    assert asked == [("file", True, False, False)], "its own program, from its own module, and nothing else from there"
+    assert not placing.is_a_probe(sys._getframe(), "uname"), "the job starting uname itself is the job starting a program"
+    assert placing.is_a_probe(None, "uname") is False
+    assert set(placing.PROBES) == {"platform", "uuid", "ctypes.util"}
+
+
+def test_what_counts_only_when_the_job_did_it_itself_is_not_placed_when_a_library_did_it():
+    """``ctypes`` is how libraries reach native code for their own ends: only the code that called ``ctypes`` decides."""
+    import ctypes.util
+    import json
+
+    def from_the_job():
+        return placing.place(sys._getframe(), direct="ctypes")
+
+    assert from_the_job()[0] == placing.JOB
+    # called by a library (here Python's own json), with the job's code further out: a library's doing
+    found = []
+    json.loads('{"a": 1}', object_hook=lambda value: found.append(placing.place(sys._getframe(1), direct="ctypes")) or value)
+    assert found[0] == (placing.LIBRARY, None)
+    assert placing.place(sys._getframe(1))[0] in (placing.JOB, placing.LIBRARY)
 
 
 # --- a run, in this process ---------------------------------------------------------------------------------------------------------
@@ -225,7 +385,7 @@ def watched(monkeypatch):
     folder) not counted as scratch."""
     write_contract(outputs=output())
     notify_to_file(monkeypatch)
-    monkeypatch.setattr(_strict, "_scratch_roots", lambda: [])
+    monkeypatch.setattr(watcher, "scratch_roots", lambda: [])
 
     def mode(value, allow=None):
         monkeypatch.setenv("INVARACT_STRICT", value)
@@ -281,7 +441,7 @@ def test_each_run_reports_its_own_and_nothing_is_watched_between_runs(watched):
         invaract.write(report(), "report")
     assert [[f["target"] for f in e["findings"]] for e in runtime_scans()] == [["first.txt"], []]
     assert [e["status"] for e in runtime_scans()] == ["FINDINGS", "CLEAN"]
-    assert _strict._watcher is None
+    assert _state.watcher is None
 
 
 def test_what_the_platform_lets_through_is_matched_by_full_path_by_path_from_the_working_folder_and_as_reached(watched, tmp_path):
@@ -308,7 +468,7 @@ def test_a_check_is_not_watched(watched):
     """``invaract.check`` judges one frame and is no run: nothing is watched for it, and it publishes nothing."""
     watched("enforce")
     invaract.check(report(), "report", contract="contract.yaml")
-    assert _strict._watcher is None
+    assert _state.watcher is None
     open("after-a-check.txt", "w").close()
     assert os.path.exists("after-a-check.txt") and not os.path.exists("events.jsonl")
 
@@ -338,7 +498,7 @@ def writers_offered(module):
 
 
 def is_wrapped(thing):
-    return hasattr(thing, "__invaract_original__") or getattr(thing, "__invaract_watched__", False)
+    return getattr(thing, "__invaract_watched__", False)
 
 
 @pytest.mark.parametrize("module", [pa, pq, pyarrow.csv, pyarrow.feather, pyarrow.orc, pyarrow.dataset, pyarrow.fs, pyarrow.ipc],
@@ -351,11 +511,198 @@ def test_every_writer_pyarrow_offers_is_wrapped(module):
         f"{module.__name__} offers writers strict mode does not wrap: add them to invaract-lint's catalogue")
 
 
+def wrapped_in_the_loaded_libraries(code):
+    """``{call: parameters}`` of every function strict mode wrapped in the libraries loaded here, for one of the catalogue's
+    codes; a class, or a function whose parameters Python cannot say, has ``None``."""
+    found = {}
+    for name, module in list(sys.modules.items()):
+        if module is None or not catalogue.watched_library(name):
+            continue
+        for owner, attribute, watch in wrapping.plan(module):
+            thing = vars(owner).get(attribute) if isinstance(owner, type) else getattr(owner, attribute, None)
+            original = wrapping.original_of(thing)
+            if watch.code == code and watch.rule != "open-write-mode" and original is not None:
+                found[watch.call] = None if isinstance(original, type) else wrapping._parameters(original, watch.method)
+    return found
+
+
+def test_every_wrapped_reader_says_what_it_reads_from_by_a_parameter_the_catalogue_names():
+    """A reader is judged by the argument that names its source. One whose parameters include none the catalogue knows
+    would be taken to read nothing: a library's new reader, or a renamed parameter, shows here."""
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+    import pandas  # noqa: F401 - its readers are wrapped as it loads
+    # what reads from no place: the clipboard, a callback, a message already in memory, a query (seen by its connection)
+    no_place = ("read_clipboard", "scan_external_reader", "read_record_batch", "read_schema", "read_message", "read_gbq")
+    unnamed = {call: parameters for call, parameters in wrapped_in_the_loaded_libraries("IVR001").items()
+               if parameters and not set(parameters) & catalogue.SOURCES and not call.endswith(no_place)}
+    assert unnamed == {}, "add the parameter that names the source to invaract-lint's catalogue (SOURCES)"
+    assert len(wrapped_in_the_loaded_libraries("IVR001")) > 60
+
+
+def test_every_wrapped_writer_says_where_it_writes_by_a_parameter_the_catalogue_names_or_its_first():
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+    # the destination is the first argument, by a name that says nothing (``source``), or it is a callback
+    first = ("pyarrow.output_stream", "sink_batches")
+    unnamed = {call: parameters for call, parameters in wrapped_in_the_loaded_libraries("IVR002").items()
+               if parameters and not set(parameters) & catalogue.DESTINATIONS and not call.endswith(first)}
+    assert unnamed == {}, "add the parameter that names the destination to invaract-lint's catalogue (DESTINATIONS)"
+    assert len(wrapped_in_the_loaded_libraries("IVR002")) > 30
+
+
+def test_pandas_readers_are_wrapped_and_its_writers_are_not():
+    """pandas writes through Python's own ``open``, which is seen by itself; its readers are judged by what they are handed."""
+    import pandas as pd
+    assert is_wrapped(pd.read_csv) and is_wrapped(pd.read_parquet) and is_wrapped(pd.io.parsers.read_csv)
+    assert pd.read_csv is pd.io.parsers.read_csv is pd.io.parsers.readers.read_csv, "one wrapper, wherever it is named"
+    assert not is_wrapped(pd.DataFrame.to_csv) and not is_wrapped(pd.DataFrame.to_parquet)
+    assert pd.read_csv.__name__ == "read_csv" and "filepath_or_buffer" in pd.read_csv.__doc__
+    assert pd.read_csv(io.StringIO("a,b\n1,2")).to_dict("records") == [{"a": 1, "b": 2}]
+
+
+def test_a_function_many_modules_hold_is_called_by_the_name_nearest_the_top_of_its_library(watched):
+    """pandas' ``read_csv`` lives in ``pandas.io.parsers.readers``, and a job writes ``pd.read_csv``."""
+    import pandas as pd
+    watched("report")
+    with open("regions.csv", "w") as f:
+        f.write("region\nnorth\n")
+    with invaract.run("contract.yaml"):
+        invaract.write(report(), "report")
+        pd.read_csv("regions.csv")
+        pd.io.parsers.readers.read_csv("regions.csv")
+    assert [(f["call"], f["rule"], f["target"]) for f in runtime_scans()[0]["findings"]] == [("pandas.read_csv", "pandas-read", "regions.csv")] * 2
+
+
+def test_a_database_drivers_connect_is_wrapped():
+    assert is_wrapped(sqlite3.connect)
+    psycopg2 = pytest.importorskip("psycopg2")
+    assert is_wrapped(psycopg2.connect) and psycopg2.connect.__name__ == "connect"
+    with pytest.raises(psycopg2.OperationalError):
+        psycopg2.connect(host="127.0.0.1", port=9, connect_timeout=1)
+
+
+# --- pyarrow's filesystems ----------------------------------------------------------------------------------------------------------
+
+def test_every_filesystem_pyarrow_offers_is_watched_and_is_still_that_filesystem(tmp_path):
+    offered = [name for name in dir(pyarrow.fs) if name.endswith("FileSystem") and not name.startswith("_")]
+    assert {"FileSystem", "LocalFileSystem", "SubTreeFileSystem", "PyFileSystem"} <= set(offered)
+    assert [name for name in offered if not is_wrapped(getattr(pyarrow.fs, name))] == []
+    local = pyarrow.fs.LocalFileSystem()
+    assert isinstance(local, pyarrow.fs.LocalFileSystem) and isinstance(local, pyarrow.fs.FileSystem)
+    assert issubclass(pyarrow.fs.LocalFileSystem, pyarrow.fs.FileSystem) and not isinstance(local, pyarrow.fs.SubTreeFileSystem)
+    assert pyarrow.fs.LocalFileSystem.__name__ == "LocalFileSystem" and local == pyarrow.fs.LocalFileSystem() and local.type_name == "local"
+    tree = pyarrow.fs.SubTreeFileSystem(str(tmp_path), local)
+    assert isinstance(tree, pyarrow.fs.SubTreeFileSystem) and isinstance(tree.base_fs, pyarrow.fs.FileSystem)
+    with local.open_output_stream(str(tmp_path / "a.bin")) as out:
+        out.write(b"x")
+    assert local.open_input_file(str(tmp_path / "a.bin")).read() == b"x"
+    pq.write_table(TABLE, str(tmp_path / "t.parquet"), filesystem=local)
+    assert pq.read_table(str(tmp_path / "t.parquet"), filesystem=local).equals(TABLE)
+    assert pyarrow.dataset.dataset(str(tmp_path / "t.parquet"), filesystem=tree.base_fs).to_table().equals(TABLE)
+
+
+def test_a_filesystem_found_from_a_local_address_is_the_watched_one(tmp_path):
+    found, path = pyarrow.fs.FileSystem.from_uri(tmp_path.as_uri())
+    assert is_wrapped(type(found)) and isinstance(found, pyarrow.fs.LocalFileSystem) and path == str(tmp_path)
+    found, path = pyarrow.fs.LocalFileSystem.from_uri(str(tmp_path))
+    assert is_wrapped(type(found)) and path == str(tmp_path)
+
+
+def test_every_method_of_a_filesystem_that_reads_or_writes_is_one_the_catalogue_names():
+    """A filesystem's new method that reads or writes would go unwatched: it shows here."""
+    methods = {name for name in dir(pyarrow.fs.FileSystem) if not name.startswith("_")}
+    # what neither reads nor writes data: looking, comparing, naming, and making an empty folder
+    harmless = {"equals", "from_uri", "get_file_info", "normalize_path", "type_name", "create_dir"}
+    assert methods - harmless - catalogue.FILESYSTEM_READS - catalogue.FILESYSTEM_WRITES == set()
+    assert (catalogue.FILESYSTEM_READS | catalogue.FILESYSTEM_WRITES) <= methods
+    assert all(is_wrapped(getattr(pyarrow.fs.LocalFileSystem, name)) for name in catalogue.FILESYSTEM_READS | catalogue.FILESYSTEM_WRITES)
+
+
+# --- references taken before the wrapping -----------------------------------------------------------------------------------------
+
+def test_whatever_holds_a_function_from_before_it_was_wrapped_is_given_the_wrapper():
+    import types
+
+    def original(table, where):
+        return ("wrote", where)
+
+    def close_over(write):
+        return lambda table, where: write(table, where)
+
+    def with_a_default(table, where, write=original):
+        return write(table, where)
+
+    library = types.ModuleType("made_up_library")
+    library.write_thing = original
+    kept = {"dict": {"thing": original}, "list": [original], "closure": close_over(original), "attribute": types.SimpleNamespace(write=original),
+            "tuple": (original,)}
+    watch = wrapping.Watch("made_up_library.write_thing", "IVR002", "library-write", judges.destination)
+    try:
+        wrapping._apply(library, "write_thing", watch)
+        wrapper = library.write_thing
+        assert is_wrapped(wrapper) and wrapping.original_of(wrapper) is original
+        wrapping.rebind_everywhere()
+        assert kept["dict"]["thing"] is wrapper and kept["list"][0] is wrapper and kept["attribute"].write is wrapper
+        assert kept["closure"].__closure__[0].cell_contents is wrapper
+        assert with_a_default.__defaults__ == (wrapper,)
+        assert kept["tuple"][0] is original, "a tuple cannot be changed: the scan is what sees a writer kept in one"
+        # the wrapper still leads to the original, and calls it
+        assert wrapping.original_of(wrapper) is original
+        assert wrapper(TABLE, "x.out") == ("wrote", "x.out") == with_a_default(TABLE, "x.out") == kept["closure"](TABLE, "x.out")
+        wrapping.rebind_everywhere()
+        assert library.write_thing is wrapper and wrapping.original_of(wrapper) is original, "done again, nothing changes"
+        assert wrapping.put_back() == []
+        library.write_thing = original
+        assert wrapping.put_back() == ["made_up_library.write_thing"]
+    finally:
+        wrapping._replaced.pop(id(original), None)
+        wrapping._places[:] = [place for place in wrapping._places if place[0] is not library]
+
+
+def test_a_wrapper_looks_like_what_it_wraps_and_does_not_lead_to_it():
+    """Code that unwraps functions as a matter of course (``inspect.unwrap``, a decorator that copies ``__wrapped__``)
+    would step around the watch if the wrapper led to its original."""
+    import inspect
+    wrapper = pq.write_table
+    original = wrapping.original_of(wrapper)
+    assert original is not None and original is not wrapper and wrapping.original_of(original) is None
+    assert (wrapper.__name__, wrapper.__qualname__, wrapper.__module__, wrapper.__doc__) == (
+        "write_table", original.__qualname__, "pyarrow.parquet.core", original.__doc__)
+    assert inspect.signature(wrapper) == inspect.signature(original) and "where" in inspect.signature(wrapper).parameters
+    assert inspect.unwrap(wrapper) is wrapper and not hasattr(wrapper, "__wrapped__") and not hasattr(wrapper, "__invaract_original__")
+    assert not hasattr(pyarrow.fs.LocalFileSystem, "__invaract_original__")
+    assert all(cell.cell_contents is not None for cell in wrapper.__closure__)
+
+
+def test_wrapping_twice_wraps_once_and_a_module_named_like_a_reader_is_left_alone():
+    import types
+    library = types.ModuleType("made_up_library")
+    library.read_thing = lambda source: source
+    library.scan_options = types.ModuleType("made_up_library.scan_options")
+    watch = wrapping.Watch("made_up_library.read_thing", "IVR001", "library-read", judges.source)
+    original = library.read_thing
+    try:
+        wrapping._apply(library, "read_thing", watch)
+        once = library.read_thing
+        wrapping._apply(library, "read_thing", watch)
+        assert library.read_thing is once and wrapping.original_of(once) is original
+        wrapping._apply(library, "scan_options", watch)
+        wrapping._apply(library, "no_such_thing", watch)
+        assert isinstance(library.scan_options, types.ModuleType) and "made_up_library.read_thing" not in wrapping.UNWATCHED
+        library.fixed = staticmethod(original)
+        wrapping._apply(library, "fixed", wrapping.Watch("made_up_library.fixed", "IVR001", "library-read", judges.source))
+        assert wrapping.UNWATCHED.pop("made_up_library.fixed") == "not a plain function"
+    finally:
+        wrapping._replaced.pop(id(original), None)
+        wrapping._places[:] = [place for place in wrapping._places if place[0] is not library]
+
+
 def test_the_wrapped_writers_are_the_catalogues():
-    named = catalogue.writer_names("pyarrow.parquet", dir(pq))
-    assert {"write_table", "ParquetWriter", "write_to_dataset", "write_metadata"} <= set(named)
+    named = catalogue.watched_names("pyarrow.parquet", dir(pq))
+    assert {"write_table", "ParquetWriter", "write_to_dataset", "write_metadata", "read_table", "ParquetFile", "ParquetDataset"} <= set(named)
     assert all(is_wrapped(getattr(pq, name)) for name in named)
-    assert _strict.UNWATCHED == {}
+    assert wrapping.UNWATCHED == {}
 
 
 def test_every_frame_writer_polars_offers_is_wrapped():
@@ -401,10 +748,10 @@ def test_wrapped_libraries_work_as_before_when_no_run_is_open(tmp_path):
 
 def test_a_library_wrapped_as_it_is_imported_is_left_as_any_import_leaves_it():
     for module in (pq, pyarrow.csv, pyarrow.dataset):
-        assert not isinstance(module.__spec__.loader, _strict._WrapAfterLoad)
-        assert not isinstance(module.__loader__, _strict._WrapAfterLoad)
-    assert any(isinstance(finder, _strict._WrapOnImport) for finder in sys.meta_path)
-    assert sum(isinstance(finder, _strict._WrapOnImport) for finder in sys.meta_path) == 1, "installed once, however often asked"
+        assert not isinstance(module.__spec__.loader, wrapping.WrapAfterLoad)
+        assert not isinstance(module.__loader__, wrapping.WrapAfterLoad)
+    assert any(isinstance(finder, wrapping.WrapOnImport) for finder in sys.meta_path)
+    assert sum(isinstance(finder, wrapping.WrapOnImport) for finder in sys.meta_path) == 1, "installed once, however often asked"
 
 
 def test_a_module_imported_after_the_hooks_are_installed_is_wrapped_as_it_loads(tmp_path):
@@ -414,14 +761,19 @@ def test_a_module_imported_after_the_hooks_are_installed_is_wrapped_as_it_loads(
     from conftest import LINT_SOURCE, PYTHON
     script = textwrap.dedent("""
         import importlib, sys, invaract_lint
-        from invaract import _strict
-        _strict.install(invaract_lint)
-        writers = {"pyarrow.orc": "write_table", "pyarrow.feather": "write_feather", "dbm": "open", "multiprocessing.util": "spawnv_passfds"}
+        from invaract._strict import wrapping
+        wrapping.install(invaract_lint)
+        writers = {"pyarrow.orc": "write_table", "pyarrow.feather": "write_feather", "dbm": "open", "dbm.dumb": "open",
+                   "multiprocessing.util": "spawnv_passfds"}
+        writers.pop("multiprocessing.util")   # what starts its workers is wrapped where it lives, in _posixsubprocess
+        import _posixsubprocess, subprocess
+        assert getattr(_posixsubprocess.fork_exec, "__invaract_watched__", False)
+        assert subprocess.run([sys.executable, "-c", "pass"]).returncode == 0
         late = sorted(name for name in writers if name not in sys.modules)
         loaded = {name: importlib.import_module(name) for name in late}
-        wrapped = all(hasattr(getattr(module, writers[name]), "__invaract_original__") for name, module in loaded.items())
-        own = all(type(module.__spec__.loader).__name__ != "_WrapAfterLoad" for module in loaded.values())
-        print("dbm" in late, len(late) >= 2, wrapped, own, _strict.UNWATCHED)
+        wrapped = all(getattr(getattr(module, writers[name]), "__invaract_watched__", False) for name, module in loaded.items())
+        own = all(type(module.__spec__.loader).__name__ != "WrapAfterLoad" for module in loaded.values())
+        print("dbm" in late, len(late) >= 2, wrapped, own, wrapping.UNWATCHED)
         """)
     env = dict(os.environ, PYTHONPATH=os.pathsep.join([PYTHON, LINT_SOURCE]))
     ran = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, cwd=tmp_path)

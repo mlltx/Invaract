@@ -16,6 +16,22 @@ def case(name, source):
 
 CASES = [
     # --- held in memory, never at rest ------------------------------------------------------------------------------------
+    # --- the package as a job uses it, and functions as code describes them ------------------------------------------------
+    case("the package's public names", "import invaract\nfrom invaract import ContractViolation\nprint(invaract.__version__)\n"
+                                       "try:\n    invaract.check(df, 'report')\nexcept invaract.errors.ContractViolation:\n    raise"),
+    case("the scan's public names", "import invaract_lint\ninvaract_lint.check_source(source)\nprint(invaract_lint.__version__, invaract_lint.__name__)"),
+    case("a function's name and documentation", "import pandas as pd\nimport pyarrow.parquet as pq\n"
+                                                "print(pd.read_csv.__doc__, pq.write_table.__name__, pd.read_csv.__module__, pq.ParquetFile.__qualname__)"),
+    case("the collector, collecting", "import gc\ngc.collect()\ngc.disable()\ngc.get_count()"),
+    case("the table of modules, for a library", "import sys\nsys.modules.get('pandas')\n'polars' in sys.modules\nsys.modules['numpy']\n"
+                                                "sys.modules.pop('my_plugin', None)"),
+    case("a module imported by a name spelled out", "import importlib\nimportlib.import_module('invaract')\nimportlib.import_module('json')"),
+    case("a class used as a type", "import pyarrow.parquet as pq\ndef f(x: pq.ParquetFile) -> pq.ParquetFile:\n    assert isinstance(x, pq.ParquetFile)\n    return x"),
+    case("a reader's attribute used as a type", "import pyarrow.parquet as pq\ndef f(w: pq.ParquetWriter.Kind) -> pq.ParquetFile.Kind:\n"
+                                                "    assert isinstance(w, pq.ParquetWriter.Kind)\n    return w"),
+    case("the package's own class used as a type", "import invaract\ndef f(run: invaract._run.Run) -> None:\n    assert isinstance(run, invaract._run.Run)"),
+    case("__call__ of a function that is no reader", "import json\njson.dumps.__call__({})\nhelper.__call__(df)"),
+    case("a module of the job's own named like a private one", "import jobs._helpers\njobs._helpers.clean(df)\nfrom jobs import _shared\n_shared.x = 1"),
     case("read from a text buffer", "import io, pandas as pd\npd.read_csv(io.StringIO(text))"),
     case("read from a named buffer", "import io, pandas as pd\nbuf = io.BytesIO(payload)\npd.read_parquet(buf)"),
     case("read from bytes", "import pandas as pd\npd.read_json(b'{}')"),
