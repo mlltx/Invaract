@@ -4061,9 +4061,21 @@ program, and wrappers around pyarrow’s, Polars’, DuckDB’s and deltalake’
 catalogue. <code dir="auto">report</code> publishes a <code dir="auto">CODE_SCAN</code> event of phase <code dir="auto">RUNTIME</code>; <code dir="auto">enforce</code> refuses the write before it happens
 (<code dir="auto">UNGOVERNED_DATA_ACCESS</code>). <code dir="auto">python/tests/strict_matrix.py</code> holds 152 ways of writing around the package, each run
 as a real job and held to what each layer says of it; five are seen only by the scan, four only by strict mode,
-none by neither. See docs/PYTHONIO_ADAPTER.md, “The lint, made hard to get around, and strict mode”. Open: reads
-at run time; wrapping h5py, netCDF4 and the compiled database drivers; watching a spawned worker process; an
-operating-system guard (a user that can write only where the contract says) for a job written to get around both.</li>
+none by neither. See docs/PYTHONIO_ADAPTER.md, “The lint, made hard to get around, and strict mode”.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: closing what Python lets be closed</strong> (<code dir="auto">pythonio-adapter</code>: the package and the lint). Strict mode now
+also watches reads through the libraries’ readers; h5py, netCDF4, PyTables, pyreadstat and <code dir="auto">dbm</code>; every database
+driver’s <code dir="auto">connect</code>; pyarrow’s filesystems; native code the job calls itself (<code dir="auto">ctypes</code>, <code dir="auto">cffi</code>) and its own
+compiled modules; sub-interpreters; what the job does between importing the package and opening its run; and
+the Python processes it starts. A reference to a compiled writer taken before the package was imported is given
+its wrapper when the run opens. A wrapper no longer leads to what it wraps, a run whose watch was taken off says
+so and, enforced, is not checked, and the scan reports code that reaches under the checks (<code dir="auto">tampering</code>). A
+secret given by name is masked in findings. Strict mode is a package of small modules driven by the lint’s
+catalogue, the lint’s checker is split and tabled, and docs/PYTHONIO_LINT_AND_STRICT.md is the recipe for adding
+a library or an edge case. <code dir="auto">strict_matrix.py</code> holds 226 techniques, run as real jobs on the oldest and newest
+supported Python: six seen only by the scan, seven only by strict mode, none by neither. See
+docs/PYTHONIO_ADAPTER.md, “Closing what Python lets be closed”. Open: an operating-system guard (a user that can
+write only where the contract says) for what cannot be closed from inside Python: another program once started,
+and the job’s own compiled code.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
