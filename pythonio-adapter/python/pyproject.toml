@@ -34,6 +34,8 @@ Homepage = "https://github.com/mlltx/Invaract"
 
 [tool.setuptools]
 packages = ["invaract", "invaract._strict"]
+# the start-up hook's first stage, and (setup.py) the .pth that loads it as Python starts
+py-modules = ["_invaract_attach"]
 
 # what a wheel carries besides the code (.github/scripts/python_wheel.py): the native checker in a platform wheel, the
 # checker jar in the pure-Python one; a source checkout has neither

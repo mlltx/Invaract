@@ -103,6 +103,10 @@ def _not_the_jobs():
     roots.update(site.getsitepackages() if hasattr(site, "getsitepackages") else [])
     roots.add(site.getusersitepackages() if hasattr(site, "getusersitepackages") else None)
     roots.add(os.path.dirname(os.path.abspath(__file__)))
+    # the start-up hook's first stage, which stands beside the package rather than in it
+    first_stage = sys.modules.get("_invaract_attach")
+    if first_stage is not None and getattr(first_stage, "__file__", None):
+        roots.add(os.path.abspath(first_stage.__file__))
     lint = sys.modules.get("invaract_lint")
     if lint is not None and getattr(lint, "__file__", None):
         roots.add(os.path.dirname(os.path.abspath(lint.__file__)))

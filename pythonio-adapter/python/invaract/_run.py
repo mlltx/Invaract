@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 
-from . import _checks, _codescan, _csv, _datasets, _frames, _outputs, _pandas, _protocol, _strict
+from . import _attach, _checks, _codescan, _csv, _datasets, _frames, _outputs, _pandas, _protocol, _strict
 from ._checker import Checker, command
 from ._settings import from_environment
 from .errors import CheckNotRun, ContractViolation
@@ -64,6 +64,9 @@ class Run:
                 _current = self
         try:
             _exit_status_on_check_not_run()
+            if not self.checking:
+                _attach.check()
+                _attach.opened()
             settings = from_environment(self._default_contract)
             # a check judges one frame, not the job's code
             self._scanner = None if self.checking else _codescan.from_environment()
