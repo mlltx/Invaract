@@ -412,7 +412,8 @@ def test_how_a_job_ended_by_raising_systemexit_is_told(job):
     assert (launched.status, launched.published()) == (4, False)
     hooked = job(source, "hook", env=AUTO)
     if sys.version_info >= (3, 12):
-        assert (hooked.status, hooked.published()) == (4, False)
+        # not told: nothing is published, and the job ends not checked, whatever status it raised
+        assert (hooked.status, hooked.published()) == (2, False)
         assert "could not tell whether this job completed" in hooked.said
     else:
         assert hooked.published()
