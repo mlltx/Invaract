@@ -181,6 +181,12 @@ class Watcher:
             return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in self._found.values()],
                                   self._errors, 0)
 
+    def errors(self):
+        """What the watch could not do, children's reports that could not be read included, as ``(where, message)``."""
+        with self._lock:
+            self._gather()
+            return list(self._errors)
+
     def unexplained(self):
         """The findings no marker and no ``INVARACT_STRICT_ALLOW`` pattern explains, children's included."""
         return [finding for finding in self.findings() if not finding.allowed]
@@ -319,19 +325,33 @@ class Watcher:
             raise
 
     def _leave(self, finding):
-        with open(self._spill, "a", encoding="utf-8") as spill:
-            spill.write(json.dumps(dataclasses.asdict(finding)) + "\n")
+        """Appends one finding to the parent's spill file in one write, so the lines of processes writing at once never
+        interleave; the file is the job's user's alone (it names what the job reached)."""
+        line = (json.dumps(dataclasses.asdict(finding)) + "\n").encode("utf-8")
+        fd = os.open(self._spill, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, line)
+        finally:
+            os.close(fd)
 
     def _gather(self):
         """Adds what child processes saw to what this process saw."""
         if self._child or self._spill is None or not os.path.exists(self._spill):
             return
         with _state.working():
-            with open(self._spill, encoding="utf-8") as spill:
-                rows = [json.loads(line) for line in spill if line.strip()]
+            with open(self._spill, encoding="utf-8", errors="replace") as spill:
+                lines = [line for line in spill if line.strip()]
             os.remove(self._spill)
-        for row in rows:
-            finding = self._lint.Finding(**{**row, "detail": row["detail"] + ", in a child process"})
+        for line in lines:
+            try:
+                row = json.loads(line)
+                finding = self._lint.Finding(**{**row, "detail": row["detail"] + ", in a child process"})
+            except (ValueError, TypeError, KeyError) as e:
+                # a child stopped as it wrote (killed, out of space): what it saw is lost, and the run must say so
+                if len(self._errors) < MAX_ERRORS:
+                    self._errors.append(("<strict mode>", f"a child process's report could not be read ({type(e).__name__}): "
+                                                          "what it did is not known"))
+                continue
             key = (finding.path, finding.line, finding.col, finding.rule, finding.target, "child")
             if key in self._found:
                 self._found[key].times += 1
@@ -350,9 +370,29 @@ def _named(seen):
 
 
 def new_spill():
-    """A new file for the Python processes a job starts to leave what they see in."""
+    """A new file for the Python processes a job starts to leave what they see in. Its name starts with the process that
+    owns it (``owner``)."""
     import uuid
     return os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{uuid.uuid4().hex[:16]}.jsonl")
+
+
+def parents_spill(environ=None):
+    """The spill file this process reports to, when it was started by a watched job; ``None`` when it was not, or when the
+    one in the environment is this process's own (a job that replaced itself with ``os.exec*`` is still that job)."""
+    environ = os.environ if environ is None else environ
+    spill = environ.get(SPILL)
+    if not spill:
+        return None
+    return None if owner(spill) == os.getpid() else spill
+
+
+def owner(spill):
+    """The process a spill file belongs to, by its name; ``None`` for a name that does not say."""
+    parts = os.path.basename(spill).split("-")
+    try:
+        return int(parts[2]) if len(parts) > 3 and parts[:2] == ["invaract", "strict"] else None
+    except ValueError:
+        return None
 
 
 def scratch_roots():

@@ -511,6 +511,31 @@ decisions in its section 15); this is what was built, in four phases, each follo
   scenario S-6 enforces the contract (observing without one is S-3, the dry run); phase 4 is an `observe` open rather
   than a dry run, whose `DRY_RUN_SUMMARY` would have claimed a draft. A settings error met by `invaract.read` outside any
   run ends the job not checked (2), as it does at a run's opening.
+- **Hardened for production** (a review after the four phases, each finding a real job that failed before the fix):
+  - a process **forked** from the root is never its root: it does not settle the job at exit (it would have closed the
+    parent's run over the shared checker pipe), and what it sees goes to the root's spill file
+    (`os.register_at_fork`); a run is tied to the process that opened it (`Run.ours`), so a forked process can neither
+    use nor end its parent's run;
+  - a job that **replaces itself** with `os.exec*` stays the root: a spill file names its owner (`invaract-strict-<pid>-…`),
+    and only another process's makes this one a child (`watcher.parents_spill`);
+  - **threads** reading at once wait for the one implicit run to open (`Run.__enter__` makes a run current before it is
+    open, so every call goes through `_attach._lock` for the implicit run);
+  - the **exit handler never fails open**: a publish that fails as the job ends gives status 1 with its traceback, as an
+    annotated run would, and anything else unexpected gives 2 ("could not settle this job");
+  - attached at import or by the launcher, the handler is not the first registered, and `os._exit` would skip the exit
+    handlers registered before it (DuckDB's, Polars', pyarrow's, `multiprocessing`'s, the job's): `atexit.register` is
+    wrapped from then on, so the ones registered after it, which have run, are unregistered, and the earlier ones run
+    before the process ends (`_run_earlier_exit_handlers`; probed on 3.10, 3.11 and 3.13);
+  - a **child's report cut short** (killed as it wrote) is an error the job says, not a crash in the exit handler; a
+    child writes each finding in one `os.write` to an append-only file only the job's user can read (`0600`);
+  - the **no-run report** is given up after `REPORT_SECONDS` (120): it changes nothing, so a checker that hangs never
+    holds the job's exit;
+  - the **launcher** runs the program in a `__main__` module of its own that stays `__main__` (the job's name on events
+    sent as it ends, `pickle`, exit handlers), sets `sys.path[0]` as Python does for a script, a folder or a zip file,
+    and says what Python says of a missing script or module;
+  - **which programs are jobs**: paths compared case-normalised, `pip install --user` packages and commands counted as
+    libraries, a library folder that would hold everything (a file system's root) ignored, and the main program's code
+    matched by name before any `realpath`.
 - **Tests.** `tests/test_attach.py` runs every case as a real job through the start-up hook, the launcher and the import:
   the scenarios, the endings, children, forks, the settings each refused, the hook failing. `tests/test_attach_unit.py`
   holds the tables (`wanted`, `is_job`, `outcome`, the settings). The recorded cases `observe-no-run-reported` and

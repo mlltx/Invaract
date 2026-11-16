@@ -22,7 +22,7 @@ import _invaract_attach as first_stage
 from . import _codescan, _settings, _strict
 from .errors import CheckNotRun, ContractViolation
 from ._strict import _state
-from ._strict.watcher import SPILL, new_spill
+from ._strict.watcher import SPILL, new_spill, owner, parents_spill
 
 #: Where Invaract attached: ``startup`` (the ``.pth``), ``launcher``, or ``import``; ``None`` before it has.
 point = None
@@ -40,6 +40,11 @@ _main_returned = None
 _launched = None
 _settled = False
 _lock = threading.RLock()
+#: The root's process and spill file: a process forked from the root is part of the job, never its root.
+_root_pid = None
+_root_spill = None
+#: The exit handlers registered after ours, when ours is not the first (attached at import or by the launcher).
+_registered_after = None
 
 
 def attach():
@@ -70,14 +75,16 @@ def launched(kind, name):
 def _begin(watcher):
     """What a job process needs: its spill file (if it is a root), the record of how it ends, and the handler that settles
     it. A process started by a job is a child: it only watches."""
-    global root
+    global root, _root_pid, _root_spill
     with _lock:
-        if root or SPILL in os.environ:
+        if root or parents_spill() is not None:
             return
-        root = True
+        root, _root_pid = True, os.getpid()
         if watcher is not None and not watcher._child:
-            watcher._spill = new_spill()
-            os.environ[SPILL] = watcher._spill
+            # a job that replaced itself (os.exec*) keeps the file its children already report to
+            own = os.environ.get(SPILL)
+            watcher._spill = _root_spill = own if own and owner(own) == os.getpid() else new_spill()
+            os.environ[SPILL] = _root_spill
             try:
                 _, strict, auto = asked()
             except ValueError:
@@ -87,7 +94,40 @@ def _begin(watcher):
                 watcher.on_unexplained = _refuse_outside_run
         _record_exits()
         if not first_stage.handles_exit:
-            atexit.register(at_exit)
+            _register_at_exit()
+
+
+def _register_at_exit():
+    """Registers ``at_exit``. Python runs exit handlers last registered first, and the handler that sets the exit status
+    ends the process: one registered before ours (a library the job imported first, or the job's own) would never run.
+    So the handlers registered from here on are kept, and ``_set_status`` runs the earlier ones before ending."""
+    global _registered_after
+    _registered_after = []
+    original = atexit.register
+
+    def register(func, *args, **kwargs):
+        _registered_after.append(func)
+        return original(func, *args, **kwargs)
+
+    register.__doc__, register.__wrapped__ = original.__doc__, original
+    original(at_exit)
+    atexit.register = register
+
+
+def _forked():
+    """In a process forked from the job's root: part of the job, never its root. What it sees goes to the root."""
+    global root
+    if not root:
+        return
+    root = False
+    watcher = _state.watcher
+    if watcher is not None and _root_spill is not None:
+        watcher._child, watcher._found, watcher._spill = True, {}, _root_spill
+        os.environ[SPILL] = _root_spill
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forked)
 
 
 def _main_program():
@@ -109,7 +149,7 @@ def is_job_process():
     """Whether this process is the root of a job: attached, and its main program a job's (worked out now if it was not
     known when it attached)."""
     global program
-    if not root:
+    if not root or os.getpid() != _root_pid:
         return False
     if program is None:
         program = _main_program()
@@ -156,20 +196,27 @@ def opened():
 
 def started_by_a_job():
     """Whether this process was started by a job's (it reports to that job's process)."""
-    return not root and SPILL in os.environ
+    return not is_job_process() and SPILL in os.environ
 
 
 def implicit_run():
-    """Opens the run Invaract opens for the job, when the platform asked for it (``INVARACT_AUTO_RUN=true``) and this is
-    the root of a job with no run open; ``None`` otherwise. The run lasts until the process ends (``at_exit``)."""
+    """The run Invaract opened for the job, once it is open, opening it if the platform asked for it
+    (``INVARACT_AUTO_RUN=true``) and this is the root of a job with no run open; ``None`` otherwise. The run lasts until
+    the process ends (``at_exit``). Threads calling at once wait for the one run to open."""
+    from . import _run
     _still_refused()
     try:
         auto = asked()[2]
     except ValueError as e:
-        from . import _run
         _run._exit_status_on_check_not_run()
         raise CheckNotRun(str(e)) from None
-    return _open_implicit() if auto and is_job_process() else None
+    with _lock:
+        current = _run._current
+        if current is not None and current.implicit and current.ours():
+            return current
+        if not (auto and is_job_process()):
+            return None
+        return _open_implicit()
 
 
 def _open_implicit():
@@ -245,12 +292,6 @@ def watch_main(code):
     monitoring = getattr(sys, "monitoring", None)
     if monitoring is None or code is None or _main_returned is not None:
         return
-    for tool in (4, 3):
-        if monitoring.get_tool(tool) is None:
-            break
-    else:
-        return
-    monitoring.use_tool_id(tool, "invaract")
 
     def returned(returning, offset, value):
         global _main_returned
@@ -258,9 +299,19 @@ def watch_main(code):
             _main_returned = True
         return monitoring.DISABLE
 
-    monitoring.register_callback(tool, monitoring.events.PY_RETURN, returned)
-    monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
-    _main_returned = False
+    for tool in (4, 3):
+        try:
+            monitoring.use_tool_id(tool, "invaract")
+        except ValueError:
+            continue  # another tool holds it
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, returned)
+            monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
+        except Exception:  # noqa: BLE001 - how the job ended is then told as on Python 3.11
+            monitoring.free_tool_id(tool)
+            return
+        _main_returned = False
+        return
 
 
 def _watch_main_from_stack():
@@ -308,6 +359,11 @@ def at_exit():
     status = None
     try:
         status = _settle(watcher)
+    except BaseException:  # noqa: BLE001 - an exit handler that raises leaves the job's status as it was: fail closed
+        import traceback
+        _said_only(traceback.format_exc())
+        _say("Invaract could not settle this job as it ended, so it was not checked.", [])
+        status = CheckNotRun.exit_status
     finally:
         _remove_spill(watcher)
     _set_status(status)
@@ -323,7 +379,7 @@ def _settle(watcher):
         return 2
     if refusal is not None:
         return 1
-    if _run._current is not None and _run._current.implicit:
+    if _run._current is not None and _run._current.implicit and _run._current.ours():
         return _close(_run._current)
     if auto:
         return _run_at_the_end(watcher)
@@ -368,7 +424,8 @@ def _scan_has_something():
 
 def _ending(action):
     """Runs ``action`` as the process ends: a refusal ends the job refused (1), a check that could not be made ends it not
-    checked (2), each said as Python would have said it."""
+    checked (2), and any other failure (an output that could not be published) ends it as an uncaught error would (1),
+    each said as Python would have said it."""
     try:
         action()
     except ContractViolation as e:
@@ -377,12 +434,21 @@ def _ending(action):
     except CheckNotRun as e:
         _said(e)
         return CheckNotRun.exit_status
+    except Exception:  # noqa: BLE001 - what an annotated run would have raised to the job
+        import traceback
+        _said_only(traceback.format_exc())
+        return 1
     return None
 
 
 def _said(error):
+    _said_only(f"{type(error).__module__}.{type(error).__qualname__}: {error}\n")
+
+
+def _said_only(text):
     try:
-        sys.stderr.write(f"{type(error).__module__}.{type(error).__qualname__}: {error}\n")
+        sys.stderr.write(text)
+        sys.stderr.flush()
     except Exception:  # noqa: BLE001 - nowhere left to say it
         pass
 
@@ -399,11 +465,12 @@ def _no_run(watcher, require, strict):
         _say(f"Invaract: this job opened no run and could not be watched (is invaract-lint installed?), so nothing checked "
              f"it ({_settings.REQUIRE_RUN}={require}).", [], _HOW_TO_OPEN_A_RUN)
     else:
-        unexplained = watcher.unexplained()
-        if not unexplained:
+        unexplained, errors = watcher.unexplained(), watcher.errors()
+        if not unexplained and not errors:
             return None
-        _say(f"Invaract: this job read or wrote data and opened no run, so nothing checked it ({_settings.REQUIRE_RUN}="
-             f"{require}).", unexplained, _HOW_TO_OPEN_A_RUN)
+        did = "read or wrote data" if unexplained else "started processes whose reports could not be read"
+        _say(f"Invaract: this job {did} and opened no run, so nothing checked it ({_settings.REQUIRE_RUN}={require}).",
+             unexplained, _HOW_TO_OPEN_A_RUN, errors)
         _report_without_run(watcher)
     return 2 if require == "enforce" else None
 
@@ -412,11 +479,11 @@ def _after_runs(watcher, strict):
     """What the job did after its last run ended: reported, and, enforced, the job ends refused."""
     if watcher is None:
         return None
-    unexplained = watcher.unexplained()
-    if not unexplained:
+    unexplained, errors = watcher.unexplained(), watcher.errors()
+    if not unexplained and not errors:
         return None
     _say(f"Invaract: this job read or wrote data after its run ended, so nothing checked it ({_settings.STRICT}={strict}).",
-         unexplained)
+         unexplained, None, errors)
     return 1 if strict == "enforce" else None
 
 
@@ -434,10 +501,11 @@ def _report_without_run(watcher):
 _HOW_TO_OPEN_A_RUN = "Decorate the job's entry point with @invaract.job(), or use 'with invaract.run():'."
 
 
-def _say(headline, findings, footer=None):
+def _say(headline, findings, footer=None, errors=()):
     lines = [headline] + [f"  {f.path}:{f.line} {f.message}" for f in findings[:5]]
     if len(findings) > 5:
         lines.append(f"  and {len(findings) - 5} more")
+    lines += [f"  {where}: {message}" for where, message in errors]
     if footer:
         lines.append(footer)
     try:
@@ -465,9 +533,23 @@ def _set_status(status):
     if _launched is not None and _launched[1] not in (0, None):
         return
     try:
+        _run_earlier_exit_handlers()
         logging.shutdown()
         for stream in (sys.stdout, sys.stderr):
             if stream is not None:
                 stream.flush()
     finally:
         os._exit(status)
+
+
+def _run_earlier_exit_handlers():
+    """Runs the exit handlers registered before ours, which ``os._exit`` would skip; those registered after it have run."""
+    if _registered_after is None or not hasattr(atexit, "_run_exitfuncs"):
+        return  # registered first (start-up attach): nothing runs after it
+    atexit.register = getattr(atexit.register, "__wrapped__", atexit.register)
+    for func in [*_registered_after, at_exit]:
+        atexit.unregister(func)
+    try:
+        atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - Python itself only reports a failing exit handler
+        pass

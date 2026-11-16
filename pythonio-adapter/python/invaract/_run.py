@@ -61,13 +61,15 @@ class Run:
         global _current
         if not self.checking:
             with _starting:
-                if _current is not None and _current.implicit:
+                if _current is not None and _current.implicit and _current.ours():
                     raise CheckNotRun("this job reads or writes through Invaract outside its own run and then opens one: move "
                                       "those calls inside the run, or remove the annotation and let the platform's run "
                                       "(INVARACT_AUTO_RUN) cover the whole job")
-                if _current is not None:
+                if _current is not None and _current.ours():
                     raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
                 _current = self
+        #: the process the run is open in: a process forked from it shares its checker, and must never speak to it
+        self._pid = os.getpid()
         try:
             _exit_status_on_check_not_run()
             if not self.checking:
@@ -103,7 +105,13 @@ class Run:
             raise
         return self
 
+    def ours(self):
+        """Whether the run was opened in this process, not in the one this process was forked from."""
+        return getattr(self, "_pid", None) == os.getpid()
+
     def __exit__(self, exc_type, exc, tb):
+        if not self.ours():
+            return False  # a forked process leaving the run's block: the run is its parent's, and goes on there
         if self.checking:
             self._end_unpublished()
             return False
@@ -409,14 +417,23 @@ def _installed():
     return versions
 
 
+#: How long the report of a job that opened no run may take, as the job ends: it changes nothing, so it never holds the
+#: job up for long.
+REPORT_SECONDS = 120
+
+
 def report_without_run(scan):
     """Sends what the watch saw of a job that opened no run (``scan``) to a checker opened only to publish it
-    (``_protocol.open_run``'s ``observe``), when the platform set where notifications go."""
+    (``_protocol.open_run``'s ``observe``), when the platform set where notifications go. A checker that takes longer
+    than ``REPORT_SECONDS`` is stopped."""
     settings = {k: v for k, v in from_environment().items() if k not in ("contract", "dryRun")}
     if "notifyConfig" not in settings:
         return
     settings["jobAttributes"] = _attach.attributes(settings.get("jobAttributes"), run="none")
     checker = Checker(command())
+    limit = threading.Timer(REPORT_SECONDS, checker.kill)
+    limit.daemon = True
+    limit.start()
     try:
         opening = _protocol.open_run(settings, _job(_script_name(), _run_id()), observe=True)
         for request in (opening, scan, _protocol.finish(completed=False)):
@@ -424,7 +441,10 @@ def report_without_run(scan):
             if not reply.get("ok"):
                 raise CheckNotRun(f"its checker answered {reply}")
     finally:
-        checker.close()
+        try:
+            checker.close()
+        finally:
+            limit.cancel()
 
 
 def _script_name():
@@ -465,8 +485,12 @@ def _exit_status_on_check_not_run():
 def current(verb):
     """The run in progress, for ``invaract.read`` and ``invaract.write``; with ``INVARACT_AUTO_RUN=true``, the one Invaract
     opens for the job when it has none."""
-    if _current is not None:
-        return _current
+    run = _current
+    if run is not None and run.ours() and not run.implicit:
+        return run
+    if run is not None and not run.ours():
+        raise RuntimeError(f"invaract.{verb} cannot be called in a process forked from a job's run: the run is the parent "
+                           "process's. Read and write in the parent, or open a run of the forked process's own")
     opened = _attach.implicit_run()
     if opened is not None:
         return opened

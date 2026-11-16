@@ -36,7 +36,7 @@ from .. import _codescan
 from .._settings import STRICT, STRICT_ALLOW, strict_mode
 from ..errors import CheckNotRun
 from . import _state, wrapping
-from .watcher import SPILL, Watcher
+from .watcher import Watcher, parents_spill
 
 
 #: What invaract-lint's catalogue must have for strict mode to read it: an older one names less than is watched.
@@ -86,7 +86,7 @@ def install_early(environ=None):
             return None
         wrapping.install(invaract_lint)
         if _state.watcher is None:
-            allow, spill = _codescan._split(environ.get(STRICT_ALLOW)), environ.get(SPILL)
+            allow, spill = _codescan._split(environ.get(STRICT_ALLOW)), parents_spill(environ)
             _state.watcher = (Watcher.in_child(invaract_lint, mode == "enforce", allow, spill) if spill
                               else Watcher.collecting(invaract_lint, allow))
         return _state.watcher

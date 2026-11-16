@@ -110,6 +110,8 @@ def _attach(found):
         _main_file = _ARGV  # where it is, runpy says by sys.argv[0] once it has found it
     elif kind == "command":
         _main_file = "<string>"
+    elif kind == "stdin":
+        _main_file = "<stdin>"
 
 
 def _saw_main_code(args):
@@ -125,13 +127,14 @@ def _saw_main_code(args):
         if not sys.argv or sys.argv[0] in ("-m", ""):
             return  # runpy is still finding the module: what runs now is its packages
         expected = os.path.realpath(sys.argv[0])
-    if filename != expected and (filename.startswith("<") or os.path.realpath(filename) != expected):
-        return
+    if filename != expected and (filename.startswith("<") or os.path.basename(filename) != os.path.basename(expected)
+                                 or os.path.realpath(filename) != expected):
+        return  # the cheap comparisons first: this runs for every module the job imports until its program starts
     main_code, _main_file = code, None
     try:
         sys.modules["invaract._attach"].watch_main(code)
-    except Exception as e:  # noqa: BLE001 - how the job ended is then not known; said where it matters
-        _failed(e)
+    except Exception:  # noqa: BLE001 - how the job ended is then told as on Python 3.11: nothing else depends on it
+        pass
 
 
 def _at_exit():
@@ -205,7 +208,8 @@ def _module_file(name):
 
 def is_own(path):
     """Whether a file is the job's own: not Python's, not an installed package's, and not a command installed beside the
-    environment's packages (``pytest``, ``pip``: a library's entry point)."""
+    environment's packages or the user's (``pytest``, ``pip``: a library's entry point)."""
+    path = os.path.normcase(path)
     return not any(path == root or path.startswith(root.rstrip(os.sep) + os.sep) for root in library_roots())
 
 
@@ -217,9 +221,16 @@ def library_roots():
     if _roots is None:
         import site
         import sysconfig
-        paths = sysconfig.get_paths()
-        roots = {paths.get(key) for key in ("stdlib", "platstdlib", "purelib", "platlib", "scripts")}
+        keys = ("stdlib", "platstdlib", "purelib", "platlib", "scripts")
+        roots = {sysconfig.get_paths().get(key) for key in keys}
+        try:
+            user = sysconfig.get_preferred_scheme("user")  # pip install --user: its packages and commands
+            roots.update(sysconfig.get_paths(user).get(key) for key in ("purelib", "platlib", "scripts"))
+        except (AttributeError, KeyError, ValueError):
+            pass
         roots.update(site.getsitepackages() if hasattr(site, "getsitepackages") else [])
         roots.add(site.getusersitepackages() if hasattr(site, "getusersitepackages") else None)
-        _roots = [os.path.realpath(root) for root in roots if root]
+        real = {os.path.normcase(os.path.realpath(root)) for root in roots if root}
+        # a folder that holds everything (a file system's root) would make no program a job's: never one of these
+        _roots = sorted(root for root in real if os.path.dirname(root) != root)
     return _roots

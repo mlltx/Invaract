@@ -179,3 +179,59 @@ def test_a_recorded_exit_looks_like_the_one_it_records():
 def test_the_launchers_status_for_each_way_to_exit():
     from invaract.__main__ import _status
     assert [_status(c) for c in (None, False, 0, 3, True, "message", 2.5)] == [0, 0, 0, 3, True, 1, 1]
+
+
+# --- whose spill file, and what counts as a library ----------------------------------------------------------------------------
+
+def test_a_spill_file_is_owned_by_the_process_its_name_starts_with():
+    from invaract._strict import watcher
+    spill = watcher.new_spill()
+    assert watcher.owner(spill) == os.getpid()
+    assert watcher.owner("/tmp/invaract-strict-123-abc.jsonl") == 123
+    for unnamed in ("/tmp/elsewhere.jsonl", "/tmp/invaract-strict-x-abc.jsonl", "/tmp/invaract-strict-123.jsonl", "/tmp/other-strict-1-a"):
+        assert watcher.owner(unnamed) is None
+
+
+def test_only_another_processs_spill_makes_this_one_a_child():
+    from invaract._strict import watcher
+    assert watcher.parents_spill({}) is None and watcher.parents_spill({"INVARACT_STRICT_SPILL": ""}) is None
+    own = watcher.new_spill()
+    assert watcher.parents_spill({"INVARACT_STRICT_SPILL": own}) is None, "a job that replaced itself with exec"
+    parents = f"/tmp/invaract-strict-{os.getpid() + 1}-abc.jsonl"
+    assert watcher.parents_spill({"INVARACT_STRICT_SPILL": parents}) == parents
+    assert watcher.parents_spill({"INVARACT_STRICT_SPILL": "/tmp/named-otherwise"}) == "/tmp/named-otherwise"
+
+
+def test_a_folder_holding_everything_is_never_a_library_root(monkeypatch):
+    import sysconfig
+    monkeypatch.setattr(first_stage, "_roots", None)
+    monkeypatch.setattr(sysconfig, "get_paths", lambda *a: {"scripts": os.sep, "purelib": LIBRARY})
+    try:
+        roots = first_stage.library_roots()
+        assert os.sep not in roots and os.path.normcase(os.path.realpath(LIBRARY)) in roots
+        assert first_stage.is_own(os.path.realpath(__file__)) and not first_stage.is_own(os.path.join(LIBRARY, "os.py"))
+    finally:
+        first_stage._roots = None
+
+
+def test_a_users_own_installed_commands_are_libraries():
+    import sysconfig
+    try:
+        scripts = sysconfig.get_paths(sysconfig.get_preferred_scheme("user"))["scripts"]
+    except (AttributeError, KeyError):
+        pytest.skip("no user scheme")
+    assert not first_stage.is_own(os.path.join(os.path.realpath(scripts), "airflow"))
+
+
+@pytest.mark.skipif(not hasattr(sys, "monitoring"), reason="sys.monitoring is Python 3.12 and later")
+def test_with_every_monitoring_slot_taken_how_a_job_ended_is_told_as_before(monkeypatch):
+    taken = [tool for tool in (3, 4) if sys.monitoring.get_tool(tool) is None]
+    for tool in taken:
+        sys.monitoring.use_tool_id(tool, "someone else")
+    monkeypatch.setattr(_attach, "_main_returned", None)
+    try:
+        _attach.watch_main(test_with_every_monitoring_slot_taken_how_a_job_ended_is_told_as_before.__code__)
+        assert _attach._main_returned is None
+    finally:
+        for tool in taken:
+            sys.monitoring.free_tool_id(tool)

@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -502,3 +503,141 @@ def test_a_value_the_package_does_not_know_never_breaks_the_import(job):
     ran = job("import invaract\nprint('imported')\n", env={"INVARACT_STRICT": "enforce", "INVARACT_AUTO_RUN": "yes"})
     assert ran.stdout == "imported\n"
     assert ran.status == 2 and "INVARACT_AUTO_RUN must be true or false, not 'yes', so this job was not checked" in ran.said
+
+
+# --- what production throws at it: forks, exec, threads, failures as the job ends -------------------------------------------------
+
+FORK_IN_RUN = """\
+import os, sys
+import invaract
+
+orders = invaract.read('orders')
+pid = os.fork()
+if pid == 0:
+    try:
+        invaract.read('orders')
+    except RuntimeError as e:
+        print('child:', e)
+    sys.exit(0)  # through Python's own ending: its exit handlers run in the child too
+os.waitpid(pid, 0)
+invaract.write(orders, 'report')
+print('the job ended')
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs os.fork")
+@pytest.mark.parametrize("point", EVERY_POINT)
+def test_a_process_forked_from_the_jobs_run_never_settles_or_speaks_for_it(job, point):
+    ran = job(FORK_IN_RUN, point, env=AUTO)
+    assert ran.status == 0 and ran.published(), ran.said
+    assert "child: invaract.read cannot be called in a process forked from a job's run" in ran.stdout
+    assert ran.stdout.endswith("the job ended\n")
+    assert [e["eventType"] for e in ran.events] == ["CONTRACT_VALIDATION", "CODE_SCAN", "WRITE", "JOB_SUMMARY"]
+
+
+FORK_OUTSIDE_RUN = """\
+import os, sys
+
+pid = os.fork()
+if pid == 0:
+    open('child.csv', 'w').write('x')
+    sys.exit(0)
+os.waitpid(pid, 0)
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs os.fork")
+def test_what_a_process_forked_from_the_job_does_is_the_jobs(job):
+    ran = job(FORK_OUTSIDE_RUN, env={"INVARACT_REQUIRE_RUN": "enforce"})
+    assert ran.status == 2 and "opened no run" in ran.said
+    assert [f["target"] for f in ran.findings()] == ["child.csv"]
+    assert ran.findings()[0]["detail"].endswith("in a child process")
+
+
+EXECS = "import os, sys\nos.execv(sys.executable, [sys.executable, 'real.py'])\n"
+
+
+def test_a_job_that_replaces_itself_with_exec_is_still_the_job(job):
+    ran = job(EXECS, env={"INVARACT_REQUIRE_RUN": "enforce"}, files={"real.py": "open('report.csv', 'w').write('x')\n"})
+    assert ran.status == 2 and "real.py:1" in ran.said and "opened no run" in ran.said
+
+
+THREADS = """\
+import threading
+import invaract
+
+frames = [None, None]
+
+def read(i):
+    frames[i] = invaract.read('orders')
+
+threads = [threading.Thread(target=read, args=(i,)) for i in range(2)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+invaract.write(frames[0], 'report')
+print('read', sum(f is not None for f in frames))
+"""
+
+
+def test_threads_reading_at_once_share_the_one_run_invaract_opens(job):
+    ran = job(THREADS, env=AUTO)
+    assert (ran.status, ran.stdout) == (0, "read 2\n"), ran.said
+    assert ran.published() and len({e["job"]["runId"] for e in ran.events}) == 1
+
+
+def test_an_output_that_cannot_be_published_as_the_job_ends_fails_the_job(job):
+    # the output gains data after the job wrote it, so only publishing it, as the job ends, finds out
+    late = "import os\nos.makedirs('data/out/report')\nopen('data/out/report/late.parquet', 'w').close()\n"
+    contract = CONTRACT.replace("saveMode: overwrite", "saveMode: error")
+    ran = job(AMBIENT + late, env=AUTO, files={"contract.yaml": contract})
+    assert ran.status == 1 and ran.stdout == "the job ended\n", ran.said
+    assert "FileExistsError: Invaract published nothing: the save mode of" in ran.said
+    assert os.listdir(os.path.join(ran.folder, "data/out/report")) == ["late.parquet"]
+
+
+def test_exit_handlers_registered_before_invaract_still_run_when_it_ends_the_job(job):
+    source = ("import atexit\natexit.register(lambda: print('registered before invaract'))\nimport invaract\n"
+              "atexit.register(lambda: print('registered after invaract'))\nopen('report.csv', 'w').write('x')\n")
+    ran = job(source, "import", env={"INVARACT_REQUIRE_RUN": "enforce"})
+    assert ran.status == 2 and "opened no run" in ran.said
+    assert ran.stdout == "registered after invaract\nregistered before invaract\n", "each once, in Python's order"
+
+
+def test_a_child_report_cut_short_is_said_and_not_taken_for_nothing(job):
+    source = "import os\nopen(os.environ['INVARACT_STRICT_SPILL'], 'a').write('{\"path\": \"child.py\", \"li')\n"
+    ran = job(source, env={"INVARACT_REQUIRE_RUN": "enforce"})
+    assert ran.status == 2
+    assert "this job started processes whose reports could not be read and opened no run" in ran.said
+    assert "a child process's report could not be read (JSONDecodeError): what it did is not known" in ran.said
+
+
+def test_a_report_the_checker_does_not_answer_is_given_up_and_changes_nothing(job):
+    source = "import invaract._run\ninvaract._run.REPORT_SECONDS = 1\n" + FORGOT
+    stuck = f"{sys.executable} -c 'import time; time.sleep(120)'"
+    started = time.monotonic()
+    ran = job(source, env={"INVARACT_REQUIRE_RUN": "report", "INVARACT_CHECKER": stuck})
+    assert time.monotonic() - started < 60, "the job waited for a checker that never answered"
+    assert ran.status == 0 and ran.stdout == "the job exited\n"
+    assert "Invaract could not report this job (CheckNotRun: Invaract's checker stopped" in ran.said
+
+
+def test_the_launcher_runs_code_and_programs_in_a_main_module_of_their_own(job):
+    pickled = "import pickle\ndef f():\n    pass\nprint(len(pickle.dumps(f)) > 0)\n"
+    assert job("", "launcher", command=["-m", "invaract", "-c", pickled]).stdout == "True\n"
+    assert job(pickled, "launcher").stdout == "True\n"
+    at_exit = "import atexit, __main__\nNAME = 'mine'\natexit.register(lambda: print(__import__('__main__').NAME))\n"
+    assert job(at_exit, "launcher").stdout == "mine\n"
+
+
+def test_the_launcher_says_what_python_says_of_a_program_it_cannot_find(job):
+    missing = job("", "launcher", command=["-m", "invaract", "nowhere.py"])
+    assert missing.status == 2 and "can't open file" in missing.stderr and "nowhere.py" in missing.stderr
+    no_module = job("", "launcher", command=["-m", "invaract", "-m", "nowhere_at_all"])
+    assert no_module.status == 1 and "No module named nowhere_at_all" in no_module.stderr
+
+
+def test_the_report_of_a_launched_job_names_the_job(job):
+    ran = job(FORGOT, "launcher", env={"INVARACT_REQUIRE_RUN": "report"})
+    assert {e["job"]["name"] for e in ran.events} == {"job.py"}

@@ -683,7 +683,8 @@ Decorate the job's entry point with @invaract.job(), or use 'with invaract.run()
 
 Where `INVARACT_NOTIFY_CONFIG` names a sink, the same goes out as a `CODE_SCAN` event (phase `RUNTIME`) and a
 `JOB_SUMMARY`, with `invaract.run=none` among the job's attributes, so a platform can count the jobs that do not use
-Invaract yet. Nothing in it is judged. With `INVARACT_REQUIRE_RUN=enforce` the job ends with exit status 2 once its own
+Invaract yet. Nothing in it is judged, and a report that takes longer than two minutes is given up, so it never holds
+the job up. With `INVARACT_REQUIRE_RUN=enforce` the job ends with exit status 2 once its own
 exit handlers have run.
 
 A job that touches no data, or only what a marker or `INVARACT_STRICT_ALLOW` explains, is left alone: a script that
@@ -706,8 +707,8 @@ orders = invaract.read("orders")
 invaract.write(orders, "report")
 ```
 
-Its first `invaract.read` or `invaract.write` opens the run, by the contract `INVARACT_CONTRACT` names, and the run lasts
-until the process ends. Then, if the job completed, its outputs are published; if it failed, nothing is. Every event
+Its first `invaract.read` or `invaract.write` opens the run, by the contract `INVARACT_CONTRACT` names (threads calling at
+once share the one run), and the run lasts until the process ends. Then, if the job completed, its outputs are published; if it failed, nothing is. Every event
 says that Invaract opened the run, and how it attached (`startup` for the start-up hook, `launcher`, or `import`):
 
 ```json
@@ -715,6 +716,9 @@ says that Invaract opened the run, and how it attached (`startup` for the start-
 ```
 
 A key the platform sets itself in `INVARACT_JOB_ATTRIBUTES` is kept.
+
+If an output cannot be published as the job ends (one whose save mode is `error` gained data meanwhile), the job ends
+with exit status 1 and the error, as an annotated run's job would.
 
 A job that never calls the package is covered too. If the watch recorded anything it did (a read or write a marker
 explains included, so the exception is reported), or the scan of its code found something, a run opens as it ends and
@@ -796,6 +800,9 @@ included one always is.
 - A **script that starts other jobs** as separate Python processes: exclude it (`INVARACT_ATTACH_EXCLUDE=run_all.py`),
   so each job it starts is a job of its own. Otherwise they belong to it: a Python process started by a job reports
   what it does to that job, and has no run of its own unless it opens one.
+- A process **forked** from a job (`os.fork`, a `multiprocessing` worker) is part of the job too: what it does is
+  reported by the job, and it cannot read or write through the job's run, which stays the parent's. A job that
+  **replaces itself** (`os.execv`, as a wrapper script that starts the real job does) is still the same job.
 
 ### The start-up hook and the launcher
 
@@ -807,8 +814,9 @@ Invaract can attach to a job in three ways:
   `INVARACT_AUTO_RUN` is set, it does nothing else; when one is, it waits for Python to say which program it is running
   and attaches if that program is a job.
 - **The launcher**, for a platform that controls the start command: `python -m invaract orders_job.py [args]`, `python
-  -m invaract -m orders_jobs.daily [args]` or `python -m invaract -c "code"`. It runs the program as Python would, with
-  Invaract attached before its first line, and knows exactly how it ended. Prefer it wherever you set the start
+  -m invaract -m orders_jobs.daily [args]` or `python -m invaract -c "code"`. It runs the program as Python would (in its
+  own `__main__` module, with Python's `sys.argv` and `sys.path`), with Invaract attached before its first line, and
+  knows exactly how it ended. Prefer it wherever you set the start
   command.
 - **At import**, the only way before this release: Invaract attaches when the job imports `invaract`, and the watch
   starts then. Set `INVARACT_ATTACH=import` to keep that behaviour.
