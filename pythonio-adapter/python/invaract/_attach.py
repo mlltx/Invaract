@@ -28,8 +28,6 @@ from ._strict.watcher import SPILL, new_spill, owner, parents_spill
 point = None
 #: The main program, ``(kind, name)``, once known.
 program = None
-#: Whether this process is the root of a job (it settles the job when it ends).
-root = False
 #: How many runs this process opened.
 runs_opened = 0
 #: The refusal a run Invaract opened for the job met (``INVARACT_AUTO_RUN``): the job is refused for good.
@@ -40,51 +38,55 @@ _main_returned = None
 _launched = None
 _settled = False
 _lock = threading.RLock()
-#: The root's process and spill file: a process forked from the root is part of the job, never its root.
+#: The job's root process: the one it started as (``_begin``). A process forked from it is part of the job, never its root.
 _root_pid = None
-_root_spill = None
-#: The exit handlers registered after ours, when ours is not the first (attached at import or by the launcher).
+#: Whether the main program is a job's, once known (``is_job_process``).
+_job = None
+#: The exit handlers registered after ours, when ours is not the first (attached at import or by the launcher), as a set
+#: that keeps their order.
 _registered_after = None
 
 
 def attach():
     """Attaches this process, as the package is imported. A process the platform asked nothing of gets the watch alone,
     as before (``INVARACT_STRICT``); a job process is also settled when it ends."""
-    global point, program
+    global point, program, _job
     watcher = _strict.install_early()
     if point is not None or not first_stage.wanted():
         return
     if first_stage.program is not None:
-        point, program = "startup", first_stage.program
+        point, program, _job = "startup", first_stage.program, True  # the first stage attaches jobs only
     else:
         point, program = "import", _main_program()
-    if program is not None and not first_stage.is_job(*program):
-        return
+        if program is not None:
+            _job = first_stage.is_job(*program)
+            if not _job:
+                return
     _begin(watcher)
     if point == "import":
         _watch_main_from_stack()
 
 
 def launched(kind, name):
-    """The launcher's start: the program it is about to run is the job."""
-    global point, program
-    point, program = "launcher", (kind, name)
+    """The launcher's start: the program it is about to run is the job, whatever the patterns say (the platform named it)."""
+    global point, program, _job
+    point, program, _job = "launcher", (kind, name), True
     _begin(_state.watcher)
 
 
 def _begin(watcher):
     """What a job process needs: its spill file (if it is a root), the record of how it ends, and the handler that settles
     it. A process started by a job is a child: it only watches."""
-    global root, _root_pid, _root_spill
+    global _root_pid
     with _lock:
-        if root or parents_spill() is not None:
+        if _root_pid == os.getpid() or parents_spill() is not None:
             return
-        root, _root_pid = True, os.getpid()
+        _root_pid = os.getpid()
         if watcher is not None and not watcher._child:
             # a job that replaced itself (os.exec*) keeps the file its children already report to
             own = os.environ.get(SPILL)
-            watcher._spill = _root_spill = own if own and owner(own) == os.getpid() else new_spill()
-            os.environ[SPILL] = _root_spill
+            watcher._spill = _state.job_spill = own if own and owner(own) == os.getpid() else new_spill()
+            os.environ[SPILL] = _state.job_spill
             try:
                 _, strict, auto = asked()
             except ValueError:
@@ -102,32 +104,20 @@ def _register_at_exit():
     ends the process: one registered before ours (a library the job imported first, or the job's own) would never run.
     So the handlers registered from here on are kept, and ``_set_status`` runs the earlier ones before ending."""
     global _registered_after
-    _registered_after = []
-    original = atexit.register
+    _registered_after = {}
+    register, unregister = atexit.register, atexit.unregister
 
-    def register(func, *args, **kwargs):
-        _registered_after.append(func)
-        return original(func, *args, **kwargs)
+    def registering(func, *args, **kwargs):
+        _registered_after[func] = None
+        return register(func, *args, **kwargs)
 
-    register.__doc__, register.__wrapped__ = original.__doc__, original
-    original(at_exit)
-    atexit.register = register
+    def unregistering(func):
+        _registered_after.pop(func, None)
+        return unregister(func)
 
-
-def _forked():
-    """In a process forked from the job's root: part of the job, never its root. What it sees goes to the root."""
-    global root
-    if not root:
-        return
-    root = False
-    watcher = _state.watcher
-    if watcher is not None and _root_spill is not None:
-        watcher._child, watcher._kept, watcher._found, watcher._spill = True, True, {}, _root_spill
-        os.environ[SPILL] = _root_spill
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_forked)
+    registering.__wrapped__, unregistering.__wrapped__ = register, unregister
+    register(at_exit)
+    atexit.register, atexit.unregister = registering, unregistering
 
 
 def _main_program():
@@ -146,14 +136,17 @@ def _main_program():
 
 
 def is_job_process():
-    """Whether this process is the root of a job: attached, and its main program a job's (worked out now if it was not
-    known when it attached)."""
-    global program
-    if not root or os.getpid() != _root_pid:
+    """Whether this process is the root of a job: attached, and its main program a job's (worked out once, when it is
+    known: attached at import while ``-m`` was still finding the module, it was not)."""
+    global program, _job
+    if os.getpid() != _root_pid:
         return False
-    if program is None:
-        program = _main_program()
-    return program is not None and first_stage.is_job(*program)
+    if _job is None:
+        program = program or _main_program()
+        if program is None:
+            return False
+        _job = first_stage.is_job(*program)
+    return _job
 
 
 def asked(environ=None):
@@ -161,7 +154,7 @@ def asked(environ=None):
     (``_settings.strict_mode``), and whether Invaract opens the run (``INVARACT_AUTO_RUN``). ``ValueError`` names a value
     the package does not know, ``INVARACT_ATTACH``'s included."""
     environ = os.environ if environ is None else environ
-    if environ.get(_settings.ATTACH, "").strip().lower() not in ("", "startup", "import"):
+    if _settings.value(environ, _settings.ATTACH) not in ("", "startup", "import"):
         raise ValueError(f"{_settings.ATTACH} must be startup or import, not {environ[_settings.ATTACH]!r}")
     return (_settings.mode(environ, _settings.REQUIRE_RUN), _settings.strict_mode(environ),
             _settings.flag(environ, _settings.AUTO_RUN))
@@ -211,23 +204,24 @@ def implicit_run():
         _run._exit_status_on_check_not_run()
         raise CheckNotRun(str(e)) from None
     with _lock:
-        current = _run._current
-        if current is not None and current.implicit and current.ours():
+        current = _run.implicit_current()  # opened by another thread while this one waited
+        if current is not None:
             return current
         if not (auto and is_job_process()):
             return None
         return _open_implicit()
 
 
-def _open_implicit():
-    """Opens a run for the job, by the contract the platform names (or a dry run)."""
+def _open_implicit(scanned=None):
+    """Opens a run for the job, by the contract the platform names (or a dry run); ``scanned``, the scan of the job's code
+    already made as the process ends."""
     from . import _run
     _run._exit_status_on_check_not_run()
     settings = _settings.from_environment()
     if "contract" not in settings and settings.get("dryRun", "").strip().lower() != "true":
         raise CheckNotRun(f"Invaract opens this job's run ({_settings.AUTO_RUN}=true), and no contract says what the job may "
                           f"do: set {_settings.variable('contract')}, or {_settings.variable('dryRun')}=true to observe it")
-    run = _run.Run(implicit=True)
+    run = _run.Run(implicit=True, scanned=scanned)
     run.__enter__()
     return run
 
@@ -252,7 +246,7 @@ def attributes(given, run="auto"):
     """``jobAttributes`` for a run Invaract opened (``invaract.run=auto``) or for the report of a job that opened none
     (``none``): what the platform set, and those and where Invaract attached (``invaract.attach``), unless the platform set
     the keys itself."""
-    pairs = [p.strip() for p in (given or "").split(",") if p.strip()]
+    pairs = _codescan._split(given)
     keys = {p.split("=", 1)[0].strip() for p in pairs}
     for key, value in (("invaract.run", run), ("invaract.attach", point or "import")):
         if key not in keys:
@@ -324,16 +318,16 @@ def _watch_main_from_stack():
         frame = frame.f_back
 
 
-def launched_ended(completed, status):
-    """The launcher's account of how the program it ran ended: exact."""
+def launched_ended(status):
+    """The launcher's account of how the program it ran ended, as its exit status: exact."""
     global _launched
-    _launched = ("completed" if completed else "failed", status)
+    _launched = status
 
 
 def outcome():
     """How the job ended: ``completed``, ``failed`` (it raised, or exited with a status other than 0) or ``unknown``."""
     if _launched is not None:
-        return _launched[0]
+        return "completed" if _launched == 0 else "failed"
     if getattr(sys, "last_exc", None) is not None or getattr(sys, "last_value", None) is not None:
         return "failed"
     if _main_returned:
@@ -379,8 +373,9 @@ def _settle(watcher):
         return 2
     if refusal is not None:
         return 1
-    if _run._current is not None and _run._current.implicit and _run._current.ours():
-        return _close(_run._current)
+    run = _run.implicit_current()
+    if run is not None:
+        return _close(run)
     if auto:
         return _run_at_the_end(watcher)
     if runs_opened == 0:
@@ -405,21 +400,19 @@ def _close(run):
 
 def _run_at_the_end(watcher):
     """No run is open as the job ends, and Invaract opens runs for it: one that has something to say gets a run that says
-    it (what it did outside any run, or what the scan of its code found), and is judged by it."""
-    if not (watcher is not None and watcher.findings()) and not _scan_has_something():
-        return None
-    return _ending(lambda: _open_implicit().__exit__(None, None, None))
-
-
-def _scan_has_something():
+    it (what it did outside any run, or what the scan of its code found), and is judged by it. The scan made to find out
+    is the run's own: the job's code is scanned once."""
+    scanned, unscannable = None, False
     try:
         scanner = _codescan.from_environment()
-        if scanner is None:
-            return False
-        scanned = scanner.start()
-        return bool(scanned["findings"] or scanned["errors"])
+        if scanner is not None:
+            scanned = (scanner, scanner.start())
     except CheckNotRun:
-        return True  # said, and judged, by the run that opens for it
+        unscannable = True  # said, and judged, by the run that opens for it
+    found = watcher is not None and watcher.seen()[0]
+    if not (found or unscannable or (scanned and (scanned[1]["findings"] or scanned[1]["errors"]))):
+        return None
+    return _ending(lambda: _open_implicit(scanned).__exit__(None, None, None))
 
 
 def _ending(action):
@@ -465,9 +458,10 @@ def _no_run(watcher, require, strict):
         _say(f"Invaract: this job opened no run and could not be watched (is invaract-lint installed?), so nothing checked "
              f"it ({_settings.REQUIRE_RUN}={require}).", [], _HOW_TO_OPEN_A_RUN)
     else:
-        unexplained, errors = watcher.unexplained(), watcher.errors()
-        if not unexplained and not errors:
+        outside = _outside_runs(watcher)
+        if outside is None:
             return None
+        unexplained, errors = outside
         did = "read or wrote data" if unexplained else "started processes whose reports could not be read"
         _say(f"Invaract: this job {did} and opened no run, so nothing checked it ({_settings.REQUIRE_RUN}={require}).",
              unexplained, _HOW_TO_OPEN_A_RUN, errors)
@@ -477,14 +471,21 @@ def _no_run(watcher, require, strict):
 
 def _after_runs(watcher, strict):
     """What the job did after its last run ended: reported, and, enforced, the job ends refused."""
-    if watcher is None:
+    outside = _outside_runs(watcher) if watcher is not None else None
+    if outside is None:
         return None
-    unexplained, errors = watcher.unexplained(), watcher.errors()
-    if not unexplained and not errors:
-        return None
+    unexplained, errors = outside
     _say(f"Invaract: this job read or wrote data after its run ended, so nothing checked it ({_settings.STRICT}={strict}).",
          unexplained, None, errors)
     return 1 if strict == "enforce" else None
+
+
+def _outside_runs(watcher):
+    """What the watch saw that nothing explains, and what it could not do: ``(unexplained, errors)``, or ``None`` for
+    neither."""
+    findings, errors = watcher.seen()
+    unexplained = [finding for finding in findings if not finding.allowed]
+    return (unexplained, errors) if unexplained or errors else None
 
 
 def _report_without_run(watcher):
@@ -495,7 +496,7 @@ def _report_without_run(watcher):
         from . import _run
         _run.report_without_run(watcher.everything())
     except Exception as e:  # noqa: BLE001 - the job's ending is decided already
-        sys.stderr.write(f"Invaract could not report this job ({type(e).__name__}: {e})\n")
+        _said_only(f"Invaract could not report this job ({type(e).__name__}: {e})\n")
 
 
 _HOW_TO_OPEN_A_RUN = "Decorate the job's entry point with @invaract.job(), or use 'with invaract.run():'."
@@ -508,11 +509,7 @@ def _say(headline, findings, footer=None, errors=()):
     lines += [f"  {where}: {message}" for where, message in errors]
     if footer:
         lines.append(footer)
-    try:
-        sys.stderr.write("\n".join(lines) + "\n")
-        sys.stderr.flush()
-    except Exception:  # noqa: BLE001 - nowhere left to say it
-        pass
+    _said_only("\n".join(lines) + "\n")
 
 
 def _remove_spill(watcher):
@@ -530,8 +527,6 @@ def _set_status(status):
     once what is buffered is written."""
     if status is None or outcome() == "failed":
         return
-    if _launched is not None and _launched[1] not in (0, None):
-        return
     try:
         _run_earlier_exit_handlers()
         logging.shutdown()
@@ -546,7 +541,7 @@ def _run_earlier_exit_handlers():
     """Runs the exit handlers registered before ours, which ``os._exit`` would skip; those registered after it have run."""
     if _registered_after is None or not hasattr(atexit, "_run_exitfuncs"):
         return  # registered first (start-up attach): nothing runs after it
-    atexit.register = getattr(atexit.register, "__wrapped__", atexit.register)
+    atexit.register, atexit.unregister = (getattr(f, "__wrapped__", f) for f in (atexit.register, atexit.unregister))
     for func in [*_registered_after, at_exit]:
         atexit.unregister(func)
     try:

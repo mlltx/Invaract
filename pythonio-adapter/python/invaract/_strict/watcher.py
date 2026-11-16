@@ -111,7 +111,7 @@ class Watcher:
         self._outer, _state.watcher = _state.watcher, self
         owned = getattr(self._outer, "_spill", None) if self._outer is not None and not self._outer._child else None
         # a job process attached at start-up leaves one file for its whole life; else the run has its own
-        self._spill = owned or os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{run.run_id}.jsonl")
+        self._spill = owned or new_spill(run.run_id)
         self._outer_spill = os.environ.get(SPILL)
         os.environ[SPILL] = self._spill
         with _state.working():
@@ -142,7 +142,10 @@ class Watcher:
                 return None
             for entry in unsent:
                 entry.sent = True
-            return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in unsent], self._errors, elapsed)
+            return self._scan(unsent, elapsed)
+
+    def _scan(self, entries, elapsed):
+        return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in entries], self._errors, elapsed)
 
     def _check_it_was_watched_throughout(self, replaced):
         """A job that switched the watch off, or put a library's own function back in a wrapper's place, was not watched
@@ -158,41 +161,39 @@ class Watcher:
                                              f"checked ({STRICT}=enforce)")
 
     def in_forked_child(self):
-        """This process is a fork of the watched one. Forked while a run is open, it is part of that run: what it sees from
-        here is left for its parent. Forked outside a run (a server forking its workers), it is a job of its own: it keeps
-        what it sees, and children it starts report to it."""
+        """This process is a fork of the watched one, and what it is decides where what it sees goes:
+
+        - forked while a run is open, it is part of that run: what it sees is left for its parent;
+        - forked outside a run from a job's root (``_state.job_spill``), it is part of the job: what it sees goes to the
+          root as it is seen (a forked worker often ends with ``os._exit``), and is kept for a run it opens itself;
+        - forked outside a run otherwise (a server forking its workers), it is a job of its own: it keeps what it sees,
+          and children it starts report to it."""
         self._lock = threading.RLock()
         if self._run is not None:
             self._child = True
             self._found = {}
+        elif _state.job_spill is not None:
+            self._child = self._kept = True
+            self._found, self._spill = {}, _state.job_spill
+            os.environ[SPILL] = _state.job_spill
         elif not self._child:
             self._found = {}
             if self._spill is not None:
                 self._spill = new_spill()
                 os.environ[SPILL] = self._spill
 
-    def findings(self):
-        """Every finding kept, children's included."""
+    def seen(self):
+        """Every finding kept, and what the watch could not do (``(where, message)``: a child's report that could not be
+        read, for one), children's included."""
         with self._lock:
             self._gather()
-            return [entry.finding for entry in self._found.values()]
+            return [entry.finding for entry in self._found.values()], list(self._errors)
 
     def everything(self):
         """Every finding kept, children's included, as one ``scan`` (the report of a job that opened no run)."""
         with self._lock:
             self._gather()
-            return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in self._found.values()],
-                                  self._errors, 0)
-
-    def errors(self):
-        """What the watch could not do, children's reports that could not be read included, as ``(where, message)``."""
-        with self._lock:
-            self._gather()
-            return list(self._errors)
-
-    def unexplained(self):
-        """The findings no marker and no ``INVARACT_STRICT_ALLOW`` pattern explains, children's included."""
-        return [finding for finding in self.findings() if not finding.allowed]
+            return self._scan(self._found.values(), 0)
 
     def _take_over(self, earlier):
         """Makes what an earlier watcher of this process saw before the run opened this run's."""
@@ -372,11 +373,11 @@ def _named(seen):
     return names
 
 
-def new_spill():
-    """A new file for the Python processes a job starts to leave what they see in. Its name starts with the process that
-    owns it (``owner``)."""
+def new_spill(name=None):
+    """A new file for the Python processes a job starts to leave what they see in, named ``name`` (a run's id) or at
+    random. Its name starts with the process that owns it (``owner``), and this is the one place it is made."""
     import uuid
-    return os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{uuid.uuid4().hex[:16]}.jsonl")
+    return os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{name or uuid.uuid4().hex[:16]}.jsonl")
 
 
 def parents_spill(environ=None):

@@ -641,3 +641,8 @@ def test_the_launcher_says_what_python_says_of_a_program_it_cannot_find(job):
 def test_the_report_of_a_launched_job_names_the_job(job):
     ran = job(FORGOT, "launcher", env={"INVARACT_REQUIRE_RUN": "report"})
     assert {e["job"]["name"] for e in ran.events} == {"job.py"}
+
+
+def test_what_the_launcher_starts_is_a_job_whatever_the_patterns_say(job):
+    ran = job(FORGOT, "launcher", env={"INVARACT_REQUIRE_RUN": "enforce", "INVARACT_ATTACH_EXCLUDE": "*"})
+    assert ran.status == 2 and "opened no run" in ran.said

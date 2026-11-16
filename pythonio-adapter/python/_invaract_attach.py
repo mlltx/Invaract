@@ -12,7 +12,6 @@ This module is the first stage and must stay cheap and safe: it imports only the
 have nothing to do with Invaract (``pip``, a test runner), and never lets a fault of its own stop Python from starting.
 Its rules for which processes are jobs are the package's too (``invaract._attach`` imports them from here).
 """
-import fnmatch
 import os
 import sys
 
@@ -26,13 +25,11 @@ PROGRAM_EVENTS = {"cpython.run_file": "script", "cpython.run_module": "module", 
                   "cpython.run_stdin": "stdin"}
 #: The events of an interactive session: no job.
 INTERACTIVE_EVENTS = ("cpython.run_interactivehook", "cpython.run_startup")
-#: The launcher (``python -m invaract job.py``) attaches by itself.
+#: The launcher (``python -m invaract job.py``) attaches by itself, and what it starts is always a job.
 LAUNCHER = "invaract"
 
 #: What the main program is, once Python has said and it is a job: ``(kind, name)``; ``None`` otherwise.
 program = None
-#: The main program's code object, once Python has run it (for telling how the job ended; ``invaract._attach``).
-main_code = None
 #: Whether ``at_startup`` registered the end-of-process handler (registered first, it runs last).
 handles_exit = False
 
@@ -117,7 +114,7 @@ def _attach(found):
 def _saw_main_code(args):
     """The first code Python runs whose file is the main program's is the main program: kept, so that how it ended can be
     told (``invaract._attach``)."""
-    global main_code, _main_file
+    global _main_file
     code = args[0] if args else None
     filename = getattr(code, "co_filename", None)
     if not filename or getattr(code, "co_name", None) != "<module>":
@@ -130,7 +127,7 @@ def _saw_main_code(args):
     if filename != expected and (filename.startswith("<") or os.path.basename(filename) != os.path.basename(expected)
                                  or os.path.realpath(filename) != expected):
         return  # the cheap comparisons first: this runs for every module the job imports until its program starts
-    main_code, _main_file = code, None
+    _main_file = None
     try:
         sys.modules["invaract._attach"].watch_main(code)
     except Exception:  # noqa: BLE001 - how the job ended is then told as on Python 3.11: nothing else depends on it
@@ -157,17 +154,22 @@ def _failed(error):
 def is_job(kind, name, environ=None):
     """Whether a main program counts as a job: ``INVARACT_ATTACH_EXCLUDE`` first, then ``INVARACT_ATTACH_INCLUDE``, then the
     default: a script or a module (by its top-level package) that is the job's own code, and code given on the command line
-    or standard input. The launcher's program always counts; an interactive session never does."""
+    or standard input. An interactive session never does. (What the launcher starts always counts: ``invaract._attach``.)"""
     environ = os.environ if environ is None else environ
-    if kind == "launcher":
-        return True
     if kind not in ("script", "module", "command", "stdin"):
         return False
-    names = program_names(kind, name)
-    if any(fnmatch.fnmatch(n, p) for n in names for p in _patterns(environ, EXCLUDE)):
-        return False
-    if any(fnmatch.fnmatch(n, p) for n in names for p in _patterns(environ, INCLUDE)):
-        return True
+    excluded, included = _patterns(environ, EXCLUDE), _patterns(environ, INCLUDE)
+    if excluded or included:
+        import fnmatch  # only now: it imports re, which most processes of the environment never need
+        names = program_names(kind, name)
+
+        def matched(patterns):
+            return any(fnmatch.fnmatch(n, p) for n in names for p in patterns)
+
+        if matched(excluded):
+            return False
+        if matched(included):
+            return True
     if kind == "script":
         return name is not None and is_own(os.path.realpath(name))
     if kind == "module":
@@ -179,7 +181,7 @@ def is_job(kind, name, environ=None):
 def program_names(kind, name):
     """The names a pattern may match a main program by: a script's full path, its path as given and its file name; a
     module's dotted name; ``-c`` for code on the command line; ``-`` for standard input."""
-    if kind in ("script", "launcher") and name:
+    if kind == "script" and name:
         return [os.path.realpath(name), name, os.path.basename(name)]
     if kind == "module" and name:
         return [name]
@@ -209,8 +211,13 @@ def _module_file(name):
 def is_own(path):
     """Whether a file is the job's own: not Python's, not an installed package's, and not a command installed beside the
     environment's packages or the user's (``pytest``, ``pip``: a library's entry point)."""
-    path = os.path.normcase(path)
-    return not any(path == root or path.startswith(root.rstrip(os.sep) + os.sep) for root in library_roots())
+    return not any(inside(path, root) for root in library_roots())
+
+
+def inside(path, root):
+    """Whether ``path`` is ``root`` or under it, compared as the file system compares names."""
+    path, root = os.path.normcase(path), os.path.normcase(root)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 _roots = None

@@ -26,17 +26,22 @@ LIBRARIES = ("pyarrow", "pandas", "polars", "duckdb", "deltalake", "pyiceberg", 
 #: The save mode of a write whose contract declares none: what the pandas or Polars call it replaces does.
 DEFAULT_SAVE_MODE = "overwrite"
 
+#: The run open in this process, once it is open (``current``).
 _current = None
+#: The run opening or open in this process: runs do not nest.
+_claimed = None
 _starting = threading.Lock()
 
 
 class Run:
     """One run of a job: a context manager (``with invaract.run():``), or what ``@invaract.job`` wraps the entry point in."""
 
-    def __init__(self, contract=None, name=None, checking=False, implicit=False):
+    def __init__(self, contract=None, name=None, checking=False, implicit=False, scanned=None):
         self._default_contract = contract
         #: a run Invaract opened for the job (INVARACT_AUTO_RUN), which lasts until the process ends
         self.implicit = implicit
+        #: the job's code, already scanned as the process ends: ``(scanner, its start request)`` (``_attach``)
+        self._scanned = scanned
         #: a check (``invaract.check``): its own checker, no events, nothing staged or published, and no run of its own
         self.checking = checking
         self.name = name or _script_name()
@@ -58,18 +63,18 @@ class Run:
     # the run's beginning and end
 
     def __enter__(self):
-        global _current
-        if not self.checking:
-            with _starting:
-                if _current is not None and _current.implicit and _current.ours():
-                    raise CheckNotRun("this job reads or writes through Invaract outside its own run and then opens one: move "
-                                      "those calls inside the run, or remove the annotation and let the platform's run "
-                                      "(INVARACT_AUTO_RUN) cover the whole job")
-                if _current is not None and _current.ours():
-                    raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
-                _current = self
+        global _claimed, _current
         #: the process the run is open in: a process forked from it shares its checker, and must never speak to it
         self._pid = os.getpid()
+        if not self.checking:
+            with _starting:
+                if _claimed is not None and _claimed.ours():
+                    if _claimed.implicit:
+                        raise CheckNotRun("this job reads or writes through Invaract outside its own run and then opens one: "
+                                          "move those calls inside the run, or remove the annotation and let the platform's "
+                                          "run (INVARACT_AUTO_RUN) cover the whole job")
+                    raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
+                _claimed = self
         try:
             _exit_status_on_check_not_run()
             if not self.checking:
@@ -77,7 +82,7 @@ class Run:
                 _attach.opened()
             settings = from_environment(self._default_contract)
             # a check judges one frame, not the job's code
-            self._scanner = None if self.checking else _codescan.from_environment()
+            self._scanner, scanned = self._scanned or (None if self.checking else _codescan.from_environment(), None)
             watcher = None if self.checking else _strict.from_environment()
             if self.checking:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
@@ -95,7 +100,7 @@ class Run:
             self.mode, self.contract = reply["mode"], reply.get("contract")
             if self._scanner is not None:
                 # before the job reads anything: a refusal here stops it before it starts
-                self._ask(self._scanner.start())
+                self._ask(scanned or self._scanner.start())
             if watcher is not None:
                 # from here until the job returns, what it does is watched
                 self._watcher = watcher
@@ -103,6 +108,8 @@ class Run:
         except BaseException:
             self._end_unpublished()
             raise
+        if not self.checking:
+            _current = self  # only now: a thread reading meanwhile waits for it (``_attach.implicit_run``) or has none
         return self
 
     def ours(self):
@@ -165,11 +172,13 @@ class Run:
         self._checker.close()
 
     def _release(self):
-        global _current
+        global _current, _claimed
         if self._watcher is not None:
             self._watcher.stop()
         if _current is self:
             _current = None
+        if _claimed is self:
+            _claimed = None
 
     # reads and writes
 
@@ -482,13 +491,19 @@ def _exit_status_on_check_not_run():
     sys.excepthook = hook
 
 
+def implicit_current():
+    """The run Invaract opened for the job, when one is open in this process."""
+    run = _current
+    return run if run is not None and run.implicit and run.ours() else None
+
+
 def current(verb):
     """The run in progress, for ``invaract.read`` and ``invaract.write``; with ``INVARACT_AUTO_RUN=true``, the one Invaract
     opens for the job when it has none."""
     run = _current
-    if run is not None and run.ours() and not run.implicit:
+    if run is not None and run.ours():
         return run
-    if run is not None and not run.ours():
+    if run is not None:
         raise RuntimeError(f"invaract.{verb} cannot be called in a process forked from a job's run: the run is the parent "
                            "process's. Read and write in the parent, or open a run of the forked process's own")
     opened = _attach.implicit_run()

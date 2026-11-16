@@ -110,8 +110,9 @@ private[pythonioadapter] final class Run {
     case (_, NotOpen)                            => notChecked("the run must be opened first")
     case (_: Request.Open, _: Opened)            => notChecked("the run is already open")
     case (s: Request.Scan, run: Opened)          => scan(s, run)
-    case (f: Request.Finish, run: Opened)        => finish(f, run)
+    case (_: Request.Finish, run: Opened) if run.observing => observed(run)
     case (_, run: Opened) if run.observing       => notChecked("a report of a job that opened no run takes only scans")
+    case (f: Request.Finish, run: Opened)        => finish(f, run)
     case (r: Request.Read, run: Opened)          => read(r, run)
     case (w: Request.Write, run: Opened)         => write(w, run)
     case (w: Request.Written, run: Opened)       => stage(w, run)
@@ -294,7 +295,7 @@ private[pythonioadapter] final class Run {
       run.contract match {
         // a job that failed publishes nothing, so there is nothing to hold its outputs to
         case Some(c) => if (f.completed) VerificationPipeline.requireOutputsWritten(c, written.toList, JobPlan, run.sink, run.job.runId, Some(run.job))
-        case None    => if (!run.observing) DryRunReporting.summary(run.sink, logger, run.job, drafts, run.contractMetadata)
+        case None    => DryRunReporting.summary(run.sink, logger, run.job, drafts, run.contractMetadata)
       }
     } catch {
       case NonFatal(e) =>
@@ -303,6 +304,13 @@ private[pythonioadapter] final class Run {
     }
     if (f.completed) state = Publishing(run) else end(run)
     Map("ok" -> true, "publish" -> f.completed)
+  }
+
+  /** The end of a report of a job that opened no run: its summary, and nothing to publish, however the job ended. */
+  private def observed(run: Opened): Map[String, Any] = {
+    state = Finished
+    end(run)
+    Map("ok" -> true, "publish" -> false)
   }
 
   /** What the package put in place: a `WriteEvent` for each output, then the run's end. */

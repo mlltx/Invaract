@@ -17,8 +17,6 @@ import types
 from . import _attach
 
 USAGE = "usage: python -m invaract (script.py | -m module | -c code) [args...]"
-#: This module, kept while the job's program takes its place as ``__main__``.
-_launcher = sys.modules.get(__name__)
 
 
 def main(argv):
@@ -37,29 +35,30 @@ def main(argv):
             sys.stderr.write(f"{sys.executable}: can't open file {os.path.abspath(target)!r}: [Errno 2] No such file or directory\n")
             return 2
     sys.argv = [target if kind == "script" else argv[0]] + rest
+    source = kind == "script" and _is_source(target)
     if kind != "script":
         sys.path[0] = os.getcwd()
-    elif _is_source(target):
+    elif source:
         sys.path[0] = os.path.dirname(os.path.realpath(target))  # the script's folder, its links followed, as Python does
     else:
         sys.path[0] = os.path.abspath(target)  # a folder or zip file holding __main__.py is itself on the path
     _attach.launched(kind, target if kind != "command" else None)
     try:
-        _run(kind, target)
+        _run(kind, target, source)
     except SystemExit as e:
         status = _status(e.code)
-        _attach.launched_ended(status == 0, status)
+        _attach.launched_ended(status)
         raise
     except BaseException:
-        _attach.launched_ended(False, 1)
+        _attach.launched_ended(1)
         raise
-    _attach.launched_ended(True, 0)
+    _attach.launched_ended(0)
     return 0
 
 
-def _run(kind, target):
+def _run(kind, target, source):
     """Runs the program as Python would, in a module of its own that stays ``__main__`` after it returns (its exit
-    handlers, ``pickle`` and the job's name all find it there)."""
+    handlers, ``pickle`` and the job's name all find it there). ``source``: a script file, not a folder or zip file."""
     program = types.ModuleType("__main__")
     program.__builtins__ = builtins
     sys.modules["__main__"] = program
@@ -67,7 +66,7 @@ def _run(kind, target):
         runpy._run_module_as_main(target)  # what python -m runs: in __main__, and says "No module named" as it does
     elif kind == "command":
         exec(compile(target, "<string>", "exec"), program.__dict__)  # noqa: S102 - python -c
-    elif _is_source(target):
+    elif source:
         program.__file__, program.__cached__ = target, None
         program.__loader__ = importlib.machinery.SourceFileLoader("__main__", target)
         with io.open_code(target) as source:

@@ -58,7 +58,7 @@ def test_a_module_is_a_job_when_its_package_is_the_jobs_own(tmp_path, monkeypatc
     assert not first_stage.is_job("module", "sys", {}), "a built-in module is no file of the job's"
 
 
-@pytest.mark.parametrize("kind,expected", [("command", True), ("stdin", True), ("launcher", True), ("interactive", False), ("other", False)])
+@pytest.mark.parametrize("kind,expected", [("command", True), ("stdin", True), ("interactive", False), ("other", False)])
 def test_code_given_on_the_command_line_or_standard_input_is_a_job(kind, expected):
     assert first_stage.is_job(kind, None, {}) is expected
 
@@ -72,7 +72,6 @@ def test_code_given_on_the_command_line_or_standard_input_is_a_job(kind, expecte
     ("command", None, {"INVARACT_ATTACH_EXCLUDE": "-", "INVARACT_ATTACH_INCLUDE": "x"}, True),
     ("module", "pytest", {"INVARACT_ATTACH_INCLUDE": "pytest", "INVARACT_ATTACH_EXCLUDE": "pytest"}, False),
     ("module", "pytest", {"INVARACT_ATTACH_INCLUDE": " , pytest , "}, True),
-    ("launcher", "job.py", {"INVARACT_ATTACH_EXCLUDE": "*"}, True),
 ])
 def test_the_platform_widens_and_narrows_what_counts_and_exclude_wins(kind, name, environ, expected):
     assert first_stage.is_job(kind, name, environ) is expected
@@ -151,7 +150,7 @@ def ending(monkeypatch):
     ({"exits": [3], "returned": True}, "completed"),           # an exit caught by the job, which then returned
     ({"exits": [0], "returned": False}, "completed"),
     ({"failed": True, "returned": True}, "failed"),
-    ({"launched": ("completed", 0), "failed": True}, "completed"), ({"launched": ("failed", 4)}, "failed"),
+    ({"launched": 0, "failed": True}, "completed"), ({"launched": 4}, "failed"), ({"launched": 1, "returned": True}, "failed"),
 ])
 def test_how_the_job_ended(ending, kwargs, expected):
     assert ending(**kwargs) == expected
@@ -167,7 +166,6 @@ def test_only_the_main_threads_exits_are_how_the_job_ended(monkeypatch):
     recording(0)
     recording()
     assert calls == [5, 0, None] and _attach._exit_codes == [0, None]
-    assert repr(recording) == repr(calls.append).replace("append", "append") or True
 
 
 def test_a_recorded_exit_looks_like_the_one_it_records():
@@ -206,12 +204,9 @@ def test_a_folder_holding_everything_is_never_a_library_root(monkeypatch):
     import sysconfig
     monkeypatch.setattr(first_stage, "_roots", None)
     monkeypatch.setattr(sysconfig, "get_paths", lambda *a: {"scripts": os.sep, "purelib": LIBRARY})
-    try:
-        roots = first_stage.library_roots()
-        assert os.sep not in roots and os.path.normcase(os.path.realpath(LIBRARY)) in roots
-        assert first_stage.is_own(os.path.realpath(__file__)) and not first_stage.is_own(os.path.realpath(os.path.join(LIBRARY, "os.py")))
-    finally:
-        first_stage._roots = None
+    roots = first_stage.library_roots()
+    assert os.sep not in roots and os.path.normcase(os.path.realpath(LIBRARY)) in roots
+    assert first_stage.is_own(os.path.realpath(__file__)) and not first_stage.is_own(os.path.realpath(os.path.join(LIBRARY, "os.py")))
 
 
 def test_a_users_own_installed_commands_are_libraries():

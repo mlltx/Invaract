@@ -14,16 +14,14 @@ invaract-lint is an optional dependency (``pip install invaract[lint]``): a run 
 never let through unscanned.
 """
 import os
-import site
 import sys
-import sysconfig
 import time
 
-from . import _protocol
+import _invaract_attach as first_stage
+
+from . import _protocol, _settings
 from ._settings import LINT, LINT_EXCLUDE, LINT_PATHS
 from .errors import CheckNotRun
-
-MODES = ("off", "report", "enforce")
 
 #: Modules Python loads at start-up from wherever the environment keeps them (Debian's is in /etc): the environment's, not the
 #: job's.
@@ -33,9 +31,10 @@ STARTUP_HOOKS = ("sitecustomize", "usercustomize")
 def from_environment(environ=None):
     """The scanner the environment asks for, or ``None`` when ``INVARACT_LINT`` is off or not set."""
     environ = os.environ if environ is None else environ
-    mode = environ.get(LINT, "").strip().lower() or "off"
-    if mode not in MODES:
-        raise CheckNotRun(f"{LINT} must be off, report or enforce, not {environ[LINT]!r}")
+    try:
+        mode = _settings.mode(environ, LINT)
+    except ValueError as e:
+        raise CheckNotRun(str(e)) from None
     if mode == "off":
         return None
     try:
@@ -97,24 +96,17 @@ def job_files():
 
 
 def _not_the_jobs():
-    """Where code that is not the job's lives: Python's standard library, every installed package's folder, and this
-    package and invaract-lint wherever they are installed from."""
-    roots = {sysconfig.get_paths().get(key) for key in ("stdlib", "platstdlib", "purelib", "platlib")}
-    roots.update(site.getsitepackages() if hasattr(site, "getsitepackages") else [])
-    roots.add(site.getusersitepackages() if hasattr(site, "getusersitepackages") else None)
-    roots.add(os.path.dirname(os.path.abspath(__file__)))
-    # the start-up hook's first stage, which stands beside the package rather than in it
-    first_stage = sys.modules.get("_invaract_attach")
-    if first_stage is not None and getattr(first_stage, "__file__", None):
-        roots.add(os.path.abspath(first_stage.__file__))
+    """Where code that is not the job's lives: where Python and installed packages and commands live (the same folders
+    that decide which programs are jobs, ``_invaract_attach.library_roots``), and this package, its start-up hook's first
+    stage beside it, and invaract-lint, wherever they are installed from."""
+    roots = {os.path.dirname(os.path.abspath(__file__)), os.path.abspath(first_stage.__file__)}
     lint = sys.modules.get("invaract_lint")
     if lint is not None and getattr(lint, "__file__", None):
         roots.add(os.path.dirname(os.path.abspath(lint.__file__)))
-    return [os.path.realpath(r) for r in roots if r]
+    return first_stage.library_roots() + [os.path.normcase(os.path.realpath(r)) for r in roots]
 
 
-def _inside(path, root):
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+_inside = first_stage.inside
 
 
 def _shown(path):

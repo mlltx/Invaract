@@ -176,9 +176,9 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
     assert(List("eventType", "status", "phase", "mode", "refused").map(scanned.get) == List("CODE_SCAN", "FINDINGS", "RUNTIME", "ENFORCE", false))
     assert(scanned.get("contract") == null && String.valueOf(summary.get("eventType")) == "JOB_SUMMARY")
     assert(map(map(scanned.get("job"))("attributes")) == Map("invaract.run" -> "none", "invaract.attach" -> "startup"))
-    // only scans and the finish follow its opening, and it is no check
-    val List(_, opened, read, _) = assertCase("observe-takes-only-scans").replies.map(map)
-    assert(opened("mode") == "observe" && read("status") == "not-checked")
+    // only scans and the finish follow its opening, it is no check, and it never publishes, however the job ended
+    val List(_, opened, read, finished) = assertCase("observe-takes-only-scans").replies.map(map)
+    assert(opened("mode") == "observe" && read("status") == "not-checked" && finished("publish") == false)
   }
 
   test(StrictMode) {

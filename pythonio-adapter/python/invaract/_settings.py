@@ -11,7 +11,8 @@ the two differ.
 import os
 import re
 
-from _invaract_attach import ATTACH, AUTO_RUN, EXCLUDE, FAILED, INCLUDE, REQUIRE_RUN  # noqa: F401 - the package's own variables
+from _invaract_attach import ATTACH, AUTO_RUN, FAILED, REQUIRE_RUN  # noqa: F401 - the package's own variables
+from _invaract_attach import _value as value
 
 # The engine-neutral settings, by their neutral names, each with its help text.
 SETTINGS = {
@@ -63,26 +64,26 @@ MODES = ("off", "report", "enforce")
 
 def mode(environ, name, default="off"):
     """The value of one of the package's ``off``/``report``/``enforce`` variables, or ``ValueError`` naming it."""
-    value = environ.get(name, "").strip().lower() or default
-    if value not in MODES:
+    given = value(environ, name) or default
+    if given not in MODES:
         raise ValueError(f"{name} must be off, report or enforce, not {environ[name]!r}")
-    return value
+    return given
 
 
 def flag(environ, name):
     """The value of one of the package's ``true``/``false`` variables, or ``ValueError`` naming it."""
-    value = environ.get(name, "").strip().lower() or "false"
-    if value not in ("true", "false"):
+    given = value(environ, name) or "false"
+    if given not in ("true", "false"):
         raise ValueError(f"{name} must be true or false, not {environ[name]!r}")
-    return value == "true"
+    return given == "true"
 
 
 def strict_mode(environ):
     """How the job is watched (``_strict``): ``INVARACT_STRICT`` as set; unset, ``report`` when the platform requires a run
     or opens one for the job (both need to know what the job did), else ``off``."""
-    if environ.get(STRICT, "").strip():
+    if value(environ, STRICT):
         return mode(environ, STRICT)
-    implied = environ.get(REQUIRE_RUN, "").strip().lower() in ("report", "enforce") or environ.get(AUTO_RUN, "").strip().lower() == "true"
+    implied = value(environ, REQUIRE_RUN) in ("report", "enforce") or value(environ, AUTO_RUN) == "true"
     return "report" if implied else "off"
 
 
