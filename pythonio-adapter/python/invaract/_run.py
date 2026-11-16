@@ -33,12 +33,14 @@ _starting = threading.Lock()
 class Run:
     """One run of a job: a context manager (``with invaract.run():``), or what ``@invaract.job`` wraps the entry point in."""
 
-    def __init__(self, contract=None, name=None, checking=False):
+    def __init__(self, contract=None, name=None, checking=False, implicit=False):
         self._default_contract = contract
+        #: a run Invaract opened for the job (INVARACT_AUTO_RUN), which lasts until the process ends
+        self.implicit = implicit
         #: a check (``invaract.check``): its own checker, no events, nothing staged or published, and no run of its own
         self.checking = checking
         self.name = name or _script_name()
-        self.run_id = uuid.uuid4().hex[:16]
+        self.run_id = _run_id()
         self.mode = None
         self.contract = None
         self._failure = None
@@ -59,6 +61,10 @@ class Run:
         global _current
         if not self.checking:
             with _starting:
+                if _current is not None and _current.implicit:
+                    raise CheckNotRun("this job reads or writes through Invaract outside its own run and then opens one: move "
+                                      "those calls inside the run, or remove the annotation and let the platform's run "
+                                      "(INVARACT_AUTO_RUN) cover the whole job")
                 if _current is not None:
                     raise RuntimeError("an Invaract run is already in progress in this process; runs do not nest")
                 _current = self
@@ -74,6 +80,9 @@ class Run:
             if self.checking:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
                 settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
+            if self.implicit:
+                # every event says the platform opened this run, and how Invaract attached to the job
+                settings["jobAttributes"] = _attach.attributes(settings.get("jobAttributes"))
             self._checker = Checker(command())
             reply = self._ask(_protocol.open_run(settings, self._job(), check=self.checking))
             if reply.get("protocol") != _protocol.VERSION:
@@ -280,7 +289,7 @@ class Run:
     def _job(self):
         """The job, as every event names it (``job``): its name, this run's id, the Python version, and the installed version
         of each data library it could use (``LIBRARIES``), found without importing any of them."""
-        return {"name": self.name, "runId": self.run_id, "pythonVersion": platform.python_version(), "libraries": _installed()}
+        return _job(self.name, self.run_id)
 
     # publishing
 
@@ -382,6 +391,14 @@ def _catalog(location, fmt):
     return _datasets.catalog_of(location, fmt) if location is not None else None
 
 
+def _job(name, run_id):
+    return {"name": name, "runId": run_id, "pythonVersion": platform.python_version(), "libraries": _installed()}
+
+
+def _run_id():
+    return uuid.uuid4().hex[:16]
+
+
 def _installed():
     versions = {}
     for library in LIBRARIES:
@@ -390,6 +407,24 @@ def _installed():
         except importlib.metadata.PackageNotFoundError:
             pass
     return versions
+
+
+def report_without_run(scan):
+    """Sends what the watch saw of a job that opened no run (``scan``) to a checker opened only to publish it
+    (``_protocol.open_run``'s ``observe``), when the platform set where notifications go."""
+    settings = {k: v for k, v in from_environment().items() if k not in ("contract", "dryRun")}
+    if "notifyConfig" not in settings:
+        return
+    settings["jobAttributes"] = _attach.attributes(settings.get("jobAttributes"), run="none")
+    checker = Checker(command())
+    try:
+        opening = _protocol.open_run(settings, _job(_script_name(), _run_id()), observe=True)
+        for request in (opening, scan, _protocol.finish(completed=False)):
+            reply = checker.ask(request)
+            if not reply.get("ok"):
+                raise CheckNotRun(f"its checker answered {reply}")
+    finally:
+        checker.close()
 
 
 def _script_name():
@@ -428,10 +463,16 @@ def _exit_status_on_check_not_run():
 
 
 def current(verb):
-    """The run in progress, for ``invaract.read`` and ``invaract.write``."""
-    if _current is None:
-        raise RuntimeError(f"invaract.{verb} needs a run: decorate the job's entry point with @invaract.job(), or use 'with invaract.run():'")
-    return _current
+    """The run in progress, for ``invaract.read`` and ``invaract.write``; with ``INVARACT_AUTO_RUN=true``, the one Invaract
+    opens for the job when it has none."""
+    if _current is not None:
+        return _current
+    opened = _attach.implicit_run()
+    if opened is not None:
+        return opened
+    where = " (this process was started by a job: its run is the parent process's)" if _attach.started_by_a_job() else ""
+    raise RuntimeError(f"invaract.{verb} needs a run: decorate the job's entry point with @invaract.job(), or use "
+                       f"'with invaract.run():'{where}")
 
 
 def job(contract=None, *, name=None):

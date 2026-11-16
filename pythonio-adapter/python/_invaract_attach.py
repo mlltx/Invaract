@@ -73,7 +73,7 @@ def at_startup():
 
 def _hook(event, args):
     """Python's audit hook: one comparison per event once the main program is known."""
-    global _armed, _main_file
+    global _armed
     if _main_file is not None:
         if event == "exec":
             _saw_main_code(args)

@@ -74,6 +74,8 @@ class Watcher:
         self._spill = spill
         self._child = child
         self._outer = None
+        #: called, outside any run, when the watcher records what nothing explains (``_attach``: Invaract opens the run)
+        self.on_unexplained = None
         self._markers = {}
         self._scratch = scratch_roots()
 
@@ -166,11 +168,22 @@ class Watcher:
                 self._spill = new_spill()
                 os.environ[SPILL] = self._spill
 
-    def unexplained(self):
-        """The findings no marker and no ``INVARACT_STRICT_ALLOW`` pattern explains, children's included."""
+    def findings(self):
+        """Every finding kept, children's included."""
         with self._lock:
             self._gather()
-            return [entry.finding for entry in self._found.values() if not entry.finding.allowed]
+            return [entry.finding for entry in self._found.values()]
+
+    def everything(self):
+        """Every finding kept, children's included, as one ``scan`` (the report of a job that opened no run)."""
+        with self._lock:
+            self._gather()
+            return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in self._found.values()],
+                                  self._errors, 0)
+
+    def unexplained(self):
+        """The findings no marker and no ``INVARACT_STRICT_ALLOW`` pattern explains, children's included."""
+        return [finding for finding in self.findings() if not finding.allowed]
 
     def _take_over(self, earlier):
         """Makes what an earlier watcher of this process saw before the run opened this run's."""
@@ -259,6 +272,8 @@ class Watcher:
                 self._leave(finding)
         if self.enforce and not allowed:
             self._refuse(entry)
+        elif not allowed and self.on_unexplained is not None and self._run is None:
+            self.on_unexplained()
 
     def _explained(self, seen, frame, line, end_line):
         """Whether a marker on one of the call's lines keeps it, or ``INVARACT_STRICT_ALLOW`` names what it reached; and the

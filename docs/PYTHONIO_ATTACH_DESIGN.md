@@ -486,3 +486,18 @@ Still open (none blocks phases 1 to 3; an implementer takes the stated default):
    Default: not in phases 1 to 3.
 3. A per-job **contract map** (one environment, many jobs, each with its own contract) is not designed here: today the
    scheduler sets `INVARACT_CONTRACT` per job. Worth its own design if platforms cannot.
+
+## 16. As built (2026-11-16)
+
+All four phases are implemented (docs/PYTHONIO_ADAPTER.md, "Attaching without the annotation"). Where the build
+departed from this design, the build is right and this section says so:
+
+| Point | As designed | As built, and why |
+|---|---|---|
+| Open point 1 (R-2) | the implied watch, and the blunt rule with the watch off | As written. |
+| Open point 2 (phase 4) | not in phases 1 to 3 | Built as phase 4: an `open` with `"observe": true` (docs/PYTHONIO_PROTOCOL.md). A dry-run open was not reused, because it publishes a `DRY_RUN_SUMMARY` that claims a draft. |
+| D-3 | a console script in `venv/bin` counts as a job | It does not: the environment's `scripts` folder counts as a library's, since `pytest`, `pip` and every other installed command live there. A job installed as a command is named with `INVARACT_ATTACH_INCLUDE`. |
+| S-6 | "observing" | The contract named is enforced; observing without one is S-3 (the dry run). The user guide's table says so. |
+| Attributes (8.1) | `invaract.run` = `annotation` or `auto`, and `invaract.attach`, on every run's events | Only on runs Invaract opened (`auto`) and on the report of a job with no run (`none`); an annotated run's events are as before, so a platform tells them apart by the key's absence. |
+| The `.pth` | `invaract_attach.pth` | `00_invaract_attach.pth`, so it sorts before most other start-up files. |
+| Settings errors | at a run's opening | Also when `invaract.read` or `invaract.write` meets one outside any run: the job ends not checked (2), not with an uncaught traceback's 1. |

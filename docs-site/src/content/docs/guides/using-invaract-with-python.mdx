@@ -524,9 +524,17 @@ a read or a write is the lint's: one list, used by the scan and by the watch. Wh
 - **Other programs and other code.** Another program started; a native library the job loads itself (`ctypes`, `cffi`)
   or a compiled module of the job's own; code run in another interpreter.
 
-It watches from the moment the package is imported. What a job does between `import invaract` and opening its run
-belongs to that run: it is reported with the rest, and with `enforce` the run is refused as it opens. A Python process
-the job starts is watched too, if it imports the package, and what it did is reported by the run that started it.
+It watches from before the job's first line until the process ends (with the [start-up
+hook](#the-start-up-hook-and-the-launcher), on by default). What a job does before it opens its run belongs to that
+run: it is reported with the rest, and with `enforce` the run is refused as it opens:
+
+```text
+  1. [UNGOVERNED_DATA_ACCESS] `open` in <module> (orders_job.py:3:1) writes data outside Invaract, so no check sees it (IVR002 open-write-mode, seen before the run opened: opened early.csv to write (mode 'w'))
+```
+
+What it does after its run ends is said as the job ends ("this job read or wrote data after its run ended, so nothing
+checked it"), and with `enforce` the job ends refused (exit status 1). A Python process the job starts is watched as well, and what it did is reported by the run that
+started it.
 
 Each finding is placed at the line of the job's own code that led to it, and reported in the same shape as a scan's
 finding, with what it reached as its `target`. A read left behind in a helper is refused like this:
@@ -615,9 +623,9 @@ does not see:
   watched unless it is Python and imports the package. A child made with `fork` stays watched;
 - **what compiled code of the job's own does**: loading it is reported (a module the job compiled, a library opened with
   `ctypes` or `cffi`), and with `enforce` refused; what it then reads or writes is not seen;
-- **what happens before `import invaract` or after the run ends**: code that runs as the job's modules are imported
-  before the package is, or in an `atexit` hook. The scan reads that code like any other. Import `invaract` first, and
-  the only time left unwatched is after the run;
+- **anything, where the start-up hook does not run**: with `INVARACT_ATTACH=import`, the watch starts at `import
+  invaract` and ends with the run, so code that runs before the import, or in an `atexit` hook, is not seen (the scan
+  reads that code like any other). `python -S` skips the hook too;
 - **a job that sets out to take the watch off**: code that reaches into the invaract package's own parts, or digs a
   library's own function out from under the one that watches it. The scan reports that code (`IVR006`), a run whose
   watch was switched off says so in its event, and with `enforce` such a run is not checked (exit status 2).
@@ -626,6 +634,193 @@ Every one of these is covered by a test that runs it as a real job, so the list 
 guess. Use the scan and the watch together: each technique in that test suite is caught by at least one of them. A job
 written by its own author to get around both can only be stopped by what the process is allowed to do: run it as a
 user that can write only where its contract says.
+
+## Decide how Invaract attaches to your jobs
+
+So far a job has a run because its own code opens one, with `@invaract.job` or `with invaract.run():`. A platform that
+runs many jobs can also **require** that every job opens a run, or **open the run itself**, without changing any job's
+source. Every switch below is an environment variable the platform sets, so a job's code cannot turn it off.
+
+### Choose a setup
+
+| You want | Set | Job teams | What happens |
+|---|---|---|---|
+| Nothing yet | nothing | nothing | Nothing. The installed package looks at a few environment variables as each Python process starts, and stops there. |
+| Teams opt in | nothing | annotate their jobs | What the rest of this guide describes. |
+| Teams opt in, watched from the first line | `INVARACT_STRICT=report` or `enforce` | annotate their jobs | The watch starts before the job's first line, not at `import invaract`, and lasts until the process ends. |
+| To see what every job reads and writes | `INVARACT_AUTO_RUN=true`, `INVARACT_DRY_RUN=true` | nothing | Each job that touches data publishes its reads and writes (a `CODE_SCAN` event) and a dry run's draft. No job fails, and no contract is needed. |
+| Invaract recommended | `INVARACT_REQUIRE_RUN=report` | annotate, or see a warning | A job that touches data and opens no run says what it touched, and publishes it. Its outcome is unchanged. |
+| Invaract required in every job's source | `INVARACT_REQUIRE_RUN=enforce` | annotate | The same, and the job ends with exit status 2 ("not checked"). |
+| Every job held to its contract, with no source change | `INVARACT_AUTO_RUN=true`, `INVARACT_CONTRACT=<the job's contract>` | nothing; may call `invaract.read` and `invaract.write` with no annotation | Every job that touches data has a run, judged by its contract. What it does around the package is reported. |
+| The same, and data moves only through Invaract | as above, with `INVARACT_STRICT=enforce` and `INVARACT_LINT=enforce` | use `invaract.read` and `invaract.write` | A read or write around the package is refused where it happens. |
+
+A sensible order is to see what there is (dry run), then make the gap visible (`INVARACT_REQUIRE_RUN=report`), then hold
+every job to its contract (`INVARACT_AUTO_RUN=true`), then enforce. `INVARACT_REQUIRE_RUN=enforce` is the alternative to
+auto-run for an organisation that wants the annotation written in every job's source.
+
+The two mix: a job that opens its own run is checked exactly as written, whatever the platform set. Only what happens
+outside every run is the platform's.
+
+### Require a run
+
+With `INVARACT_REQUIRE_RUN=report`, this job, which reads and writes with pandas and never uses the package:
+
+```python
+import pandas as pd
+
+orders = pd.read_parquet("data/in/orders")
+orders.groupby("region", as_index=False)["total"].sum().to_parquet("report.parquet")
+```
+
+runs as it always did, then says what it touched:
+
+```text
+Invaract: this job read or wrote data and opened no run, so nothing checked it (INVARACT_REQUIRE_RUN=report).
+  orders_job.py:3 `pandas.read_parquet` reads data outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`
+  orders_job.py:4 `pyarrow.OSFile` writes data outside invaract: write it with invaract.write(<frame>, <name>), or mark the line `# invaract: allow`
+Decorate the job's entry point with @invaract.job(), or use 'with invaract.run():'.
+```
+
+Where `INVARACT_NOTIFY_CONFIG` names a sink, the same goes out as a `CODE_SCAN` event (phase `RUNTIME`) and a
+`JOB_SUMMARY`, with `invaract.run=none` among the job's attributes, so a platform can count the jobs that do not use
+Invaract yet. Nothing in it is judged. With `INVARACT_REQUIRE_RUN=enforce` the job ends with exit status 2 once its own
+exit handlers have run.
+
+A job that touches no data, or only what a marker or `INVARACT_STRICT_ALLOW` explains, is left alone: a script that
+only computes is not asked to open a run. Telling the two apart needs the watch, so setting `INVARACT_REQUIRE_RUN`
+turns the watch on in `report` mode when `INVARACT_STRICT` is not set. If the platform sets `INVARACT_STRICT=off`, what
+a job did is not known, and every job that opened no run counts:
+
+```text
+Invaract: this job opened no run, so nothing checked it (INVARACT_REQUIRE_RUN=enforce; with INVARACT_STRICT=off what it did is not known).
+```
+
+### Let Invaract open the run
+
+With `INVARACT_AUTO_RUN=true`, a job needs no annotation. This is a whole job:
+
+```python
+import invaract
+
+orders = invaract.read("orders")
+invaract.write(orders, "report")
+```
+
+Its first `invaract.read` or `invaract.write` opens the run, by the contract `INVARACT_CONTRACT` names, and the run lasts
+until the process ends. Then, if the job completed, its outputs are published; if it failed, nothing is. Every event
+says that Invaract opened the run, and how it attached (`startup` for the start-up hook, `launcher`, or `import`):
+
+```json
+"attributes": {"invaract.run": "auto", "invaract.attach": "startup"}
+```
+
+A key the platform sets itself in `INVARACT_JOB_ATTRIBUTES` is kept.
+
+A job that never calls the package is covered too. If the watch recorded anything it did (a read or write a marker
+explains included, so the exception is reported), or the scan of its code found something, a run opens as it ends and
+judges it. So the job above written with pandas is refused, because it never wrote the output its contract declares:
+
+```text
+invaract.errors.ContractViolation: Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+...
+Why it violates the contract (1 violation):
+  1. [MISSING_OUTPUT] the job never writes declared output 'report' (data/out/report)
+```
+
+and its `CODE_SCAN` event lists the read and the write it made around the package. With `INVARACT_STRICT=enforce`, the
+first read or write around the package is refused where it happens instead, inside or outside the run:
+
+```text
+  1. [UNGOVERNED_DATA_ACCESS] `open` in <module> (orders_job.py:6:1) writes data outside Invaract, so no check sees it (IVR002 open-write-mode, seen as the job ran: opened backup.csv to write (mode 'w'))
+```
+
+Auto-run needs to know what a job may do. With neither a contract nor a dry run, a job that touches data ends not
+checked (exit status 2):
+
+```text
+invaract.errors.CheckNotRun: Invaract opens this job's run (INVARACT_AUTO_RUN=true), and no contract says what the job may do: set INVARACT_CONTRACT, or INVARACT_DRY_RUN=true to observe it
+```
+
+`INVARACT_CONTRACT` is one contract, so set it per job, the way a scheduler sets any job's environment. Like
+`INVARACT_REQUIRE_RUN`, `INVARACT_AUTO_RUN` turns the watch on in `report` mode when `INVARACT_STRICT` is not set.
+
+A job that annotates its entry point needs nothing from auto-run, and its run is checked as written. What is refused is
+a job that reads or writes through the package first and then opens its own run, because the platform's run already
+holds those calls:
+
+```text
+invaract.errors.CheckNotRun: this job reads or writes through Invaract outside its own run and then opens one: move those calls inside the run, or remove the annotation and let the platform's run (INVARACT_AUTO_RUN) cover the whole job
+```
+
+#### How Invaract knows the job completed
+
+A run Invaract opened publishes only if the job completed. An uncaught exception, or `sys.exit()` with a status other
+than 0, means it failed. A job that returns normally, or calls `sys.exit(0)`, completed. Started with the
+[launcher](#the-start-up-hook-and-the-launcher), every ending is known exactly. With the start-up hook, one ending
+cannot be told on every Python version: a bare `raise SystemExit(...)` that is not a call to `sys.exit`.
+
+- On Python 3.12 and later, such a job's outputs are not published, and it ends with exit status 2:
+
+  ```text
+  Invaract could not tell whether this job completed, so its outputs are not published: end it with sys.exit(<status>), or start it with python -m invaract.
+  ```
+
+- On Python 3.10 and 3.11, such a job is taken to have completed, and its outputs are published even when its status
+  is not 0.
+
+End jobs with `sys.exit`, or start them with the launcher, and neither applies. A job killed by a signal, or ended with
+`os._exit`, publishes nothing.
+
+### What counts as a job
+
+Every Python process in the environment starts with the package installed, but only a job's own process is attached.
+A process counts as a job when its main program is:
+
+| Started as | A job? |
+|---|---|
+| `python path/to/script.py` | Yes, if the script is the job's own: not inside Python's or an installed package's folders. |
+| `python -m package.module` | Yes, if the top-level package is the job's own, by the same rule. |
+| `python -c "..."`, code on standard input | Yes. |
+| an interactive `python` | No. |
+| a library's command (`pip`, `pytest`, `airflow`, `jupyter`) | No: it lives beside the installed packages. |
+| `python -m invaract ...` (the launcher) | Always. |
+
+Name what the default gets wrong with `INVARACT_ATTACH_INCLUDE` and `INVARACT_ATTACH_EXCLUDE`: comma-separated patterns
+(`*` matches anything) matched against a script's full path, its path as given and its file name, a module's dotted
+name, `-c` for code on the command line and `-` for standard input. An excluded program is never a job; otherwise an
+included one always is.
+
+- A job **installed as a package** and run with `python -m orders_jobs.daily` lives beside the libraries, so it is not
+  a job by default: `INVARACT_ATTACH_INCLUDE=orders_jobs*`.
+- Jobs run **by a framework's command** (an Airflow task, a Celery worker): name the command, or annotate the jobs.
+- A **script that starts other jobs** as separate Python processes: exclude it (`INVARACT_ATTACH_EXCLUDE=run_all.py`),
+  so each job it starts is a job of its own. Otherwise they belong to it: a Python process started by a job reports
+  what it does to that job, and has no run of its own unless it opens one.
+
+### The start-up hook and the launcher
+
+Invaract can attach to a job in three ways:
+
+- **The start-up hook**, on by default. The package installs a one-line `.pth` file into the environment's
+  `site-packages`. Python reads `.pth` files as it starts, before running any of the job's code, which is how
+  editable installs and pytest-cov hook in too. Unless `INVARACT_STRICT`, `INVARACT_REQUIRE_RUN` or
+  `INVARACT_AUTO_RUN` is set, it does nothing else; when one is, it waits for Python to say which program it is running
+  and attaches if that program is a job.
+- **The launcher**, for a platform that controls the start command: `python -m invaract orders_job.py [args]`, `python
+  -m invaract -m orders_jobs.daily [args]` or `python -m invaract -c "code"`. It runs the program as Python would, with
+  Invaract attached before its first line, and knows exactly how it ended. Prefer it wherever you set the start
+  command.
+- **At import**, the only way before this release: Invaract attaches when the job imports `invaract`, and the watch
+  starts then. Set `INVARACT_ATTACH=import` to keep that behaviour.
+
+If the hook itself fails, it says so, and the process is not watched:
+
+```text
+Invaract could not attach to this process (<why>): it is not watched
+```
+
+A run that then opens with any of its checks set to `enforce` ends not checked, since what the job did before it was
+not seen. `python -S` skips `.pth` files, and with them the hook.
 
 ## The settings
 
@@ -647,6 +842,10 @@ Every Invaract setting is an environment variable of the job, spelled `INVARACT_
 | `INVARACT_REGISTRY_URL`, `INVARACT_REGISTRY_CLIENT_CLASS` | The contract registry. |
 | `INVARACT_CHECKER` | The command that runs the checker, instead of the one the package carries. |
 | `INVARACT_LINT`, `INVARACT_LINT_PATHS`, `INVARACT_LINT_EXCLUDE` | Scan the job's own code when the run starts: `report` or `enforce` ([above](#scan-the-jobs-code-when-it-starts)). |
+| `INVARACT_STRICT`, `INVARACT_STRICT_ALLOW` | Watch what the job does as it runs: `report` or `enforce` ([above](#watch-what-the-job-does-as-it-runs)). |
+| `INVARACT_REQUIRE_RUN` | `report` or `enforce`: a job that touches data and opens no run is reported, or ends not checked ([above](#require-a-run)). |
+| `INVARACT_AUTO_RUN=true` | Invaract opens the job's run itself, with no annotation ([above](#let-invaract-open-the-run)). |
+| `INVARACT_ATTACH`, `INVARACT_ATTACH_INCLUDE`, `INVARACT_ATTACH_EXCLUDE` | `startup` (default) or `import`: when Invaract attaches; and which programs are jobs ([above](#what-counts-as-a-job)). |
 
 A read of an input the contract does not declare is always refused, since every read names the input it reads. Every
 setting, with its spelling on the other engines, is in [Configuration Settings](/reference/configuration/).

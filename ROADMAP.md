@@ -3994,6 +3994,15 @@ first written: one field's value compared against *another field on the same row
       docs/PYTHONIO_ADAPTER.md, "Closing what Python lets be closed". Open: an operating-system guard (a user that can
       write only where the contract says) for what cannot be closed from inside Python: another program once started,
       and the job's own compiled code.
+- [x] **Follow-up: attaching to Python jobs without the annotation** (`pythonio-adapter`; design
+      docs/PYTHONIO_ATTACH_DESIGN.md). The wheel installs a start-up hook (`00_invaract_attach.pth`, on by default,
+      `INVARACT_ATTACH=import` to switch it off) that attaches before a job's first line when a setting asks for Invaract,
+      and `python -m invaract` launches a job with Invaract attached. `INVARACT_REQUIRE_RUN` reports, or ends not
+      checked, a job that touched data and opened no run, and publishes what it touched (`observe` open, `invaract.run=none`);
+      `INVARACT_AUTO_RUN` opens the run itself, so a job needs no annotation, publishing only if the job completed.
+      `INVARACT_ATTACH_INCLUDE`/`EXCLUDE` say which programs are jobs. See docs/PYTHONIO_ADAPTER.md, "Attaching without
+      the annotation". Open: a per-job contract map (one environment, many jobs), for platforms that cannot set
+      `INVARACT_CONTRACT` per job.
 
 ---
 

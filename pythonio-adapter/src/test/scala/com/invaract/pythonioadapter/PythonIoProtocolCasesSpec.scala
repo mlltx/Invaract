@@ -167,6 +167,20 @@ class PythonIoProtocolCasesSpec extends AnyFunSuite {
       "writes is not known (IVR006 dynamic-attribute, a method whose name starts 'to_', the rest built at run time)"))
   }
 
+  test("a job that opened no run is reported, and nothing in it judged (observe)") {
+    def events(name: String) = assertCase(name).eventObjects
+    def map(value: AnyRef) = value.asInstanceOf[java.util.Map[String, AnyRef]].asScala.toMap
+    // the contract the settings name is never read (it does not exist): the report judges nothing, and its scan, enforced or
+    // not, refuses nothing; what was seen is published as it is, with the job's attributes
+    val List(scanned, summary) = events("observe-no-run-reported")
+    assert(List("eventType", "status", "phase", "mode", "refused").map(scanned.get) == List("CODE_SCAN", "FINDINGS", "RUNTIME", "ENFORCE", false))
+    assert(scanned.get("contract") == null && String.valueOf(summary.get("eventType")) == "JOB_SUMMARY")
+    assert(map(map(scanned.get("job"))("attributes")) == Map("invaract.run" -> "none", "invaract.attach" -> "startup"))
+    // only scans and the finish follow its opening, and it is no check
+    val List(_, opened, read, _) = assertCase("observe-takes-only-scans").replies.map(map)
+    assert(opened("mode") == "observe" && read("status") == "not-checked")
+  }
+
   test(StrictMode) {
     def scans(name: String) = assertCase(name).eventObjects.filter(e => String.valueOf(e.get("eventType")) == "CODE_SCAN")
     def list(e: java.util.Map[String, AnyRef], key: String) = e.get(key).asInstanceOf[java.util.List[AnyRef]].asScala.toList

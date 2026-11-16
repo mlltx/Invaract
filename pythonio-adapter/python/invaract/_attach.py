@@ -20,7 +20,7 @@ import threading
 import _invaract_attach as first_stage
 
 from . import _codescan, _settings, _strict
-from .errors import CheckNotRun
+from .errors import CheckNotRun, ContractViolation
 from ._strict import _state
 from ._strict.watcher import SPILL, new_spill
 
@@ -32,6 +32,8 @@ program = None
 root = False
 #: How many runs this process opened.
 runs_opened = 0
+#: The refusal a run Invaract opened for the job met (``INVARACT_AUTO_RUN``): the job is refused for good.
+refusal = None
 
 _exit_codes = []
 _main_returned = None
@@ -76,6 +78,13 @@ def _begin(watcher):
         if watcher is not None and not watcher._child:
             watcher._spill = new_spill()
             os.environ[SPILL] = watcher._spill
+            try:
+                _, strict, auto = asked()
+            except ValueError:
+                strict, auto = None, False  # said when a run opens, or when the job ends
+            if auto and strict == "enforce":
+                # what nothing explains is refused where it happens: Invaract opens the run that refuses it
+                watcher.on_unexplained = _refuse_outside_run
         _record_exits()
         if not first_stage.handles_exit:
             atexit.register(at_exit)
@@ -107,19 +116,30 @@ def is_job_process():
     return program is not None and first_stage.is_job(*program)
 
 
+def asked(environ=None):
+    """What the platform asked of a job: ``(require, strict, auto)``, the modes of ``INVARACT_REQUIRE_RUN`` and of the watch
+    (``_settings.strict_mode``), and whether Invaract opens the run (``INVARACT_AUTO_RUN``). ``ValueError`` names a value
+    the package does not know, ``INVARACT_ATTACH``'s included."""
+    environ = os.environ if environ is None else environ
+    if environ.get(_settings.ATTACH, "").strip().lower() not in ("", "startup", "import"):
+        raise ValueError(f"{_settings.ATTACH} must be startup or import, not {environ[_settings.ATTACH]!r}")
+    return (_settings.mode(environ, _settings.REQUIRE_RUN), _settings.strict_mode(environ),
+            _settings.flag(environ, _settings.AUTO_RUN))
+
+
 def check(environ=None):
     """Refuses to open a run the attach settings leave unchecked: a value the package does not know, or, with any of its
-    checks enforced, a process start-up attach failed in (so what the job did before this run was not seen)."""
+    checks enforced, a process start-up attach failed in (so what the job did before this run was not seen). A job a run
+    Invaract opened for it has refused stays refused."""
+    _still_refused()
     environ = os.environ if environ is None else environ
     try:
-        if environ.get(_settings.ATTACH, "").strip().lower() not in ("", "startup", "import"):
-            raise ValueError(f"{_settings.ATTACH} must be startup or import, not {environ[_settings.ATTACH]!r}")
-        enforced = [name for name in (_settings.REQUIRE_RUN, _codescan.LINT) if _settings.mode(environ, name) == "enforce"]
-        if _settings.strict_mode(environ) == "enforce":
-            enforced.append(_settings.STRICT)
-        _settings.flag(environ, _settings.AUTO_RUN)
+        require, strict, _ = asked(environ)
+        lint = _settings.mode(environ, _codescan.LINT)
     except ValueError as e:
         raise CheckNotRun(str(e)) from None
+    enforced = [name for name, value in ((_settings.REQUIRE_RUN, require), (_codescan.LINT, lint), (_settings.STRICT, strict))
+                if value == "enforce"]
     failed = environ.get(_settings.FAILED)
     if failed and enforced:
         raise CheckNotRun(f"Invaract could not attach to this process as it started ({failed}), so what the job did before this "
@@ -130,6 +150,67 @@ def opened():
     """A run opened in this process."""
     global runs_opened
     runs_opened += 1
+
+
+# the run Invaract opens for the job (INVARACT_AUTO_RUN)
+
+def started_by_a_job():
+    """Whether this process was started by a job's (it reports to that job's process)."""
+    return not root and SPILL in os.environ
+
+
+def implicit_run():
+    """Opens the run Invaract opens for the job, when the platform asked for it (``INVARACT_AUTO_RUN=true``) and this is
+    the root of a job with no run open; ``None`` otherwise. The run lasts until the process ends (``at_exit``)."""
+    _still_refused()
+    try:
+        auto = asked()[2]
+    except ValueError as e:
+        from . import _run
+        _run._exit_status_on_check_not_run()
+        raise CheckNotRun(str(e)) from None
+    return _open_implicit() if auto and is_job_process() else None
+
+
+def _open_implicit():
+    """Opens a run for the job, by the contract the platform names (or a dry run)."""
+    from . import _run
+    _run._exit_status_on_check_not_run()
+    settings = _settings.from_environment()
+    if "contract" not in settings and settings.get("dryRun", "").strip().lower() != "true":
+        raise CheckNotRun(f"Invaract opens this job's run ({_settings.AUTO_RUN}=true), and no contract says what the job may "
+                          f"do: set {_settings.variable('contract')}, or {_settings.variable('dryRun')}=true to observe it")
+    run = _run.Run(implicit=True)
+    run.__enter__()
+    return run
+
+
+def _still_refused():
+    """A job a run Invaract opened for it has refused stays refused: nothing after it opens a run."""
+    if refusal is not None:
+        raise ContractViolation(refusal.violations, refusal.explanation)
+
+
+def _refuse_outside_run():
+    """The watch saw what nothing explains outside any run, enforced: the run Invaract opens refuses it there."""
+    global refusal
+    try:
+        implicit_run()
+    except ContractViolation as refused:
+        refusal = refused
+        raise
+
+
+def attributes(given, run="auto"):
+    """``jobAttributes`` for a run Invaract opened (``invaract.run=auto``) or for the report of a job that opened none
+    (``none``): what the platform set, and those and where Invaract attached (``invaract.attach``), unless the platform set
+    the keys itself."""
+    pairs = [p.strip() for p in (given or "").split(",") if p.strip()]
+    keys = {p.split("=", 1)[0].strip() for p in pairs}
+    for key, value in (("invaract.run", run), ("invaract.attach", point or "import")):
+        if key not in keys:
+            pairs.append(f"{key}={value}")
+    return ",".join(pairs)
 
 
 # how the job ended
@@ -234,15 +315,76 @@ def at_exit():
 
 def _settle(watcher):
     """The exit status the job ends with because of what it did outside any run, or ``None`` to leave it."""
+    from . import _run
     try:
-        require = _settings.mode(os.environ, _settings.REQUIRE_RUN)
-        strict = _settings.strict_mode(os.environ)
+        require, strict, auto = asked()
     except ValueError as e:
         _say(f"Invaract: {e}, so this job was not checked.", [])
         return 2
+    if refusal is not None:
+        return 1
+    if _run._current is not None and _run._current.implicit:
+        return _close(_run._current)
+    if auto:
+        return _run_at_the_end(watcher)
     if runs_opened == 0:
         return _no_run(watcher, require, strict)
     return _after_runs(watcher, strict)
+
+
+def _close(run):
+    """Ends the run Invaract opened for the job: published if the job completed; not, if it failed, or if how it ended
+    is not known and it has outputs to publish."""
+    ended = outcome()
+    if ended == "unknown" and run._outputs:
+        run.__exit__(RuntimeError, RuntimeError("how the job ended is not known"), None)
+        _say("Invaract could not tell whether this job completed, so its outputs are not published: end it with "
+             "sys.exit(<status>), or start it with python -m invaract.", [])
+        return 2
+    if ended == "failed":
+        run.__exit__(RuntimeError, RuntimeError("the job failed"), None)
+        return None
+    return _ending(lambda: run.__exit__(None, None, None))
+
+
+def _run_at_the_end(watcher):
+    """No run is open as the job ends, and Invaract opens runs for it: one that has something to say gets a run that says
+    it (what it did outside any run, or what the scan of its code found), and is judged by it."""
+    if not (watcher is not None and watcher.findings()) and not _scan_has_something():
+        return None
+    return _ending(lambda: _open_implicit().__exit__(None, None, None))
+
+
+def _scan_has_something():
+    try:
+        scanner = _codescan.from_environment()
+        if scanner is None:
+            return False
+        scanned = scanner.start()
+        return bool(scanned["findings"] or scanned["errors"])
+    except CheckNotRun:
+        return True  # said, and judged, by the run that opens for it
+
+
+def _ending(action):
+    """Runs ``action`` as the process ends: a refusal ends the job refused (1), a check that could not be made ends it not
+    checked (2), each said as Python would have said it."""
+    try:
+        action()
+    except ContractViolation as e:
+        _said(e)
+        return ContractViolation.exit_status
+    except CheckNotRun as e:
+        _said(e)
+        return CheckNotRun.exit_status
+    return None
+
+
+def _said(error):
+    try:
+        sys.stderr.write(f"{type(error).__module__}.{type(error).__qualname__}: {error}\n")
+    except Exception:  # noqa: BLE001 - nowhere left to say it
+        pass
 
 
 def _no_run(watcher, require, strict):
@@ -262,6 +404,7 @@ def _no_run(watcher, require, strict):
             return None
         _say(f"Invaract: this job read or wrote data and opened no run, so nothing checked it ({_settings.REQUIRE_RUN}="
              f"{require}).", unexplained, _HOW_TO_OPEN_A_RUN)
+        _report_without_run(watcher)
     return 2 if require == "enforce" else None
 
 
@@ -275,6 +418,17 @@ def _after_runs(watcher, strict):
     _say(f"Invaract: this job read or wrote data after its run ended, so nothing checked it ({_settings.STRICT}={strict}).",
          unexplained)
     return 1 if strict == "enforce" else None
+
+
+def _report_without_run(watcher):
+    """Publishes what the watch saw of a job that opened no run, where the platform's notifications go: a ``CODE_SCAN``
+    event and the job's summary, marked ``invaract.run=none``. Nothing is judged, and a failure to report is said and
+    changes nothing."""
+    try:
+        from . import _run
+        _run.report_without_run(watcher.everything())
+    except Exception as e:  # noqa: BLE001 - the job's ending is decided already
+        sys.stderr.write(f"Invaract could not report this job ({type(e).__name__}: {e})\n")
 
 
 _HOW_TO_OPEN_A_RUN = "Decorate the job's entry point with @invaract.job(), or use 'with invaract.run():'."
