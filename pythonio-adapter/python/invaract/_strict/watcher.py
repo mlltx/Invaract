@@ -73,6 +73,9 @@ class Watcher:
         #: where child processes leave what they saw (a run's own, or the job process's), and whether this is one of them
         self._spill = spill
         self._child = child
+        #: a process forked from a job's root outside any run: what it sees goes to the root as it is seen (a forked worker
+        #: often ends with os._exit), and stays its own too, for a run it opens itself
+        self._kept = False
         self._outer = None
         #: called, outside any run, when the watcher records what nothing explains (``_attach``: Invaract opens the run)
         self.on_unexplained = None
@@ -193,7 +196,7 @@ class Watcher:
 
     def _take_over(self, earlier):
         """Makes what an earlier watcher of this process saw before the run opened this run's."""
-        if earlier is None or earlier._child:
+        if earlier is None or (earlier._child and not earlier._kept):
             return  # a child's findings are with its parent already
         with earlier._lock:
             entries, earlier._found = list(earlier._found.items()), {}

@@ -209,7 +209,7 @@ def test_a_folder_holding_everything_is_never_a_library_root(monkeypatch):
     try:
         roots = first_stage.library_roots()
         assert os.sep not in roots and os.path.normcase(os.path.realpath(LIBRARY)) in roots
-        assert first_stage.is_own(os.path.realpath(__file__)) and not first_stage.is_own(os.path.join(LIBRARY, "os.py"))
+        assert first_stage.is_own(os.path.realpath(__file__)) and not first_stage.is_own(os.path.realpath(os.path.join(LIBRARY, "os.py")))
     finally:
         first_stage._roots = None
 

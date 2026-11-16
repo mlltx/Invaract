@@ -122,7 +122,7 @@ def _forked():
     root = False
     watcher = _state.watcher
     if watcher is not None and _root_spill is not None:
-        watcher._child, watcher._found, watcher._spill = True, {}, _root_spill
+        watcher._child, watcher._kept, watcher._found, watcher._spill = True, True, {}, _root_spill
         os.environ[SPILL] = _root_spill
 
 
