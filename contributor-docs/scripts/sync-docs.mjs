@@ -61,6 +61,13 @@ const PAGES = [
     order: 4,
   },
   {
+    src: 'docs/SPARK_ADAPTER_HARDENING_PLAN.md',
+    slug: 'design/spark-adapter-hardening-plan',
+    section: 'Design Docs',
+    label: 'Spark Adapter Hardening Plan',
+    order: 3,
+  },
+  {
     src: 'docs/ADDING_A_SPARK_CONNECTOR.md',
     slug: 'design/adding-a-spark-connector',
     section: 'Design Docs',
