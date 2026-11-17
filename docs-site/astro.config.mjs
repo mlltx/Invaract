@@ -56,6 +56,7 @@ export default defineConfig({
 							label: 'Install',
 							items: [
 								{ label: 'Install on Spark', slug: 'guides/installing-the-enforcement-rule' },
+								{ label: 'Lock Settings for a Platform', slug: 'guides/locking-settings-for-a-platform' },
 								{ label: 'Use Prebuilt Jars Without sbt', slug: 'guides/using-prebuilt-jars-without-sbt' },
 								{ label: 'Install and Configure in Code', slug: 'guides/calling-invaract-explicitly' },
 								{ label: 'Use with Apache Beam (Java)', slug: 'guides/using-invaract-with-apache-beam' },

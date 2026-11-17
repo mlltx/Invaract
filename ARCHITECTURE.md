@@ -405,6 +405,27 @@ all, throwing at session-construction time. Confirmed against Spark's own
 `applyExtensions` source, not assumed from the constructor signature Delta
 happens to use.
 
+**Amendment (a driver plugin, and pinned settings):** attached through
+`spark.sql.extensions` alone, Invaract could be missing without a sound: Spark only logs a
+warning for a class it cannot load, and a job whose own code sets `spark.sql.extensions` (as
+the Delta and Iceberg quick-starts say to) replaces the list `spark-submit` gave. And every
+`spark.invaract.*` setting could be changed by the job's own configuration, `dryRun`
+included. `InvaractSparkPlugin` (`spark.plugins`) fixes the first: Spark fails an
+application whose plugin it cannot load, and a `DriverPlugin`'s `init` runs before any
+`SparkSession` exists, with the live `SparkConf`, so it adds the extension to whatever list
+the application ends up with; the session built afterwards honours it, from Scala and from
+PySpark (confirmed with a prototype, then `InvaractSparkPluginJobSpec`). The extension
+injects its rule once per `SparkSessionExtensions`, so being listed twice is harmless.
+`PinnedSettings` fixes the second: the environment variable `INVARACT_PINNED_CONF` names a
+file whose settings `SparkConfigSource` reads before the session's. An environment variable,
+because it is the one input a job's Spark calls cannot overwrite and every scheduler can set
+for the driver; not a JVM system property, which job code can set.
+
+**Alternative considered:** registering the extension through Spark's
+`META-INF/services` loading of `SparkSessionExtensionsProvider`, which needs no setting at
+all. **Rejected:** a session created from PySpark does not use it (tried: the provider was on
+the classpath and never called).
+
 ### ADR-010: Which `verification-core` members are an adapter SPI (`private[invaract]`)
 
 **Decision:** `verification-core` marks the members an adapter needs from it, but a

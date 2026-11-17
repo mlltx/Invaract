@@ -52,6 +52,28 @@ class SparkConfigSourceSpec extends AnyFunSuite {
     } finally spark.stop()
   }
 
+  test("a pinned setting wins over the session's; an unpinned one is the session's; a pinned one the session lacks is found") {
+    val spark = SparkSession
+      .builder()
+      .master("local[1]")
+      .appName("SparkConfigSourceSpec")
+      .config("spark.ui.enabled", "false")
+      .config("spark.invaract.dryRun", "true")
+      .config("spark.invaract.locationMap", "/m.properties")
+      .getOrCreate()
+    try {
+      PinnedSettings.withPinsForTest(Map("spark.invaract.dryRun" -> "false", "spark.invaract.orgPolicy" -> "/p.yaml")) {
+        val source = SparkConfigSource(spark)
+        assert(source.get(InvaractConf.DryRun).contains("false"))
+        spark.conf.set("spark.invaract.dryRun", "true")
+        assert(source.get(InvaractConf.DryRun).contains("false"), "nor can the job change it later")
+        assert(source.get(InvaractConf.LocationMap).contains("/m.properties"))
+        assert(source.get(InvaractConf.OrgPolicy).contains("/p.yaml"))
+      }
+      assert(SparkConfigSource(spark).get(InvaractConf.DryRun).contains("true"), "with nothing pinned, the session's")
+    } finally spark.stop()
+  }
+
   test("the settings Invaract reads are known; nothing else under spark.invaract. is") {
     assert(SparkSettingNames.unknown(Map.empty) == Nil)
     assert(SparkSettingNames.unknown(Map("spark.sql.shuffle.partitions" -> "2", "spark.invaractx" -> "1")) == Nil, "only the prefix is judged")

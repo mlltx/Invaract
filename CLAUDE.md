@@ -384,7 +384,11 @@ per-session configuration it isn't handed directly — via the check-rule
 LogicalPlan => Unit` shape `forContract` itself already returns, invoked by
 Spark once the real session exists. Every `spark.invaract.*` key documented
 elsewhere in this file composes with it for free, since it calls the same
-`forContract`. `ContractEnforcementRule.forContract`/`.dryRun`, called
+`forContract`. The recommended form is `--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin`
+(`InvaractSparkPlugin`), which fails the job when Invaract cannot be loaded and keeps the extension installed
+when the job's own code sets `spark.sql.extensions`; a platform pins settings a job's configuration must not
+change in the file the driver's `INVARACT_PINNED_CONF` environment variable names (`PinnedSettings`, ADR-008's
+amendment). `ContractEnforcementRule.forContract`/`.dryRun`, called
 directly in code, remain available for anything the conf-driven path can't
 express — a contract loaded from somewhere `spark.invaract.contract` can't
 name, a resolver `spark.invaract.locationMap` can't express, a custom

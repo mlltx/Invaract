@@ -21,23 +21,73 @@ changed afterward. Load your contract *before* building the session.
 
 ## Attach it via `spark-submit --conf`
 
-`InvaractSparkSessionExtension` installs Invaract with **no code at all** in the job it's
-attached to — the same way Delta Lake's own
-`io.delta.sql.DeltaSparkSessionExtension` is attached, purely via `spark.sql.extensions`:
+`InvaractSparkPlugin` installs Invaract with **no code at all** in the job it's attached to:
 
 ```bash
 spark-submit \
   --class com.example.MyRealJob \
-  --master yarn \
+  --master yarn --deploy-mode client \
   --jars invaract-spark-adapter-0.11.0.jar \
-  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   my-real-job.jar
 ```
 
 `MyRealJob`'s source never imports anything from `com.invaract.contract`/
 `com.invaract.sparkadapter` — a platform team, an orchestration framework, or a CI
-pipeline can attach contract enforcement to a job whose source they don't own at all.
+pipeline can attach contract enforcement to a job whose source they don't own at all. The
+same works for a PySpark job (`my-job.py` in place of the jar).
+
+The plugin installs `InvaractSparkSessionExtension`, the session extension that does the
+checking. You can also name that extension directly, the same way Delta Lake's
+`io.delta.sql.DeltaSparkSessionExtension` is attached:
+
+```bash
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+```
+
+<Aside type="caution" title="Prefer spark.plugins: three accidents it prevents">
+Attached through `spark.sql.extensions` alone, Invaract can be missing without anyone
+noticing. Spark logs one warning and every write passes unchecked when:
+
+- the class name is misspelt;
+- the Invaract jar is missing from `--jars`;
+- the job's own code sets `spark.sql.extensions`, as the Delta Lake and Iceberg
+  quick-starts tell people to. That replaces the list `spark-submit` gave.
+
+Through `spark.plugins`, Spark refuses to start a job whose plugin it cannot load, and the
+plugin adds Invaract to whatever `spark.sql.extensions` the job ends up with. Listing
+Invaract in both places, or twice, is harmless: each write is checked once.
+</Aside>
+
+### Where the contract file can live
+
+`spark.invaract.contract`, and every other setting that names a file (`orgPolicy`,
+`orgPolicyOverlays`, `locationMap`, `notifyConfig`), takes either:
+
+- a path on the machine the driver runs on: `/path/to/contract.yaml`;
+- any URI the job's Hadoop configuration can read: `s3a://bucket/contracts/orders.yaml`,
+  `hdfs://namenode:8020/contracts/orders.yaml`, `abfss://...`, `gs://...`, `dbfs:/...`,
+  `file:///path/to/contract.yaml`. Invaract reads it with the job's own credentials when the
+  job starts.
+
+With `--deploy-mode cluster` the driver runs on a machine of the cluster, not the one you
+submit from, so a local path must exist there. Either name the file by a URI as above, or
+ship it with the job and name it by its file name:
+
+```bash
+spark-submit \
+  --master yarn --deploy-mode cluster \
+  --jars invaract-spark-adapter-0.11.0.jar \
+  --files /path/to/contract.yaml \
+  --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
+  --conf spark.invaract.contract=contract.yaml \
+  my-real-job.jar
+```
+
+A job can still change Invaract's own settings through its Spark configuration (for
+example, turn on `spark.invaract.dryRun`). A platform that must stop that pins them: see
+[Lock Settings for a Platform](/guides/locking-settings-for-a-platform/).
 
 Every other `spark.invaract.*` setting works with this too — the location map, the stricter
 checks, a notification sink. [Configuration Settings](/reference/configuration/) lists them
@@ -53,7 +103,7 @@ all.
 
    ```bash
    spark-submit \
-     --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+     --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
      --conf spark.invaract.dryRun=true \
      ...
    ```
@@ -177,7 +227,7 @@ To have the job fail as well, so the scheduler or CI step running it stops what 
 
 ```bash
 spark-submit \
-  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   --conf spark.invaract.failOnMissingOutput=true \
   ...

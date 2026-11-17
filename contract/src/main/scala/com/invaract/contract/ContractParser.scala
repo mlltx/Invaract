@@ -38,7 +38,9 @@ object ContractParser {
 
   def parseFile(file: File): Contract = {
     if (!file.exists()) {
-      throw new ContractParseException(s"Contract file not found: ${file.getPath}")
+      throw new ContractParseException(
+        s"Contract file not found: ${file.getPath}. If the job runs in cluster mode, ship the file with --files and name it by its file name."
+      )
     }
     val stream = new FileInputStream(file)
     try {

@@ -387,6 +387,7 @@ class ContractParserTest extends AnyFunSuite {
       ContractParser.parseFile(fixture("does_not_exist.yaml"))
     }
     assert(ex.getMessage.contains("not found"))
+    assert(ex.getMessage.endsWith("If the job runs in cluster mode, ship the file with --files and name it by its file name."))
   }
 
   test("parseFile should raise ContractParseException when 'id' is missing") {

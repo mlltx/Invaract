@@ -240,6 +240,39 @@ sink whose own required property is missing, is reported the same way. When Inva
 enforcing a contract rather than in dry-run mode, each of these stops the job at start-up
 instead, with the same message.
 
+## Spark: `Contract file not found` in cluster mode
+
+```
+Contract file not found: /path/to/contract.yaml. If the job runs in cluster mode, ship the file with --files and name it by its file name.
+```
+
+With `--deploy-mode cluster` the driver runs on a machine of the cluster, where the path you
+gave does not exist. Name the file by a URI the cluster can read
+(`--conf spark.invaract.contract=s3a://bucket/contracts/orders.yaml`), or ship it with
+`--files /path/to/contract.yaml` and set `spark.invaract.contract=contract.yaml`. See
+[Where the contract file can live](/guides/installing-the-enforcement-rule/#where-the-contract-file-can-live).
+
+## Spark: the job runs, but nothing is checked
+
+No `CONTRACT_VALIDATION` events, no `Invaract` lines in the driver log, and writes to places
+the contract does not declare go through. Invaract was never installed in the session. With
+`spark.sql.extensions` alone, Spark only logs one warning when it cannot load a class:
+
+```
+WARN SparkSession: Cannot use com.invaract.sparkadapter.InvaractSparkSessionExtension to configure session extensions.
+```
+
+That happens when the class name is misspelt or the jar is not on `--jars`. It also happens
+with no warning at all when the job's own code sets `spark.sql.extensions` (for Delta Lake or
+Iceberg), which replaces the list `spark-submit` gave. Attach Invaract with
+`--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin` instead: a plugin Spark
+cannot load stops the job, and the plugin adds Invaract to whatever extensions the job sets.
+See [Install the Enforcement Rule on Spark](/guides/installing-the-enforcement-rule/).
+
+If Invaract is installed but only reports (`CONTRACT_INFERENCE` events, no blocking), the job's
+configuration has turned on `spark.invaract.dryRun`. A platform can stop that by pinning the
+setting: see [Lock Settings for a Platform](/guides/locking-settings-for-a-platform/).
+
 ## Beam: the pipeline runs, but nothing is checked
 
 `--runner=Invaract` (Java) or `--runner=invaract_beam.InvaractRunner` (Python) only takes

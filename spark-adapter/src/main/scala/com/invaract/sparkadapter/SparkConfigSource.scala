@@ -16,8 +16,15 @@ import org.apache.spark.sql.SparkSession
 private[sparkadapter] object SparkConfigSource {
   val Prefix = "spark.invaract."
 
-  def apply(session: SparkSession): ConfigSource =
-    ConfigSource.prefixed(Prefix)(key => session.conf.getOption(key))
+  /** A setting the platform pinned (`PinnedSettings`) first, then the session's. A setting that names a file may name
+    * it by any Hadoop file system URI: it reads as a local copy (`RemoteFiles`). */
+  def apply(session: SparkSession): ConfigSource = new ConfigSource {
+    def get(name: String): Option[String] = {
+      val key = Prefix + name
+      PinnedSettings.get(key).orElse(session.conf.getOption(key)).map(RemoteFiles.localizeSetting(name, key, _, session))
+    }
+    override def describe(name: String): String = Prefix + name
+  }
 }
 
 /** The `spark.invaract.*` keys Invaract reads, so that one it does not read - almost always a typo, such as

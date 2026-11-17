@@ -50,8 +50,10 @@ import org.slf4j.LoggerFactory
   * duplicate handling for any of them.
   */
 class InvaractSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+  // Listed twice (by a platform and by the job, or by `InvaractSparkPlugin` and a user), Spark calls this twice with the
+  // same extensions: the check rule is injected once, so every check runs once.
   override def apply(extensions: SparkSessionExtensions): Unit =
-    extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)
+    if (InvaractSparkSessionExtension.firstTime(extensions)) extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)
 }
 
 object InvaractSparkSessionExtension {
@@ -100,6 +102,12 @@ object InvaractSparkSessionExtension {
     * `JobMetadataConfPrefix` entries, by contrast, describe one run and stay out of the contract.
     */
   val ContractMetadataConfPrefix: String = DryRunReporter.ContractMetadataConfPrefix
+
+  private val installed = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[SparkSessionExtensions, java.lang.Boolean]())
+
+  /** Whether `extensions` has not had Invaract installed yet; it has from now on. */
+  private[sparkadapter] def firstTime(extensions: SparkSessionExtensions): Boolean =
+    installed.putIfAbsent(extensions, java.lang.Boolean.TRUE) == null
 
   private[sparkadapter] def checkRuleFor: SparkSession => LogicalPlan => Unit =
     session => {

@@ -2380,6 +2380,44 @@ message when neither conf key is set, and (with `spark.invaract.notifyConfig`
 also set) publishes both `ContractValidationEvent` and `WriteEvent` to a
 real `FileNotificationSink`.
 
+### Attaching with `spark.plugins`, and pinned settings
+
+`InvaractSparkPlugin` (a `SparkPlugin` with a driver half only) is the recommended way to
+attach: `--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin`. Its
+`DriverPlugin.init` runs before any session exists and adds this extension to the
+application's `spark.sql.extensions` when it is missing (`InvaractSparkPlugin.withInvaract`),
+with a `WARN`. That closes three ways the extension alone could be missing unnoticed: a
+misspelt class name and a missing jar (Spark only warns for an extension it cannot load, but
+fails an application whose plugin it cannot load), and a job whose own builder sets
+`spark.sql.extensions`. The extension injects its check rule once per
+`SparkSessionExtensions` (`InvaractSparkSessionExtension.firstTime`), so listing it twice, or
+in both places, checks each write once.
+
+`PinnedSettings` reads the `.properties` file the driver's environment variable
+`INVARACT_PINNED_CONF` names. `SparkConfigSource` looks every key up there before the
+session's conf, so a pinned setting cannot be changed by the job's `builder.config`,
+`spark.conf.set` or `--conf`. The plugin also writes pinned values back into the live
+`SparkConf`, warning with the key (never the value) for each one the job had changed. A file
+that cannot be read, or that names a key Invaract does not read (`SparkSettingNames`), stops
+the job. The two prefix families dry-run reporting reads with `session.conf.getAll`
+(`spark.invaract.job.metadata.*`, `spark.invaract.contract.metadata.*`) are not pinned. This
+promises that Invaract is not missing or loosened *by accident or by configuration*; a job's
+code runs with the driver's permissions, so no in-process check can stop code written to
+defeat it. `InvaractSparkPluginJobSpec` runs a real job in its own JVM that sets its own
+extensions and `dryRun=true`, and is still enforced.
+
+### File settings from any Hadoop file system
+
+The settings that name a file (`contract`, `orgPolicy`, `orgPolicyOverlays`, `locationMap`,
+`notifyConfig`) used to be read as local paths only: even a `file:` URI failed, and in
+cluster deploy mode every file had to be shipped with `--files`. `SparkConfigSource` now
+passes their values through `RemoteFiles.localizeSetting`: a value with a URL scheme (two
+letters or more, so `C:/` stays a path; not `registry://` or `ref://`) is copied to a local
+temporary file with the session's `hadoopConfiguration`, once per session per value, and the
+setting reads as that copy. A plain path is unchanged; a URI that cannot be read is refused
+naming the setting. `ContractParser.parseFile`'s "not found" message now says to ship the file
+with `--files` in cluster mode.
+
 ## Contract resolution: `registry://`
 
 `com.invaract.sparkadapter.registry`
