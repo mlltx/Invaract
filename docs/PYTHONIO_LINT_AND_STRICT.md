@@ -111,7 +111,8 @@ Know these before promising more than the guards give. Each is pinned by a test,
 - **The job's own compiled code.** Loading it is reported (`IVR006`); what it does is not seen.
 - **Code that digs a library's own function out of the wrapper that watches it**, or out of the process's memory. The
   scan reports the digging (`tampering`), and a run whose watch was switched off says so and, enforced, is not checked.
-- **What the job does before `import invaract` and after its run ends.** The scan reads that code like any other.
+- **What the job does before `import invaract` and after its run ends, where the start-up hook does not run**
+  (`INVARACT_ATTACH=import`, `python -S`). The scan reads that code like any other.
 
 ## Gates
 

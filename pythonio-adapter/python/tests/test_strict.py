@@ -545,7 +545,7 @@ def test_a_second_run_does_not_report_the_first_runs_findings_and_reports_what_w
     ran = job(WRITE, strict="report", after=after)
     assert ran.status == 0, ran.stderr[-2000:]
     assert [[(f["target"], f["detail"].split(":")[0]) for f in e["findings"]] for e in ran.scans("RUNTIME")] == [
-        [("evade/backup.out", "seen as the job ran")], [("evade/between.out", "seen before the run opened")]]
+        [("evade/backup.out", "seen as the job ran")], [("evade/between.out", "seen after the run ended")]]
 
 
 CHILD = "import sys\nimport invaract\nopen(sys.argv[1], 'w').write('x')\n"

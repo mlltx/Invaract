@@ -1,0 +1,1 @@
+import _invaract_attach; _invaract_attach.at_startup()

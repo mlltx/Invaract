@@ -109,11 +109,13 @@ private[pythonioadapter] final class Run {
     case (o: Request.Open, NotOpen)              => open(o)
     case (_, NotOpen)                            => notChecked("the run must be opened first")
     case (_: Request.Open, _: Opened)            => notChecked("the run is already open")
+    case (s: Request.Scan, run: Opened)          => scan(s, run)
+    case (_: Request.Finish, run: Opened) if run.observing => observed(run)
+    case (_, run: Opened) if run.observing       => notChecked("a report of a job that opened no run takes only scans")
+    case (f: Request.Finish, run: Opened)        => finish(f, run)
     case (r: Request.Read, run: Opened)          => read(r, run)
     case (w: Request.Write, run: Opened)         => write(w, run)
     case (w: Request.Written, run: Opened)       => stage(w, run)
-    case (s: Request.Scan, run: Opened)          => scan(s, run)
-    case (f: Request.Finish, run: Opened)        => finish(f, run)
   }
 
   private def open(o: Request.Open): Map[String, Any] = {
@@ -121,6 +123,8 @@ private[pythonioadapter] final class Run {
     if (o.protocol != Requests.Version)
       notChecked(s"this checker speaks protocol version ${Requests.Version}, and the package speaks protocol version ${o.protocol}: install the invaract package and its checker from the same release")
     else if (unknown.nonEmpty) notChecked(s"unknown setting(s): ${unknown.mkString(", ")}")
+    else if (o.observe && o.check) notChecked("a check judges a frame, and a report of a job that opened no run judges nothing: open one or the other")
+    else if (o.observe) observe(o)
     else {
       val config = new PythonIoConfigSource(o.settings)
       val job = VerificationSetup.identify(jobInfo(o.job), config)
@@ -138,6 +142,16 @@ private[pythonioadapter] final class Run {
           reply
       }
     }
+  }
+
+  /** A report of a job that opened no run of its own (the package's `INVARACT_REQUIRE_RUN`): no contract is read, whatever
+    * the settings name, nothing is judged, and only what the package scanned is published, with the run's summary. A sink
+    * that cannot be built leaves it not checked: a report that reaches no one is no report. */
+  private def observe(o: Request.Open): Map[String, Any] = {
+    val config = new PythonIoConfigSource(o.settings)
+    val sink = AttachSetup.strictSink(config).map(new RunTally(_))
+    state = Opened(None, VerificationOptions(), sink, VerificationSetup.identify(jobInfo(o.job), config), observing = true)
+    Map("ok" -> true, "protocol" -> Requests.Version, "mode" -> ObserveMode)
   }
 
   /** A check asks whether one frame would pass as a write, whatever the job has read: every declared input counts as read, with
@@ -292,6 +306,13 @@ private[pythonioadapter] final class Run {
     Map("ok" -> true, "publish" -> f.completed)
   }
 
+  /** The end of a report of a job that opened no run: its summary, and nothing to publish, however the job ended. */
+  private def observed(run: Opened): Map[String, Any] = {
+    state = Finished
+    end(run)
+    Map("ok" -> true, "publish" -> false)
+  }
+
   /** What the package put in place: a `WriteEvent` for each output, then the run's end. */
   private def published(p: Request.Published, run: Opened): Map[String, Any] = {
     state = Finished
@@ -438,19 +459,23 @@ private[pythonioadapter] object Run {
 
   val EnforceMode = "enforce"
   val DryRunMode = "dry-run"
+  /** The mode of a report of a job that opened no run (`Request.Open.observe`). */
+  val ObserveMode = "observe"
 
   /** Where a run is: before `open`; open (enforcing a contract, or a dry run with none); finished and waiting to hear what
     * the package published; or over. */
   sealed trait State
   case object NotOpen extends State
   case object Finished extends State
-  /** An open run; `contractMetadata` is what a dry run writes into its drafts (`VerificationSetup.contractMetadata`). */
+  /** An open run; `contractMetadata` is what a dry run writes into its drafts (`VerificationSetup.contractMetadata`);
+    * `observing`, a report of a job that opened no run (`Request.Open.observe`). */
   final case class Opened(
       contract: Option[Contract],
       options: VerificationOptions,
       sink: Option[RunTally],
       job: JobInfo,
-      contractMetadata: Map[String, String] = Map.empty
+      contractMetadata: Map[String, String] = Map.empty,
+      observing: Boolean = false
   ) extends State
   final case class Publishing(run: Opened) extends State
 

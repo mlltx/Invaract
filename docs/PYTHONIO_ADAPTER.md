@@ -473,6 +473,79 @@ then closed or written down as not closable.
   filesystem method the catalogue does not name, or names its path parameter differently. The lint has over 260 evasion
   cases and over 110 legitimate ones (1,005 tests); `mutmut` kills 1,958 of 2,214 mutants (88.4%; the floor is 80%).
 
+### Attaching without the annotation (2026-11-16)
+
+A job that forgot `@invaract.job` was not checked, and nothing said so; what ran before `import invaract` and after the
+run was not watched. docs/PYTHONIO_ATTACH_DESIGN.md is the design (scenarios S-0 to S-10, rules R-1 to R-12, the owner's
+decisions in its section 15); this is what was built, in four phases, each followed by a simplification pass.
+
+- **Start-up attach** (phase 1). The wheel installs `00_invaract_attach.pth`, whose one line calls
+  `_invaract_attach.at_startup()` in every Python process of the environment. That module (standard library only, a top-level
+  module beside the package) does nothing unless `INVARACT_STRICT`, `INVARACT_REQUIRE_RUN` or `INVARACT_AUTO_RUN` is set
+  and `INVARACT_ATTACH` is not `import`; then an audit hook waits for `cpython.run_file`/`run_module`/`run_command`/
+  `run_stdin`, decides whether the program is a job (`is_job`: exclude patterns, include patterns, then "the job's own
+  code", the environment's `scripts` folder counting as a library's), and imports the package, which attaches
+  (`invaract._attach`). The process that attaches with no `INVARACT_STRICT_SPILL` in its environment is the job's root
+  and owns the spill file for its whole life; the processes it starts are its children. `python -m invaract` is the
+  launcher: it runs a script, a module or `-c` code as Python would and records exactly how it ended.
+- **How the job ended**, for the start-up hook: an uncaught exception (`sys.last_value`), the last `sys.exit` code on the
+  main thread (wrapped), and on 3.12 and later the main code object's `PY_RETURN` (`sys.monitoring`, a local event on the
+  code object the first `exec` event after the program event carries). A bare `raise SystemExit` is unknown on 3.12 and
+  later, and indistinguishable from a normal end on 3.10 and 3.11 (L-1, accepted). The end-of-process handler is
+  registered first, so it runs last, after the job's own; it sets the exit status with `os._exit` after flushing and
+  `logging.shutdown()`, and only when the job itself did not fail.
+- **`INVARACT_REQUIRE_RUN`** (phase 2): `report` or `enforce`. A root job process that opened no run and whose watch holds
+  an unexplained finding is said, and enforced ends with status 2 ("not checked", decision R-6b). With the watch off it
+  counts every job that opened no run. A job that read or wrote after its last run is said whatever the setting, and
+  with `INVARACT_STRICT=enforce` ends refused (1).
+- **`INVARACT_AUTO_RUN`** (phase 3): a run opens at the first `invaract.read`/`write` outside a run (T1); with the watch
+  enforcing, at the first unexplained finding outside a run, which it then refuses, and the job stays refused (T2); and
+  at exit, for a job with findings or a scan with something to say (T3). It needs `INVARACT_CONTRACT` or a dry run. Its
+  events carry `invaract.run=auto` and `invaract.attach=startup|launcher|import` (a key the platform set wins). An
+  annotated run opened after the implicit one has taken calls is `CheckNotRun`.
+- **The no-run event** (phase 4): the report of `INVARACT_REQUIRE_RUN` also goes to the platform's sink, through an `open`
+  with `"observe": true`: the checker reads no contract, takes only `scan` and `finish`, and publishes a `CODE_SCAN` and a
+  `JOB_SUMMARY` marked `invaract.run=none`. Failing to report is said and changes nothing.
+- **Where the design was changed while building it**: D-3 counts the environment's `scripts` folder as a library's (a
+  console script such as `pytest` would otherwise have been a job); the attributes go only on runs Invaract opened;
+  scenario S-6 enforces the contract (observing without one is S-3, the dry run); phase 4 is an `observe` open rather
+  than a dry run, whose `DRY_RUN_SUMMARY` would have claimed a draft. A settings error met by `invaract.read` outside any
+  run ends the job not checked (2), as it does at a run's opening.
+- **Hardened for production** (a review after the four phases, each finding a real job that failed before the fix):
+  - a process **forked** from the root is never its root (the root is a process id, `_attach._root_pid`): it does not
+    settle the job at exit (it would have closed the parent's run over the shared checker pipe). What it sees goes to the
+    root's spill file as it is seen, and stays its own for a run it opens itself: the watcher's one fork handler decides
+    this (`Watcher.in_forked_child`, told the root's spill file by `_state.job_spill`). A run is tied to the process that
+    opened it (`Run.ours`), so a forked process can neither use nor end its parent's run;
+  - a job that **replaces itself** with `os.exec*` stays the root: a spill file names its owner (`invaract-strict-<pid>-…`),
+    and only another process's makes this one a child (`watcher.parents_spill`);
+  - **threads** reading at once wait for the one implicit run to open: a run is current only once it is open (`_claimed`
+    keeps runs from nesting meanwhile), and opening the implicit run is serialised by `_attach._lock`;
+  - the **exit handler never fails open**: a publish that fails as the job ends gives status 1 with its traceback, as an
+    annotated run would, and anything else unexpected gives 2 ("could not settle this job");
+  - attached at import or by the launcher, the handler is not the first registered, and `os._exit` would skip the exit
+    handlers registered before it (DuckDB's, Polars', pyarrow's, `multiprocessing`'s, the job's): `atexit.register` is
+    wrapped from then on (and `atexit.unregister`, so the record stays true), so the ones registered after it, which
+    have run, are unregistered, and the earlier ones run before the process ends (`_run_earlier_exit_handlers`; probed on
+    3.10, 3.11 and 3.13);
+  - a **child's report cut short** (killed as it wrote) is an error the job says, not a crash in the exit handler; a
+    child writes each finding in one `os.write` to an append-only file only the job's user can read (`0600`);
+  - the **no-run report** is given up after `REPORT_SECONDS` (120): it changes nothing, so a checker that hangs never
+    holds the job's exit;
+  - the **launcher** runs the program in a `__main__` module of its own that stays `__main__` (the job's name on events
+    sent as it ends, `pickle`, exit handlers), sets `sys.path[0]` as Python does for a script, a folder or a zip file,
+    and says what Python says of a missing script or module;
+  - **which programs are jobs**: paths compared case-normalised, `pip install --user` packages and commands counted as
+    libraries, a library folder that would hold everything (a file system's root) ignored, and the main program's code
+    matched by name before any `realpath`. The scan's idea of the job's own code (`_codescan._not_the_jobs`) starts from
+    the same folders (`_invaract_attach.library_roots`), so the two never disagree; what the launcher starts is a job
+    whatever the patterns say.
+- **Tests.** `tests/test_attach.py` runs every case as a real job through the start-up hook, the launcher and the import:
+  the scenarios, the endings, children, forks, the settings each refused, the hook failing. `tests/test_attach_unit.py`
+  holds the tables (`wanted`, `is_job`, `outcome`, the settings). The recorded cases `observe-no-run-reported` and
+  `observe-takes-only-scans` hold the checker's side. `.github/scripts/python_wheel.py` checks that the installed wheel's
+  hook idles with no settings and attaches with one.
+
 ## Milestone 5: the user guide and the release
 
 Milestone 5 (design section 10) is the user guide and what a release needs:

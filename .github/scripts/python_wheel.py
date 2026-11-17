@@ -192,6 +192,12 @@ def smoke(wheel, expect, extras):
         subprocess.run([python, "-m", "pip", "install", "--quiet", wheel, *extras], check=True)
         environ = {k: v for k, v in os.environ.items() if not k.startswith("INVARACT_")}
         subprocess.run([python, "-c", _SMOKE, expect], check=True, env=environ, cwd=work)
+        # the start-up hook: idle unless the platform asks for Invaract, and attached before the job's code when it does
+        attached = "import sys; print('invaract' in sys.modules)"
+        for asked, expected in (({}, "False"), ({"INVARACT_STRICT": "report"}, "True")):
+            said = subprocess.run([python, "-c", attached], check=True, env={**environ, **asked}, cwd=work, capture_output=True, text=True)
+            if said.stdout.strip() != expected:
+                raise SystemExit(f"the start-up hook did not {'stay idle' if expected == 'False' else 'attach'} ({asked}): {said.stdout}{said.stderr}")
         job = os.path.join(work, "orders_job")
         shutil.copytree(os.path.join(PACKAGE, "examples", "orders_job"), job)
         subprocess.run([python, "main.py"], check=True, env=environ, cwd=job)

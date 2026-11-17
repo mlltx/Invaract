@@ -22,6 +22,9 @@ on:
     paths:
       - 'pythonio-adapter/build.sbt'
       - 'pythonio-adapter/python/pyproject.toml'
+      - 'pythonio-adapter/python/setup.py'
+      - 'pythonio-adapter/python/00_invaract_attach.pth'
+      - 'pythonio-adapter/python/_invaract_attach.py'
       - 'pythonio-adapter/python/invaract/__init__.py'
       - 'pythonio-adapter/python/invaract/_checker.py'
       - 'pythonio-adapter/lint/pyproject.toml'
@@ -345,5 +348,9 @@ jobs:
             Iceberg tables (`invaract[delta]`, `invaract[iceberg]`). Tested end to end against S3, Google Cloud Storage
             and Azure (their emulators) and a single-node HDFS cluster; a Delta table on Google Cloud Storage is the one
             combination no emulator can serve, so it is not tested.
+
+            The package installs a start-up hook (`00_invaract_attach.pth`). With INVARACT_STRICT, INVARACT_REQUIRE_RUN or
+            INVARACT_AUTO_RUN set, Invaract now attaches before a job's first line, so INVARACT_STRICT=enforce also covers
+            what a job does before `import invaract` and after its run. INVARACT_ATTACH=import keeps the old behaviour.
           files: release/*
           fail_on_unmatched_files: true

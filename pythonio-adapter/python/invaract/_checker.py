@@ -81,6 +81,13 @@ class Checker:
         """The checker's command line, as a message names it."""
         return shlex.join(self._command)
 
+    def kill(self):
+        """Stops the checker at once: a request waiting for its reply then ends as if it had stopped."""
+        try:
+            self._process.kill()
+        except OSError:
+            pass
+
     def close(self):
         """Lets the checker deliver its events and stop."""
         try:

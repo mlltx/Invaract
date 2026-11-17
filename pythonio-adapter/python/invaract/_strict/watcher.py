@@ -57,7 +57,7 @@ class Entry:
 
 
 class Watcher:
-    def __init__(self, lint, enforce, allow=(), when="as the job ran", spill=None):
+    def __init__(self, lint, enforce, allow=(), when="as the job ran", spill=None, child=False):
         self._lint = lint
         self.enforce = enforce
         self.allow = list(allow)
@@ -70,10 +70,15 @@ class Watcher:
         self._errors = []
         self._sent_any = False
         self._started = None
-        #: where a child process leaves what it saw, and whether this is one
+        #: where child processes leave what they saw (a run's own, or the job process's), and whether this is one of them
         self._spill = spill
-        self._child = spill is not None
+        self._child = child
+        #: a process forked from a job's root outside any run: what it sees goes to the root as it is seen (a forked worker
+        #: often ends with os._exit), and stays its own too, for a run it opens itself
+        self._kept = False
         self._outer = None
+        #: called, outside any run, when the watcher records what nothing explains (``_attach``: Invaract opens the run)
+        self.on_unexplained = None
         self._markers = {}
         self._scratch = scratch_roots()
 
@@ -86,7 +91,7 @@ class Watcher:
     @classmethod
     def in_child(cls, lint, enforce, allow, spill):
         """The watcher of a Python process a watched job started: it leaves what it sees in ``spill``."""
-        return cls(lint, enforce, allow, spill=spill)
+        return cls(lint, enforce, allow, spill=spill, child=True)
 
     @property
     def scanner(self):
@@ -103,9 +108,12 @@ class Watcher:
         wrapping.rebind_everywhere()
         self._run = run
         self._started = time.monotonic()
-        self._spill = os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{run.run_id}.jsonl")
         self._outer, _state.watcher = _state.watcher, self
-        self._outer_spill, os.environ[SPILL] = os.environ.get(SPILL), self._spill
+        owned = getattr(self._outer, "_spill", None) if self._outer is not None and not self._outer._child else None
+        # a job process attached at start-up leaves one file for its whole life; else the run has its own
+        self._spill = owned or new_spill(run.run_id)
+        self._outer_spill = os.environ.get(SPILL)
+        os.environ[SPILL] = self._spill
         with _state.working():
             self._take_over(self._outer)
             self._note_compiled_modules()
@@ -116,6 +124,9 @@ class Watcher:
         replaced = self._started is not None and _state.watcher is not self
         if _state.watcher is self or replaced:
             _state.watcher = self._outer
+            if self._outer is not None and not self._outer._child:
+                # what is seen from here is after this run
+                self._outer._when = "after the run ended"
         if self._started is None:
             return None
         self._check_it_was_watched_throughout(replaced)
@@ -131,7 +142,10 @@ class Watcher:
                 return None
             for entry in unsent:
                 entry.sent = True
-            return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in unsent], self._errors, elapsed)
+            return self._scan(unsent, elapsed)
+
+    def _scan(self, entries, elapsed):
+        return _protocol.scan("runtime", self.enforce, self.scanner, [], [entry.to_send() for entry in entries], self._errors, elapsed)
 
     def _check_it_was_watched_throughout(self, replaced):
         """A job that switched the watch off, or put a library's own function back in a wrapper's place, was not watched
@@ -147,16 +161,43 @@ class Watcher:
                                              f"checked ({STRICT}=enforce)")
 
     def in_forked_child(self):
-        """This process is a fork of the watched one: what it sees from here is left for its parent, when its parent has a
-        run open to pick it up. A fork made before any run opened goes on keeping what it sees for its own run."""
+        """This process is a fork of the watched one, and what it is decides where what it sees goes:
+
+        - forked while a run is open, it is part of that run: what it sees is left for its parent;
+        - forked outside a run from a job's root (``_state.job_spill``), it is part of the job: what it sees goes to the
+          root as it is seen (a forked worker often ends with ``os._exit``), and is kept for a run it opens itself;
+        - forked outside a run otherwise (a server forking its workers), it is a job of its own: it keeps what it sees,
+          and children it starts report to it."""
         self._lock = threading.RLock()
-        if self._spill is not None:
+        if self._run is not None:
             self._child = True
             self._found = {}
+        elif _state.job_spill is not None:
+            self._child = self._kept = True
+            self._found, self._spill = {}, _state.job_spill
+            os.environ[SPILL] = _state.job_spill
+        elif not self._child:
+            self._found = {}
+            if self._spill is not None:
+                self._spill = new_spill()
+                os.environ[SPILL] = self._spill
+
+    def seen(self):
+        """Every finding kept, and what the watch could not do (``(where, message)``: a child's report that could not be
+        read, for one), children's included."""
+        with self._lock:
+            self._gather()
+            return [entry.finding for entry in self._found.values()], list(self._errors)
+
+    def everything(self):
+        """Every finding kept, children's included, as one ``scan`` (the report of a job that opened no run)."""
+        with self._lock:
+            self._gather()
+            return self._scan(self._found.values(), 0)
 
     def _take_over(self, earlier):
         """Makes what an earlier watcher of this process saw before the run opened this run's."""
-        if earlier is None or earlier._child:
+        if earlier is None or (earlier._child and not earlier._kept):
             return  # a child's findings are with its parent already
         with earlier._lock:
             entries, earlier._found = list(earlier._found.items()), {}
@@ -241,6 +282,8 @@ class Watcher:
                 self._leave(finding)
         if self.enforce and not allowed:
             self._refuse(entry)
+        elif not allowed and self.on_unexplained is not None and self._run is None:
+            self.on_unexplained()
 
     def _explained(self, seen, frame, line, end_line):
         """Whether a marker on one of the call's lines keeps it, or ``INVARACT_STRICT_ALLOW`` names what it reached; and the
@@ -286,19 +329,33 @@ class Watcher:
             raise
 
     def _leave(self, finding):
-        with open(self._spill, "a", encoding="utf-8") as spill:
-            spill.write(json.dumps(dataclasses.asdict(finding)) + "\n")
+        """Appends one finding to the parent's spill file in one write, so the lines of processes writing at once never
+        interleave; the file is the job's user's alone (it names what the job reached)."""
+        line = (json.dumps(dataclasses.asdict(finding)) + "\n").encode("utf-8")
+        fd = os.open(self._spill, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, line)
+        finally:
+            os.close(fd)
 
     def _gather(self):
         """Adds what child processes saw to what this process saw."""
-        if self._child or not os.path.exists(self._spill):
+        if self._child or self._spill is None or not os.path.exists(self._spill):
             return
         with _state.working():
-            with open(self._spill, encoding="utf-8") as spill:
-                rows = [json.loads(line) for line in spill if line.strip()]
+            with open(self._spill, encoding="utf-8", errors="replace") as spill:
+                lines = [line for line in spill if line.strip()]
             os.remove(self._spill)
-        for row in rows:
-            finding = self._lint.Finding(**{**row, "detail": row["detail"] + ", in a child process"})
+        for line in lines:
+            try:
+                row = json.loads(line)
+                finding = self._lint.Finding(**{**row, "detail": row["detail"] + ", in a child process"})
+            except (ValueError, TypeError, KeyError) as e:
+                # a child stopped as it wrote (killed, out of space): what it saw is lost, and the run must say so
+                if len(self._errors) < MAX_ERRORS:
+                    self._errors.append(("<strict mode>", f"a child process's report could not be read ({type(e).__name__}): "
+                                                          "what it did is not known"))
+                continue
             key = (finding.path, finding.line, finding.col, finding.rule, finding.target, "child")
             if key in self._found:
                 self._found[key].times += 1
@@ -314,6 +371,32 @@ def _named(seen):
         real = os.path.realpath(path)
         names += [real, os.path.relpath(real, os.path.realpath(os.getcwd()))]
     return names
+
+
+def new_spill(name=None):
+    """A new file for the Python processes a job starts to leave what they see in, named ``name`` (a run's id) or at
+    random. Its name starts with the process that owns it (``owner``), and this is the one place it is made."""
+    import uuid
+    return os.path.join(tempfile.gettempdir(), f"invaract-strict-{os.getpid()}-{name or uuid.uuid4().hex[:16]}.jsonl")
+
+
+def parents_spill(environ=None):
+    """The spill file this process reports to, when it was started by a watched job; ``None`` when it was not, or when the
+    one in the environment is this process's own (a job that replaced itself with ``os.exec*`` is still that job)."""
+    environ = os.environ if environ is None else environ
+    spill = environ.get(SPILL)
+    if not spill:
+        return None
+    return None if owner(spill) == os.getpid() else spill
+
+
+def owner(spill):
+    """The process a spill file belongs to, by its name; ``None`` for a name that does not say."""
+    parts = os.path.basename(spill).split("-")
+    try:
+        return int(parts[2]) if len(parts) > 3 and parts[:2] == ["invaract", "strict"] else None
+    except ValueError:
+        return None
 
 
 def scratch_roots():

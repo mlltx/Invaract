@@ -22,10 +22,13 @@ VERSION = 1
 SCHEMA = "https://mlltx.github.io/Invaract/schemas/pythonio/v1/protocol.schema.json"
 
 
-def open_run(settings, job, check=False):
+def open_run(settings, job, check=False, observe=False):
     """Starts a run: the Invaract settings by their neutral names (``_settings``), and the job's details. ``check`` opens a
-    check (``invaract.check``) instead: one frame judged as a write would be, with nothing written and no events."""
-    return {"op": "open", "protocol": VERSION, "settings": settings, "job": job, **({"check": True} if check else {})}
+    check (``invaract.check``) instead: one frame judged as a write would be, with nothing written and no events.
+    ``observe`` opens the report of a job that opened no run (``INVARACT_REQUIRE_RUN``): only scans follow, nothing is
+    judged, and what they found is published."""
+    return {"op": "open", "protocol": VERSION, "settings": settings, "job": job, **({"check": True} if check else {}),
+            **({"observe": True} if observe else {})}
 
 
 def read(name, location=None, fmt=None, schema=None, catalog=None, csv=None):

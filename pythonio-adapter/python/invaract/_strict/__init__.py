@@ -33,12 +33,11 @@ is not checked.
 import os
 
 from .. import _codescan
-from .._settings import STRICT, STRICT_ALLOW
+from .._settings import STRICT, STRICT_ALLOW, strict_mode
 from ..errors import CheckNotRun
 from . import _state, wrapping
-from .watcher import SPILL, Watcher
+from .watcher import Watcher, parents_spill
 
-MODES = ("off", "report", "enforce")
 
 #: What invaract-lint's catalogue must have for strict mode to read it: an older one names less than is watched.
 _CATALOGUE = ("COMPILED", "READERS", "SOURCES", "FILESYSTEMS", "watched_library", "watched_names", "opener_names", "frame_writer_names")
@@ -47,9 +46,10 @@ _CATALOGUE = ("COMPILED", "READERS", "SOURCES", "FILESYSTEMS", "watched_library"
 def from_environment(environ=None):
     """The watcher of a run that the environment asks for, or ``None`` when ``INVARACT_STRICT`` is off or not set."""
     environ = os.environ if environ is None else environ
-    mode = environ.get(STRICT, "").strip().lower() or "off"
-    if mode not in MODES:
-        raise CheckNotRun(f"{STRICT} must be off, report or enforce, not {environ[STRICT]!r}")
+    try:
+        mode = strict_mode(environ)
+    except ValueError as e:
+        raise CheckNotRun(str(e)) from None
     if mode == "off":
         return None
     try:
@@ -72,22 +72,23 @@ def _names_what_to_watch(lint):
 
 
 def install_early(environ=None):
-    """Starts watching as the package is imported, when the environment asks for strict mode: a library the job imports
-    afterwards is wrapped as it loads, and what the job does before its run opens is kept for that run. In a Python process
-    a watched job started, what is seen is left for that job's run. Never raises: a run that cannot watch says so when it
-    opens."""
+    """Starts watching as the package is imported (or, attached at start-up, as the job's program starts), when the
+    environment asks for the watch: a library the job imports afterwards is wrapped as it loads, and what the job does
+    before its run opens is kept for that run. In a Python process a watched job started, what is seen is left for that
+    job's run. Returns the watcher, or ``None``. Never raises: a run that cannot watch says so when it opens."""
     environ = os.environ if environ is None else environ
-    mode = environ.get(STRICT, "").strip().lower()
-    if mode not in ("report", "enforce"):
-        return
     try:
+        mode = strict_mode(environ)
+        if mode == "off":
+            return None
         import invaract_lint
         if not _names_what_to_watch(invaract_lint):
-            return
+            return None
         wrapping.install(invaract_lint)
         if _state.watcher is None:
-            allow, spill = _codescan._split(environ.get(STRICT_ALLOW)), environ.get(SPILL)
+            allow, spill = _codescan._split(environ.get(STRICT_ALLOW)), parents_spill(environ)
             _state.watcher = (Watcher.in_child(invaract_lint, mode == "enforce", allow, spill) if spill
                               else Watcher.collecting(invaract_lint, allow))
+        return _state.watcher
     except Exception:  # noqa: BLE001 - said when the run opens (from_environment), where it can be refused
-        pass
+        return None

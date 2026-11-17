@@ -235,7 +235,7 @@ name that version.
 ## Dry run
 
 `release-python.yml` runs everything up to publishing on any pull request that changes how the packages
-are built (either package's `pyproject.toml` or `__init__.py`, `_checker.py`, `pythonio-adapter/build.sbt`,
+are built (either package's `pyproject.toml` or `__init__.py`, `_checker.py`, the start-up hook's `setup.py`, `.pth` and `_invaract_attach.py`, `pythonio-adapter/build.sbt`,
 `python_wheel.py`, the workflow or this file), and on a manual run. It uses no secret and uploads nothing to PyPI; it cannot prove the
 trusted publisher is set up, which only a real release does. Locally, with the jar built
 (`cd pythonio-adapter && sbt assembly`):

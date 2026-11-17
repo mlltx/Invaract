@@ -43,7 +43,8 @@
         "protocol": { "const": 1, "description": "The protocol version the package speaks. A checker that speaks another answers not-checked. (The checker takes a request without it as version 1, from packages before the field was sent.)" },
         "settings": { "$ref": "#/$defs/Settings", "description": "None when absent: the contract then comes from nowhere, and the open is answered not-checked unless `dryRun` is set." },
         "job": { "$ref": "#/$defs/Job", "description": "Empty when absent." },
-        "check": { "type": "boolean", "description": "Only `true` counts (the checker takes any other value as false). true opens a check (`invaract.check`): every declared input counts as read, nothing is published and no events are sent. A check needs a contract." }
+        "check": { "type": "boolean", "description": "Only `true` counts (the checker takes any other value as false). true opens a check (`invaract.check`): every declared input counts as read, nothing is published and no events are sent. A check needs a contract." },
+        "observe": { "type": "boolean", "description": "Only `true` counts. true opens a report of a job that opened no run of its own (`INVARACT_REQUIRE_RUN`): no contract is read, whatever the settings name; only `scan` and `finish` follow; nothing is judged, and what was scanned is published with the run's summary. Not with `check`." }
       }
     },
     "ReadRequest": {
@@ -202,7 +203,7 @@
       "properties": {
         "ok": { "const": true },
         "protocol": { "const": 1, "description": "The protocol version the checker speaks. A package that speaks another stops the run, not checked." },
-        "mode": { "enum": ["enforce", "dry-run"], "description": "`enforce`: a contract is checked, and `contract` gives it. `dry-run`: no contract; every write is let through and a draft contract inferred." },
+        "mode": { "enum": ["enforce", "dry-run", "observe"], "description": "`enforce`: a contract is checked, and `contract` gives it. `dry-run`: no contract; every write is let through and a draft contract inferred. `observe`: a report of a job that opened no run (`observe` on the request)." },
         "contract": { "$ref": "#/$defs/ContractView" }
       }
     },
