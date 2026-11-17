@@ -4076,6 +4076,15 @@ supported Python: six seen only by the scan, seven only by strict mode, none by 
 docs/PYTHONIO_ADAPTER.md, “Closing what Python lets be closed”. Open: an operating-system guard (a user that can
 write only where the contract says) for what cannot be closed from inside Python: another program once started,
 and the job’s own compiled code.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: attaching to Python jobs without the annotation</strong> (<code dir="auto">pythonio-adapter</code>; design
+docs/PYTHONIO_ATTACH_DESIGN.md). The wheel installs a start-up hook (<code dir="auto">00_invaract_attach.pth</code>, on by default,
+<code dir="auto">INVARACT_ATTACH=import</code> to switch it off) that attaches before a job’s first line when a setting asks for Invaract,
+and <code dir="auto">python -m invaract</code> launches a job with Invaract attached. <code dir="auto">INVARACT_REQUIRE_RUN</code> reports, or ends not
+checked, a job that touched data and opened no run, and publishes what it touched (<code dir="auto">observe</code> open, <code dir="auto">invaract.run=none</code>);
+<code dir="auto">INVARACT_AUTO_RUN</code> opens the run itself, so a job needs no annotation, publishing only if the job completed.
+<code dir="auto">INVARACT_ATTACH_INCLUDE</code>/<code dir="auto">EXCLUDE</code> say which programs are jobs. See docs/PYTHONIO_ADAPTER.md, “Attaching without
+the annotation”. Open: a per-job contract map (one environment, many jobs), for platforms that cannot set
+<code dir="auto">INVARACT_CONTRACT</code> per job.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
