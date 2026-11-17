@@ -170,6 +170,19 @@ crash.**
   case) is combined into a synthetic `ARGS(...)` wrapper (an `ir.Function`)
   with a `Diagnostic`, since `AggregateCall` models exactly one argument.
 
+**A plan too deep for the stack.** Translation recurses once per plan node, and the
+enforcement rule translates every plan Spark analyzes (it must, to remember what a later
+`.checkpoint()` was made from), so a plan Spark itself handles — a loop of a thousand
+`withColumn` calls before a `count()` — once ran the analyzer thread out of stack inside
+Invaract and failed a query that writes nothing. `ContractEnforcementRule.verifyOrThrow`
+now runs the translation and the check through `DeepPlans`: an overflow on the analyzer
+thread is retried on a thread with a 512 MB stack (which inherits the active session), and
+only a plan too deep even for that is decided without checking it — a write (or anything
+that may be one) is refused as `UNVERIFIABLE_WRITE` (`DeeplyNestedPlan`), and any other plan
+runs unchecked with one warning. Log-only dry-run skips such a plan with a warning.
+`DeepPlansSpec` exercises the retry deterministically, on a thread with a deliberately tiny
+stack.
+
 Every degradation is paired with a `Diagnostic(nodeType, message)`, and
 `TranslationResult(plan, diagnostics)` carries the complete list. A
 partially understood pipeline is more useful to a verification engine than

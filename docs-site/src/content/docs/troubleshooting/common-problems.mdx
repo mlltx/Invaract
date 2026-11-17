@@ -45,6 +45,19 @@ write. If that step only reports (it sends metrics or a notification, and writes
 data), a platform can let it through with the
 [trusted steps setting](/reference/configuration/#making-the-checks-stricter).
 
+## A write is rejected as "too deeply nested"
+
+```
+[UNVERIFIABLE_WRITE] 'DeeplyNestedPlan' ... this write's plan is too deeply nested for Invaract to verify
+```
+
+The write's plan is so deep (thousands of chained steps, typically a loop of `withColumn` or
+`union` calls) that even Invaract's retry, on a thread with a very large stack, could not walk
+it. Rather than let the write through unchecked, Invaract refuses it. Shorten the plan before
+writing: call `.checkpoint()` or `.localCheckpoint()` part way through the loop, or write an
+intermediate table and read it back. Queries that write nothing (`count()`, `show()`) are never
+refused for this.
+
 ## A rule check is rejected with `RULE_UNVERIFIABLE_DML`
 
 Your contract declares a DML rule (`merge_condition`, `forbid_unconditional_delete`, or

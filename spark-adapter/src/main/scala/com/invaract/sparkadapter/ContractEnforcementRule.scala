@@ -498,6 +498,26 @@ object ContractEnforcementRule {
       job: Option[JobInfo],
       written: com.invaract.ir.Write => Unit
   ): Unit = {
+    def translate(): Translation = translateStage(analyzedPlan, checkpointRegistry)
+    def check(t: Translation): Unit =
+      checkStage(contract, analyzedPlan, t, options, sink, applicationId, capabilities, job, written)
+    // A plan too deep for this thread's stack is tried again on a thread with a large one (`DeepPlans`). Only the stage
+    // that overflowed is run again: translation has a side effect that must happen once (`TableCreations.claim`), and an
+    // overflow in the check happens while it is computing, before it publishes anything.
+    DeepPlans.attempt(translate()) match {
+      case Right(t) =>
+        DeepPlans.attempt(check(t)).left.foreach { _ =>
+          DeepPlans.onLargeStack(check(t)).left.foreach(_ => tooDeep(contract, analyzedPlan, sink, applicationId, job))
+        }
+      case Left(_) =>
+        DeepPlans.onLargeStack(check(translate())).left.foreach(_ => tooDeep(contract, analyzedPlan, sink, applicationId, job))
+    }
+  }
+
+  /** `analyzedPlan` with its checkpoints resolved, and its translation. */
+  private final case class Translation(plan: LogicalPlan, translated: TranslationResult)
+
+  private def translateStage(analyzedPlan: LogicalPlan, checkpointRegistry: Option[CheckpointRegistry]): Translation = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
     // long before any write (see CheckpointRegistry's class doc). A bare
@@ -511,6 +531,21 @@ object ContractEnforcementRule {
     // The insert inside a new-table `.saveAsTable()` gets the table it is filling (see `TableCreations`).
     val translated = translatedRaw.copy(plan = TableCreations.claim(translatedRaw.plan), diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
+    Translation(plan, translated)
+  }
+
+  private def checkStage(
+      contract: Contract,
+      analyzedPlan: LogicalPlan,
+      translation: Translation,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      applicationId: Option[String],
+      capabilities: Option[AdapterCapabilities],
+      job: Option[JobInfo],
+      written: com.invaract.ir.Write => Unit
+  ): Unit = {
+    val Translation(plan, translated) = translation
     translated.plan match {
       case w: com.invaract.ir.Write =>
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
@@ -572,6 +607,44 @@ object ContractEnforcementRule {
         }
     }
   }
+
+  /** What a plan too deep to check even on a large stack means: a write (or anything that might be one) is refused, so
+    * it is never let through unchecked; any other plan - a `count()`, a `show()` - is let through with a warning, since
+    * it changes nothing and a contract has nothing to say about it.
+    */
+  private[sparkadapter] def tooDeep(
+      contract: Contract,
+      analyzedPlan: LogicalPlan,
+      sink: Option[NotificationSink],
+      applicationId: Option[String],
+      job: Option[JobInfo]
+  ): Unit =
+    // Both tests look only at the plan's root, so they cannot overflow themselves.
+    if (analyzedPlan.isInstanceOf[Command] || WriteCommandSupport.combined.isDefinedAt(analyzedPlan)) {
+      VerificationPipeline.rejectUnverifiableWrite(
+        contract,
+        DeeplyNestedPlan,
+        com.invaract.ir.UnknownPlan("a plan too deeply nested to render", analyzedPlan.getClass.getSimpleName),
+        sink,
+        applicationId,
+        job
+      )
+    } else if (warnedTooDeep.compareAndSet(false, true)) {
+      logger.warn(
+        "Invaract: a query's plan is too deeply nested to translate; it writes nothing, so it runs unchecked. " +
+          "(Logged once per JVM.)"
+      )
+    }
+
+  private val warnedTooDeep = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  /** The refusal of a write whose plan is too deep to check. */
+  private[sparkadapter] val DeeplyNestedPlan = com.invaract.verification.UnverifiableOperation(
+    "DeeplyNestedPlan",
+    "this write's plan is too deeply nested for Invaract to verify",
+    "Shorten the plan before writing: call .checkpoint() or .localCheckpoint() part-way through, or write an " +
+      "intermediate table and read it back."
+  )
 
   /** What this adapter hands `VerificationPipeline` for a plan it translated to
     * an `ir.Write`.
@@ -645,10 +718,14 @@ object ContractEnforcementRule {
       onInferred: Contract => Unit,
       checkpointRegistry: Option[CheckpointRegistry] = None
   ): Unit =
-    inferOutcome(analyzedPlan, checkpointRegistry).foreach {
-      case outcome: InferenceOutcome.Inferred => onInferred(outcome.contract)
-      case _: InferenceOutcome.Skipped => () // surfaced by DryRunReporter; this callback only ever wanted contracts
-    }
+    // Dry-run never stops a job: a plan too deep to infer from is skipped with a warning (`DeepPlans`).
+    DeepPlans.attempt(inferOutcome(analyzedPlan, checkpointRegistry)).fold(
+      _ => logger.warn("Invaract dry-run mode: a query's plan is too deeply nested to infer a contract from; skipped."),
+      _.foreach {
+        case outcome: InferenceOutcome.Inferred => onInferred(outcome.contract)
+        case _: InferenceOutcome.Skipped => () // surfaced by DryRunReporter; this callback only ever wanted contracts
+      }
+    )
 
   /** What dry-run mode made of one analyzed plan - the structured form
     * `inferOrIgnore` flattens to "a contract, or nothing". `DryRunReporter`
