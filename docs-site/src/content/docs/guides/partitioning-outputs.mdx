@@ -143,10 +143,14 @@ Spark says how a write is partitioned for these writes:
 | `.writeStream` into files, a Delta table or a table partitioned by plain columns | the stream's `.partitionBy(...)`, else the Delta table's own | a stream appends, so none |
 
 Any other write to an output that declares partition keys is refused with `UNVERIFIABLE_WRITE` rather
-than let through unchecked: a `foreachBatch`, console or Kafka stream (whatever the function writes is
-its own code), an insert into a Hive table Spark doesn't convert (a `TEXTFILE` table, say), another
-source's `.save(...)` with no `.partitionBy(...)`, and a table partitioned by a derived value such as
-`days(ts)` or `bucket(4, id)`, which a contract's keys (columns) cannot name.
+than let through unchecked: a Kafka stream, an insert into a Hive table Spark doesn't convert (a
+`TEXTFILE` table, say), another source's `.save(...)` with no `.partitionBy(...)` (a JDBC write, for
+one), and a table partitioned by a derived value such as `days(ts)` or `bucket(4, id)`, which a
+contract's keys (columns) cannot name. A console or memory stream reports no partitioning, so it is
+checked as unpartitioned.
+
+A `foreachBatch` stream is not itself a write: the writes its function makes to each batch are
+checked, each as the batch write it is, partitioning included.
 
 ## Write it from Beam
 

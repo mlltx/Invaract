@@ -616,6 +616,9 @@ object ContractEnforcementRule {
             VerificationPipeline.rejectUnverifiableWrite(
               contract, FailClosedCommands.unverifiable(plan), translated.plan, sink, applicationId, job
             )
+          case None if WriteCommandSupport.isForeachBatch(plan) =>
+            if (loggedForeachBatch.compareAndSet(false, true))
+              logger.info("Invaract: a foreachBatch stream is checked through the writes its function makes.")
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }
@@ -651,6 +654,7 @@ object ContractEnforcementRule {
     }
 
   private val warnedTooDeep = new java.util.concurrent.atomic.AtomicBoolean(false)
+  private val loggedForeachBatch = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   /** The refusal, under `rejectUndeclaredInputs`, of a write that reads a Dataset built from an RDD. */
   private[sparkadapter] val RddBackedSource = com.invaract.verification.UnverifiableOperation(
@@ -852,8 +856,9 @@ object ContractEnforcementRule {
     val queries = plan :: WriteCommandSupport.combined.lift(plan).map(_.query).toList
     queries.flatMap(_.collectWithSubqueries {
       case LogicalRelation(h: org.apache.spark.sql.execution.datasources.HadoopFsRelation, _, _, _) =>
-        lazy val files = scala.util.Try(h.location.inputFiles.toSet).getOrElse(Set.empty[String])
-        h.location.rootPaths.map(p => ReadLocations.datasetRoot(p.toString, files.contains(p.toString))).toList
+        // compared in canonical form: Spark spells a file `file:/x` in one list and `file:///x` in the other
+        lazy val files = scala.util.Try(h.location.inputFiles.map(com.invaract.contract.Locations.canonical).toSet).getOrElse(Set.empty[String])
+        h.location.rootPaths.map(p => ReadLocations.datasetRoot(p.toString, files.contains(com.invaract.contract.Locations.canonical(p.toString)))).toList
     }.flatten).distinct
   }
 

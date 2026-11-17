@@ -450,7 +450,9 @@ and none for an overwrite with `overwriteSchema`, which Delta really leaves unpa
 (`SparkPartitioningSpec` reads the log after one); a streaming write (`PartitioningSupport.streamSink`):
 a `DeltaSink`'s `partitionColumns`, else the table's as above, a `FileStreamSink`'s
 `partitionColumnNames`, or a V2 sink table's identity transforms (a memory sink has none), but
-never a V1 `Sink`'s empty default (`foreachBatch`, console, Kafka), which says nothing; and
+never a V1 `Sink`'s empty default (Kafka), which says nothing (a console or memory stream is a V2
+table with no partitioning, so it is checked as unpartitioned; a `foreachBatch` stream is not judged
+as a write at all, see "`foreachBatch` streams"); and
 the V2 writes, from `Table.partitioning()` (or a CTAS/RTAS's own `partitioning`) when every
 transform is an identity on one column (`OverwritePartitionsDynamic` dynamic, the rest
 static). Everything else (another streaming sink, an unconverted `InsertIntoHiveTable`, Hive CTAS, a
@@ -1082,6 +1084,32 @@ naming an unrelated class on the classpath runs none of its code. A class that d
 real code running in the driver: a contract is therefore an input to trust like the job's jar, and a registry
 that serves contracts must authenticate its publishers. The registry client class is instantiated without this
 check because it can only come from platform configuration, never from a contract.
+
+## `foreachBatch` streams
+
+`df.writeStream.foreachBatch(f).start()` analyzes to a `WriteToStream` whose sink is Spark's
+`ForeachBatchSink`: the job's own function. It used to be judged as a write to a place named
+`ForeachBatchSink`, so every such stream - the standard way to upsert a stream into Delta - was
+refused under any contract, and no contract could let it through. Now
+`WriteCommandSupport.writeToStream` does not match a `ForeachBatchSink`
+(`WriteCommandSupport.isForeachBatch`); the stream is not itself a write, and each write the
+function makes is checked as the batch write it is.
+
+What such a write reads is found through the checkpoint registry. Per micro-batch the rule sees
+`WriteToMicroBatchDataSourceV1` (the batch's query, wrapped for the sink), then the bare
+`LogicalRDD` Spark builds the batch DataFrame from, carrying the same output attribute ids - so
+`CheckpointRegistry` records the first and binds the second to it, exactly as it does for a
+`.checkpoint()`, and the function's write is resolved back to the files the micro-batch read.
+`SparkPlanAdapter` translates `WriteToMicroBatchDataSourceV1` as a pass-through to its query.
+Those files lie inside the stream's source folder, so a contract that declares the folder as an
+input is satisfied (`ReadLocations`). Each session builds its own registry, and a stream runs in
+a clone of the job's session with its own rule and registry, which sees both plans.
+
+A non-file source (`rate`, Kafka) has no location: its batches read nothing a contract can
+declare, so the function's write passes a contract that declares no input, and fails one that
+declares the source (`MISSING_INPUT`). `ForeachBatchSpec` records this. `.foreach(writer)`,
+`console`, `memory` and `noop` streams are still judged as writes, to a place a contract can
+name but no output usually is.
 
 ## Declared outputs never written (`DeclaredOutputs`)
 

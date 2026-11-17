@@ -47,6 +47,7 @@ regardless of which connector issued it:
 | `InsertIntoDataSourceDirCommand` | `INSERT [OVERWRITE] DIRECTORY '<path>' USING <format> SELECT ...` |
 | `CreateDataSourceTableAsSelectCommand` | `df.write.saveAsTable(...)` / `CREATE TABLE ... AS SELECT` against a new table |
 | `WriteToStream` | `df.writeStream...start()`: a Structured Streaming query, checked once when it starts |
+| *(the function's own writes)* | `df.writeStream.foreachBatch(f).start()`: the stream itself is not a write; each write `f` makes to a batch is checked as the batch write it is, its input being the files the micro-batch read |
 
 Most new connectors need **zero new recognition code** — any connector built on
 `CreatableRelationProvider`'s `.save(...)` convention is already covered by

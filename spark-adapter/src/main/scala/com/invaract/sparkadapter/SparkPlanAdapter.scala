@@ -861,6 +861,13 @@ private[sparkadapter] object SparkPlanAdapter {
           case None => opaque(w)
         }
 
+      // A V1 streaming sink's micro-batch: the batch's query, wrapped for the sink. It is a pass-through, so that the
+      // batch DataFrame a `foreachBatch` function receives - which `CheckpointRegistry` resolves to this plan - is
+      // translated as the query that produced it. At the top of a plan it writes nothing Invaract checks per batch (the
+      // stream itself is checked once, when it starts), as before.
+      case mb if mb.getClass.getSimpleName == "WriteToMicroBatchDataSourceV1" && mb.children.size == 1 =>
+        translatePlan(mb.children.head)
+
       case d: Deduplicate =>
         translatePlan(d.child)
       case r: Repartition =>

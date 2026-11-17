@@ -315,8 +315,12 @@ private[sparkadapter] object WriteCommandSupport {
   // means ContractEnforcementRule.verifyOrThrow verifies it the normal
   // way, no special-casing needed there: see docs/SPARK_ADAPTER.md's
   // "Streaming writes" section.
+  //
+  // Not a stream into `foreachBatch`: its sink is the job's own function, which hands each micro-batch to code that
+  // writes it with ordinary batch writes - and each of those is checked as the write it is (`isForeachBatch`). Judging
+  // the stream itself as a write to a place named "ForeachBatchSink" refused every such stream, under any contract.
   private val writeToStream: PartialFunction[LogicalPlan, WriteCommandInfo] = {
-    case ws: WriteToStream =>
+    case ws: WriteToStream if !isForeachBatchSink(ws.sink) =>
       val (location, format, diagnostic) = streamSinkLocationAndFormat(ws)
       WriteCommandInfo(
         location = location,
@@ -355,6 +359,14 @@ private[sparkadapter] object WriteCommandSupport {
         partitioning = PartitioningSupport.streamSink(ws.sink, location)
       )
   }
+
+  /** Whether `plan` is a stream into `foreachBatch`, whose writes are checked one micro-batch at a time, as batch writes. */
+  def isForeachBatch(plan: LogicalPlan): Boolean = plan match {
+    case ws: WriteToStream => isForeachBatchSink(ws.sink)
+    case _                 => false
+  }
+
+  private def isForeachBatchSink(sink: AnyRef): Boolean = sink.getClass.getSimpleName == "ForeachBatchSink"
 
   /** `WriteToStream.sink` is typed as a generic V2 `Table`, but Delta's
     * `DeltaSink` (and several of Spark's own built-in streaming sinks) is

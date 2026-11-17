@@ -100,7 +100,8 @@ private[sparkadapter] object PartitioningSupport {
 
   /** How a streaming write into `sink` lays out its data: a Delta sink's `.partitionBy(...)` columns, else its table's
     * (`deltaTablePartitionColumns`, at `location`); a file sink's partition columns; a V2 table's plain partition columns (a
-    * memory sink has none). Not another V1 sink's: `foreachBatch`, console and Kafka sinks state nothing.
+    * memory or console sink has none). Not a V1 sink's: a Kafka sink states nothing. (A `foreachBatch` stream is not judged
+    * as a write at all: the batch writes its function makes are, one by one - `WriteCommandSupport.isForeachBatch`.)
     * A stream appends, so nothing is replaced: the overwrite mode is never compared (`static`). `None` for any other sink. */
   def streamSink(sink: AnyRef, location: String): Option[WritePartitioning] = {
     def field(name: String): Option[AnyRef] = Try {
@@ -115,7 +116,7 @@ private[sparkadapter] object PartitioningSupport {
       case "FileStreamSink" => field("partitionColumnNames").map(_.asInstanceOf[scala.collection.Seq[String]].toList)
       case _ =>
         sink match {
-          // a V1 sink (foreachBatch, console, Kafka) is a Table only to fit the API: its empty partitioning says nothing
+          // a V1 sink (Kafka) is a Table only to fit the API: its empty partitioning says nothing
           case _: org.apache.spark.sql.execution.streaming.Sink => None
           case t: Table if !t.isInstanceOf[StagedTable]         => identityColumns(t.partitioning().toSeq)
           case _                                               => None
