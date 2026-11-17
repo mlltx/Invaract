@@ -241,6 +241,37 @@ The message says why:
 | `Invaract has nowhere to read '...' from` / `Invaract has nowhere to write '...'` | In a dry run, every read and write needs its `location=` ([Start from a job with no contract](/guides/using-invaract-with-python/#start-from-a-job-with-no-contract)). |
 | `Invaract could not describe the table handed to invaract.write('...')` | `invaract.write` takes a pandas, Polars or DuckDB frame, a Polars LazyFrame, or a pyarrow Table or RecordBatchReader. |
 
+## Python jobs: a job ends with status 2 and "opened no run"
+
+```text
+Invaract: this job read or wrote data and opened no run, so nothing checked it (INVARACT_REQUIRE_RUN=enforce).
+  orders_job.py:3 `pandas.read_parquet` reads data outside invaract: read it with invaract.read(<name>), or mark the line `# invaract: allow`
+```
+
+The platform requires every job that touches data to open a run, and this one did not. Open one around the job's work,
+with `@invaract.job()` on its entry point or `with invaract.run():`, and read and write through `invaract.read` and
+`invaract.write`. If what it touched is expected (a log, a file it ships with), mark the line `# invaract: allow - <why>`
+or ask the platform to name it in `INVARACT_STRICT_ALLOW`. If the message ends "with INVARACT_STRICT=off what it did is
+not known", the platform turned the watch off, so every job that opens no run counts, whatever it did. See [Require a
+run](/guides/using-invaract-with-python/#require-a-run).
+
+## Python jobs: "Invaract could not tell whether this job completed"
+
+The platform opens jobs' runs (`INVARACT_AUTO_RUN=true`), and this job ended with a bare `raise SystemExit(...)`, which
+the start-up hook cannot tell from a crash on Python 3.12 and later, so its outputs were not published. End the job with
+`sys.exit(<status>)`, or have the platform start it with `python -m invaract <job>`. See [How Invaract knows the job
+completed](/guides/using-invaract-with-python/#how-invaract-knows-the-job-completed).
+
+## Python jobs: "no contract says what the job may do"
+
+```text
+invaract.errors.CheckNotRun: Invaract opens this job's run (INVARACT_AUTO_RUN=true), and no contract says what the job may do: set INVARACT_CONTRACT, or INVARACT_DRY_RUN=true to observe it
+```
+
+Auto-run holds a job to a contract, and none is set for this one. Set `INVARACT_CONTRACT` for the job (each job has its
+own), or `INVARACT_DRY_RUN=true` to only see what it reads and writes. See [Let Invaract open the
+run](/guides/using-invaract-with-python/#let-invaract-open-the-run).
+
 ## Python jobs: strict mode reports a file the job is meant to write
 
 With `INVARACT_STRICT` on, every file the job opens to write outside the invaract package is a finding, and that

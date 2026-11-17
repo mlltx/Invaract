@@ -23,9 +23,11 @@ private[pythonioadapter] object Request {
 
   /** Start a run: the Invaract settings by their neutral names (`contract`, `orgPolicy`, ...), and the job's details. `check`
     * opens a check (`invaract.check`) rather than a run: one frame judged as a write would be, whatever the job read.
-    * `protocol` is the protocol version the package speaks (`Requests.Version` when it does not say: a package from before
-    * the version was sent). */
-  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false, protocol: Long = Requests.Version) extends Request
+    * `observe` opens a report of a job that opened no run of its own: it takes only scans, judges nothing, and publishes
+    * what it is told. `protocol` is the protocol version the package speaks (`Requests.Version` when it does not say: a
+    * package from before the version was sent). */
+  final case class Open(settings: Map[String, String], job: JobDetails, check: Boolean = false, protocol: Long = Requests.Version,
+                        observe: Boolean = false) extends Request
 
   /** A dataset the job reads through `invaract.read`, by its declared name, with the columns read and how many empty values
     * each holds. `location` is the job's own only in dry-run mode, where there is no contract to give it. `format` is the
@@ -145,7 +147,8 @@ private[pythonioadapter] object Requests {
     val job = section(m, "job")
     optionalCount(m, "protocol", "the protocol version").map(_.getOrElse(Version)).map { protocol =>
       Request.Open(strings(m, "settings"), JobDetails(text(job, "name"), text(job, "runId"), text(job, "pythonVersion"), strings(job, "libraries")),
-        check = m.get("check").contains(java.lang.Boolean.TRUE), protocol = protocol)
+        check = m.get("check").contains(java.lang.Boolean.TRUE), protocol = protocol,
+        observe = m.get("observe").contains(java.lang.Boolean.TRUE))
     }
   }
 

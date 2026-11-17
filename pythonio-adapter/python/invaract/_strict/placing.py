@@ -23,6 +23,8 @@ INVARACT, JOB, LIBRARY, UNPLACED = "invaract", "job", "library", "unplaced"
 #: This package's own folder: its frames are how a thing was seen, never who did it.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _INVARACT = os.path.dirname(_HERE)
+#: The start-up hook's first stage, which stands beside the package.
+_FIRST_STAGE = os.path.abspath(sys.modules["_invaract_attach"].__file__) if "_invaract_attach" in sys.modules else _INVARACT
 
 _whose_file = {}
 _folders = {}
@@ -40,7 +42,7 @@ def whose(filename):
             found = UNPLACED  # code compiled under a name that is no file
         else:
             real = os.path.realpath(filename)
-            ours = [_INVARACT] + ([os.path.dirname(os.path.abspath(_state.lint.__file__))] if getattr(_state.lint, "__file__", None) else [])
+            ours = [_INVARACT, _FIRST_STAGE] + ([os.path.dirname(os.path.abspath(_state.lint.__file__))] if getattr(_state.lint, "__file__", None) else [])
             if any(_codescan._inside(real, os.path.realpath(root)) for root in ours):
                 found = INVARACT
             else:

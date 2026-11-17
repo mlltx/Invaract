@@ -1,0 +1,4 @@
+{"op": "open", "protocol": 1, "observe": true, "settings": {"notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}, "check": true}
+{"op": "open", "protocol": 1, "observe": true, "settings": {"notifyConfig": "${CASE}/notify.properties"}, "job": {"name": "orders_job.main", "runId": "run-1", "pythonVersion": "3.11.17", "libraries": {"pandas": "2.3.3", "pyarrow": "25.0.1"}}}
+{"op": "read", "name": "orders", "location": "data/in/orders", "format": "parquet", "schema": []}
+{"op": "finish", "completed": true}

@@ -82,6 +82,12 @@ With `"check": true` the `open` starts a check (`invaract.check`) instead of a r
 with its declared columns, so one write is judged alone; nothing is published, and the settings that send events are not
 forwarded. A check needs a contract.
 
+With `"observe": true` the `open` starts the report of a job that opened no run of its own (the package's
+`INVARACT_REQUIRE_RUN`): no contract is read, whatever the settings name, and its reply's mode is `observe`. Only `scan`
+and `finish` may follow; the checker publishes the scan as a `CODE_SCAN` event, refusing nothing even when it says
+`enforce`, and the run's `JOB_SUMMARY`, with no dry-run summary. A sink `notifyConfig` names that cannot be built leaves
+the open not checked. `check` and `observe` together are not checked.
+
 ### `read`
 
 Sent for each `invaract.read`, after the package has read the data and before it hands it to the job. The checker refuses

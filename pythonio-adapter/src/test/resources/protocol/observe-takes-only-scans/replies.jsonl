@@ -1,0 +1,4 @@
+{"ok": false, "reason": "a check judges a frame, and a report of a job that opened no run judges nothing: open one or the other", "status": "not-checked"}
+{"mode": "observe", "ok": true, "protocol": 1}
+{"ok": false, "reason": "a report of a job that opened no run takes only scans", "status": "not-checked"}
+{"ok": true, "publish": false}

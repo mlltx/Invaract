@@ -12,6 +12,9 @@ from typing import Optional, Tuple
 watcher = None
 #: invaract-lint, whose catalogue names what to watch; set when the hooks are installed.
 lint = None
+#: The spill file of the job's root process (``invaract._attach``), in it and in processes forked from it: a fork made
+#: outside any run reports what it sees there.
+job_spill = None
 #: Streams a watched call was seen to open: handed to a writer later, they are not reported a second time.
 streams = weakref.WeakSet()
 

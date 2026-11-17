@@ -11,6 +11,9 @@ the two differ.
 import os
 import re
 
+from _invaract_attach import ATTACH, AUTO_RUN, FAILED, REQUIRE_RUN  # noqa: F401 - the package's own variables
+from _invaract_attach import _value as value
+
 # The engine-neutral settings, by their neutral names, each with its help text.
 SETTINGS = {
     "contract": "The data contract to enforce: a file path, or registry://<id>@<version>. Overrides the one @invaract.job names.",
@@ -50,6 +53,38 @@ LINT_EXCLUDE = "INVARACT_LINT_EXCLUDE"
 #: finding reached (a file's path, a ``host:port``, a program's name).
 STRICT = "INVARACT_STRICT"
 STRICT_ALLOW = "INVARACT_STRICT_ALLOW"
+
+#: The package's own variables for attaching without the job's annotation (docs/PYTHONIO_ATTACH_DESIGN.md), none of them
+#: forwarded: ``ATTACH`` (``startup``, the default, or ``import``); ``ATTACH_INCLUDE`` and ``ATTACH_EXCLUDE`` (which main
+#: programs count as jobs); ``REQUIRE_RUN`` (``off``, ``report`` or ``enforce``: a job that touched data and opened no run);
+#: ``AUTO_RUN`` (``true``: Invaract opens the run for the job). Their names are kept in ``_invaract_attach``, which reads them
+#: as Python starts, before this package is imported.
+MODES = ("off", "report", "enforce")
+
+
+def mode(environ, name, default="off"):
+    """The value of one of the package's ``off``/``report``/``enforce`` variables, or ``ValueError`` naming it."""
+    given = value(environ, name) or default
+    if given not in MODES:
+        raise ValueError(f"{name} must be off, report or enforce, not {environ[name]!r}")
+    return given
+
+
+def flag(environ, name):
+    """The value of one of the package's ``true``/``false`` variables, or ``ValueError`` naming it."""
+    given = value(environ, name) or "false"
+    if given not in ("true", "false"):
+        raise ValueError(f"{name} must be true or false, not {environ[name]!r}")
+    return given == "true"
+
+
+def strict_mode(environ):
+    """How the job is watched (``_strict``): ``INVARACT_STRICT`` as set; unset, ``report`` when the platform requires a run
+    or opens one for the job (both need to know what the job did), else ``off``."""
+    if value(environ, STRICT):
+        return mode(environ, STRICT)
+    implied = value(environ, REQUIRE_RUN) in ("report", "enforce") or value(environ, AUTO_RUN) == "true"
+    return "report" if implied else "off"
 
 
 def variable(name):
