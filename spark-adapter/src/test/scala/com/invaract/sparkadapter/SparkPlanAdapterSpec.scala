@@ -658,11 +658,13 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     result.plan match {
-      case Write(DatasetRef(location), Read(_, None, _), format, saveMode, _) =>
+      // The write's own columns are listed on top of the read (`withOutputProjection`), so lineage can trace them.
+      case Write(DatasetRef(location), Project(Read(_, None, _), columns), format, saveMode, _) =>
+        assert(columns.map(_.name) == List("id", "value"))
         assert(location.contains(outputPath), s"expected the Delta table path in the location, got '$location'")
         assert(format.contains("delta"), s"expected format 'delta' via DataSourceRegister.shortName(), got $format")
         assert(saveMode.contains("overwrite"))
-      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+      case other => fail(s"expected a Write over a projection of a Read, got ${PlanPrinter.render(other)}")
     }
     // Confirms this is a real, precise translation, not a best-effort
     // fallback that merely happens to produce a Write node.
@@ -689,7 +691,8 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     result.plan match {
-      case Write(DatasetRef(location), Read(_, None, _), format, saveMode, _) =>
+      case Write(DatasetRef(location), Project(Read(_, None, _), columns), format, saveMode, _) =>
+        assert(columns.map(_.name) == List("id", "value"))
         // The filename only, not the full native outputPath: Spark
         // normalizes a catalog table's storage location into a
         // forward-slash file: URI regardless of platform, so on Windows
@@ -699,7 +702,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
         assert(location.contains("save_as_table_test"), s"expected the table's path in the location, got '$location'")
         assert(format.contains("parquet"), s"expected the default 'parquet' format via table.provider, got $format")
         assert(saveMode.contains("overwrite"))
-      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+      case other => fail(s"expected a Write over a projection of a Read, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.isEmpty, s"a .saveAsTable() write with an explicit path should not need a fallback diagnostic: ${result.diagnostics}")
   }

@@ -194,3 +194,20 @@ it — never a runtime value, and never anything outside that representation:
 
 See the design document's "Key risks and design trade-offs" section for the complete,
 itemized account of both categories.
+
+## Fingerprints change when Invaract learns to see more of a job
+
+A fingerprint hashes Invaract's translation of the job. When a release of Invaract sees more
+of a job than the release before it, the same job's fingerprint changes once, at the upgrade,
+with no change to the job itself. The fingerprint's own `version` stays the same, because the
+way a translation is hashed has not changed; what changed is the translation. Compare
+fingerprints taken by the same release of Invaract.
+
+Jobs of these shapes fingerprint differently from the next release on:
+
+- **A job that reads through a view** (a temporary view used with `spark.sql`, or a persistent
+  view). The view's query is now part of the translation, where it was an opaque step.
+- **A job that uses a `WITH` clause (a CTE).** Each reference to a CTE is now its query, as if
+  it had been written without `WITH`.
+- **A write with no `select` of its own** (a copy, a filter, a sort, a `distinct`, a `union` of
+  reads). The written columns are now listed in the translation, so their lineage is traced.

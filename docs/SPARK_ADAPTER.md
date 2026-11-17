@@ -219,6 +219,9 @@ part of).
 | `Sort` | `Sort(input, order)` |
 | `Window` | `Window(input, windowExpressions, partitionSpec, orderSpec)` |
 | `GlobalLimit` + `LocalLimit` (`.limit(n)`) | `Limit(input, limitValue, offset = 0)` — both nodes (sharing one literal) collapse to one `ir.Limit`, not two |
+| `View` (a temp or persistent view, as `spark.sql` over `createOrReplaceTempView` produces) | transparent pass-through to the view's own query — it was an opaque `UnknownPlan`, so no lineage (and no sensitivity tag) could be traced through a view |
+| `WithCTE` / `CTERelationDef` / `CTERelationRef` (a `WITH` clause) | every reference inlined by the CTE's body (`InlineCTE(alwaysInline = true)`, Spark's own rule), then translated, with the alias map recomputed for the inlined plan so a read and its columns are named after the same alias; a plan that cannot be inlined stays an opaque `UnknownPlan` |
+| a write's query with no projection of its own (a copy, a filter, a sort, a union of reads) | `Project(<translated query>, <the query's own output columns>)` (`withOutputProjection`) — an `ir.Read` declares no columns, so without it the write had no output columns for `ir.Lineage` to trace; a query already ending in `Project`/`Aggregate` is unchanged |
 | `Deduplicate` (`.distinct()`) | transparent pass-through (row count only, no column change) |
 | `Repartition` / `RepartitionByExpression` (`.repartition()`, `.coalesce()`) | transparent pass-through (physical partitioning only) |
 | `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier, Some(exprId.id)))` — the `id` is translator-assigned identity, opaque outside this module |

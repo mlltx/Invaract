@@ -53,9 +53,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Sort,
   SubqueryAlias,
   Union,
-  Window
+  View,
+  Window,
+  WithCTE
 }
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
+import org.apache.spark.sql.catalyst.optimizer.InlineCTE
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.columnar.InMemoryRelation
@@ -331,10 +334,10 @@ private[sparkadapter] object SparkPlanAdapter {
     * is ignored.
     */
   def translateAsWrite(plan: LogicalPlan, dataset: ir.DatasetRef): TranslationResult = {
-    val result = translate(plan)
-    result.plan match {
-      case _: ir.Write => result
-      case other        => result.copy(plan = ir.Write(dataset, other))
+    val translator = new Translator(computeAliasDisambiguation(plan))
+    translator.translatePlan(plan) match {
+      case w: ir.Write => TranslationResult(w, translator.diagnostics)
+      case other        => TranslationResult(ir.Write(dataset, translator.withOutputProjection(plan, other)), translator.diagnostics)
     }
   }
 
@@ -520,7 +523,10 @@ private[sparkadapter] object SparkPlanAdapter {
     */
   private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator(Map.empty).translateExpr(expr)
 
-  private class Translator(aliasDisambiguation: Map[Long, String]) {
+  private class Translator(initialAliases: Map[Long, String]) {
+    // Replaced, for the attributes of an inlined CTE, by the map of the inlined plan (see the WithCTE case).
+    private var aliasDisambiguation: Map[Long, String] = initialAliases
+
     // A secondary, no-arg constructor kept purely for binary compatibility:
     // MiMa flags the loss of the old `Translator()` constructor as a real
     // break even though this class is Scala-`private` - `SparkPlanAdapter`'s
@@ -550,9 +556,21 @@ private[sparkadapter] object SparkPlanAdapter {
       // touches this method — it touches WriteCommandSupport instead.
       case Some(info) =>
         info.diagnostic.foreach(d => report(d.nodeType, d.message))
-        ir.Write(ir.DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode, info.catalogIdentity)
+        ir.Write(ir.DatasetRef(info.location), withOutputProjection(info.query, translatePlan(info.query)), info.format, info.saveMode, info.catalogIdentity)
 
       case None => translateNonWritePlan(plan)
+    }
+
+    /** `translated` with an explicit list of `query`'s own output columns on top, unless it already ends in one.
+      *
+      * An `ir.Read` declares no columns (the IR carries no schema), so a write whose query has no projection of its own
+      * - a plain copy, a filter, a sort, a union of reads - would have no output columns for `ir.Lineage` to trace, and
+      * a sensitive input column copied straight to an output would be reported nowhere. The IR's own design leaves it
+      * to a front end to make every output list explicit (docs/TRANSFORMATION_IR.md, "`SELECT *` isn't supported").
+      */
+    def withOutputProjection(query: LogicalPlan, translated: ir.Plan): ir.Plan = translated match {
+      case _: ir.Project | _: ir.Aggregate => translated
+      case other                           => ir.Project(other, query.output.map(translateNamed).toList)
     }
 
     private def translateNonWritePlan(plan: LogicalPlan): ir.Plan = plan match {
@@ -739,6 +757,29 @@ private[sparkadapter] object SparkPlanAdapter {
       // RepartitionByExpression (.repartition()/.coalesce()) only change
       // physical partitioning. Previously these all fell through to the
       // opaque UnknownPlan placeholder — none of them actually needed one.
+      // A temp or persistent view: Spark wraps the view's own analyzed query in a `View` node, which changes no column.
+      // Without this case it was an opaque UnknownPlan, through which no output column could be traced - so the
+      // commonest PySpark style (createOrReplaceTempView, then spark.sql) reported no lineage and no sensitivity tags.
+      case v: View =>
+        translatePlan(v.child)
+
+      // A query with a WITH clause keeps its CTEs as definitions and references (`WithCTE`, `CTERelationDef`,
+      // `CTERelationRef`) in a write's analyzed query. Inlining every reference by the CTE's body - what Spark's own
+      // optimizer does for a CTE used once - gives the same plan the query would have without the WITH clause. A plan
+      // that cannot be inlined (still a WithCTE afterwards) stays opaque rather than being followed in a loop.
+      //
+      // The alias map is recomputed for the inlined plan. It was computed from the plan with its CTEs still apart, where
+      // a definition and the references to it are separate subtrees, so two columns of one read could be named after
+      // different aliases (one the read's own, one an alias over a reference), and lineage could not follow them back.
+      // In the inlined plan every alias sits above the read it names, as in a query written without WITH.
+      case w: WithCTE =>
+        scala.util.Try(InlineCTE(alwaysInline = true).apply(w)).toOption.filterNot(_.isInstanceOf[WithCTE]) match {
+          case Some(inlined) =>
+            aliasDisambiguation = aliasDisambiguation ++ computeAliasDisambiguation(inlined)
+            translatePlan(inlined)
+          case None => opaque(w)
+        }
+
       case d: Deduplicate =>
         translatePlan(d.child)
       case r: Repartition =>
@@ -827,10 +868,14 @@ private[sparkadapter] object SparkPlanAdapter {
         )
         ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", "RDDRelation")
 
-      case other =>
-        val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
-        report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
-        ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
+      case other => opaque(other)
+    }
+
+    /** A plan node with no translation: an opaque placeholder over its translated children, with a diagnostic. */
+    private def opaque(other: LogicalPlan): ir.Plan = {
+      val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
+      report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
+      ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
     }
 
     /** A LIMIT clause's row cap is virtually always a plain integer literal
