@@ -776,4 +776,58 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
         .parquet(outPath) // must not throw
     }
   }
+
+  private def iodContract(location: String, format: String = "parquet"): String =
+    s"""id: iod
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: $location
+       |    format: $format
+       |    saveMode: overwrite
+       |    schema:
+       |      fields:
+       |        - { name: id, type: long }
+       |""".stripMargin
+
+  test("PASS: INSERT OVERWRITE DIRECTORY ... USING parquet into the declared output is checked and lands") {
+    val out = scratchDir.resolve("iod_ok").toString
+    df().createOrReplaceTempView("iod_src")
+    withContract(iodContract(out))(spark.sql(s"INSERT OVERWRITE DIRECTORY '$out' USING parquet SELECT id FROM iod_src").collect())
+    assert(spark.read.parquet(out).count() == 2)
+  }
+
+  test("FAIL: INSERT OVERWRITE DIRECTORY into another directory is refused and writes nothing") {
+    val declared = scratchDir.resolve("iod_declared").toString
+    val elsewhere = scratchDir.resolve("iod_elsewhere").toString
+    df().createOrReplaceTempView("iod_src")
+    val e = intercept[ContractViolationException](
+      withContract(iodContract(declared))(spark.sql(s"INSERT OVERWRITE DIRECTORY '$elsewhere' USING parquet SELECT id FROM iod_src").collect())
+    )
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
+    assert(!Files.exists(java.nio.file.Paths.get(elsewhere)))
+  }
+
+  test("FAIL: INSERT OVERWRITE DIRECTORY USING csv into an output declared parquet is a format mismatch") {
+    val out = scratchDir.resolve("iod_csv").toString
+    df().createOrReplaceTempView("iod_src")
+    val e = intercept[ContractViolationException](
+      withContract(iodContract(out))(spark.sql(s"INSERT OVERWRITE DIRECTORY '$out' USING csv SELECT id FROM iod_src").collect())
+    )
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputFormatMismatch))
+  }
+
+  test("INSERT DIRECTORY without OVERWRITE is an append; OVERWRITE an overwrite") {
+    val out = scratchDir.resolve("iod_modes").toString
+    df().createOrReplaceTempView("iod_src")
+    val overwrite = spark.sql(s"INSERT OVERWRITE DIRECTORY '$out' USING parquet SELECT id FROM iod_src").queryExecution.analyzed
+    assert(WriteCommandSupport.combined(overwrite).saveMode.contains("overwrite"))
+    assert(WriteCommandSupport.combined(overwrite).format.contains("parquet"))
+    val append = overwrite.asInstanceOf[org.apache.spark.sql.execution.command.InsertIntoDataSourceDirCommand].copy(overwrite = false)
+    assert(WriteCommandSupport.combined(append).saveMode.contains("append"))
+    val noLocation = overwrite.asInstanceOf[org.apache.spark.sql.execution.command.InsertIntoDataSourceDirCommand]
+    val unresolved = noLocation.copy(storage = noLocation.storage.copy(locationUri = None))
+    assert(WriteCommandSupport.combined(unresolved).diagnostic.exists(_.nodeType == "InsertIntoDataSourceDirCommand"))
+    assert(WriteCommandSupport.combined(overwrite).diagnostic.isEmpty)
+  }
 }

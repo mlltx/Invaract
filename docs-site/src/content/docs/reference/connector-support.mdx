@@ -23,7 +23,7 @@ A write it doesn't recognize is rejected rather than silently passed — see
 | **Hive** | ✅ | ✅ | — | — | Table reads plus multiple write shapes (including `CREATE TABLE ... AS SELECT` and static-partition `INSERT`). Ships with Spark itself, not independently versioned here. |
 | **Avro** | ✅ | ✅ | — | — | Reuses the same generic write recognition as Parquet/CSV — no Avro-specific code needed. |
 | **ClickHouse** | ✅ | ✅ | `DELETE` only | — | `UPDATE`/`MERGE` are not yet translated for this connector. Verified against a real standalone ClickHouse server. |
-| **JDBC** (generic) | ✅ | — | — | — | Reads recognized precisely, including the resolved connection/table identity. |
+| **JDBC** (generic) | ✅ | ✅ | — | — | A table is located as `jdbc:<connection URL>/<table>` whether it is read or written (see [JDBC tables](/reference/contract-format/#jdbc-tables)). Tested against an embedded Derby database. |
 
 Parquet, CSV, and JDBC don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL at all —
 Spark itself rejects those statements before any plan reaches Invaract, so there's
@@ -43,7 +43,8 @@ regardless of which connector issued it:
 | Spark command | Typical trigger |
 |---|---|
 | `InsertIntoHadoopFsRelationCommand` | `df.write.parquet(...)`, `.csv(...)`, `.avro(...)` and similar file-format writes |
-| `SaveIntoDataSourceCommand` | `df.write.format("delta").save(...)`, and any other `CreatableRelationProvider`-based `.save(...)` |
+| `SaveIntoDataSourceCommand` | `df.write.format("delta").save(...)`, `df.write.jdbc(...)`, and any other `CreatableRelationProvider`-based `.save(...)` |
+| `InsertIntoDataSourceDirCommand` | `INSERT [OVERWRITE] DIRECTORY '<path>' USING <format> SELECT ...` |
 | `CreateDataSourceTableAsSelectCommand` | `df.write.saveAsTable(...)` / `CREATE TABLE ... AS SELECT` against a new table |
 | `WriteToStream` | `df.writeStream...start()`: a Structured Streaming query, checked once when it starts |
 

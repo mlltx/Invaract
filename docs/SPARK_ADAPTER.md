@@ -191,6 +191,8 @@ part of).
 |---|---|
 | `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
 | `SaveIntoDataSourceCommand` (Delta and other `CreatableRelationProvider`-based `.save(...)` writes) | `Write(DatasetRef(options("path")), ..., format, saveMode)` — `format` from the write's `dataSource` via `DataSourceRegister.shortName()`, the same mechanism as above, just for the other provider trait Spark routes non-`FileFormat` writes through (see "Delta Lake support" below) |
+| `SaveIntoDataSourceCommand` with no `path` but a JDBC `url` and `dbtable` (`df.write.jdbc(...)`) | `Write(DatasetRef("jdbc:<url>/<table>"), ...)` — the same location string a JDBC read gets, so one contract entry names the table whether a job reads or writes it. A save with neither is located as `<source class>(no path)` with a diagnostic; the options map itself is never used as a location or shown in a message, since it can hold a password |
+| `InsertIntoDataSourceDirCommand` (`INSERT [OVERWRITE] DIRECTORY '<path>' USING <format> SELECT ...`) | `Write(DatasetRef(path), ..., format, saveMode)` — `overwrite`/`append` from the statement; the nested `InsertIntoHadoopFsRelationCommand` Spark runs for the same directory is checked too |
 | `CreateDataSourceTableAsSelectCommand` (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data source table) | `Write(DatasetRef(storageLocation), ..., format, saveMode)` — `format` straight from `table.provider` (already the clean identifier `DataSourceRegister.shortName()` gives the other two write cases); a third, distinct write shape from both of the above (see "Fail-closed on unverifiable writes" below) |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` — also covers Delta reads (`.load(path)` and catalog table references alike): Delta's read relation is an anonymous subclass of `HadoopFsRelation`, matched here via ordinary subtyping, no dedicated case needed (see "Delta Lake reads" below) |
 | `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
@@ -869,6 +871,7 @@ belongs on which side of it.
 | [CSV](connectors/csv.md) | Same shape as Parquet — Spark's own bundled `FileFormat`. | [Operation](connectors/csv.md#csv-operation-surface-coverage-ledger) · [Feature](connectors/csv.md#csv-feature-surface-coverage-ledger) |
 | [Hive](connectors/hive.md) | `HiveTableRelation` reads plus three newly-translated write shapes; a static-partition `INSERT` false-rejection bug found and fixed. | [Operation](connectors/hive.md#hive-operation-surface-coverage-ledger) · [Feature](connectors/hive.md#hive-feature-surface-coverage-ledger) |
 | [Avro](connectors/avro.md) | Reuses existing generic write cases with zero new `WriteCommandSupport` code; one general (non-Avro-specific) location bug found and fixed. | [Operation](connectors/avro.md#avro-operation-surface-coverage-ledger) · [Feature](connectors/avro.md#avro-feature-surface-coverage-ledger) |
+| [JDBC](connectors/jdbc.md) | Reads, and `df.write.jdbc(...)` writes, located as `jdbc:<url>/<table>` on both sides. Tested against embedded Derby. | [Operation](connectors/jdbc.md#jdbc-operation-surface-coverage-ledger) · [Feature](connectors/jdbc.md#jdbc-feature-surface-coverage-ledger) |
 | [ClickHouse](connectors/clickhouse.md) | Redirected from an infeasible BigQuery attempt; one new `deleteFromTable` write case; tested against a real standalone-binary server (no Docker in this environment). | [Operation](connectors/clickhouse.md#clickhouse-operation-surface-coverage-ledger) · [Feature](connectors/clickhouse.md#clickhouse-feature-surface-coverage-ledger) |
 
 ## Fail-closed on unverifiable writes
@@ -926,10 +929,23 @@ has no compile-time Delta dependency (see "Delta Lake support" above) —
 importing those classes directly would reintroduce exactly the dependency
 this module was built to avoid.
 
+**The list is keyed by the class of the *analyzed* plan**, which is what the check rule
+sees — and for many statements that is a catalyst command, not the `execution.command`
+class the statement later runs as. `DROP DATABASE` is the case that showed why this
+matters: the rule sees `org.apache.spark.sql.catalyst.plans.logical.DropNamespace`, never
+`DropDatabaseCommand`. `DropNamespace` used to be on the safe list, so `DROP DATABASE ...
+CASCADE` — which deletes every table in the database, declared outputs included — passed.
+It is now judged by its `cascade` flag in `FailClosedCommands.isKnownSafe`: without
+`CASCADE` Spark itself refuses to drop a database that still holds a table, so that form is
+safe; with it, the statement fails closed with its own explanation.
+`FailClosedStatementsSpec` runs the statements themselves (not class names) under a
+contract, so a statement whose analyzed class differs from what this list expects shows up
+as a test failure.
+
 Genuinely data-mutating commands the survey found (`DeleteFromTable(WithFilters)`,
 `MergeIntoTable`/`DeltaMergeInto`, `UpdateTable`, `LoadData(Command)`,
-`TruncateTable(Command/Partition)`, `DropTable(Command)`/
-`DropDatabaseCommand` (can delete a managed table's/database's data),
+`TruncateTable(Command/Partition)`, `DropTable(Command)`, `DropNamespace` with
+`CASCADE` (can delete a managed table's/database's data),
 `DropPartitions`/`AlterTableDropPartitionCommand`, `ReplaceTable`, and
 Delta's `DeleteCommand`/`UpdateCommand`/`MergeIntoCommand`/`WriteIntoDelta`/
 `CloneTableCommand`/`ConvertToDeltaCommand`/`CreateDeltaTableCommand`/
@@ -939,10 +955,11 @@ are deliberately **not** on the safe list — they fail closed until
 `ir.Write`'s "write a dataset to a location" shape at all — `MERGE`/
 `DELETE`/`UPDATE` are row-level operations the IR wasn't designed to
 represent, a real future modeling question, not just a missing case
-arm). `InsertIntoDataSourceCommand`/`InsertIntoDataSourceDirCommand` are
-real writes with a shape similar to `SaveIntoDataSourceCommand` that could
-plausibly be added later; left off for now rather than expanding this
-change's scope further. `FailClosedCommands`' own doc comment carries the
+arm). `InsertIntoDataSourceCommand` is a real write with a shape similar to
+`SaveIntoDataSourceCommand` that could plausibly be added later; left off for now.
+`InsertIntoDataSourceDirCommand` (`INSERT [OVERWRITE] DIRECTORY ... USING <format>`) is
+now a recognized write (`WriteCommandSupport.insertIntoDataSourceDir`), the data-source
+counterpart of the Hive form `insertIntoHiveDir` already covered. `FailClosedCommands`' own doc comment carries the
 full list and the categorization rule ("does it change a table's
 committed row content?") so it can be extended consistently.
 

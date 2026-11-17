@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.verification.UnverifiableOperation
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{DropNamespace, LogicalPlan}
 
 /** The known-safe exemption list for `ContractEnforcementRule`'s fail-closed
   * policy on unverifiable writes (see that object's "Fail-closed on
@@ -57,9 +57,27 @@ private[sparkadapter] object FailClosedCommands {
         "\"Fail-closed on unverifiable writes\" section."
     )
 
-  def isKnownSafe(plan: LogicalPlan): Boolean =
-    if (plan.getClass.getName == icebergCallClassName) isKnownSafeIcebergProcedureCall(plan)
-    else knownSafe.contains(plan.getClass.getName)
+  /** The command `plan` is, as the rejection describes it: its own words for a statement that deletes whole databases. */
+  def unverifiable(plan: LogicalPlan): UnverifiableOperation = plan match {
+    case d: DropNamespace if d.cascade =>
+      UnverifiableOperation(
+        plan.getClass.getSimpleName,
+        "DROP DATABASE ... CASCADE deletes every table in the database, so Invaract cannot check it against the contract",
+        "Drop the tables this job is allowed to remove one at a time, then drop the empty database without CASCADE."
+      )
+    case _ => unverifiable(plan.getClass.getSimpleName)
+  }
+
+  /** Whether `plan` is known not to change any table's rows. Keyed by the class of the *analyzed* plan (what the check
+    * rule sees), which for many statements is a catalyst command, not the `execution.command` class it later becomes.
+    */
+  def isKnownSafe(plan: LogicalPlan): Boolean = plan match {
+    // DROP DATABASE without CASCADE: Spark refuses to drop a database that still holds a table, so it deletes no data.
+    // With CASCADE it deletes every table in the database, so it is not safe.
+    case d: DropNamespace                                   => !d.cascade
+    case _ if plan.getClass.getName == icebergCallClassName => isKnownSafeIcebergProcedureCall(plan)
+    case _                                                  => knownSafe.contains(plan.getClass.getName)
+  }
 
   // Iceberg's Call node (see the "Iceberg CALL procedures" comment at the
   // bottom of the knownSafe set below for the full background) always has this one
@@ -158,7 +176,6 @@ private[sparkadapter] object FailClosedCommands {
     "org.apache.spark.sql.catalyst.plans.logical.DropColumns",
     "org.apache.spark.sql.catalyst.plans.logical.DropFunction",
     "org.apache.spark.sql.catalyst.plans.logical.DropIndex",
-    "org.apache.spark.sql.catalyst.plans.logical.DropNamespace",
     "org.apache.spark.sql.catalyst.plans.logical.DropView",
     "org.apache.spark.sql.catalyst.plans.logical.NoopCommand",
     "org.apache.spark.sql.catalyst.plans.logical.RecoverPartitions", // MSCK REPAIR-style discovery of existing partitions, writes no data
@@ -300,14 +317,17 @@ private[sparkadapter] object FailClosedCommands {
     // here with the same reasoning): anything that adds, modifies, drops,
     // or copies row content - DeleteFromTable(WithFilters), MergeIntoTable/
     // DeltaMergeInto, UpdateTable, LoadData(Command), TruncateTable(Command
-    // /Partition), DropTable(Command)/DropDatabaseCommand (can delete a
-    // managed table's/database's data), DropPartitions/
+    // /Partition), DropTable(Command) (can delete a managed table's data),
+    // DropNamespace with CASCADE (DROP DATABASE ... CASCADE: deletes every
+    // table in it - the analyzed plan is this catalyst class, never
+    // DropDatabaseCommand, so it is judged in isKnownSafe by its `cascade`
+    // flag rather than listed), DropPartitions/
     // AlterTableDropPartitionCommand (deletes the partition's data),
     // ReplaceTable (drops+recreates), Delta's WriteIntoDelta/
     // CloneTableCommand/ConvertToDeltaCommand/CreateDeltaTableCommand/
     // DeltaReorgTable(Command)/DeltaGenerateCommand/RestoreTableCommand,
-    // InsertIntoDataSourceCommand/InsertIntoDataSourceDirCommand (real
-    // writes, just not yet translated), and ExternalCommandExecutor
+    // InsertIntoDataSourceCommand (a real write, just not yet translated),
+    // and ExternalCommandExecutor
     // (arbitrary passthrough to an external system - can't be classified
     // either way). See docs/SPARK_ADAPTER.md's "Fail-closed on
     // unverifiable writes" section for the per-class reasoning.

@@ -72,6 +72,30 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     assert(failed.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/audit"))))
   }
 
+  test("a write the check blocked does not count as the output having been written") {
+    val out = Files.createTempDirectory("declared-outputs-blocked")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.range(3).write.parquet(s"$out/report")
+    // `audit` declares id as long; an int column is refused, and the job carries on, as a job catching the error would.
+    intercept[com.invaract.verification.ContractViolationException](spark.range(3).selectExpr("cast(id as int) as id").write.parquet(s"$out/audit"))
+    assert(!Files.exists(out.resolve("audit")), "the blocked write never landed")
+    spark.stop()
+    val last = sink.validations.last
+    assert(last.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/audit"))))
+  }
+
+  test("a blocked write followed by one of the same output that passes: the output was written") {
+    val out = Files.createTempDirectory("declared-outputs-blocked-then-written")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.range(3).write.parquet(s"$out/report")
+    intercept[com.invaract.verification.ContractViolationException](spark.range(3).selectExpr("cast(id as int) as id").write.parquet(s"$out/audit"))
+    spark.range(3).write.parquet(s"$out/audit")
+    spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "FAILED", "PASSED"), "no MISSING_OUTPUT at the end")
+  }
+
   test("a job's record is decided once: a second ending publishes nothing more and gives the same answer") {
     val out = Files.createTempDirectory("declared-outputs-once")
     val sink = new Capture

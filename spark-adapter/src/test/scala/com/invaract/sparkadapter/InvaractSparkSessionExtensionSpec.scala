@@ -144,6 +144,46 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     }
   }
 
+  test("a misspelt spark.invaract.* setting is refused with the setting it was probably meant to be") {
+    val outputPath = scratchDir.resolve("typo.parquet").toString
+    val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
+    Files.write(contractFile, passingContractYaml.replace("OUTPUT_PATH", outputPath).getBytes("UTF-8"))
+    val spark = buildSession(
+      InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
+      "spark.invaract.rejectUndeclaredInput" -> "true"
+    )
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("'spark.invaract.rejectUndeclaredInput'"))
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.rejectUndeclaredInputs'?"))
+      // Still refused on the next query: a refusal is not remembered as "checked".
+      intercept[IllegalArgumentException](spark.range(5).count())
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("a misspelt dryRun is reported as the typo it is, not as a missing contract") {
+    val spark = buildSession("spark.invaract.dryrun" -> "true")
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.dryRun'?"))
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("in dry-run mode a misspelt setting is only warned about: the job is never stopped") {
+    val outputPath = scratchDir.resolve("dry_run_typo.parquet").toString
+    val spark = buildSession(InvaractSparkSessionExtension.DryRunConfKey -> "true", "spark.invaract.rejectUndeclaredInput" -> "true")
+    try {
+      spark.range(5).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally {
+      spark.stop()
+    }
+  }
+
   test("spark.invaract.notifyConfig attaches a real sink and listener purely via conf") {
     val outputPath = scratchDir.resolve("with_sink.parquet").toString
     val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")

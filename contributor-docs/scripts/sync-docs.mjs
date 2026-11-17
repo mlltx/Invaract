@@ -216,6 +216,13 @@ const PAGES = [
     order: 6,
   },
   {
+    src: 'docs/connectors/jdbc.md',
+    slug: 'connectors/jdbc',
+    section: 'Connectors',
+    label: 'JDBC',
+    order: 8,
+  },
+  {
     src: 'docs/connectors/clickhouse.md',
     slug: 'connectors/clickhouse',
     section: 'Connectors',

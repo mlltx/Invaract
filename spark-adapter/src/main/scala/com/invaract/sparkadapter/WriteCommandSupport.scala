@@ -21,7 +21,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{
 }
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.connector.catalog.StagedTable
-import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
+import org.apache.spark.sql.execution.command.{CreateDataSourceTableAsSelectCommand, InsertIntoDataSourceDirCommand}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.{DataSourceUtils, InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.SaveMode
@@ -191,12 +191,15 @@ private[sparkadapter] object WriteCommandSupport {
   // does) gets a precise format for free via `formatOf`.
   private val saveIntoDataSource: PartialFunction[LogicalPlan, WriteCommandInfo] = {
     case cmd: SaveIntoDataSourceCommand =>
-      val (location, diagnostic) = cmd.options.get("path") match {
-        case Some(path) => (path, None)
-        case None =>
-          val msg = s"No 'path' option on a ${cmd.dataSource.getClass.getSimpleName} write; " +
-            "using its options map as a best-effort location"
-          (cmd.options.toString, Some(Diagnostic("SaveIntoDataSourceCommand", msg)))
+      // The options can hold a password (a JDBC write's), so neither the location nor a message ever shows the map.
+      def option(name: String): Option[String] = cmd.options.collectFirst { case (k, v) if k.equalsIgnoreCase(name) => v }
+      val (location, diagnostic) = (option("path"), option("url"), option("dbtable")) match {
+        case (Some(path), _, _)          => (path, None)
+        case (None, Some(url), Some(tbl)) => (SparkPlanAdapter.jdbcLocation(url, tbl), None)
+        case _ =>
+          val source = cmd.dataSource.getClass.getSimpleName
+          val msg = s"No 'path' option on a $source write, and no JDBC url and table; it has no location Invaract can name"
+          (s"$source(no path)", Some(Diagnostic("SaveIntoDataSourceCommand", msg)))
       }
       WriteCommandInfo(
         location = location,
@@ -1436,6 +1439,29 @@ private[sparkadapter] object WriteCommandSupport {
         }.toOption
     }
 
+  /** `INSERT [OVERWRITE] DIRECTORY '<path>' USING <format> SELECT ...` - the data-source form of the statement
+    * `insertIntoHiveDir` covers for Hive's `STORED AS`. A plain `spark-sql` class (no reflection needed). Spark runs it by
+    * planning a nested `InsertIntoHadoopFsRelationCommand` for the same directory, which is checked too, as the insert
+    * inside a `.saveAsTable()` is.
+    */
+  private val insertIntoDataSourceDir: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: InsertIntoDataSourceDirCommand =>
+      val (location, diagnostic) = cmd.storage.locationUri match {
+        case Some(uri) => (uri.toString, None)
+        case None =>
+          val msg = "INSERT ... DIRECTORY has no resolved storage location; using its canonicalized toString as a best-effort location"
+          (cmd.canonicalized.toString, Some(Diagnostic("InsertIntoDataSourceDirCommand", msg)))
+      }
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = Some(cmd.provider),
+        saveMode = Some(if (cmd.overwrite) "overwrite" else "append"),
+        outputSchema = cmd.query.schema,
+        diagnostic = diagnostic
+      )
+  }
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -1450,7 +1476,7 @@ private[sparkadapter] object WriteCommandSupport {
     insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
       appendData orElse overwriteByExpression orElse overwritePartitionsDynamic orElse replaceTableAsSelect orElse
       createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite orElse deleteFromTable orElse
-      createHiveTableAsSelect orElse insertIntoHiveTable orElse insertIntoHiveDir
+      createHiveTableAsSelect orElse insertIntoHiveTable orElse insertIntoHiveDir orElse insertIntoDataSourceDir
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

@@ -51,4 +51,36 @@ class SparkConfigSourceSpec extends AnyFunSuite {
       assert(source.get(InvaractConf.OrgPolicy).contains("/p.yaml"))
     } finally spark.stop()
   }
+
+  test("the settings Invaract reads are known; nothing else under spark.invaract. is") {
+    assert(SparkSettingNames.unknown(Map.empty) == Nil)
+    assert(SparkSettingNames.unknown(Map("spark.sql.shuffle.partitions" -> "2", "spark.invaractx" -> "1")) == Nil, "only the prefix is judged")
+    val known = InvaractConf.All.map(n => SparkConfigSource.Prefix + n -> "x").toMap
+    assert(SparkSettingNames.unknown(known) == Nil)
+    assert(
+      SparkSettingNames.unknown(Map("spark.invaract.job.metadata.team" -> "a", "spark.invaract.contract.metadata.owner" -> "b")) == Nil,
+      "the two per-key families"
+    )
+    assert(SparkSettingNames.unknown(Map("spark.invaract." -> "x")) == List("spark.invaract." -> None), "the bare prefix is no setting")
+  }
+
+  test("an unknown key is offered the nearest known one, ignoring case, within three edits") {
+    def unknownOf(key: String) = SparkSettingNames.unknown(Map(key -> "true"))
+    assert(unknownOf("spark.invaract.rejectUndeclaredInput") == List("spark.invaract.rejectUndeclaredInput" -> Some("spark.invaract.rejectUndeclaredInputs")))
+    assert(unknownOf("spark.invaract.dryrun") == List("spark.invaract.dryrun" -> Some("spark.invaract.dryRun")), "case alone")
+    assert(unknownOf("spark.invaract.dryRunXYZ").head._2.contains("spark.invaract.dryRun"), "three edits away")
+    assert(unknownOf("spark.invaract.dryRunWXYZ").head._2.isEmpty, "four edits away")
+    assert(unknownOf("spark.invaract.somethingElseEntirely").head._2.isEmpty)
+    assert(SparkSettingNames.unknown(Map("spark.invaract.zz" -> "1", "spark.invaract.aa" -> "1")).map(_._1) == List("spark.invaract.aa", "spark.invaract.zz"), "in key order")
+  }
+
+  test("the refusal names every unknown key, its suggestion when there is one, and where the settings are listed") {
+    val text = SparkSettingNames.describe(List("spark.invaract.dryrun" -> Some("spark.invaract.dryRun"), "spark.invaract.foo" -> None))
+    assert(
+      text ==
+        "Invaract does not read 'spark.invaract.dryrun'. Did you mean 'spark.invaract.dryRun'?\n" +
+        "Invaract does not read 'spark.invaract.foo'.\n" +
+        s"(The settings Invaract reads: ${SparkSettingNames.SettingsPage})"
+    )
+  }
 }

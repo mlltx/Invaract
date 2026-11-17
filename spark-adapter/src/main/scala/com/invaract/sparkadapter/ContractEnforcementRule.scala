@@ -88,6 +88,7 @@ object ContractEnforcementRule {
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     session => {
+      SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
@@ -118,6 +119,7 @@ object ContractEnforcementRule {
     */
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
     session => {
+      SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
@@ -366,6 +368,7 @@ object ContractEnforcementRule {
     */
   def dryRun(onInferred: Contract => Unit): SparkSession => LogicalPlan => Unit =
     session => {
+      SparkSettingNames.check(session, enforcing = false)
       VersionCompatibilityGuard.check(session)
       val checkpointRegistry = new CheckpointRegistry
       (plan: LogicalPlan) => inferOrIgnore(plan, onInferred, Some(checkpointRegistry))
@@ -510,7 +513,6 @@ object ContractEnforcementRule {
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
       case w: com.invaract.ir.Write =>
-        written(w)
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
         // describes the same (checkpoint-resolved) plan this check does.
         SparkAdapterListener.stash(analyzedPlan, translated)
@@ -530,6 +532,10 @@ object ContractEnforcementRule {
           VerificationPipeline.rejectUnverifiableWrite(contract, operation, translated.plan, sink, applicationId, job)
         }
         VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
+        // Recorded only once it has passed: a write the check blocked never lands, so it must not count as the output
+        // having been written (`DeclaredOutputs`). A write that passes here and then fails while Spark runs it is still
+        // recorded; that failure reaches the job as an exception of its own.
+        written(w)
         // Passed: if this creates a data-source table, the insert Spark runs next fills it (see `TableCreations`).
         plan match {
           case _: org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand =>
@@ -559,7 +565,7 @@ object ContractEnforcementRule {
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
             VerificationPipeline.rejectUnverifiableWrite(
-              contract, FailClosedCommands.unverifiable(plan.getClass.getSimpleName), translated.plan, sink, applicationId, job
+              contract, FailClosedCommands.unverifiable(plan), translated.plan, sink, applicationId, job
             )
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write

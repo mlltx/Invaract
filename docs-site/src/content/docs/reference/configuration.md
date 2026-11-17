@@ -24,6 +24,16 @@ Settings that switch something on take `true` or `false` (in any case), and are 
 set to `true`. Any other value, such as `yes`, is refused when the job starts, with an error
 naming the setting.
 
+A setting Invaract does not read is refused too, so a typo can't leave a check switched off
+without anyone noticing. On Spark, a `spark.invaract.*` key that is not on this page stops the
+job at its first query, naming the setting it was probably meant to be:
+
+```
+Invaract does not read 'spark.invaract.rejectUndeclaredInput'. Did you mean 'spark.invaract.rejectUndeclaredInputs'?
+```
+
+In dry-run mode the same message is a warning and the job carries on.
+
 ## Choosing what to enforce
 
 | Setting | Spark | Beam Java | Beam Python | Python | What it does | Guide |

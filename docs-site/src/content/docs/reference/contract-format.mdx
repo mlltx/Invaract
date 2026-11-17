@@ -346,6 +346,22 @@ location spelt exactly that way, never the table. An engine that names other dat
 converted the same way: BigQuery's `project.dataset.table` is `project/dataset/table`, so
 `dataset/table` matches that table in any project and the full form pins one.
 
+### JDBC tables
+
+A table read or written over JDBC (`spark.read.jdbc(...)`, `df.write.jdbc(...)`) is located as
+`jdbc:`, then the connection URL, then `/` and the table name. The URL begins with `jdbc:`
+itself, so the prefix appears twice. Quote the value, since it holds `:` and `;`:
+
+```yaml
+outputs:
+  - name: orders
+    location: "jdbc:jdbc:derby:memory:orders_db;create=true/ORDERS"
+    format: jdbc
+```
+
+The same string names the table whether the job reads it or writes it. Write the table name as
+the job passes it to Spark.
+
 ### Resolving a location at runtime
 
 `location` can also be `ref://<id>` — a reference resolved to a real literal location at

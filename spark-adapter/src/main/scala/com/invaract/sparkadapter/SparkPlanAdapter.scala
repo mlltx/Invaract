@@ -430,9 +430,14 @@ private[sparkadapter] object SparkPlanAdapter {
     if (relation.getClass.getSimpleName == "JDBCRelation") {
       scala.util.Try {
         val opts = relation.getClass.getMethod("jdbcOptions").invoke(relation).asInstanceOf[JDBCOptions]
-        s"jdbc:${opts.url}/${opts.tableOrQuery}"
+        jdbcLocation(opts.url, opts.tableOrQuery)
       }.toOption
     } else None
+
+  /** How a JDBC table is located: `jdbc:` + the connection URL + `/` + the table, for a read and a write alike, so a
+    * contract names a table the same way whichever the job does to it.
+    */
+  private[sparkadapter] def jdbcLocation(url: String, table: String): String = s"jdbc:$url/$table"
 
   /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
     * `FileFormat`) and non-file data sources written via `.save(...)`

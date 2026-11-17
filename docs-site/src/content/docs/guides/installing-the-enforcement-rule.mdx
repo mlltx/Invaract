@@ -169,7 +169,9 @@ runs, so whether every declared output was written is known only when the job en
 application stops, Invaract publishes a `FAILED` validation with one `MISSING_OUTPUT` per
 declared output the job never wrote, and logs it as an error, for example
 `the job never writes declared output 'audit' (out/audit)`. The job's other writes have already
-happened by then; nothing is blocked.
+happened by then; nothing is blocked. A write that Invaract blocked does not count: if the
+job's only attempt at `audit` was rejected and the job caught the error and carried on, `audit`
+is reported as never written.
 
 To have the job fail as well, so the scheduler or CI step running it stops what depends on it:
 

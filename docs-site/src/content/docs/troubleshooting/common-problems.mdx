@@ -108,6 +108,20 @@ Every setting that switches something on (`dryRun`, `rejectUndeclaredFields`,
 A notification config's `sink.enabled` is held to the same rule, and the message names the
 file. A value Invaract can't read is never quietly taken to mean `false`.
 
+## The job stops with "Invaract does not read 'spark.invaract.…'"
+
+A `spark.invaract.*` setting is misspelt, or isn't one Invaract has. The message names the
+setting you probably meant:
+
+```
+Invaract does not read 'spark.invaract.rejectUndeclaredInput'. Did you mean 'spark.invaract.rejectUndeclaredInputs'?
+```
+
+Fix the spelling where the job is launched. The names are case-sensitive, as all Spark settings
+are: `spark.invaract.dryrun` is refused, `spark.invaract.dryRun` is read. Every setting is listed
+in [Configuration Settings](/reference/configuration/). In dry-run mode the same message is only
+a warning, and the misspelt setting has no effect.
+
 ## A location doesn't match even though it "looks right"
 
 A declared location matches the place the job reads or writes when it is that place, or the
