@@ -71,28 +71,31 @@ private[sparkadapter] object CsvOptionsSupport {
   }
 
   /** Every CSV read in `plans`, by the location the read is checked under, with the options it used. */
-  def ofReads(plans: Seq[LogicalPlan]): Map[String, Map[String, String]] =
-    plans.flatMap(_.collect {
-      case lr @ LogicalRelation(h: HadoopFsRelation, _, _, _) if isCsv(h.fileFormat) => SparkPlanAdapter.locationOf(lr) -> h.options
+  def ofReads(plans: Seq[LogicalPlan], declaredInputs: Seq[String] = Nil): Map[String, Map[String, String]] =
+    plans.flatMap(_.collectWithSubqueries {
+      // keyed by the same attributed locations the read's translation carries (`SparkPlanAdapter.locationsOf`)
+      case lr @ LogicalRelation(h: HadoopFsRelation, _, _, _) if isCsv(h.fileFormat) =>
+        SparkPlanAdapter.locationsOf(lr, declaredInputs).map(_ -> h.options)
       case sr: StreamingRelation if sr.dataSource.className.equalsIgnoreCase("csv") =>
-        SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.dataSource.options
-    }).toMap
+        List(SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.dataSource.options)
+    }.flatten).toMap
 
   /** `CheckedWrite.formatOptions` for `plan`, a write to `writeLocation` (when it is one) reading through `plans`: what
     * each CSV read and write used, Spark's defaults filled in. */
-  def used(plan: LogicalPlan, writeLocation: Option[String], plans: Seq[LogicalPlan]): Map[String, Map[String, String]] =
-    collect(plan, writeLocation, plans, effective)
+  def used(plan: LogicalPlan, writeLocation: Option[String], plans: Seq[LogicalPlan], declaredInputs: Seq[String] = Nil): Map[String, Map[String, String]] =
+    collect(plan, writeLocation, plans, declaredInputs, effective)
 
   /** `InferredWrite.formatOptions`: what a dry run's draft declares for each CSV read and write (`drafted`). */
-  def forDraft(plan: LogicalPlan, writeLocation: Option[String], plans: Seq[LogicalPlan]): Map[String, Map[String, String]] =
-    collect(plan, writeLocation, plans, drafted)
+  def forDraft(plan: LogicalPlan, writeLocation: Option[String], plans: Seq[LogicalPlan], declaredInputs: Seq[String] = Nil): Map[String, Map[String, String]] =
+    collect(plan, writeLocation, plans, declaredInputs, drafted)
 
   private def collect(
       plan: LogicalPlan,
       writeLocation: Option[String],
       plans: Seq[LogicalPlan],
+      declaredInputs: Seq[String],
       as: Map[String, String] => Map[String, String]
   ): Map[String, Map[String, String]] =
-    ofReads(plans).map { case (location, options) => location -> as(options) } ++
+    ofReads(plans, declaredInputs).map { case (location, options) => location -> as(options) } ++
       (for { location <- writeLocation; options <- ofWrite(plan) } yield location -> as(options))
 }

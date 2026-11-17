@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
+import com.invaract.verification.{AdapterCapabilities, StructuralVerifier, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 
@@ -383,23 +383,26 @@ object ContractEnforcementRule {
     * single-source-of-truth reasoning `WriteCommandSupport.combined`
     * already applies to write recognition.
     */
-  private val recognizedRead: PartialFunction[LogicalPlan, (String, StructType)] = {
-    case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
-    case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
-    case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+  private def recognizedRead(declaredInputs: Seq[String]): PartialFunction[LogicalPlan, List[(String, StructType)]] = {
+    // Every location the relation reads, attributed as its translation attributes them (`SparkPlanAdapter.locationsOf`),
+    // so a schema is keyed by the same location string the plan's `ir.Read` carries; were they to differ, that input's
+    // schema would silently stop being checked.
+    case lr: LogicalRelation => SparkPlanAdapter.locationsOf(lr, declaredInputs).map(_ -> lr.schema)
+    case sr: StreamingRelation => List(SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema)
+    case sr2: StreamingRelationV2 => List(SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema)
     // A batch DataSourceV2 catalog read - see SparkPlanAdapter's own
     // DataSourceV2Relation case for why this is needed at all (any "pure"
     // DSv2 connector's reads, Iceberg's included, previously fell through
     // to the generic Unsupported translation and so could never satisfy a
     // contract's declared input).
-    case dsv2: DataSourceV2Relation => SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name) -> dsv2.schema
+    case dsv2: DataSourceV2Relation => List(SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name) -> dsv2.schema)
     // A real Hive-format catalog table read - see SparkPlanAdapter's own
     // HiveTableRelation case for why this is needed at all (a genuinely
     // Hive-native table, e.g. non-Parquet/ORC or with metastore conversion
     // disabled, previously fell through to the generic Unsupported
     // translation, so a contract declaring one as a required `input`
     // always reported MISSING_INPUT even though data was genuinely read).
-    case htr: HiveTableRelation => SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.schema
+    case htr: HiveTableRelation => List(SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.schema)
   }
 
   /** Every recognized read anywhere in `plan` — the raw plan itself, plus
@@ -417,18 +420,21 @@ object ContractEnforcementRule {
     * infers from), so re-deriving it a second time here would just repeat
     * that match on every analyzed plan the session produces for no reason.
     */
-  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): List[(String, LogicalSchema)] =
+  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan], declaredInputs: Seq[String]): List[(String, LogicalSchema)] =
     (
-      plan.collect(recognizedRead) ++
-        writeQuery.toList.flatMap(_.collect(recognizedRead))
+      // With subqueries: a read inside an IN / EXISTS / scalar subquery is a read like any other.
+      plan.collectWithSubqueries(recognizedRead(declaredInputs)).flatten ++
+        writeQuery.toList.flatMap(_.collectWithSubqueries(recognizedRead(declaredInputs)).flatten)
     ).distinct.toList.map { case (location, schema) => location -> SparkSchemas.toLogicalSchema(schema) }
 
   /** The format of every recognized read `collectInputSchemas` finds, by the same location, where Spark says what it is
     * (`SparkPlanAdapter.readFormatOf`), for `check.inputFormat`. */
-  private def collectInputFormats(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): Map[String, String] =
-    (plan :: writeQuery.toList).flatMap(_.collect(Function.unlift { read: LogicalPlan =>
-      recognizedRead.lift(read).flatMap { case (location, _) => SparkPlanAdapter.readFormatOf(read).map(location -> _) }
-    })).toMap
+  private def collectInputFormats(plan: LogicalPlan, writeQuery: Option[LogicalPlan], declaredInputs: Seq[String]): Map[String, String] =
+    (plan :: writeQuery.toList).flatMap(_.collectWithSubqueries(Function.unlift { read: LogicalPlan =>
+      recognizedRead(declaredInputs).lift(read).map { reads =>
+        reads.flatMap { case (location, _) => SparkPlanAdapter.readFormatOf(read).map(location -> _) }
+      }
+    }).flatten).toMap
 
   /** The registry is a best-effort aid: it can only ever turn an unresolved
     * boundary into a resolved one, so a failure inside it (a pathologically
@@ -498,7 +504,7 @@ object ContractEnforcementRule {
       job: Option[JobInfo],
       written: com.invaract.ir.Write => Unit
   ): Unit = {
-    def translate(): Translation = translateStage(analyzedPlan, checkpointRegistry)
+    def translate(): Translation = translateStage(analyzedPlan, checkpointRegistry, contract.inputs.map(_.location))
     def check(t: Translation): Unit =
       checkStage(contract, analyzedPlan, t, options, sink, applicationId, capabilities, job, written)
     // A plan too deep for this thread's stack is tried again on a thread with a large one (`DeepPlans`). Only the stage
@@ -515,9 +521,9 @@ object ContractEnforcementRule {
   }
 
   /** `analyzedPlan` with its checkpoints resolved, and its translation. */
-  private final case class Translation(plan: LogicalPlan, translated: TranslationResult)
+  private final case class Translation(plan: LogicalPlan, translated: TranslationResult, declaredInputs: Seq[String])
 
-  private def translateStage(analyzedPlan: LogicalPlan, checkpointRegistry: Option[CheckpointRegistry]): Translation = {
+  private def translateStage(analyzedPlan: LogicalPlan, checkpointRegistry: Option[CheckpointRegistry], declaredInputs: Seq[String]): Translation = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
     // long before any write (see CheckpointRegistry's class doc). A bare
@@ -527,11 +533,11 @@ object ContractEnforcementRule {
     // reads, schemas, lineage, fingerprint - works on the real
     // transformation.
     val (plan, resolutionDiagnostics) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
-    val translatedRaw = SparkPlanAdapter.translate(plan)
+    val translatedRaw = SparkPlanAdapter.translate(plan, declaredInputs)
     // The insert inside a new-table `.saveAsTable()` gets the table it is filling (see `TableCreations`).
     val translated = translatedRaw.copy(plan = TableCreations.claim(translatedRaw.plan), diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
-    Translation(plan, translated)
+    Translation(plan, translated, declaredInputs)
   }
 
   private def checkStage(
@@ -545,7 +551,7 @@ object ContractEnforcementRule {
       job: Option[JobInfo],
       written: com.invaract.ir.Write => Unit
   ): Unit = {
-    val Translation(plan, translated) = translation
+    val Translation(plan, translated, declaredInputs) = translation
     translated.plan match {
       case w: com.invaract.ir.Write =>
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
@@ -566,7 +572,15 @@ object ContractEnforcementRule {
           VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
           VerificationPipeline.rejectUnverifiableWrite(contract, operation, translated.plan, sink, applicationId, job)
         }
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
+        // With rejectUndeclaredInputs the platform asked for every input to be visible. A Dataset built from an RDD hides
+        // what it was computed from (it is not a lineage boundary to see through, like a checkpoint: it is a source of its
+        // own), so the write cannot be shown to read only declared inputs, and is refused rather than passed.
+        if (options.rejectUndeclaredInputs &&
+            StructuralVerifier.collectUnknownPlans(translated.plan).exists(_.sourceType == SparkPlanAdapter.RddRelationSourceType)) {
+          VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
+          VerificationPipeline.rejectUnverifiableWrite(contract, RddBackedSource, translated.plan, sink, applicationId, job)
+        }
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated, declaredInputs), options, sink, applicationId, capabilities, job)
         // Recorded only once it has passed: a write the check blocked never lands, so it must not count as the output
         // having been written (`DeclaredOutputs`). A write that passes here and then fails while Spark runs it is still
         // recorded; that failure reaches the job as an exception of its own.
@@ -638,6 +652,15 @@ object ContractEnforcementRule {
 
   private val warnedTooDeep = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  /** The refusal, under `rejectUndeclaredInputs`, of a write that reads a Dataset built from an RDD. */
+  private[sparkadapter] val RddBackedSource = com.invaract.verification.UnverifiableOperation(
+    SparkPlanAdapter.RddRelationSourceType,
+    "this write reads a DataFrame built from an RDD (createDataFrame(rdd), rdd.toDF), and Invaract cannot see what the " +
+      "RDD was computed from",
+    "Read the data with spark.read or spark.table so its source is visible, or run without rejectUndeclaredInputs if " +
+      "inputs outside the contract are acceptable for this job."
+  )
+
   /** The refusal of a write whose plan is too deep to check. */
   private[sparkadapter] val DeeplyNestedPlan = com.invaract.verification.UnverifiableOperation(
     "DeeplyNestedPlan",
@@ -669,11 +692,11 @@ object ContractEnforcementRule {
     * honoured (`SQLConf.get` is the active session's conf on the analyzer
     * thread this rule runs on).
     */
-  private def checkedWrite(plan: LogicalPlan, translated: TranslationResult): CheckedWrite = {
+  private def checkedWrite(plan: LogicalPlan, translated: TranslationResult, declaredInputs: Seq[String]): CheckedWrite = {
     val writeInfo = WriteCommandSupport.combined.lift(plan)
     CheckedWrite(
       plan = translated.plan,
-      inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query)),
+      inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query), declaredInputs),
       outputSchema = SparkSchemas.toLogicalSchema(writeInfo.map(_.outputSchema).getOrElse(plan.schema)),
       caseSensitive = SQLConf.get.caseSensitiveAnalysis,
       // Classified once; a separate, independent classifier over the same plan
@@ -685,9 +708,9 @@ object ContractEnforcementRule {
       // plans is an assumption the fingerprint cannot reflect; disclosed with it.
       resolutionNotes = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType).map(_.message),
       // the CSV options each CSV read and write used, Spark's defaults filled in (check.csvOptions)
-      formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList),
+      formatOptions = CsvOptionsSupport.used(plan, writeInfo.map(_.location), plan +: writeInfo.map(_.query).toList, declaredInputs),
       // the format each read was made in (check.inputFormat)
-      inputFormats = collectInputFormats(plan, writeInfo.map(_.query)),
+      inputFormats = collectInputFormats(plan, writeInfo.map(_.query), declaredInputs),
       // the partition columns and overwrite mode, where Spark states them (check.partitioning)
       partitioning = writeInfo.flatMap(_.partitioning)
     )
@@ -768,12 +791,16 @@ object ContractEnforcementRule {
     // so a write downstream of a `.checkpoint()` infers the inputs it really
     // read rather than an empty contract.
     val (plan, _) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
-    lazy val translated = SparkPlanAdapter.translate(plan)
+    // A draft has no contract to attribute reads to, so each file read is attributed to its own dataset: the folder a
+    // file is in, without trailing partition folders (`ReadLocations.datasetRoot`). Reading today's partition drafts
+    // the dataset, so the draft still holds tomorrow; the draft's self-check sees the same locations.
+    lazy val datasets = draftDatasets(plan)
+    lazy val translated = SparkPlanAdapter.translate(plan, datasets)
     checkpointRegistry.foreach(_ => recordCheckpointOrigin(checkpointRegistry, plan, translated.plan))
     WriteCommandSupport.combined.lift(plan) match {
       case Some(writeInfo) =>
         SparkAdapterListener.stash(analyzedPlan, translated)
-        val inputSchemas = collectInputSchemas(plan, Some(writeInfo.query))
+        val inputSchemas = collectInputSchemas(plan, Some(writeInfo.query), datasets)
         Some(
           InferenceOutcome.Inferred(
             ContractInference.infer(
@@ -782,8 +809,8 @@ object ContractEnforcementRule {
                 writeInfo.format,
                 writeInfo.saveMode,
                 SparkSchemas.toLogicalSchema(writeInfo.outputSchema),
-                formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query)),
-                inputFormats = collectInputFormats(plan, Some(writeInfo.query)),
+                formatOptions = CsvOptionsSupport.forDraft(plan, Some(writeInfo.location), Seq(plan, writeInfo.query), datasets),
+                inputFormats = collectInputFormats(plan, Some(writeInfo.query), datasets),
                 partitioning = writeInfo.partitioning
               ),
               inputSchemas,
@@ -816,6 +843,18 @@ object ContractEnforcementRule {
           case None => None
         }
     }
+  }
+
+  /** The dataset each file read in `plan` belongs to (`ReadLocations.datasetRoot`), each once - what a dry run drafts
+    * inputs at. Includes reads in a write's query and in subqueries.
+    */
+  private[sparkadapter] def draftDatasets(plan: LogicalPlan): List[String] = {
+    val queries = plan :: WriteCommandSupport.combined.lift(plan).map(_.query).toList
+    queries.flatMap(_.collectWithSubqueries {
+      case LogicalRelation(h: org.apache.spark.sql.execution.datasources.HadoopFsRelation, _, _, _) =>
+        lazy val files = scala.util.Try(h.location.inputFiles.toSet).getOrElse(Set.empty[String])
+        h.location.rootPaths.map(p => ReadLocations.datasetRoot(p.toString, files.contains(p.toString))).toList
+    }.flatten).distinct
   }
 
   /** Builds the full explanation `ContractViolationException.getMessage`

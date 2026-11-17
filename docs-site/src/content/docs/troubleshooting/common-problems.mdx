@@ -147,8 +147,9 @@ examples. The usual reasons it still doesn't match:
   `hdfs://nn:8020/data/orders`: write `data/orders`, or the whole URL.
 - **A dotted table name.** `gold.orders` is one segment and never matches the table. Write
   `gold/orders` (see [Tables](/reference/contract-format/#tables)).
-- **A partition's folder.** A job that reads `/data/orders/date=2024-01-01` reads that folder,
-  not `orders`.
+- **A partition's folder of an output.** A read of `/data/orders/date=2024-01-01` counts as a
+  read of a declared input `orders` ([Reading part of an input](/reference/contract-format/#reading-part-of-an-input)),
+  but a write into it is a write somewhere other than a declared output `orders`.
 
 The violation names the location the job actually used, so compare the two from there.
 

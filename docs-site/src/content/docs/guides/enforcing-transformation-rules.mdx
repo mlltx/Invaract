@@ -37,7 +37,9 @@ rules:
 
 Each rule is checked against *every* matching node anywhere in the plan (a single write can
 itself contain several aggregations, joins, or filters — an aggregate feeding into a join,
-say) and is satisfied if *any* node of the relevant kind satisfies it.
+say) and is satisfied if *any* node of the relevant kind satisfies it. That includes the joins,
+filters and aggregations inside a subquery (`IN (SELECT ...)`, `EXISTS (...)`, a scalar
+subquery): a `CROSS JOIN` inside one is refused under `forbid_cross_join`.
 
 ### `required_group_by`
 

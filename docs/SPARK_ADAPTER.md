@@ -222,6 +222,8 @@ part of).
 | `View` (a temp or persistent view, as `spark.sql` over `createOrReplaceTempView` produces) | transparent pass-through to the view's own query — it was an opaque `UnknownPlan`, so no lineage (and no sensitivity tag) could be traced through a view |
 | `WithCTE` / `CTERelationDef` / `CTERelationRef` (a `WITH` clause) | every reference inlined by the CTE's body (`InlineCTE(alwaysInline = true)`, Spark's own rule), then translated, with the alias map recomputed for the inlined plan so a read and its columns are named after the same alias; a plan that cannot be inlined stays an opaque `UnknownPlan` |
 | a write's query with no projection of its own (a copy, a filter, a sort, a union of reads) | `Project(<translated query>, <the query's own output columns>)` (`withOutputProjection`) — an `ir.Read` declares no columns, so without it the write had no output columns for `ir.Lineage` to trace; a query already ending in `Project`/`Aggregate` is unchanged |
+| a subquery expression in a node (`IN`/`ListQuery`, `EXISTS`, a scalar subquery) | the subquery's plan, its output columns renamed into a scope of its own (`subquery#<n>`, numbered per plan so a fingerprint doesn't depend on Spark's expression ids), joined to the input of the node that uses it as a `LeftSemi` join on the literal `true` — the shape Spark's optimizer rewrites it to. A scalar subquery's value is a `ColumnReference` to that renamed column, so lineage follows it. Before, a subquery's plan (which hangs off an expression, not off the plan's children) was a no-argument function: its reads, joins and filters were invisible to every check |
+| `LogicalRelation` (+ `HadoopFsRelation`) reading several root paths (`spark.read.parquet(a, b)`, a glob Spark expands) | `Union(Read(first), Read(second), ...)` — one read per distinct location (`ReadLocations.of`); columns are traced to the first, as before. Under a contract, a root path inside a declared input is reported at that input's location (`ReadLocations.attribute`), so a partition folder, a file or a glob of files inside a declared input is a read of it; outputs are unaffected. Dry-run attributes each root path to its own dataset (`ReadLocations.datasetRoot`: a file's folder, without trailing `name=value` folders) |
 | `Deduplicate` (`.distinct()`) | transparent pass-through (row count only, no column change) |
 | `Repartition` / `RepartitionByExpression` (`.repartition()`, `.coalesce()`) | transparent pass-through (physical partitioning only) |
 | `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier, Some(exprId.id)))` — the `id` is translator-assigned identity, opaque outside this module |
@@ -1190,7 +1192,11 @@ every real run for a reason unrelated to actual contract compliance, so
 locations are matched by normalized suffix instead (both sides in
 `contract.Locations`' canonical form - no `file:` scheme, no repeated or
 trailing slashes, `s3a://` as `s3://` - then a declared location matches if
-it equals, or is a path-boundary suffix of, the actual one). A read or write
+it equals, or is a path-boundary suffix of, the actual one). A *read* whose root path lies
+inside a declared input (a partition folder, a file, a glob of files) is reported at that
+input's location before matching (`ReadLocations`, applied by `SparkPlanAdapter.locationsOf`),
+and every root path of a multi-path read is a read of its own; schemas, formats and CSV
+options are keyed by the same attributed locations. A read or write
 of a catalog table also answers to its table name, `catalog/namespace/table`
 (`LocationMatching.namesOf`), so a contract can name the table; see
 "`StructuralVerifier` internals" below.

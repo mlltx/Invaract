@@ -108,7 +108,9 @@ intend before treating it as a finished document.
    `location` is the absolute `file:`-scheme-stripped path Spark actually reported for this
    run (see [Contract Format](/reference/contract-format/)'s "Location matching") — replace
    it with a portable, relative path (`demo/input/sample.csv`) once you copy this into a real
-   contract file. `value_tier` is inferred `nullable: false` because both branches of its
+   contract file. An input is drafted at the dataset, not at the part of it this run happened to
+   read: a job that read one partition's folder (`.../orders/dt=2024-01-01`) or one file gets
+   an input at `.../orders`, so the draft still holds when tomorrow's run reads another day. `value_tier` is inferred `nullable: false` because both branches of its
    `CASE WHEN` produce a non-null literal.
 
    Save that to a file (`id`, `version`, and `status` are placeholders — replace them once

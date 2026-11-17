@@ -327,7 +327,25 @@ policy.
 | `/data/orders` | `/archive/data/orders` | ❌ it starts from the root |
 | `/data/orders` | `hdfs://nn:8020/data/orders` | ❌ write `data/orders`, or the whole URL |
 | `Orders` | `/data/orders` | ❌ case matters |
-| `orders` | `/data/orders/date=2024-01-01` | ❌ a partition's folder isn't the dataset |
+| `orders` (an output) | `/data/orders/date=2024-01-01` | ❌ a write into a partition's folder is somewhere else |
+| `orders` (an input) | `/data/orders/date=2024-01-01` | ✅ a read inside a declared input (below) |
+
+### Reading part of an input
+
+An input matches a read of any part of it: a partition's folder
+(`/data/orders/date=2024-01-01`), one file, or a glob of files (`/data/orders/*.parquet`) inside
+the place the contract declares. The read counts as a read of that input, so a contract declares
+`orders` once and the job may read one day of it today and another tomorrow. A part is a whole
+number of `/`-separated segments, so `/data/orders2` is not part of `orders`. A path that climbs
+out with `..` after the declared part is never counted as inside it.
+
+When a read names several paths (`spark.read.parquet(a, b)`), or a glob matches several datasets
+(`/data/orders*`), each is a read of its own: with
+[`rejectUndeclaredInputs`](/reference/configuration/#making-the-checks-stricter), each must be a
+declared input.
+
+This applies to inputs only. A write into a folder inside a declared output is a write to another
+place, and is refused as `OUTPUT_LOCATION_MISMATCH`.
 
 ### Tables
 
