@@ -43,7 +43,7 @@ capabilities:
     docs: connectors/iceberg.md
   write.stateChange:
     status: supported
-    note: Nine Iceberg CALL procedures that commit a schema change are checked against the contract.
+    note: Nine Iceberg CALL procedures that commit a schema change, and ALTER TABLE statements that change a declared output's columns, are checked against the contract; SET LOCATION, ADD PARTITION ... LOCATION and RENAME TO of a declared output are refused. DROP TABLE, TRUNCATE TABLE and DROP PARTITION are allowed on a declared output that may be overwritten, and refused on any other table.
     docs: connectors/iceberg.md
 
   check.inputExistence:

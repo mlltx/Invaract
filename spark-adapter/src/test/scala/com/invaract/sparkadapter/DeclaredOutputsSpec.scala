@@ -96,6 +96,30 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     assert(sink.validations.map(_.status) == List("PASSED", "FAILED", "PASSED"), "no MISSING_OUTPUT at the end")
   }
 
+  test("dropping a declared output is allowed, but is not writing it: a job that never rebuilds it ends with MISSING_OUTPUT") {
+    val out = Files.createTempDirectory("declared-outputs-dropped")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.sql(s"CREATE TABLE dropped_report (id BIGINT) USING parquet LOCATION '$out/report'")
+    spark.sql("DROP TABLE dropped_report")
+    spark.range(3).write.parquet(s"$out/audit")
+    spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "FAILED"), "the drop, the audit write, then the job's end")
+    assert(sink.validations.last.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/report"))))
+  }
+
+  test("a job that drops a declared output and then rebuilds it ends clean") {
+    val out = Files.createTempDirectory("declared-outputs-dropped-rebuilt")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.sql(s"CREATE TABLE rebuilt_report (id BIGINT) USING parquet LOCATION '$out/report'")
+    spark.sql("DROP TABLE rebuilt_report")
+    spark.range(3).write.mode("overwrite").parquet(s"$out/report")
+    spark.range(3).write.parquet(s"$out/audit")
+    spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "PASSED"), "no MISSING_OUTPUT at the end")
+  }
+
   test("a job's record is decided once: a second ending publishes nothing more and gives the same answer") {
     val out = Files.createTempDirectory("declared-outputs-once")
     val sink = new Capture

@@ -4,7 +4,9 @@
 package com.invaract.sparkadapter
 
 import org.apache.spark.sql.catalyst.analysis.UnresolvedNamespace
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{DropNamespace, OneRowRelation}
+import org.apache.spark.sql.execution.command.{ClearCacheCommand, DropTableCommand}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Direct, session-free unit coverage for `isKnownSafeIcebergProcedureCall`'s
@@ -44,5 +46,12 @@ class FailClosedCommandsSpec extends AnyFunSuite {
     assert(cascade.remediation.startsWith("Drop the tables this job is allowed to remove one at a time"))
     assert(FailClosedCommands.unverifiable(dropDatabase(cascade = false)) == FailClosedCommands.unverifiable("DropNamespace"))
     assert(FailClosedCommands.unverifiable(OneRowRelation()) == FailClosedCommands.unverifiable("OneRowRelation"))
+  }
+
+  test("DropTableCommand is known safe for a view, which holds no data, and not for a table; CLEAR CACHE is safe") {
+    def drop(isView: Boolean) = DropTableCommand(TableIdentifier("t"), ifExists = true, isView = isView, purge = false)
+    assert(FailClosedCommands.isKnownSafe(drop(isView = true)))
+    assert(!FailClosedCommands.isKnownSafe(drop(isView = false)))
+    assert(FailClosedCommands.isKnownSafe(ClearCacheCommand))
   }
 }

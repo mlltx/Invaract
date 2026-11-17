@@ -179,7 +179,7 @@ kinds of event:
 |---|---|---|
 | `INFERRED` | A contract was inferred and nothing about it is in doubt. | Candidate for your contract repository. |
 | `INFERRED_DEGRADED` | A contract was inferred, but from a plan Invaract could only partly see: an unresolved `.checkpoint()`/cache boundary (inputs behind it are missing), a resolution that had to guess, or row-level DML (`MERGE`/`UPDATE`/`DELETE`, where the draft describes the target's current schema and the operation's own logic isn't inferred). `diagnostics` says which. | Review before trusting. |
-| `SKIPPED_UNSUPPORTED` | A state-changing procedure `CALL`. Dry-run mode infers a contract from a write's output schema, and a procedure call has none. | Nothing to infer; enforcement would verify the resulting table state. |
+| `SKIPPED_UNSUPPORTED` | A state-changing procedure `CALL`, or a statement that removes a table's data (`DROP TABLE`, `TRUNCATE TABLE`, `ALTER TABLE ... DROP PARTITION`). Dry-run mode infers a contract from a write's output schema, and neither has one. | Nothing to infer. Enforcement verifies a `CALL`'s resulting table state, and allows a removal when the table is a declared output that may be overwritten; the `reason` names the table. |
 | `SKIPPED_UNRECOGNIZED` | A command that may write data but that Invaract has no translation for. With a contract active, enforcement would **reject** it as an `UNVERIFIABLE_WRITE`. | **A blocker for turning enforcement on** for this job. |
 | `INFERENCE_ERROR` | Inference itself threw. The job was unaffected. | Report it. |
 

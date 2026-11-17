@@ -40,6 +40,22 @@ Check whether your write goes through a shape listed in
 (a DataSourceV2 catalog write, or `MERGE`/`UPDATE`/`DELETE` outside the connectors this
 covers), support for it may not exist yet.
 
+A statement that removes or moves a table's data names the table in the message rather than a
+Spark class. There are three cases:
+
+- **`DROP TABLE`, `TRUNCATE TABLE` or `ALTER TABLE ... DROP PARTITION` on a table the contract
+  does not declare**, such as a job that begins `DROP TABLE IF EXISTS top_customers` before
+  rebuilding it. Declare the table as an output: the statement is allowed on a declared output
+  that may be overwritten (no `saveMode`, or `saveMode: overwrite`). The job must then write
+  it too, or it ends with `MISSING_OUTPUT`. See
+  [Fail-Closed by Default](/concepts/fail-closed/#statements-that-remove-data).
+- **`ALTER TABLE ... SET LOCATION`, `ADD PARTITION ... LOCATION` or `RENAME TO` on a declared
+  output.** The output would hold data no checked write produced, or stop existing under the
+  name the contract gives. Write the output with a query instead, or change the contract's
+  location in the same change.
+- **A column change Invaract could not work out** on a declared output (rare; it depends on a
+  Spark method that may differ in a Spark release Invaract has not been tested with).
+
 On Beam, the same violation names the step that ends the pipeline without a recognized
 write. If that step only reports (it sends metrics or a notification, and writes no governed
 data), a platform can let it through with the

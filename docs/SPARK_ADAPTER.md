@@ -975,7 +975,9 @@ are deliberately **not** on the safe list — they fail closed until
 `ir.Write`'s "write a dataset to a location" shape at all — `MERGE`/
 `DELETE`/`UPDATE` are row-level operations the IR wasn't designed to
 represent, a real future modeling question, not just a missing case
-arm). `InsertIntoDataSourceCommand` is a real write with a shape similar to
+arm); the table-removal ones among them (`DROP TABLE`, `TRUNCATE`, `DROP PARTITION`) are
+now judged against the contract's outputs before this list is consulted - see "Statements
+that remove data or change a table" below. `InsertIntoDataSourceCommand` is a real write with a shape similar to
 `SaveIntoDataSourceCommand` that could plausibly be added later; left off for now.
 `InsertIntoDataSourceDirCommand` (`INSERT [OVERWRITE] DIRECTORY ... USING <format>`) is
 now a recognized write (`WriteCommandSupport.insertIntoDataSourceDir`), the data-source
@@ -1084,6 +1086,61 @@ naming an unrelated class on the classpath runs none of its code. A class that d
 real code running in the driver: a contract is therefore an input to trust like the job's jar, and a registry
 that serves contracts must authenticate its publishers. The registry client class is instantiated without this
 check because it can only come from platform configuration, never from a contract.
+
+## Statements that remove data or change a table
+
+Two kinds of statement change a table without a query to check. Both used to be decided by
+the safe list alone: the first kind was always refused, the second always passed. Both are
+now judged against what the contract says about the table they name, before the fail-closed
+catch-all, in `ContractEnforcementRule`'s non-write branch. A table is named as a write to it
+is: its location and its table name (`TableTargets`, shared by both).
+
+**Removing data** (`DestructiveDdlSupport`): `DROP TABLE`, `TRUNCATE TABLE [PARTITION]`,
+`ALTER TABLE ... DROP PARTITION`. The analyzed plan is catalyst `DropTable(ResolvedIdentifier)`
+for any `DROP TABLE` (existing or not; `DropTableCommand` only under
+`spark.sql.legacy.useV1Command`), `TruncateTableCommand`/`AlterTableDropPartitionCommand` for a
+V1 table, and `TruncateTable`/`TruncatePartition`/`DropPartitions` on a `ResolvedTable` for a
+V2 one. A contract lists what a job may change, so (`DestructiveDdlSupport.judge`):
+
+| The table is | Whole table | One partition |
+|---|---|---|
+| a declared output, no `saveMode` or `overwrite` | allowed, `PASSED` event | allowed |
+| a declared output, another `saveMode` | `OUTPUT_SAVE_MODE_MISMATCH` | same |
+| a declared output, a rule about deletes applies (`RuleVerifier.anyRuleAppliesTo`) | `RULE_UNCONDITIONAL_DELETE` for `forbid_unconditional_delete`, else `RULE_UNVERIFIABLE_DML` | allowed |
+| not a declared output | `UNVERIFIABLE_WRITE`, naming the table and telling the user to declare it | same |
+
+A table that does not exist (`DROP TABLE IF EXISTS`) is located where Spark would create it
+(`defaultTablePath`), so a dry run's draft, which declares a new table by that path, covers
+the drop that precedes its rebuild. An allowed removal is not a write (`DeclaredOutputs` is not
+told): a job that drops a declared output and never rebuilds it still ends with
+`MISSING_OUTPUT`. Dry-run reports a removal `SKIPPED_UNSUPPORTED` rather than
+`SKIPPED_UNRECOGNIZED`, since enforcement can allow it. `DROP VIEW` (`DropTableCommand` with
+`isView`) and `CLEAR CACHE` (`ClearCacheCommand$`) are on the safe list: they remove no data.
+`DestructiveDdlSupportSpec` holds every row of the table.
+
+**Changing a table** (`SchemaDdlSupport`): `ALTER TABLE` statements that change the columns
+or the location of a table. They change no rows, which is why they were on the safe list,
+but they change what the contract describes, so an output could lose a required column or be
+repointed at other data with no validation at all. They are checked the way an Iceberg
+procedure that changes a table's state is (`StateChangingCallSupport`):
+
+- a column change (catalyst `AddColumns`/`RenameColumn`/`DropColumns`/`AlterColumn`/
+  `ReplaceColumns` on a `ResolvedTable`, for Delta and Iceberg; `AlterTableAddColumnsCommand`
+  and `AlterTableChangeColumnCommand` for a V1 table) goes through
+  `VerificationPipeline.verifyStateChange` with the columns the table will have. For a V2
+  table those are worked out by Spark's own `CatalogV2Util.applySchemaChanges`, called by
+  reflection since it is not public API; if it cannot be called, the statement is refused on
+  a declared output rather than passed. `verifyStateChange` lets a table no declared output
+  names through, with a `PASSED` event.
+- `SET LOCATION` (table or partition) and `ADD PARTITION ... LOCATION` on a declared output
+  are refused, `UNVERIFIABLE_WRITE`: the output would serve data no checked write produced.
+  On any other table they pass, with no event.
+- `RENAME TO` is both: renaming a declared output away is refused, and the table is then
+  checked as the one its new name is, so renaming a staging table onto a declared output's
+  name has its columns checked as the output's.
+
+A statement `SchemaDdlSupport` does not recognize (properties, constraints, a view) keeps its
+place on the safe list. `SchemaDdlSupportSpec` holds these on parquet and Delta tables.
 
 ## `foreachBatch` streams
 

@@ -5,6 +5,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.verification.UnverifiableOperation
 import org.apache.spark.sql.catalyst.plans.logical.{DropNamespace, LogicalPlan}
+import org.apache.spark.sql.execution.command.DropTableCommand
 
 /** The known-safe exemption list for `ContractEnforcementRule`'s fail-closed
   * policy on unverifiable writes (see that object's "Fail-closed on
@@ -75,6 +76,9 @@ private[sparkadapter] object FailClosedCommands {
     // DROP DATABASE without CASCADE: Spark refuses to drop a database that still holds a table, so it deletes no data.
     // With CASCADE it deletes every table in the database, so it is not safe.
     case d: DropNamespace                                   => !d.cascade
+    // DROP VIEW of a persistent view arrives as DropTableCommand with `isView` (not the catalyst DropView listed below):
+    // a view holds no data. DROP TABLE is judged against the contract instead (DestructiveDdlSupport).
+    case d: DropTableCommand                                => d.isView
     case _ if plan.getClass.getName == icebergCallClassName => isKnownSafeIcebergProcedureCall(plan)
     case _                                                  => knownSafe.contains(plan.getClass.getName)
   }
@@ -203,6 +207,8 @@ private[sparkadapter] object FailClosedCommands {
     "org.apache.spark.sql.catalyst.plans.logical.ShowTables",
     "org.apache.spark.sql.catalyst.plans.logical.ShowViews",
     "org.apache.spark.sql.catalyst.plans.logical.UncacheTable",
+    // CLEAR CACHE: an object, hence the `$`; drops cached copies only, like UNCACHE TABLE.
+    "org.apache.spark.sql.execution.command.ClearCacheCommand$",
     "org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties",
     "org.apache.spark.sql.catalyst.plans.logical.UnsetViewProperties",
 
@@ -317,12 +323,14 @@ private[sparkadapter] object FailClosedCommands {
     // here with the same reasoning): anything that adds, modifies, drops,
     // or copies row content - DeleteFromTable(WithFilters), MergeIntoTable/
     // DeltaMergeInto, UpdateTable, LoadData(Command), TruncateTable(Command
-    // /Partition), DropTable(Command) (can delete a managed table's data),
+    // /Partition) and DropTable(Command) (judged against the contract by
+    // DestructiveDdlSupport before this list is consulted),
     // DropNamespace with CASCADE (DROP DATABASE ... CASCADE: deletes every
     // table in it - the analyzed plan is this catalyst class, never
     // DropDatabaseCommand, so it is judged in isKnownSafe by its `cascade`
     // flag rather than listed), DropPartitions/
-    // AlterTableDropPartitionCommand (deletes the partition's data),
+    // AlterTableDropPartitionCommand (deletes the partition's data; also
+    // judged by DestructiveDdlSupport),
     // ReplaceTable (drops+recreates), Delta's WriteIntoDelta/
     // CloneTableCommand/ConvertToDeltaCommand/CreateDeltaTableCommand/
     // DeltaReorgTable(Command)/DeltaGenerateCommand/RestoreTableCommand,

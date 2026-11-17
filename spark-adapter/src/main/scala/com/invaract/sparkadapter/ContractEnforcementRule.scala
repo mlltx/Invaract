@@ -612,16 +612,93 @@ object ContractEnforcementRule {
               applicationId,
               job
             )
-          case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            VerificationPipeline.rejectUnverifiableWrite(
-              contract, FailClosedCommands.unverifiable(plan), translated.plan, sink, applicationId, job
-            )
-          case None if WriteCommandSupport.isForeachBatch(plan) =>
-            if (loggedForeachBatch.compareAndSet(false, true))
-              logger.info("Invaract: a foreachBatch stream is checked through the writes its function makes.")
           case None =>
-            () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+            // DROP TABLE, TRUNCATE TABLE, ALTER TABLE ... DROP PARTITION, then the ALTER TABLE statements that change an
+            // output's columns or location: each judged against what the contract says about the table, before the
+            // fail-closed catch-all (DestructiveDdlSupport, SchemaDdlSupport).
+            DestructiveDdlSupport.extract(plan) match {
+              case Some(ddl) => checkRemoval(contract, ddl, sink, applicationId, job)
+              case None =>
+                SchemaDdlSupport.extract(plan) match {
+                  case Some(ddl) => checkTableChange(contract, ddl, options, sink, applicationId, job)
+                  case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+                    VerificationPipeline.rejectUnverifiableWrite(
+                      contract, FailClosedCommands.unverifiable(plan), translated.plan, sink, applicationId, job
+                    )
+                  case None if WriteCommandSupport.isForeachBatch(plan) =>
+                    if (loggedForeachBatch.compareAndSet(false, true))
+                      logger.info("Invaract: a foreachBatch stream is checked through the writes its function makes.")
+                  case None =>
+                    () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+                }
+            }
         }
+    }
+  }
+
+  /** A statement that removes a table's data (`DestructiveDdlSupport`): allowed, with a PASSED validation, when the
+    * contract lets the table be overwritten; refused otherwise. An allowed removal is not a write: a job that drops a
+    * declared output and never rebuilds it still ends with `MISSING_OUTPUT` (`DeclaredOutputs`).
+    */
+  private def checkRemoval(
+      contract: Contract,
+      ddl: DestructiveDdlSupport.DestructiveDdl,
+      sink: Option[NotificationSink],
+      applicationId: Option[String],
+      job: Option[JobInfo]
+  ): Unit = {
+    VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
+    val contractRef = s"${contract.id}@${contract.version}"
+    val described = com.invaract.ir.UnknownPlan(s"${ddl.statement} on '${ddl.table}'")
+    DestructiveDdlSupport.judge(contract, ddl) match {
+      case DestructiveDdlSupport.Verdict.Allowed =>
+        VerificationPipeline.publishValidation(contract, VerificationResult.of(contractRef, Nil), sink, applicationId, job)
+      case DestructiveDdlSupport.Verdict.Undeclared(operation) =>
+        VerificationPipeline.rejectUnverifiableWrite(contract, operation, described, sink, applicationId, job)
+      case DestructiveDdlSupport.Verdict.Refused(violation) =>
+        VerificationPipeline.reject(contract, VerificationResult.of(contractRef, List(violation)), described, sink, applicationId, job)
+    }
+  }
+
+  /** An ALTER TABLE statement that changes a table's columns or location (`SchemaDdlSupport`). New columns are checked
+    * as the resulting state of the table (`VerificationPipeline.verifyStateChange`, which lets a table no declared
+    * output names through, with a PASSED validation); moving a declared output away is refused; a rename is both: the
+    * old name must not be a declared output, and the table is checked as the one the new name now is.
+    */
+  private def checkTableChange(
+      contract: Contract,
+      ddl: SchemaDdlSupport.SchemaDdl,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      applicationId: Option[String],
+      job: Option[JobInfo]
+  ): Unit = {
+    def newState(target: TableTargets.Target, schema: org.apache.spark.sql.types.StructType): Unit =
+      VerificationPipeline.verifyStateChange(
+        contract,
+        s"${ddl.statement} on '${target.display}'",
+        target.location,
+        target.names,
+        SparkSchemas.toLogicalSchema(schema),
+        SQLConf.get.caseSensitiveAnalysis,
+        options,
+        sink,
+        applicationId,
+        job
+      )
+    def refuseIfDeclared(target: TableTargets.Target, problem: String): Unit =
+      SchemaDdlSupport.refusal(contract, ddl.statement, target, problem).foreach { operation =>
+        VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
+        VerificationPipeline.rejectUnverifiableWrite(
+          contract, operation, com.invaract.ir.UnknownPlan(s"${ddl.statement} on '${target.display}'"), sink, applicationId, job
+        )
+      }
+    ddl match {
+      case SchemaDdlSupport.NewSchema(_, target, schema) => newState(target, schema)
+      case SchemaDdlSupport.Displaced(_, target, problem) => refuseIfDeclared(target, problem)
+      case SchemaDdlSupport.RenamedOnto(_, source, target, schema) =>
+        refuseIfDeclared(source, SchemaDdlSupport.RenamesAway)
+        newState(target, schema)
     }
   }
 
@@ -834,6 +911,15 @@ object ContractEnforcementRule {
                 InferenceStatus.SkippedUnsupported,
                 s"state-changing CALL ${info.callName}(...) targeting '${info.location}': dry-run mode infers a " +
                   "contract from a write's output schema, and a procedure call has none"
+              )
+            )
+          case None if DestructiveDdlSupport.extract(plan).isDefined =>
+            val ddl = DestructiveDdlSupport.extract(plan).get
+            Some(
+              InferenceOutcome.Skipped(
+                InferenceStatus.SkippedUnsupported,
+                s"${ddl.statement} on '${ddl.table}': allowed under enforcement when '${ddl.table}' is a declared output " +
+                  "that may be overwritten"
               )
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>

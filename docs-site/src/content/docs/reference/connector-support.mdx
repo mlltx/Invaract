@@ -55,6 +55,21 @@ Most new connectors need **zero new recognition code** — any connector built o
 introduces a genuinely new write-command shape Spark has no existing generic node for
 (row-level DML, DSv2 catalog writes, and similar).
 
+### Table changes
+
+Statements that change a table without a query are judged against what the contract says
+about the table they name (by its location or its table name), on any connector. See
+[Fail-Closed by Default](/concepts/fail-closed/#statements-that-remove-data) for the full
+rules.
+
+| Statement | On a declared output | On any other table |
+|---|---|---|
+| `DROP TABLE`, `TRUNCATE TABLE`, `ALTER TABLE ... DROP PARTITION` | Allowed when the output may be overwritten (no `saveMode`, or `overwrite`) | `UNVERIFIABLE_WRITE` |
+| `ADD COLUMNS`, `RENAME COLUMN`, `DROP COLUMN`, `ALTER COLUMN`, `REPLACE COLUMNS`, `CHANGE COLUMN` | The columns it leaves are checked as a write's | Passes |
+| `SET LOCATION`, `ADD PARTITION ... LOCATION`, `RENAME TO` (away from a declared name) | `UNVERIFIABLE_WRITE` | Passes |
+| `RENAME TO` a declared output's name | The renamed table's columns are checked as the output's | — |
+| `DROP VIEW`, `CLEAR CACHE` | Passes | Passes |
+
 ## What happens for a write shape that isn't recognized
 
 If your contract is active and a write doesn't match a recognized shape above, the write
