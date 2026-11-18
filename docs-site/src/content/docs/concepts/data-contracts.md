@@ -35,7 +35,7 @@ These are two separate passes:
 - **Validation** (`ContractValidator`) runs a second pass over an already-parsed
   contract and collects every issue in one call, distinguishing **errors** (duplicate
   names, an empty schema, zero declared outputs) from **warnings** (an unrecognized field
-  type, a field marked both required and nullable).
+  type, a dataset that declares no fields).
 
 A contract that fails validation never reaches enforcement — see
 [Fail-Closed by Default](/concepts/fail-closed/).

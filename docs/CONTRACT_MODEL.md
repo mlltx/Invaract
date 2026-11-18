@@ -199,8 +199,10 @@ Two renderings, both identical to what Spark prints (asserted against Spark by
 | `typeName` | a plain `type:` is compared against it exactly; a container is the bare keyword (`array`, `map`, `struct`) | `integer`, `long`, `decimal(10,2)`, `array` |
 | `catalogString` | inside a nested type, and in violation messages | `int`, `bigint`, `array<int>`, `struct<a:int,b:string>` |
 
-A bare top-level `type: int` is therefore *not* `integer` (the keyword above is the
-vocabulary); the aliases are accepted only inside a nested type. A native type with
+A plain `type:` is compared against `typeName`, written as the keyword above or as an alias
+the type parser maps to it: a bare top-level `type: int` is `integer`, as inside a nested type
+(`SchemaChecker`; a bare `decimal`, `dec` or `numeric` names no precision and matches no
+`decimal(p,s)` column). A native type with
 no logical equivalent (an interval, a geography) is an `OtherType` that equals only
 the identical native type — an adapter must not guess a lossy mapping, since a wrong
 guess would make a mismatch invisible.
