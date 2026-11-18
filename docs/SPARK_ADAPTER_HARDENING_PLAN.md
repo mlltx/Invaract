@@ -49,6 +49,23 @@ departs from an item's text, the reason is here, so the plan can still be read a
   by method name).
 - **H-17f.** The validator stops warning for any spelling the type parser maps to a known type;
   an unknown word still parses (as `OtherType`) and is still warned about.
+- **MiMa (rule 7).** `mimaReportBinaryIssues` against `main`'s jars reports nothing for
+  `contract`, `verification-core` and `spark-adapter`. Two package-private shapes had changed and
+  were restored rather than filtered: a removal's dry-run outcome is its own case class
+  (`InferenceOutcome.SkippedRemoval`) instead of a new field on `Skipped`, and
+  `SparkPlanAdapter.Translator` keeps its one-map constructor.
+- **Mutation testing (rule 4).** Each new or changed small file was mutated against its own
+  specs only (`--test-filter`; a filtered run can only score lower than the full suite):
+  `TableTargets`, `DestructiveDdlSupport`, `SchemaDdlSupport`, `ReadLocations`, `PinnedSettings`,
+  `InvaractSparkPlugin`, `FailClosedCommands`, `WriteKeys` and `InvaractSparkSessionExtension`
+  100%; `RemoteFiles` 92%, `DryRunReporter` 93%, `SparkConfigSource` 76%; `verification-core`'s
+  changed files 100%. The runs found real gaps, now tested, and one real bug (Spark's
+  `SetTableLocation` is an `AlterTableCommand` whose `changes` throw for a partitioned V2 table).
+  The survivors left are equivalent (a cache that a mutant bypasses, a log line, an empty list
+  recorded) or in code this work did not change (`CsvOptionsSupport.ofWrite`). `DeepPlans` has no
+  scored mutant. The three large files (`ContractEnforcementRule`, `SparkPlanAdapter`,
+  `WriteCommandSupport`) were not mutated locally: a whole-file run with the full suite takes
+  hours here; CI's incremental job does it for a pull request.
 - **H-18.** The examples in the dry-run guide and the troubleshooting page that quoted
   `INSERT OVERWRITE DIRECTORY` as unrecognized (it is recognized since H-13) were regenerated from
   a real `spark-sql` run, with `LOAD DATA` as the statement Invaract still cannot check.
