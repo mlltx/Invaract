@@ -66,7 +66,7 @@ class ReadLocationsEnforcementSpec extends ConnectorSpecBase {
   }
 
   test("a glob that matches two datasets reads both") {
-    assert(violations(contract(input("orders", orders)), strict)(spark.read.parquet(in("orders*"))) == List(ViolationType.UndeclaredInput))
+    assert(violations(contract(input("orders", orders)), strict)(spark.read.parquet(s"$orders*")) == List(ViolationType.UndeclaredInput))
   }
 
   test("with both declared, a two-path read passes, and the second path's schema is checked") {
@@ -76,7 +76,7 @@ class ReadLocationsEnforcementSpec extends ConnectorSpecBase {
         write(spark.read.parquet(orders, orders2))
       )
     )
-    assert(e.result.violations.map(v => v.violationType -> v.location.exists(_.endsWith("/in/orders2"))) == List(ViolationType.MissingInputField -> true))
+    assert(e.result.violations.map(v => v.violationType -> v.location.exists(_.replace('\\', '/').endsWith("/in/orders2"))) == List(ViolationType.MissingInputField -> true))
   }
 
   test("a dataset next to a declared one, whose name starts the same, is not inside it") {
@@ -124,7 +124,9 @@ class ReadLocationsEnforcementSpec extends ConnectorSpecBase {
     var drafted: Option[Contract] = None
     ContractEnforcementRule.inferOrIgnore(writePlan, c => drafted = Some(c))
     val draft = drafted.getOrElse(fail("no draft"))
-    assert(draft.inputs.map(_.location) == List(part.replace('\\', '/')))
+    // on Windows the draft spells the drive path as Spark does (/C:/...), which matches the declared C:\... form
+    val locations = draft.inputs.map(_.location)
+    assert(locations.size == 1 && (locations.head == part.replace('\\', '/') || locations.head.endsWith("/" + part.replace('\\', '/'))), locations)
     withContract(ContractParser.write(draft), strict)(spark.read.parquet(s"$part/dt=2024-01-02").select("id").write.mode("overwrite").parquet(out))
   }
 }

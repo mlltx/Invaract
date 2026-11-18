@@ -100,10 +100,12 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     val out = Files.createTempDirectory("declared-outputs-dropped")
     val sink = new Capture
     val spark = session(contract(out), sink)
-    spark.sql(s"CREATE TABLE dropped_report (id BIGINT) USING parquet LOCATION '$out/report'")
-    spark.sql("DROP TABLE dropped_report")
-    spark.range(3).write.parquet(s"$out/audit")
-    spark.stop()
+    // stopped whatever happens: a session left running keeps its contract installed for the next test
+    try {
+      spark.sql(s"CREATE TABLE dropped_report (id BIGINT) USING parquet LOCATION '${out.toString.replace('\\', '/')}/report'")
+      spark.sql("DROP TABLE dropped_report")
+      spark.range(3).write.parquet(s"$out/audit")
+    } finally spark.stop()
     assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "FAILED"), "the drop, the audit write, then the job's end")
     assert(sink.validations.last.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/report"))))
   }
@@ -112,11 +114,12 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     val out = Files.createTempDirectory("declared-outputs-dropped-rebuilt")
     val sink = new Capture
     val spark = session(contract(out), sink)
-    spark.sql(s"CREATE TABLE rebuilt_report (id BIGINT) USING parquet LOCATION '$out/report'")
-    spark.sql("DROP TABLE rebuilt_report")
-    spark.range(3).write.mode("overwrite").parquet(s"$out/report")
-    spark.range(3).write.parquet(s"$out/audit")
-    spark.stop()
+    try {
+      spark.sql(s"CREATE TABLE rebuilt_report (id BIGINT) USING parquet LOCATION '${out.toString.replace('\\', '/')}/report'")
+      spark.sql("DROP TABLE rebuilt_report")
+      spark.range(3).write.mode("overwrite").parquet(s"$out/report")
+      spark.range(3).write.parquet(s"$out/audit")
+    } finally spark.stop()
     assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "PASSED"), "no MISSING_OUTPUT at the end")
   }
 

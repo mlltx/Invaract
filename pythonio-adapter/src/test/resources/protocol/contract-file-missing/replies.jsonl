@@ -1,1 +1,1 @@
-{"ok": false, "reason": "ContractParseException: Contract file not found: ${CASE}/nowhere.yaml", "status": "not-checked"}
+{"ok": false, "reason": "ContractParseException: Contract file not found: ${CASE}/nowhere.yaml. If a Spark job runs in cluster mode, ship the file with --files and name it by its file name.", "status": "not-checked"}

@@ -104,7 +104,9 @@ class ForeachBatchSpec extends AnyFunSuite {
       val failure = runStream(spark, dir)(_.write.mode("append").parquet(elsewhere))
       val v = failure.flatMap(violationOf).getOrElse(fail(s"expected a contract violation, got $failure"))
       assert(v.result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
-      assert(v.result.violations.head.message.contains(elsewhere) && !v.result.violations.head.message.contains("ForeachBatchSink"))
+      // the message names the location as Spark does (file:/C:/... on Windows), so compare with forward slashes
+      val message = v.result.violations.head.message
+      assert(message.replace('\\', '/').contains(elsewhere.replace('\\', '/')) && !message.contains("ForeachBatchSink"))
       assert(!v.getMessage.contains("WriteToMicroBatchDataSourceV1"), "the batch is translated as its query")
       assert(!Files.exists(dir.resolve("elsewhere")))
     }
@@ -150,8 +152,11 @@ class ForeachBatchSpec extends AnyFunSuite {
         case List(only) => only
         case other      => fail(s"expected one draft, got ${other.size}: ${other.map(_.outputs.map(_.location))}")
       }
-      assert(draft.outputs.map(_.location.stripPrefix("file:")) == List(out))
-      assert(draft.inputs.map(_.location) == List(dir.resolve("events").toString))
+      // a draft names a location as Spark does (/C:/... on Windows for the path C:\...), so compare by its end
+      def same(drafted: List[String], path: String) =
+        drafted.size == 1 && { val d = drafted.head.stripPrefix("file:"); val p = path.replace('\\', '/'); d == p || d.endsWith("/" + p) }
+      assert(same(draft.outputs.map(_.location), out), draft.outputs.map(_.location))
+      assert(same(draft.inputs.map(_.location), dir.resolve("events").toString), draft.inputs.map(_.location))
     }
   }
 

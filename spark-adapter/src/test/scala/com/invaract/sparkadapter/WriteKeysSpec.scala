@@ -52,7 +52,10 @@ class WriteKeysSpec extends ConnectorSpecBase {
     val found = events(out)(spark.range(3).write.parquet(out))
     assert(found.map(_.status) == List("PASSED"))
     assert(found.forall(_.writeKey.isDefined))
-    assert(keysOf(found).size == 1 && keysOf(found).head.startsWith(out + "#"), keysOf(found))
+    // the key names the location as Spark does: /C:/... on Windows for the path C:\..., so compare by its end
+    val named = keysOf(found).map(k => k.substring(0, k.lastIndexOf('#')))
+    val path = out.replace('\\', '/')
+    assert(named.size == 1 && (named.head == path || named.head.endsWith("/" + path)), keysOf(found))
   }
 
   test("saveAsTable of a new table and of an existing one: each checked twice, each one write") {

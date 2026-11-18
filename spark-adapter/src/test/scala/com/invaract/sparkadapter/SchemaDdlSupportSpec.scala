@@ -136,7 +136,7 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
   test("SET LOCATION of a declared output: UNVERIFIABLE_WRITE, and the table stays where it was") {
     parquetTable("p6")
     val before = location("p6")
-    val e = refusal(contract("p6"))(s"ALTER TABLE p6 SET LOCATION '${dir.resolve("elsewhere")}'")
+    val e = refusal(contract("p6"))(s"ALTER TABLE p6 SET LOCATION '${dir.resolve("elsewhere").toString.replace('\\', '/')}'")
     assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     assert(e.getMessage.contains("repoints the table at a different location") && e.getMessage.contains("'out'"), e.getMessage)
     assert(location("p6") == before)
@@ -144,7 +144,7 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
 
   test("SET LOCATION of one partition of a declared output is refused too") {
     parquetTable("p7")
-    val e = refusal(contract("p7"))(s"ALTER TABLE p7 PARTITION (dt='a') SET LOCATION '${dir.resolve("elsewhere_part")}'")
+    val e = refusal(contract("p7"))(s"ALTER TABLE p7 PARTITION (dt='a') SET LOCATION '${dir.resolve("elsewhere_part").toString.replace('\\', '/')}'")
     assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     assert(e.getMessage.contains("repoints a partition at data no write produced"), e.getMessage)
   }
@@ -159,7 +159,7 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
 
   test("ADD PARTITION ... LOCATION of a declared output is refused; ADD PARTITION without a location passes") {
     parquetTable("p9")
-    val e = refusal(contract("p9"))(s"ALTER TABLE p9 ADD PARTITION (dt='z') LOCATION '${dir.resolve("foreign")}'")
+    val e = refusal(contract("p9"))(s"ALTER TABLE p9 ADD PARTITION (dt='z') LOCATION '${dir.resolve("foreign").toString.replace('\\', '/')}'")
     assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     assert(e.getMessage.contains("attaches data no write produced"), e.getMessage)
     assert(run(contract("p9"))("ALTER TABLE p9 ADD PARTITION (dt='y')") == Nil)
@@ -186,9 +186,9 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
       "ALTER TABLE u1 ADD COLUMNS (email STRING)",
       "ALTER TABLE u1 CHANGE COLUMN id id BIGINT COMMENT 'k'",
       "ALTER TABLE u1 RENAME TO u1_renamed",
-      s"ALTER TABLE u1_renamed ADD PARTITION (dt='z') LOCATION '${dir.resolve("u1_z")}'",
-      s"ALTER TABLE u1_renamed PARTITION (dt='z') SET LOCATION '${dir.resolve("u1_z2")}'",
-      s"ALTER TABLE u1_renamed SET LOCATION '${dir.resolve("u1_moved")}'",
+      s"ALTER TABLE u1_renamed ADD PARTITION (dt='z') LOCATION '${dir.resolve("u1_z").toString.replace('\\', '/')}'",
+      s"ALTER TABLE u1_renamed PARTITION (dt='z') SET LOCATION '${dir.resolve("u1_z2").toString.replace('\\', '/')}'",
+      s"ALTER TABLE u1_renamed SET LOCATION '${dir.resolve("u1_moved").toString.replace('\\', '/')}'",
       "ALTER TABLE u2 ADD COLUMNS (email STRING)",
       "ALTER TABLE u2 RENAME COLUMN value TO amount",
       "ALTER TABLE u2 DROP COLUMN id"
@@ -217,7 +217,7 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
   test("moving an undeclared table publishes nothing; renaming one publishes the PASSED check of the table under its new name") {
     parquetTable("e3")
     val sink = new TestNotificationSink
-    withSink(sink)(assert(run(contract("somewhere_else"))(s"ALTER TABLE e3 SET LOCATION '${dir.resolve("e3_moved")}'") == Nil))
+    withSink(sink)(assert(run(contract("somewhere_else"))(s"ALTER TABLE e3 SET LOCATION '${dir.resolve("e3_moved").toString.replace('\\', '/')}'") == Nil))
     assert(sink.events.isEmpty)
     parquetTable("e4")
     withSink(sink)(assert(run(contract("somewhere_else"))("ALTER TABLE e4 RENAME TO e4_renamed") == Nil))
@@ -248,11 +248,11 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
     assert(changed.statement == "ALTER TABLE ... CHANGE COLUMN" && changed.schema.fieldNames.toList == List("id", "value", "dt"))
     assert(changed.schema("value").getComment().contains("v"), "the named column is replaced, whatever its case")
     assert(changed.schema("id").getComment().isEmpty)
-    val List(moved: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 SET LOCATION '${dir.resolve("x1_moved")}'")
+    val List(moved: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 SET LOCATION '${dir.resolve("x1_moved").toString.replace('\\', '/')}'")
     assert(moved.statement == "ALTER TABLE ... SET LOCATION" && moved.target.names == List(byName("x1")) && moved.problem == SchemaDdlSupport.RepointsTable)
-    val List(movedPart: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 PARTITION (dt='a') SET LOCATION '${dir.resolve("x1_a")}'")
+    val List(movedPart: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 PARTITION (dt='a') SET LOCATION '${dir.resolve("x1_a").toString.replace('\\', '/')}'")
     assert(movedPart.problem == SchemaDdlSupport.RepointsPartition)
-    val List(attached: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 ADD PARTITION (dt='q') PARTITION (dt='r') LOCATION '${dir.resolve("x1_r")}'")
+    val List(attached: SchemaDdlSupport.Displaced) = extracted(s"ALTER TABLE x1 ADD PARTITION (dt='q') PARTITION (dt='r') LOCATION '${dir.resolve("x1_r").toString.replace('\\', '/')}'")
     assert(attached.statement == "ALTER TABLE ... ADD PARTITION ... LOCATION" && attached.problem == SchemaDdlSupport.AttachesData)
     val List(rename: SchemaDdlSupport.RenamedOnto) = extracted("ALTER TABLE x1 RENAME TO x1_new")
     assert(rename.statement == "ALTER TABLE ... RENAME TO")
