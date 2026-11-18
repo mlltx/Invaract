@@ -54,6 +54,10 @@ departs from an item's text, the reason is here, so the plan can still be read a
   were restored rather than filtered: a removal's dry-run outcome is its own case class
   (`InferenceOutcome.SkippedRemoval`) instead of a new field on `Skipped`, and
   `SparkPlanAdapter.Translator` keeps its one-map constructor.
+- **Coverage, real jobs (rules 6, 8).** `spark-adapter` 94.67% statements / 91.73% branches
+  (thresholds 92 / 88), with all 1029 tests passing; `verification-core` 98.53% / 96.75%;
+  `contract` 94.31% / 90.47%. `./dev/test` exits 0 with report status `PASS`, and
+  `./dev/regression` passes all 10 cases.
 - **Mutation testing (rule 4).** Each new or changed small file was mutated against its own
   specs only (`--test-filter`; a filtered run can only score lower than the full suite):
   `TableTargets`, `DestructiveDdlSupport`, `SchemaDdlSupport`, `ReadLocations`, `PinnedSettings`,
