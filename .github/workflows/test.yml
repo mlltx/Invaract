@@ -2118,6 +2118,12 @@ jobs:
         run: ./dev/build
         shell: bash
 
+      # registry-client is built: false in modules.json, so dev/build does not publish it. pythonio-adapter depends on
+      # com.invaract %% invaract-registry-client, which makeBom must resolve, so publish it locally first.
+      - name: Publish registry-client locally (pythonio-adapter's libraryDependencies)
+        run: cd registry-client && sbt publishLocal
+        shell: bash
+
       # Once dev/build above has put every sibling jar in place, these 5
       # invocations have no ordering dependency on each other (unlike the
       # build itself) - each is just that module's own already-resolved
