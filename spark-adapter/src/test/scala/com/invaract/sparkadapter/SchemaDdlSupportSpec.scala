@@ -282,4 +282,28 @@ class SchemaDdlSupportSpec extends ConnectorSpecBase {
     assert(refused.exists(_.remediation.startsWith("Write the output with a query Invaract can check")))
     assert(SchemaDdlSupport.refusal(parseContract(contract("elsewhere")), "ALTER TABLE ... ADD COLUMNS", target, SchemaDdlSupport.Unworkable).isEmpty)
   }
+
+  test("extract: the catalyst SET LOCATION and RENAME TO a V2 catalog's table arrives as, built from a real Delta table") {
+    import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+    import org.apache.spark.sql.catalyst.plans.logical.{AddColumns, RenameTable, SetTableLocation}
+    import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+    deltaTable("x3")
+    val catalog = spark.sessionState.catalogManager.catalog("spark_catalog").asInstanceOf[TableCatalog]
+    val ident = Identifier.of(Array("default"), "x3")
+    val rt = ResolvedTable.create(catalog, ident, catalog.loadTable(ident))
+    val Some(moved: SchemaDdlSupport.Displaced) = SchemaDdlSupport.extract(SetTableLocation(rt, None, "/elsewhere"))
+    assert(moved.problem == SchemaDdlSupport.RepointsTable && moved.target.names == List(byName("x3")))
+    assert(moved.target.location.endsWith("/warehouse/x3"), moved.target.location)
+    val Some(movedPart: SchemaDdlSupport.Displaced) = SchemaDdlSupport.extract(SetTableLocation(rt, Some(Map("dt" -> "a")), "/elsewhere"))
+    assert(movedPart.problem == SchemaDdlSupport.RepointsPartition)
+    val Some(renamed: SchemaDdlSupport.RenamedOnto) = SchemaDdlSupport.extract(RenameTable(rt, Seq("x3_new"), isView = false))
+    assert(renamed.source.names == List(byName("x3")) && renamed.target.names == List(byName("x3_new")), "the old namespace, by default")
+    assert(renamed.target.location.endsWith("/warehouse/x3_new"), renamed.target.location)
+    assert(renamed.schema.fieldNames.toList == List("id", "value"))
+    val Some(elsewhere: SchemaDdlSupport.RenamedOnto) = SchemaDdlSupport.extract(RenameTable(rt, Seq("other_db", "x3_new"), isView = false))
+    assert(elsewhere.target.names == List("spark_catalog/other_db/x3_new"), "a qualified new name keeps its namespace")
+    assert(SchemaDdlSupport.extract(RenameTable(rt, Seq("x3_view"), isView = true)).isEmpty, "a view")
+    assert(SchemaDdlSupport.extract(RenameTable(rt, Nil, isView = false)).isEmpty, "no new name")
+    assert(SchemaDdlSupport.extract(AddColumns(rt, Nil)).isEmpty, "a command that changes no column")
+  }
 }

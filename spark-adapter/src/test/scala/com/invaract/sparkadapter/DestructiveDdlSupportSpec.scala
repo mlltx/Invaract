@@ -358,4 +358,30 @@ class DestructiveDdlSupportSpec extends ConnectorSpecBase {
     val inSession = TableTargets.ofResolvedIdentifier(ResolvedIdentifier(session, Identifier.of(Array("default"), "t15")))
     assert(inSession.location.endsWith("/warehouse/t15"), inSession.location)
   }
+
+  test("forbid_unconditional_delete reaches every whole-table form: the legacy DropTableCommand, a Delta TRUNCATE") {
+    freshTable("t16")
+    spark.conf.set("spark.sql.legacy.useV1Command", "true")
+    try {
+      val e = refusal(contract(byName("t16"), tail = forbidUnconditionalDelete))("DROP TABLE t16")
+      assert(e.result.violations.map(_.violationType) == List(ViolationType.RuleUnconditionalDelete))
+      assert(spark.catalog.tableExists("t16"))
+    } finally spark.conf.unset("spark.sql.legacy.useV1Command")
+    spark.sql("DROP TABLE IF EXISTS d4")
+    spark.sql("CREATE TABLE d4 (id BIGINT) USING delta")
+    spark.sql("INSERT INTO d4 VALUES (1)")
+    val e = refusal(contract(byName("d4"), tail = forbidUnconditionalDelete))("TRUNCATE TABLE d4")
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.RuleUnconditionalDelete), "Invaract's refusal, before Delta's own")
+  }
+
+  test("a contract with forbid_unconditional_delete and a custom delete rule: the built-in rule's violation") {
+    freshTable("t17")
+    val both = contract(
+      byName("t17"),
+      tail = s"customRuleTypes:\n  custom_rule: ${classOf[AlwaysViolatesRuleVerifier].getName}\nrules:\n  - type: custom_rule\n  - type: forbid_unconditional_delete"
+    )
+    val e = refusal(both)("TRUNCATE TABLE t17")
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.RuleUnconditionalDelete))
+    assert(rows("t17") == 2)
+  }
 }
