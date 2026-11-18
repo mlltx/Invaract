@@ -832,7 +832,8 @@ object ContractEnforcementRule {
       _ => logger.warn("Invaract dry-run mode: a query's plan is too deeply nested to infer a contract from; skipped."),
       _.foreach {
         case outcome: InferenceOutcome.Inferred => onInferred(outcome.contract)
-        case _: InferenceOutcome.Skipped => () // surfaced by DryRunReporter; this callback only ever wanted contracts
+        // surfaced by DryRunReporter; this callback only ever wanted contracts
+        case _: InferenceOutcome.Skipped | _: InferenceOutcome.SkippedRemoval => ()
       }
     )
 
@@ -856,9 +857,15 @@ object ContractEnforcementRule {
     ) extends InferenceOutcome
 
     /** A write-shaped plan with no inference: `status` is an `InferenceStatus`. */
-    /** @param removes the names of a table the statement removes data from (`DestructiveDdlSupport`), if it is one: a
-      *   dry run then drafts that output with no `saveMode`, since the job's write mode no longer says what happens to it. */
-    final case class Skipped(status: String, reason: String, removes: List[String] = Nil) extends InferenceOutcome
+    final case class Skipped(status: String, reason: String) extends InferenceOutcome
+
+    /** A statement that removes data from the table answering to `removes` (`DestructiveDdlSupport`), reported
+      * `SKIPPED_UNSUPPORTED`: a dry run then drafts that output with no `saveMode`, since the job's write mode no longer
+      * says what happens to it. (A case class of its own, not a field on `Skipped`, so `Skipped`'s compiled shape is
+      * unchanged for MiMa.) */
+    final case class SkippedRemoval(reason: String, removes: List[String]) extends InferenceOutcome {
+      def status: String = InferenceStatus.SkippedUnsupported
+    }
   }
 
   /** `None` for a plan that is not write-shaped at all (a read, a `.count()`, an
@@ -923,8 +930,7 @@ object ContractEnforcementRule {
           case None if DestructiveDdlSupport.extract(plan).isDefined =>
             val ddl = DestructiveDdlSupport.extract(plan).get
             Some(
-              InferenceOutcome.Skipped(
-                InferenceStatus.SkippedUnsupported,
+              InferenceOutcome.SkippedRemoval(
                 s"${ddl.statement} on '${ddl.table}': allowed under enforcement when '${ddl.table}' is a declared output " +
                   "that may be overwritten",
                 ddl.target.all

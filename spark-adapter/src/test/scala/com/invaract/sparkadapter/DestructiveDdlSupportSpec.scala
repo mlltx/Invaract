@@ -297,8 +297,8 @@ class DestructiveDdlSupportSpec extends ConnectorSpecBase {
     spark.sql("TRUNCATE TABLE t14").collect()
     val outcome = ContractEnforcementRule.inferOutcome(capturedPlans.head)
     outcome match {
-      case Some(ContractEnforcementRule.InferenceOutcome.Skipped(status, reason, removes)) =>
-        assert(status == InferenceStatus.SkippedUnsupported)
+      case Some(removal @ ContractEnforcementRule.InferenceOutcome.SkippedRemoval(reason, removes)) =>
+        assert(removal.status == InferenceStatus.SkippedUnsupported)
         assert(removes.contains(byName("t14")) && removes.exists(_.endsWith("/warehouse/t14")), removes)
         assert(reason.startsWith("TRUNCATE TABLE") && reason.contains("spark_catalog/default/t14"), reason)
         assert(reason.contains("declared output that may be overwritten"), reason)
@@ -383,5 +383,14 @@ class DestructiveDdlSupportSpec extends ConnectorSpecBase {
     val e = refusal(both)("TRUNCATE TABLE t17")
     assert(e.result.violations.map(_.violationType) == List(ViolationType.RuleUnconditionalDelete))
     assert(rows("t17") == 2)
+  }
+
+  test("log-only dry run (no sink) passes over a removal: no draft, no error") {
+    freshTable("t18")
+    capturedPlans.clear()
+    spark.sql("TRUNCATE TABLE t18").collect()
+    val drafts = scala.collection.mutable.ListBuffer.empty[com.invaract.contract.Contract]
+    capturedPlans.toList.foreach(plan => ContractEnforcementRule.inferOrIgnore(plan, c => drafts += c))
+    assert(drafts.isEmpty)
   }
 }

@@ -544,7 +544,7 @@ private[sparkadapter] object SparkPlanAdapter {
     */
   private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator(Map.empty).translateExpr(expr)
 
-  private class Translator(initialAliases: Map[Long, String], declaredInputs: Seq[String] = Nil) {
+  private class Translator(initialAliases: Map[Long, String], declaredInputs: Seq[String]) {
     // Replaced, for the attributes of an inlined CTE, by the map of the inlined plan (see the WithCTE case).
     private var aliasDisambiguation: Map[Long, String] = initialAliases
 
@@ -559,7 +559,10 @@ private[sparkadapter] object SparkPlanAdapter {
     // solely to keep `com.invaract:invaract-spark-adapter`'s previously-
     // published jar binary-compatible with this one, per CLAUDE.md's API
     // Compatibility Requirement's "restore the old signature" option.
-    def this() = this(Map.empty)
+    def this() = this(Map.empty, Nil)
+
+    // The same, for the one-map constructor this class had before it took the declared inputs (H-03).
+    def this(initialAliases: Map[Long, String]) = this(initialAliases, Nil)
 
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList

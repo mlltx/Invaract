@@ -95,9 +95,11 @@ private[sparkadapter] final class DryRunReporter(
     try {
       infer(plan, registry).foreach {
         case inferred: InferenceOutcome.Inferred => reportInferred(inferred)
-        case InferenceOutcome.Skipped(status, reason, removes) =>
-          if (removes.nonEmpty) lock.synchronized(removed += removes)
+        case InferenceOutcome.Skipped(status, reason) =>
           record(s"$status:$reason", status, None)(eventOf(status, Some(reason), None, None, None, Nil, Nil, None))
+        case removal @ InferenceOutcome.SkippedRemoval(reason, removes) =>
+          lock.synchronized(removed += removes)
+          record(s"${removal.status}:$reason", removal.status, None)(eventOf(removal.status, Some(reason), None, None, None, Nil, Nil, None))
       }
     } catch {
       case NonFatal(e)           => reportFailure(e)
