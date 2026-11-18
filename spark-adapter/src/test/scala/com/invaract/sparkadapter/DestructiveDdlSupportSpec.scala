@@ -339,4 +339,23 @@ class DestructiveDdlSupportSpec extends ConnectorSpecBase {
     assert(cleared.outputs.map(o => o.name -> o.saveMode) == List("gone" -> None, "out" -> Some("append")))
     assert(DryRunReporter.withoutSaveModeOf(List(byName("elsewhere")))(draft).outputs.map(_.saveMode) == List(Some("error"), Some("append")))
   }
+
+  test("TableTargets: a table of another catalog, or of a nested namespace, is named as it is and not looked up in the session's") {
+    import org.apache.spark.sql.catalyst.analysis.ResolvedIdentifier
+    import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier}
+    import org.apache.spark.sql.util.CaseInsensitiveStringMap
+    val other = new CatalogPlugin {
+      override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = ()
+      override def name(): String = "other_catalog"
+    }
+    val elsewhere = TableTargets.ofResolvedIdentifier(ResolvedIdentifier(other, Identifier.of(Array("default"), "t15")))
+    assert(elsewhere.names == List("other_catalog/default/t15"))
+    assert(elsewhere.location == "other_catalog/default/t15", "not the session catalog's default/t15")
+    val session = spark.sessionState.catalogManager.catalog("spark_catalog")
+    val nested = TableTargets.ofResolvedIdentifier(ResolvedIdentifier(session, Identifier.of(Array("a", "b"), "t15")))
+    assert(nested.names == List("spark_catalog/a/b/t15"))
+    assert(nested.location == "spark_catalog/a/b/t15", "a namespace the session catalog cannot hold is not looked up in it")
+    val inSession = TableTargets.ofResolvedIdentifier(ResolvedIdentifier(session, Identifier.of(Array("default"), "t15")))
+    assert(inSession.location.endsWith("/warehouse/t15"), inSession.location)
+  }
 }
