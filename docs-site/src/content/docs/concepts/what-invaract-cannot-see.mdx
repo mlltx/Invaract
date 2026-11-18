@@ -1,0 +1,51 @@
+---
+title: What Invaract on Spark Cannot See
+description: The ways a Spark job can read or write data that no check of a query plan can see, and the settings that close the ones that can be closed.
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Invaract on Spark checks the **query plans** a job runs: what a write reads, what it writes,
+and where. Anything a job does without a query plan, or after the data has left Spark, is
+outside what it can check. Each line below was tried, and passed under a contract that
+should have stopped it. These are properties of checking a query plan, not defects to be
+fixed.
+
+| The job does | Why Invaract cannot see it |
+|---|---|
+| `df.rdd.saveAsTextFile(path)`, `saveAsObjectFile` | An RDD action has no query plan. |
+| `df.foreachPartition { ... }` that writes files, or a `ForeachWriter`'s body | Arbitrary code running on the executors. |
+| `df.collect()` and then `java.io`, or `df.toPandas().to_csv(...)` | The data has left Spark. |
+| `df.collect()` and then `toDF` again | Invaract sees literal rows, not where they came from. |
+| `FileSystem.rename`, or `hadoop fs -mv`, onto a declared output | Not a Spark query. |
+| `CREATE VIEW v AS SELECT * FROM <input>` | A view stores no data; who may read it is the catalog's access control. |
+| A relative declared location (`out/result`) matched by `/anywhere/out/result` | By design: a relative location matches any location ending in it. |
+| An output column the contract does not declare, with default options | By design: undeclared columns are allowed unless a setting says otherwise. |
+| A contract that names a **view** as an input | A read through a view is reported as a read of the tables under it: declare those tables. |
+
+A write Invaract does see but cannot check is refused, not passed: see
+[Fail-Closed by Default](/concepts/fail-closed/).
+
+## Closing what can be closed
+
+Three settings close the gaps in the table that are there by design. A platform team that
+attaches Invaract to other teams' jobs should set them, and
+[pin them](/guides/locking-settings-for-a-platform/) so a job's own configuration cannot
+turn them off:
+
+- `spark.invaract.rejectUndeclaredInputs=true`: every read must be of a declared input. It
+  also refuses a write that reads a DataFrame built from an RDD, whose source Invaract
+  cannot see.
+- `spark.invaract.rejectUndeclaredFields=true`: every column of a declared dataset must be
+  declared.
+- An [organizational policy](/guides/enforcing-organizational-policy/#common-organizational-policy-patterns)
+  with `require_absolute_location`, so every contract names its datasets by a full URL,
+  path or catalog table name.
+
+<Aside>
+The rest (RDD actions, code on the executors, data that has left Spark, a file moved by
+hand) cannot be seen by checking query plans at all. Keep jobs writing through the
+DataFrame API, `INSERT`, and `saveAsTable`, and review code that does otherwise.
+</Aside>

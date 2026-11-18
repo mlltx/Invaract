@@ -83,6 +83,8 @@ private[sparkadapter] final class DryRunReporter(
   private val reported = mutable.Set.empty[String]
   private val counts = mutable.LinkedHashMap.empty[String, Long]
   private val drafts = mutable.ListBuffer.empty[Contract]
+  // The names of every table a statement removed data from (DROP TABLE, TRUNCATE, DROP PARTITION).
+  private val removed = mutable.ListBuffer.empty[List[String]]
   private val finished = new AtomicBoolean(false)
 
   /** The check rule body: offered every analyzed plan the session produces. Everything
@@ -93,7 +95,8 @@ private[sparkadapter] final class DryRunReporter(
     try {
       infer(plan, registry).foreach {
         case inferred: InferenceOutcome.Inferred => reportInferred(inferred)
-        case InferenceOutcome.Skipped(status, reason) =>
+        case InferenceOutcome.Skipped(status, reason, removes) =>
+          if (removes.nonEmpty) lock.synchronized(removed += removes)
           record(s"$status:$reason", status, None)(eventOf(status, Some(reason), None, None, None, Nil, Nil, None))
       }
     } catch {
@@ -227,8 +230,8 @@ private[sparkadapter] final class DryRunReporter(
     */
   def finish(): Unit =
     if (finished.compareAndSet(false, true)) {
-      val (statusCounts, mergeable) = lock.synchronized((counts.toMap, drafts.toList))
-      emit(DryRunSummary.event(statusCounts, mergeable, job, clock(), contractMetadata))
+      val (statusCounts, mergeable, removedNames) = lock.synchronized((counts.toMap, drafts.toList, removed.toList.flatten))
+      emit(DryRunSummary.event(statusCounts, mergeable.map(DryRunReporter.withoutSaveModeOf(removedNames)), job, clock(), contractMetadata))
       try sink.flush(FlushTimeoutMs)
       catch { case NonFatal(e) => logger.warn(s"Dry-run reporting could not flush its sink: $e") }
     }
@@ -236,6 +239,17 @@ private[sparkadapter] final class DryRunReporter(
 
 private[sparkadapter] object DryRunReporter {
   private val logger = LoggerFactory.getLogger(classOf[DryRunReporter])
+
+  /** `draft` with no `saveMode` on an output the job also removed data from (one of `removedNames`). The commonest way
+    * to rebuild a table, `DROP TABLE IF EXISTS t` and then `saveAsTable(t)`, writes with the default mode `error`; a
+    * draft declaring that would refuse the drop it came with (an output with a save mode other than `overwrite` may not
+    * lose its data), so enforcing a job's own draft would fail. With no save mode declared, both pass. */
+  private[sparkadapter] def withoutSaveModeOf(removedNames: List[String])(draft: Contract): Contract =
+    if (removedNames.isEmpty) draft
+    else
+      draft.copy(outputs = draft.outputs.map { output =>
+        if (com.invaract.verification.LocationMatching.matchesAny(output.location, removedNames)) output.copy(saveMode = None) else output
+      })
 
   val SelfCheckPassed: String = SelfCheckStatus.Passed
   val SelfCheckFailed: String = SelfCheckStatus.Failed

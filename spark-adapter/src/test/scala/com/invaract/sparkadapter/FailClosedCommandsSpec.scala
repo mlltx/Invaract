@@ -24,12 +24,16 @@ class FailClosedCommandsSpec extends AnyFunSuite {
     assert(!FailClosedCommands.isKnownSafeIcebergProcedureCall(OneRowRelation()))
   }
 
-  test("an unverifiable command is described in Spark's own terms: its class, the known-safe list, the translation gap") {
+  test("an unverifiable command is described by its class, with advice a job's owner can act on") {
     val op = FailClosedCommands.unverifiable("MergeIntoCommand")
     assert(op.name == "MergeIntoCommand")
     assert(op.problem == "'MergeIntoCommand' looks like it may write or otherwise mutate data, but Invaract has no translation for it")
-    assert(op.remediation.startsWith("If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list"))
-    assert(op.remediation.contains("SparkPlanAdapter") && op.remediation.contains("docs/SPARK_ADAPTER.md"))
+    assert(
+      op.remediation == "Invaract cannot check 'MergeIntoCommand'. If the statement only reads or manages metadata, please report it: " +
+        "https://github.com/mlltx/Invaract/issues. Otherwise write this output with a statement Invaract recognizes " +
+        "(see https://mlltx.github.io/Invaract/reference/connector-support/)."
+    )
+    assert(!op.remediation.contains("FailClosedCommands") && !op.remediation.contains("SparkPlanAdapter"), "nothing only a contributor can do")
   }
 
   private def dropDatabase(cascade: Boolean) = DropNamespace(UnresolvedNamespace(Seq("db")), ifExists = false, cascade = cascade)

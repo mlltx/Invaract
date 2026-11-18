@@ -46,6 +46,13 @@ checking. You can also name that extension directly, the same way Delta Lake's
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
 ```
 
+`spark.sql.extensions` is a comma-separated list. A job that already uses Delta Lake's or
+Iceberg's extension lists Invaract next to it:
+
+```bash
+  --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension,com.invaract.sparkadapter.InvaractSparkSessionExtension \
+```
+
 <Aside type="caution" title="Prefer spark.plugins: three accidents it prevents">
 Attached through `spark.sql.extensions` alone, Invaract can be missing without anyone
 noticing. Spark logs one warning and every write passes unchecked when:
@@ -150,6 +157,62 @@ Try {
     sys.exit(1)
   case Failure(other) => throw other
 }
+```
+
+## PySpark jobs
+
+A PySpark job is attached the same way, with the job's `.py` file in place of the jar. Nothing
+in the job imports Invaract:
+
+```bash
+spark-submit \
+  --jars invaract-spark-adapter-0.11.0.jar \
+  --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  my_job.py
+```
+
+A refused write raises in Python as a `Py4JJavaError` around the call that wrote. Its text
+starts with the same four-part explanation; this is a real one, from a job writing to a place
+its contract does not declare (trimmed before the Java stack trace):
+
+```
+An error occurred while calling o35.parquet.
+: com.invaract.verification.ContractViolationException: Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+
+What the contract expects:
+  output 'report' at /tmp/invaract-pyspark/report: order_id: long (optional)
+
+What the plan contains:
+  Write(file:/tmp/invaract-pyspark/undeclared, format=parquet, saveMode=overwrite)
+  └─ Project
+     ├─ UnknownPlan(Range: Range (0, 3, step=1, splits=Some(1)))
+     └─ order_id = id
+
+Why it violates the contract (1 violation):
+  1. [OUTPUT_LOCATION_MISMATCH] contract declares output location '/tmp/invaract-pyspark/report' but the plan writes to 'file:/tmp/invaract-pyspark/undeclared'
+
+How to correct it:
+  1. Write to '/tmp/invaract-pyspark/report' instead, or update the contract's declared output location to 'file:/tmp/invaract-pyspark/undeclared' if this location change is intentional.
+```
+
+To handle it in the job, catch the exception and look for the headline:
+
+```python
+try:
+    df.write.mode("overwrite").parquet(output_path)
+except Exception as e:
+    if "Contract violation" in str(e):
+        log.error(str(e))
+        sys.exit(1)
+    raise
+```
+
+That job's own code set `spark.sql.extensions` to another class, and it was still enforced: the
+plugin added Invaract back, with this line in the driver's log:
+
+```
+WARN InvaractSparkPlugin: Invaract: spark.sql.extensions did not name Invaract (the job's own configuration may have replaced it); added it.
 ```
 
 ## Reporting on a write, not just gating it

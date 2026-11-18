@@ -112,6 +112,12 @@ The Beam adapters apply the same rule to a pipeline before it runs:
   data-quality proof on Beam) is refused with `UNSUPPORTED_CONTRACT_FEATURE` before the
   pipeline runs.
 
+## What fail-closed cannot cover
+
+Fail-closed applies to what Invaract sees: a query plan it cannot translate. A job can also
+read and write without one (an RDD action, code on the executors, data collected to the
+driver): see [What Invaract on Spark Cannot See](/concepts/what-invaract-cannot-see/).
+
 ## What this means in practice
 
 If a job you've put under contract starts failing with `UNVERIFIABLE_WRITE` or

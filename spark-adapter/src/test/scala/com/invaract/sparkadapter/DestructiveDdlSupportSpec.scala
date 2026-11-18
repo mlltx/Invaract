@@ -297,11 +297,46 @@ class DestructiveDdlSupportSpec extends ConnectorSpecBase {
     spark.sql("TRUNCATE TABLE t14").collect()
     val outcome = ContractEnforcementRule.inferOutcome(capturedPlans.head)
     outcome match {
-      case Some(ContractEnforcementRule.InferenceOutcome.Skipped(status, reason)) =>
+      case Some(ContractEnforcementRule.InferenceOutcome.Skipped(status, reason, removes)) =>
         assert(status == InferenceStatus.SkippedUnsupported)
+        assert(removes.contains(byName("t14")) && removes.exists(_.endsWith("/warehouse/t14")), removes)
         assert(reason.startsWith("TRUNCATE TABLE") && reason.contains("spark_catalog/default/t14"), reason)
         assert(reason.contains("declared output that may be overwritten"), reason)
       case other => fail(s"expected a skipped outcome, got $other")
     }
+  }
+
+  test("the newcomer's job: DROP TABLE IF EXISTS, then saveAsTable - its dry-run draft passes the same job when enforced") {
+    spark.sql("DROP TABLE IF EXISTS top_customers")
+    def job(): Unit = {
+      spark.sql("DROP TABLE IF EXISTS top_customers")
+      spark.range(5).withColumnRenamed("id", "customer_id").write.saveAsTable("top_customers")
+    }
+    val sink = new TestNotificationSink
+    val reporter = new DryRunReporter(
+      sink,
+      com.invaract.verification.notification.JobInfo(name = Some("newcomer")),
+      com.invaract.verification.VerificationOptions(),
+      () => 1L,
+      (plan, registry) => ContractEnforcementRule.inferOutcome(plan, Some(registry)),
+      Map.empty
+    )
+    capturedPlans.clear()
+    job()
+    capturedPlans.toList.foreach(reporter.check)
+    reporter.finish()
+    val summary = sink.events.collect { case e: com.invaract.verification.notification.DryRunSummaryEvent => e }.last
+    val draft = parseContract(summary.mergedContractYaml.getOrElse(fail(s"no merged draft: ${summary.mergeConflicts}")))
+    assert(draft.outputs.map(_.saveMode) == List(None), "the write's default mode, error, would refuse the drop")
+    withContract(summary.mergedContractYaml.get)(job()) // must not throw
+    assert(rows("top_customers") == 5)
+  }
+
+  test("withoutSaveModeOf: only an output the job removed data from loses its save mode") {
+    val draft = parseContract(contract(byName("kept"), Some("append")).replace("outputs:\n", "outputs:\n  - { name: gone, location: " + byPath("gone") + ", saveMode: error, schema: { fields: [ { name: id, type: long } ] } }\n"))
+    assert(DryRunReporter.withoutSaveModeOf(Nil)(draft) eq draft)
+    val cleared = DryRunReporter.withoutSaveModeOf(List("file:" + byPath("gone"), byName("gone")))(draft)
+    assert(cleared.outputs.map(o => o.name -> o.saveMode) == List("gone" -> None, "out" -> Some("append")))
+    assert(DryRunReporter.withoutSaveModeOf(List(byName("elsewhere")))(draft).outputs.map(_.saveMode) == List(Some("error"), Some("append")))
   }
 }

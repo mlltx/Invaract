@@ -71,7 +71,10 @@ policies) parse and are kept, but aren't enforced.
 
 It means the job's actual write matches what the contract declares. It doesn't verify
 business logic (that an aggregation computed the right value, for instance). Treat it as
-"the shape is what was promised," not "the values are right."
+"the shape is what was promised," not "the values are right." And it covers what the job
+does through Spark's query plans: see
+[What Invaract on Spark Cannot See](/concepts/what-invaract-cannot-see/) for what a job can
+do around them.
 
 ### Where do I report a bug or request a connector?
 

@@ -344,7 +344,7 @@ call, rather than stopping at the first:
 val result = ContractValidator.validate(contract)
 result.isValid    // true iff no Errors (warnings are still allowed)
 result.errors     // Duplicate names, empty outputs, ...
-result.warnings   // Unrecognized types, required+nullable both true, ...
+result.warnings   // Unrecognized types, ...
 ```
 
 | Check | Severity |
@@ -358,7 +358,6 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
-| Field marked both `required` and `nullable` | Warning |
 | `catalog.required: false` with an identity sub-field still declared | Warning |
 | Field constraint (`equals`/`oneOf`/`range`) with malformed/missing properties for its shape | Error |
 | Field constraint's value type disagrees with the field's own declared `type` (e.g. an `equals` string value on a numeric field) | Warning |
@@ -453,7 +452,7 @@ the test suite:
 | `customer_orders_v2_breaking.yaml` | Removes a field and changes another's type — BREAKING change. |
 | `invalid_missing_id.yaml` | Missing `id` — parser raises `ContractParseException`. |
 | `invalid_no_outputs.yaml` | Parses fine, but validator errors on zero outputs. |
-| `warnings_field_issues.yaml` | Parses fine, but validator reports duplicate field name, required+nullable contradiction, and an unrecognized type. |
+| `warnings_field_issues.yaml` | Parses fine, but validator reports a duplicate field name and an unrecognized type (its field that is both required and nullable is not reported: the two are independent). |
 
 ## JSON Schema
 
@@ -480,8 +479,8 @@ implementation enforces — it sits between two layers:
   parses but is immediately rejected by validation isn't a useful
   "valid contract" for this schema's purpose either.
 - **Does not attempt** duplicate-name detection (dataset names, field
-  names) or cross-field business rules (e.g. `required` and `nullable`
-  both `true` — a `ContractValidator` Warning, not an Error). JSON Schema
+  names) or cross-field business rules (e.g. a declared type the parser
+  does not recognize — a `ContractValidator` Warning, not an Error). JSON Schema
   has no clean way to express "unique by nested key," and business-rule
   checks like this are exactly what stay engine-only, not
   structural-shape concerns.

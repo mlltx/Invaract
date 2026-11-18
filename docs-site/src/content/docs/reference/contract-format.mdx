@@ -109,17 +109,17 @@ Types can carry parameters, written as Spark writes them — `decimal(10,2)`,
 leading keyword is checked against the list above.
 
 These are *logical* types: Invaract defines what they mean, independent of any one
-engine, and maps each engine's own column types onto them before comparing. Inside
-`array<...>`, `map<...>` and `struct<...>` the usual SQL aliases are also accepted
-(`int`, `bigint`, `smallint`, `tinyint`, `real`, `dec`/`numeric`, `timestamp_ltz`; a
-struct member may be written `name:type` or `name type`, with `NOT NULL`); a bare
-top-level `type:` must use the keyword from the list above — `integer`, not `int`. Note
-that a plain `decimal` does not match a column of a particular precision: declare
-`decimal(10,2)`.
+engine, and maps each engine's own column types onto them before comparing. The usual
+SQL aliases are also accepted, at the top level and inside `array<...>`, `map<...>` and
+`struct<...>`: `int`, `bigint`, `smallint`, `tinyint`, `real`, `dec`/`numeric`,
+`timestamp_ltz`, as `DESCRIBE TABLE` prints them (a struct member may be written
+`name:type` or `name type`, with `NOT NULL`). `type: int` matches an `integer` column. Note
+that a plain `decimal` (or `dec`, `numeric`) does not match a column of a particular
+precision: declare `decimal(10,2)`.
 
 ### How a declared type is compared
 
-- A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type.
+- A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type, written as above or as one of its aliases (`int` for `integer`).
 - `array<...>`, `map<...>` and `struct<...>` are compared structurally against the actual
   type: element, key, value and member types must match, and a struct's member names and
   count must too. Nullability *inside* a container (`containsNull`, a nested field's
@@ -163,7 +163,6 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
-| Field marked both `required` and `nullable` | Warning |
 | Output `saveMode`, dataset `format` or `catalog.technology` outside the canonical names | Warning |
 | A partition key that is nested, or not a scalar type; a position below 1 or used twice; every field a key; a `partitionOverwriteMode` other than `static`/`dynamic` | Error |
 | A `partitionKeyPosition` without `partitioned: true`; a `partitionOverwriteMode` with no partition keys | Warning |

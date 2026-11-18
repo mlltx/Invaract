@@ -856,7 +856,9 @@ object ContractEnforcementRule {
     ) extends InferenceOutcome
 
     /** A write-shaped plan with no inference: `status` is an `InferenceStatus`. */
-    final case class Skipped(status: String, reason: String) extends InferenceOutcome
+    /** @param removes the names of a table the statement removes data from (`DestructiveDdlSupport`), if it is one: a
+      *   dry run then drafts that output with no `saveMode`, since the job's write mode no longer says what happens to it. */
+    final case class Skipped(status: String, reason: String, removes: List[String] = Nil) extends InferenceOutcome
   }
 
   /** `None` for a plan that is not write-shaped at all (a read, a `.count()`, an
@@ -924,7 +926,8 @@ object ContractEnforcementRule {
               InferenceOutcome.Skipped(
                 InferenceStatus.SkippedUnsupported,
                 s"${ddl.statement} on '${ddl.table}': allowed under enforcement when '${ddl.table}' is a declared output " +
-                  "that may be overwritten"
+                  "that may be overwritten",
+                ddl.target.all
               )
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>

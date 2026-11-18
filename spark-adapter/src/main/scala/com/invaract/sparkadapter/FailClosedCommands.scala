@@ -47,15 +47,21 @@ import org.apache.spark.sql.execution.command.DropTableCommand
   */
 private[sparkadapter] object FailClosedCommands {
 
-  /** A command this list does not exempt and `SparkPlanAdapter` does not translate, as the rejection describes it. */
+  /** Where a user reports a statement Invaract refuses though it changes no data. */
+  val IssuesPage = "https://github.com/mlltx/Invaract/issues"
+
+  /** The statements Invaract recognizes, for a user choosing another way to write an output. */
+  val ConnectorSupportPage = "https://mlltx.github.io/Invaract/reference/connector-support/"
+
+  /** A command this list does not exempt and `SparkPlanAdapter` does not translate, as the rejection describes it. The
+    * advice is for the job's owner, who cannot change this list: what to do instead, and where to report a command that
+    * only reads or manages metadata. (How a contributor extends the list is in docs/SPARK_ADAPTER.md.) */
   def unverifiable(commandClassName: String): UnverifiableOperation =
     UnverifiableOperation(
       commandClassName,
       s"'$commandClassName' looks like it may write or otherwise mutate data, but Invaract has no translation for it",
-      "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-        "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-        "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-        "\"Fail-closed on unverifiable writes\" section."
+      s"Invaract cannot check '$commandClassName'. If the statement only reads or manages metadata, please report it: " +
+        s"$IssuesPage. Otherwise write this output with a statement Invaract recognizes (see $ConnectorSupportPage)."
     )
 
   /** The command `plan` is, as the rejection describes it: its own words for a statement that deletes whole databases. */

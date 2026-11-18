@@ -107,6 +107,7 @@ export default defineConfig({
 							slug: 'concepts/verification-vs-enforcement',
 						},
 						{ label: 'Fail-Closed by Default', slug: 'concepts/fail-closed' },
+						{ label: 'What Invaract on Spark Cannot See', slug: 'concepts/what-invaract-cannot-see' },
 					],
 				},
 				{

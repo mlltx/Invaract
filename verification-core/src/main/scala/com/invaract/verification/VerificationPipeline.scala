@@ -480,10 +480,15 @@ object VerificationPipeline {
     * violates the contract, and how to correct it - a developer reading only
     * this text, with no other context, should be able to answer all four.
     */
-  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult): String = {
+  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult): String =
+    explain(contract, plan, result, s"Contract violation: '${result.contract}' rejected this transformation. Write aborted.")
+
+  /** The same, with `headline` as its first line: for a refusal that is not of one write (an organizational policy
+    * that refuses the contract refuses every query). */
+  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult, headline: String): String = {
     val sb = new StringBuilder
 
-    sb.append(s"Contract violation: '${result.contract}' rejected this transformation. Write aborted.\n")
+    sb.append(headline).append("\n")
 
     sb.append("\nWhat the contract expects:\n")
     contract.inputs.foreach { input =>

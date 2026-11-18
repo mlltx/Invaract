@@ -90,8 +90,24 @@ object AttachSetup {
     if (!new java.io.File(path).isFile) {
       throw new IllegalArgumentException(s"'${config.describe(InvaractConf.NotifyConfig)}' names '$path', which is not a file that exists.")
     }
-    NotificationConfig.load(path)
+    val loaded = NotificationConfig.load(path)
+    warnIfDisabled(config.describe(InvaractConf.NotifyConfig), path, loaded)
+    loaded
   }
+
+  // The (setting, file) pairs already warned about, so a job building several sessions warns once.
+  private val warnedDisabled = java.util.concurrent.ConcurrentHashMap.newKeySet[(String, String)]()
+
+  /** A file named by `setting` whose sink is not enabled publishes nothing, which looks like a sink that does not work: said
+    * once, at WARN. Whether it was said now. */
+  private[verification] def warnIfDisabled(setting: String, path: String, loaded: NotificationConfig): Boolean =
+    !loaded.enabled && warnedDisabled.add((setting, path)) && {
+      logger.warn(disabledSinkMessage(setting, path))
+      true
+    }
+
+  private[verification] def disabledSinkMessage(setting: String, path: String): String =
+    s"'$setting' names '$path', but sink.enabled is not true in it, so no events are published."
 
   /** The sink `notifyConfig` names, or `None` (after one WARN) if it cannot be built. */
   def lenientSink(config: ConfigSource): Option[NotificationSink] =

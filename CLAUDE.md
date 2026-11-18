@@ -89,7 +89,8 @@ don't present it as something external consumers would bind to.
   publishing to Kafka — see "Notification sinks" in
   docs/SPARK_ADAPTER.md; not part of the engine's own dependency
   footprint, not built by `./dev/build`, opt-in like `plugin`/`runner`)
-- **Spark Version**: 3.5.1
+- **Spark Version**: 3.5.9 (`spark.primary` in `spark-adapter/src/main/resources/supported-versions.properties`,
+  the one source for the versions built and tested against)
 - **Scala Version**: 2.12.18
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
@@ -740,7 +741,7 @@ When opening the repository in GitHub Codespaces:
 # - JDK 21
 # - sbt
 # - Scala 2.12.18
-# - Apache Spark 3.5.1
+# - Apache Spark 3.5.9
 # - Node.js 20
 
 # After container is ready, nothing else is needed
@@ -984,8 +985,8 @@ To modify it:
 | Component | Version | Reason |
 |-----------|---------|--------|
 | JDK       | 21      | Latest LTS, Spark 3.5 compatible |
-| Scala     | 2.12.18 | Spark 3.5.1 standard binary |
-| Spark     | 3.5.1   | Latest stable, well-supported |
+| Scala     | 2.12.18 | Spark 3.5 standard binary |
+| Spark     | 3.5.9   | `spark.primary` in `spark-adapter/src/main/resources/supported-versions.properties`; CI also tests 3.5.6 and 3.5.7 |
 | sbt       | 1.9.8 (`contract`/`plugin`/`runner`), 1.11.7 (`ir`/`spark-adapter`) | Stryker4s 1.1.1 needs sbt ≥ 1.11.2; the other three modules stayed on the older, more broadly-tested version |
 | Next.js   | 14.1.0  | Latest stable, Vercel-maintained |
 | Node.js   | 20      | LTS, stable |
@@ -1127,11 +1128,11 @@ versioned API — see "Build Artifacts and Outputs" above). To add fields:
 
 ### Supporting Multiple Spark Versions
 
-Currently pinned to Spark 3.5.1, only in `spark-adapter` (and thus the
-harness). This is one of the outstanding regression-testing guardrails
-(ROADMAP.md) — a matrix run of `spark-adapter`'s suite against several
-Spark versions would catch Catalyst plan-shape drift the adapter would
-otherwise silently mistranslate.
+Built against Spark 3.5.9 (`spark.primary` in
+`spark-adapter/src/main/resources/supported-versions.properties`, the one source every other
+copy derives from). CI's `spark-version-matrix` job runs `spark-adapter`'s suite against each
+version that file lists as verified (3.5.6, 3.5.7, 3.5.9), catching Catalyst plan-shape drift
+the adapter would otherwise silently mistranslate.
 
 ## Common Development Tasks
 

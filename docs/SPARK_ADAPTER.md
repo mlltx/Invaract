@@ -1114,7 +1114,11 @@ A table that does not exist (`DROP TABLE IF EXISTS`) is located where Spark woul
 the drop that precedes its rebuild. An allowed removal is not a write (`DeclaredOutputs` is not
 told): a job that drops a declared output and never rebuilds it still ends with
 `MISSING_OUTPUT`. Dry-run reports a removal `SKIPPED_UNSUPPORTED` rather than
-`SKIPPED_UNRECOGNIZED`, since enforcement can allow it. `DROP VIEW` (`DropTableCommand` with
+`SKIPPED_UNRECOGNIZED`, since enforcement can allow it, and the summary's merged draft declares no
+`saveMode` for an output the job removed data from (`DryRunReporter.withoutSaveModeOf`): the
+commonest rebuild, `DROP TABLE IF EXISTS t` then `saveAsTable(t)`, writes with the default mode
+`error`, and a draft declaring it refused its own job's drop (found running the plan's newcomer
+check as a real PySpark job; `DestructiveDdlSupportSpec` now runs it). `DROP VIEW` (`DropTableCommand` with
 `isView`) and `CLEAR CACHE` (`ClearCacheCommand$`) are on the safe list: they remove no data.
 `DestructiveDdlSupportSpec` holds every row of the table.
 
@@ -1206,6 +1210,22 @@ ends each scenario's job with `DeclaredOutputs.finishAll`, which is how `declare
   declares the output's location rejects it with `OUTPUT_LOCATION_MISMATCH`. A catalog-registered Delta
   table is unaffected, which is why the conformance kit's DML scenarios run on one.
 
+- **Reads and writes outside a query plan are not seen**: RDD actions (`saveAsTextFile`),
+  `foreachPartition`/`ForeachWriter` bodies, data collected to the driver and written there, a
+  file moved with `FileSystem.rename`. Invisible by nature; the user page "What Invaract on Spark
+  Cannot See" lists them and the settings (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, a
+  `require_absolute_location` policy) that close the gaps that can be closed.
+- **A contract cannot name a view as its input.** A read through a view is reported as a read of
+  the tables under it (H-14), so declaring those works. Answering to the view's name too would
+  need an `ir.Read` with two identities: an IR change left for a separate design.
+- **`console`, `memory`, `noop` and `.foreach(writer)` streaming sinks stay refused** under a
+  contract: they have no location a contract could name. A non-file source (`rate`, Kafka) inside
+  `foreachBatch` reads nothing a contract can declare (see "`foreachBatch` streams").
+- **Sensitivity tags are reported, not enforced** (the contract format reference says so).
+- **Not exercised for the table statements** (`DestructiveDdlSupport`, `SchemaDdlSupport`): Spark
+  Connect, the Iceberg forms (covered by construction where a catalyst class such as
+  `AlterTableCommand`, `DropTable` or `TruncateTable` is matched), and cluster managers other
+  than `local`.
 - **No `SparkSessionExtensions`-based capture.** Only a `DataFrame`'s own
   `.queryExecution` or a registered `QueryExecutionListener` are used to
   obtain a plan. This is deliberate (see *Integration point* above), not

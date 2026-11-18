@@ -36,6 +36,14 @@ object ContractValidator {
     "struct", "array", "map"
   )
 
+  /** A spelling of a known type the type parser accepts (`int`, `bigint`, `real`, `dec(10,2)`, as DESCRIBE TABLE prints
+    * them); an unknown word parses too, as an `OtherType`, and is not one. */
+  private def isTypeAlias(fieldType: String): Boolean =
+    LogicalType.parse(fieldType.trim).exists {
+      case _: LogicalType.OtherType => false
+      case _                        => true
+    }
+
   /** The type's own keyword, lower-cased, ignoring any parameters: `decimal(10,2)`
     * is a `decimal`, `array<struct<a:int>>` is an `array`. Parameterized and
     * nested types are written in Spark's DDL syntax and compared structurally by
@@ -354,7 +362,7 @@ object ContractValidator {
 
     if (field.fieldType.trim.isEmpty) {
       issues += ValidationIssue(ValidationSeverity.Error, path, "Field type must not be empty")
-    } else if (!field.isStruct && !KnownTypes.contains(baseType(field.fieldType))) {
+    } else if (!field.isStruct && !KnownTypes.contains(baseType(field.fieldType)) && !isTypeAlias(field.fieldType)) {
       issues += ValidationIssue(
         ValidationSeverity.Warning,
         path,
@@ -363,13 +371,8 @@ object ContractValidator {
       )
     }
 
-    if (field.required && field.nullable) {
-      issues += ValidationIssue(
-        ValidationSeverity.Warning,
-        path,
-        "Field is marked required but also nullable; a required field should not be nullable"
-      )
-    }
+    // `required` (the column is there) and `nullable` (its values may be null) are independent: a dry run drafts
+    // `required: true, nullable: true` for file data, so both together are not worth a warning.
 
     duplicateNames(field.properties.map(_.name)).foreach { name =>
       issues += ValidationIssue(ValidationSeverity.Error, path, s"Duplicate nested field name '$name'")

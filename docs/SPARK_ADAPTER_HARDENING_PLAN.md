@@ -21,6 +21,38 @@ Everything in "Observed" was seen in a real run, not inferred from reading code,
 marked *(by reading the code)*. Fixes marked **prototyped** were tried against the real session
 and behaved as described.
 
+## Implementation record
+
+Every item below has been implemented on the branch that carries this plan, in the order the
+plan gives (one commit per step; the commit messages name the items). Where the implementation
+departs from an item's text, the reason is here, so the plan can still be read as the design.
+
+- **H-10 + dry run.** The plan's own acceptance check (a PySpark job that does
+  `DROP TABLE IF EXISTS t` and then `saveAsTable(t)`, dry-run, then enforced with its draft) failed
+  as written: `saveAsTable` writes with the default mode `error`, the draft declared
+  `saveMode: error`, and the item's rule refuses a drop of an output whose save mode is not
+  `overwrite`. The rule was kept (a hand-written `saveMode: error` should keep protecting an
+  output); instead the dry-run summary's merged draft declares no `saveMode` for an output the job
+  removed data from (`DryRunReporter.withoutSaveModeOf`). The check now passes, by hand as a real
+  PySpark job and in `DestructiveDdlSupportSpec`.
+- **H-07.** A pinned-settings file that names a key Invaract does not read is refused too (a typo
+  would otherwise pin nothing), using H-08's list of known settings.
+- **H-15.** Each remote file is fetched once per session and value.
+- **H-16.** The key is not carried by "same thread, same location, within 60 seconds": that rule
+  would have merged two real writes of one place, and a probe showed the repeat checks are of two
+  kinds it did not cover. A check made while a checked write is executing finds that write's plan
+  through Spark's SQL execution id on the thread (innermost and outermost execution), and a V2
+  `CREATE TABLE ... AS SELECT`'s marked-analyzed copy is linked to its unmarked twin
+  (`WriteKeys`). No version bump: `verification-core` 0.4.0 is unreleased (the MiMa baseline is
+  0.3.0), CI compares against the base commit in an isolated Ivy home, and `mimaReportBinaryIssues`
+  against `main`'s jar reports nothing new (the existing `ContractValidationEvent` filters match
+  by method name).
+- **H-17f.** The validator stops warning for any spelling the type parser maps to a known type;
+  an unknown word still parses (as `OtherType`) and is still warned about.
+- **H-18.** The examples in the dry-run guide and the troubleshooting page that quoted
+  `INSERT OVERWRITE DIRECTORY` as unrecognized (it is recognized since H-13) were regenerated from
+  a real `spark-sql` run, with `LOAD DATA` as the statement Invaract still cannot check.
+
 ## How to read an item
 
 Each item has a severity:
