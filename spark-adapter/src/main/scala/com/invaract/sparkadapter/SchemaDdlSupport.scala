@@ -53,7 +53,8 @@ private[sparkadapter] object SchemaDdlSupport {
 
   def extract(plan: LogicalPlan): Option[SchemaDdl] = plan match {
     // Delta, Iceberg: ADD/RENAME/DROP/ALTER/REPLACE COLUMNS. A command that changes only properties changes no column.
-    case cmd: AlterTableCommand if cmd.changes.exists(_.isInstanceOf[TableChange.ColumnChange]) =>
+    // `changes` can throw (SetTableLocation with a partition, which a V2 table does not support): no column change then.
+    case cmd: AlterTableCommand if Try(cmd.changes).toOption.exists(_.exists(_.isInstanceOf[TableChange.ColumnChange])) =>
       cmd.table match {
         case rt: ResolvedTable =>
           val statement = s"ALTER TABLE ... ${verbOf(cmd)}"

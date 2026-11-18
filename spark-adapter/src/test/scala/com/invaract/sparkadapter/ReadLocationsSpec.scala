@@ -65,5 +65,6 @@ class ReadLocationsSpec extends AnyFunSuite {
     assert(datasetRoot("s3://b/t/dt=1/f", isFile = true) == "s3://b/t")
     assert(datasetRoot("/d/=x", isFile = false) == "/d/=x", "a segment starting with = is no partition")
     assert(datasetRoot("/d/x=", isFile = false) == "/d/x=", "nor one ending with it")
+    assert(datasetRoot("/d/t/=b=c", isFile = false) == "/d/t/=b=c", "a segment whose first = starts it has no key, whatever follows")
   }
 }

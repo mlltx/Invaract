@@ -163,6 +163,16 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     }
   }
 
+  test("a dryRun that is not true or false counts as enforcing for the typo check: a misspelt setting next to it is refused") {
+    val spark = buildSession("spark.invaract.dryRun" -> "yes", "spark.invaract.rejectUndeclaredInput" -> "true")
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.rejectUndeclaredInputs'?"), ex.getMessage)
+    } finally {
+      spark.stop()
+    }
+  }
+
   test("a misspelt dryRun is reported as the typo it is, not as a missing contract") {
     val spark = buildSession("spark.invaract.dryrun" -> "true")
     try {
