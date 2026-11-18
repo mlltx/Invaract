@@ -66,7 +66,7 @@ private[sparkadapter] object WriteKeys {
   private def markedTwin(plan: LogicalPlan): Option[String] = plan match {
     case c: AnalysisOnlyCommand if c.isAnalyzed =>
       val twin = unmarked.get.collect {
-        case (first, key) if Try(first.markAsAnalyzed(AnalysisContext.get) == c).getOrElse(false) => key
+        case (first, key) if Try(first.markAsAnalyzed(AnalysisContext.get) == c).toOption.contains(true) => key
       }
       unmarked.set(None)
       twin

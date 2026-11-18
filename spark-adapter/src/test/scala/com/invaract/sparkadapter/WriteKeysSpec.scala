@@ -99,4 +99,21 @@ class WriteKeysSpec extends ConnectorSpecBase {
     assert(keysOf(found).size == 16, found.map(_.writeKey))
     names.foreach(n => assert(keysOf(found).count(_.contains(s"/$n#")) == 1, n))
   }
+
+  test("keyFor inside a checked write's execution: one shared name makes it the same write; none, a new one") {
+    import org.apache.spark.sql.execution.SQLExecution
+    val outer = spark.range(1).queryExecution.analyzed
+    val outerKey = WriteKeys.keyFor(outer, List("/w/a", "spark_catalog/default/t"))
+    assert(outerKey.startsWith("/w/a#"))
+    val execution = spark.sessionState.executePlan(outer)
+    val (sharesOne, sharesNone) = SQLExecution.withNewExecutionId(execution) {
+      (
+        WriteKeys.keyFor(spark.range(2).queryExecution.analyzed, List("/w/elsewhere", "spark_catalog/default/t")),
+        WriteKeys.keyFor(spark.range(3).queryExecution.analyzed, List("/w/other"))
+      )
+    }
+    assert(sharesOne == outerKey, "a name in common (the table) is enough")
+    assert(sharesNone != outerKey && sharesNone.startsWith("/w/other#"))
+    assert(WriteKeys.keyFor(spark.range(4).queryExecution.analyzed, List("/w/a")) != outerKey, "outside the execution, a new write")
+  }
 }
