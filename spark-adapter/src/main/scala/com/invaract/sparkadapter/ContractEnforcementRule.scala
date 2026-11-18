@@ -580,7 +580,12 @@ object ContractEnforcementRule {
           VerificationPipeline.requireValidContract(contract, sink, applicationId, job)
           VerificationPipeline.rejectUnverifiableWrite(contract, RddBackedSource, translated.plan, sink, applicationId, job)
         }
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated, declaredInputs), options, sink, applicationId, capabilities, job)
+        // One statement can be checked more than once (a saveAsTable, then the insert it runs): every check of it
+        // publishes the same key (`WriteKeys`).
+        val writeKey = WriteKeys.keyFor(analyzedPlan, com.invaract.verification.OutputChecker.namesOf(w))
+        VerificationPipeline.verifyWrite(
+          contract, checkedWrite(plan, translated, declaredInputs), options, sink, applicationId, capabilities, job, Some(writeKey)
+        )
         // Recorded only once it has passed: a write the check blocked never lands, so it must not count as the output
         // having been written (`DeclaredOutputs`). A write that passes here and then fails while Spark runs it is still
         // recorded; that failure reaches the job as an exception of its own.

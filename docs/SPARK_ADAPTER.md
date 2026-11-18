@@ -2234,6 +2234,32 @@ dependency at all, so it's fully and directly testable with a real
 without needing a Spark job to prove anything a Spark job wouldn't
 actually exercise differently.
 
+### One write, several checks: `writeKey`
+
+Spark checks some statements more than once: a `saveAsTable` as the table's creation and again
+as the insert it runs inside it, a Delta `CREATE TABLE ... AS SELECT` three times (as analyzed,
+as the copy the analyzer marks analyzed, then the `AppendData` it runs). Every check still runs
+(a nested write that fails is blocked), so each publishes a `ContractValidationEvent`, and a
+consumer counting events over-counted writes. `WriteKeys` gives every check of one write the
+same `writeKey` (`<canonical location>#<n>`), passed to `VerificationPipeline.verifyWrite`'s
+overload that takes one:
+
+- a check made while a checked write is executing is of that write, when the two answer to a
+  common name (location or table name). Spark runs a command inside
+  `SQLExecution.withNewExecutionId`, which records the command's `QueryExecution` against the
+  execution id it puts on the thread as an inheritable local property; the key is a tree node
+  tag on the plan the rule was given, found again through `SQLExecution.getQueryExecution` of
+  the innermost and the outermost (`EXECUTION_ROOT_ID_KEY`) execution;
+- an `AnalysisOnlyCommand` marked analyzed is the same statement as the unmarked one checked just
+  before it on the same thread, when marking that one gives exactly it;
+- anything else gets a new key: a second write to the same place, each batch write a
+  `foreachBatch` function makes (it runs inside the micro-batch's execution, whose plan is no
+  checked write).
+
+The plan (H-16) suggested a per-thread "same location within 60 seconds" rule; it would have
+merged two genuine writes of the same place and missed the marked twin, which the probe that
+drove this design found. `WriteKeysSpec` holds the cases.
+
 ## Location resolution
 
 `com.invaract.verification.location`

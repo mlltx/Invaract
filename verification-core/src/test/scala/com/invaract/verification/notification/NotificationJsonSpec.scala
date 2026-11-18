@@ -442,4 +442,12 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(NotificationJson.eventIdOf(a) != NotificationJson.eventIdOf(b))
     assert(NotificationJson.eventIdOf(a) != NotificationJson.eventIdOf(a.copy(job = None)))
   }
+
+  test("a validation event's writeKey is written as writeKey, and as null when there is none") {
+    val mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+    val event = ContractValidationEvent("c@1", "PASSED", Nil, 1L, Map.empty)
+    assert(mapper.readTree(NotificationJson.toJson(event)).get("writeKey").isNull)
+    assert(mapper.readTree(NotificationJson.toJson(event.copy(writeKey = Some("/out#3")))).get("writeKey").asText == "/out#3")
+    EventSchema.assertValid(event.copy(writeKey = Some("/out#3")))
+  }
 }

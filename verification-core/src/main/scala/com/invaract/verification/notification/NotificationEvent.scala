@@ -104,6 +104,12 @@ sealed trait NotificationEvent {
   * and group one job's events across runs. Supplied by the adapter; `None` only
   * when an adapter supplies none (the conformance kit requires every adapter that
   * publishes events to name its engine).
+  *
+  * `writeKey` names the write this check was of, when the adapter can tell. An engine may check one write more than
+  * once: Spark analyzes a `saveAsTable` and then the insert it runs inside it, and each is a write of the same output,
+  * so one statement can publish two or three `PASSED` events. Their `writeKey` is the same, so a consumer counts writes
+  * by `writeKey`, not by event. `None` from an adapter that checks each write once, and for an event that is not a
+  * write's check (a refused statement, a state-changing CALL).
   */
 case class ContractValidationEvent(
   contract: String,
@@ -116,7 +122,8 @@ case class ContractValidationEvent(
   dataQuality: List[DataQualityCheckResult] = Nil,
   roleConformance: List[RoleConformanceCheckResult] = Nil,
   unverifiableInputs: List[UnverifiableInput] = Nil,
-  job: Option[JobInfo] = None
+  job: Option[JobInfo] = None,
+  writeKey: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }

@@ -195,7 +195,7 @@ class EventSchemaSpec extends AnyFunSuite {
     json.remove("eventId")
     json.remove("schemaVersion")
     val content = json.fieldNames().asScala.toList.sorted
-    assert(content == List("contract", "dataQuality", "eventType", "fingerprints", "job", "metadata", "roleConformance", "runId", "status", "timestamp", "unverifiableInputs", "violations"))
+    assert(content == List("contract", "dataQuality", "eventType", "fingerprints", "job", "metadata", "roleConformance", "runId", "status", "timestamp", "unverifiableInputs", "violations", "writeKey"))
   }
 
   test("contractDigest is the SHA-256 of contractYaml (null without one), and identical drafts have identical digests") {

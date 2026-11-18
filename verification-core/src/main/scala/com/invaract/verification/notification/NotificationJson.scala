@@ -66,7 +66,8 @@ object NotificationJson {
         "dataQuality" -> e.dataQuality.map(_.toMap),
         "roleConformance" -> e.roleConformance.map(_.toMap),
         "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap),
-        "job" -> e.job.map(_.toMap)
+        "job" -> e.job.map(_.toMap),
+        "writeKey" -> e.writeKey
       )
     case e: WriteEvent =>
       Map(

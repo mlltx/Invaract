@@ -137,6 +137,19 @@ class VerificationPipelineSpec extends AnyFunSuite {
     intercept[ContractViolationException](VerificationPipeline.reject(contract, result, Read(DatasetRef("in/secrets")), None, None, None))
   }
 
+  test("verifyWrite with a write key: every event of the check carries it, PASSED or FAILED; without one there is none") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(sink), Some("app-1"), None, None, Some("out/report#1"))
+    intercept[ContractViolationException](
+      VerificationPipeline.verifyWrite(
+        contract, checked(output = Cols().add("id", LongType, nullable = false)), VerificationOptions(), Some(sink), None, None, None, Some("out/report#2")
+      )
+    )
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(sink))
+    assert(validationEvents(sink).map(e => e.status -> e.writeKey) == List("PASSED" -> Some("out/report#1"), "FAILED" -> Some("out/report#2"), "PASSED" -> None))
+    assert(validationEvents(sink).head.runId.contains("app-1"))
+  }
+
   test("verifyWrite: a violation throws ContractViolationException, publishes FAILED first, and explains itself") {
     val sink = new TestNotificationSink
     val ex = intercept[ContractViolationException] {

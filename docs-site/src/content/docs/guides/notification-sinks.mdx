@@ -510,6 +510,17 @@ Every event, of every type, carries three common fields:
 | `eventId` | The SHA-256 of the event's own content, as 64 hex characters. It is **deterministic**: sending the same event again (a retry, or a replay from a [dead-letter file](#delivery-retries-the-dead-letter-and-duplicates)) gives the same `eventId`, so deduplicate on it. |
 | `timestamp` | Milliseconds since the Unix epoch, when the event was created. |
 
+### Counting writes: `writeKey`
+
+Spark checks some statements more than once: a `saveAsTable` is checked as the table's
+creation and again as the insert that fills it, and a Delta `CREATE TABLE ... AS SELECT` up to
+three times. Every check is a real check (a nested write that fails is blocked), so each
+publishes its own `CONTRACT_VALIDATION` event, with its own `eventId`. The events of one write
+share a `writeKey`: the write's location, `#`, and a number. **Count writes by `writeKey`, not by
+event.** A second write to the same place gets a new key. `writeKey` is `null` on an event that
+is not a write's check (a refused `DROP TABLE`, an Iceberg `CALL`), and from the engines that
+check each write once.
+
 ## Validate events and build an endpoint to receive them
 
 A JSON Schema covering every event type is published at:
@@ -543,6 +554,7 @@ Beyond the status codes:
 - **Answer quickly.** The default request timeout is five seconds (`sink.property.timeoutMs`).
   Accept the event, then do any slow work afterwards.
 - **Deduplicate on `eventId`.** Delivery is at-least-once, so the same event can arrive twice.
+- **Count writes by `writeKey`**, not by `CONTRACT_VALIDATION` event (see [above](#counting-writes-writekey)).
 - **Ignore fields you don't know, and expect new `status` values.** Switch on `eventType`.
 - **Don't assume ordering.** Events from many jobs arrive concurrently; order by `timestamp`.
 
