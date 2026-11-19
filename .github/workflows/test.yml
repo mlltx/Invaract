@@ -1060,12 +1060,13 @@ jobs:
   mutation-testing-spark-adapter:
     name: Mutation testing (spark-adapter, ${{ matrix.name }})
     runs-on: ubuntu-latest
-    # Whole-module runs are for pushes (main/develop/feature/**), not PR pushes: the
-    # incremental job below already enforces the 70% bar on exactly the files a PR
-    # changes, and re-mutating every untouched file on every PR push cost ~50-90 min
-    # of wall clock per push. A whole-module regression is caught on the merge
-    # commit's push run instead (this job still gates that run via `summary`).
-    if: github.event_name != 'pull_request'
+    # On a push (main/develop/feature/**) each shard mutates all of its files: the
+    # whole-module run. On a pull request each shard mutates only its files the PR
+    # changed (against the PR's base commit) and skips the rest of its steps when there
+    # are none, so a PR is held to the 70% bar on exactly what it touched, spread over
+    # the same parallel shards. This replaced a single PR-only job that mutated every
+    # changed file on one runner: a PR changing 13 files (#92) or 18 (#237) needed
+    # longer than GitHub's 360-minute maximum and was cancelled with no score.
     # Shards take 50-90 min. Without this the 360-minute default would let a hung runner
     # (or a Stryker run wedged on a stuck test JVM) hold a slot for six hours.
     timeout-minutes: 180
@@ -1095,10 +1096,35 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The files this shard mutates: all of them on a push; on a pull request, those
+      # the PR changed against its base commit (a fixed anchor, not the previous push:
+      # a sliding baseline would let an undertested file pass once it stops changing).
+      - name: Choose the files to mutate (${{ matrix.name }})
+        id: scope
+        shell: bash
+        env:
+          SHARD_FILES: ${{ matrix.files }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            MUTATE="$SHARD_FILES"
+          else
+            CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- spark-adapter/src/main/scala/ | sed 's|^spark-adapter/||')
+            MUTATE=$(echo "$SHARD_FILES" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -Fxf <(echo "$CHANGED") | paste -sd, - || true)
+          fi
+          echo "mutate=$MUTATE" >> "$GITHUB_OUTPUT"
+          if [ -z "$MUTATE" ]; then
+            echo "=== ${{ matrix.name }}: this pull request changes none of this shard's files, skipping ==="
+          else
+            echo "=== ${{ matrix.name }}: mutating ==="; echo "$MUTATE" | tr ',' '\n'
+          fi
+
       - name: Set up JDK 21 and sbt
+        if: steps.scope.outputs.mutate != ''
         uses: ./.github/actions/setup-jdk-sbt
 
       - name: Cache Spark distribution
+        if: steps.scope.outputs.mutate != ''
         id: cache-spark
         uses: actions/cache@v6
         with:
@@ -1106,7 +1132,7 @@ jobs:
           key: spark-${{ runner.os }}-3.5.9-hadoop3
 
       - name: Download Spark 3.5.9
-        if: steps.cache-spark.outputs.cache-hit != 'true'
+        if: steps.scope.outputs.mutate != '' && steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         run: |
           SPARK_VERSION="3.5.9"
@@ -1119,6 +1145,7 @@ jobs:
           rm -f "${RUNNER_TEMP}/spark.tgz"
 
       - name: Configure Spark environment
+        if: steps.scope.outputs.mutate != ''
         shell: bash
         run: |
           echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
@@ -1135,153 +1162,28 @@ jobs:
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
+        if: steps.scope.outputs.mutate != ''
         uses: ./.github/actions/publish-engine-modules
 
-      # No --thresholds override here (unlike the incremental step below):
-      # build.sbt's own strykerThresholdsHigh/Low/Break (90/80/70) already
-      # apply to whatever --mutate scopes this run to, which is exactly
-      # what makes per-shard gating at the module's real break threshold
-      # work without duplicating it in the workflow.
+      # No --thresholds override: build.sbt's own strykerThresholdsHigh/Low/Break
+      # (90/80/70) apply to whatever --mutate scopes this run to, which is the same
+      # 70% bar for a push's whole shard and a pull request's changed files.
+      # --concurrency 2, not more: see the memory note above this job (4 test runners
+      # lost runners to memory exhaustion).
       - name: Mutation test spark-adapter (${{ matrix.name }})
+        if: steps.scope.outputs.mutate != ''
         shell: bash
+        env:
+          MUTATE: ${{ steps.scope.outputs.mutate }}
         run: |
           cd spark-adapter
-          "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 2"
+          "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"{$MUTATE}\" --concurrency 2"
 
       - name: Upload mutation report
-        if: always()
+        if: always() && steps.scope.outputs.mutate != ''
         uses: actions/upload-artifact@v7
         with:
           name: mutation-report-spark-adapter-${{ matrix.name }}
-          path: spark-adapter/target/stryker4s-report/**
-          if-no-files-found: warn
-
-  # The changed-files, 70%-on-new-code incremental check pulled out of the
-  # (now sharded) whole-module job above into its own job: it doesn't share
-  # anything with the shards - it always mutates only what a PR actually
-  # touched, so it was never the source of the 30-40 min bottleneck the
-  # sharding above addresses, and running it standalone lets it start
-  # immediately in parallel with all of the shards instead of waiting in line
-  # behind whichever shard it used to be bolted onto.
-  mutation-testing-spark-adapter-incremental:
-    name: Mutation testing (spark-adapter, incremental)
-    runs-on: ubuntu-latest
-    # Diffs against the PR's BASE commit, so it mutates every spark-adapter file the
-    # whole PR has changed, in one job, with the full test suite per mutant. PR #92
-    # (13 changed files, StructuralVerifier ~90 min and ContractEnforcementRule ~50
-    # min of that alone) was cancelled by the 180-minute limit this job used to have
-    # after running for 3 hours; the estimate for that file set is ~4 hours. 360 is
-    # GitHub's maximum for a hosted runner. The whole-module shards above already
-    # mutate the same files in parallel, so this is the slow, serial duplicate of
-    # them - see docs/SPARK_ADAPTER.md for the options to shrink or fold it.
-    timeout-minutes: 360
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up JDK 21 and sbt
-        uses: ./.github/actions/setup-jdk-sbt
-
-      - name: Cache Spark distribution
-        id: cache-spark
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.9-hadoop3
-
-      - name: Download Spark 3.5.9
-        if: steps.cache-spark.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          SPARK_VERSION="3.5.9"
-          SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
-          SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
-          SPARK_DIR="${RUNNER_TEMP}/spark"
-          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP}/spark.tgz"
-          mkdir -p "$SPARK_DIR"
-          tar -xzf "${RUNNER_TEMP}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
-          rm -f "${RUNNER_TEMP}/spark.tgz"
-
-      - name: Configure Spark environment
-        shell: bash
-        run: |
-          echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
-          echo "${RUNNER_TEMP}/spark/bin" >> "$GITHUB_PATH"
-
-      # spark-adapter's build.sbt resolves contract/ir as real
-      # libraryDependencies against their own published coordinate (not
-      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
-      # fix and why), so they need `publishLocal`, not just `assembly`,
-      # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        uses: ./.github/actions/publish-engine-modules
-
-      # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
-      # specific file(s) a feature adds or changes to ir/spark-adapter -
-      # previously a manual step, since Stryker4s has no native
-      # incremental/diff mode (see docs/SPARK_ADAPTER.md). This automates
-      # it for PRs: diff against a base commit, scope --mutate to just the
-      # changed .scala files (brace-expansion glob for multiple files -
-      # confirmed to work locally), and override the whole-module break
-      # threshold with a stricter 70% via CLI flags only, leaving
-      # build.sbt's whole-module gate untouched. Runs only on pull_request
-      # events, where a base commit is available - a bare push has no
-      # equivalent reference point.
-      #
-      # The base commit is the PR's base branch (github.event.pull_request.
-      # base.sha), not the previous push's HEAD. An earlier version of this
-      # step used the previous push instead, reasoning that diffing against
-      # the PR's base captures the *entire* PR's accumulated history, which
-      # degenerates to "the whole module" for a long-lived, evolutionary PR
-      # (confirmed the hard way - this exact PR's spark-adapter diff against
-      # its base scored exactly 57.06%, identical to the whole-module score,
-      # because this PR *is* the introduction of that module). That reasoning
-      # was correct but the fix was wrong: diffing against the *previous
-      # push* is a sliding baseline, and a sliding baseline can never durably
-      # catch a regression that's introduced and then never fixed. Concretely:
-      # if push N adds an undertested file and this check correctly fails,
-      # then push N+1 - even one that touches nothing in that file - diffs
-      # against N, where the same file already looks "unchanged" (nothing
-      # differs between N and N+1), so the check passes even though the file
-      # is exactly as undertested as when it failed. The bar silently stops
-      # being enforced the moment CI reports it as met, whether or not
-      # anything was actually fixed. A fixed base doesn't have this problem
-      # (it only moves if the base branch itself advances, which is a
-      # legitimate re-anchor, not a self-erasing one) - the "whole module"
-      # degeneration for this specific long-lived PR is real but harmless
-      # (redundant with the whole-module check above, not unsound), so it's
-      # the correct tradeoff.
-      - name: Mutation test changed files (incremental, 70% bar)
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          echo "Diffing against base commit: $BASE_SHA"
-
-          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "spark-adapter/src/main/scala/" | grep '\.scala$' | sed "s|^spark-adapter/||" || true)
-
-          if [ -z "$CHANGED" ]; then
-            echo "=== spark-adapter: no changed files under src/main/scala, skipping ==="
-          else
-            FILE_COUNT=$(echo "$CHANGED" | wc -l)
-            if [ "$FILE_COUNT" -eq 1 ]; then
-              MUTATE_GLOB="$CHANGED"
-            else
-              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
-            fi
-
-            echo "=== spark-adapter: mutation-testing changed file(s) ==="
-            echo "$CHANGED"
-            (cd spark-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 2 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
-          fi
-
-      - name: Upload mutation report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: mutation-report-spark-adapter-incremental
           path: spark-adapter/target/stryker4s-report/**
           if-no-files-found: warn
 
@@ -2237,12 +2139,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, pythonio-storage, pythonio-lint, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, pythonio-storage, pythonio-lint, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.pythonio-storage.result }}" == "failure" ] || [ "${{ needs.pythonio-lint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.pythonio-storage.result }}" == "failure" ] || [ "${{ needs.pythonio-lint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

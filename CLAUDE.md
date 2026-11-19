@@ -187,10 +187,13 @@ further if that single run turns up a real survivor.
 
 This is a manual, PR-scoped check — Stryker4s has no incremental/diff
 mode, so CI cannot enforce "the new code specifically" on its own. (It
-*is* automated for PRs: see `.github/workflows/test.yml`'s
-`mutation-testing` job, which diffs each PR against its previous push and
-reruns `sbt stryker` scoped to just the changed files — see
-docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
+*is* automated for PRs: each module's `mutation-testing-<name>` job diffs
+the PR against its base commit and reruns `sbt stryker` scoped to just the
+changed files; for `spark-adapter` that happens inside the same 8 shards as
+the whole-module run, each shard mutating only its changed files, so a PR
+touching many files is spread over 8 runners instead of outrunning one
+runner's 6-hour limit — see docs/SPARK_ADAPTER.md's "Incremental checking
+in CI.")
 
 **Adding a new file under `spark-adapter/src/main/scala` also means updating
 `.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
@@ -1014,10 +1017,11 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   changed-files check on PRs (70% bar) — see "Mutation Testing
   Requirement" above
   The whole-module runs (every `ir`/`fingerprint`/`verification-core`
-  file, and all `spark-adapter` shards) execute on pushes to `main`/
-  `develop`/`feature/**` only; a PR push runs just the incremental
-  changed-files check, so a whole-module regression is caught on the merge
-  commit's run, not before it
+  file, and every file of every `spark-adapter` shard) execute on pushes to
+  `main`/`develop`/`feature/**` only; a PR push runs just the incremental
+  changed-files check (for `spark-adapter`, each shard on its own changed
+  files, skipping a shard the PR does not touch), so a whole-module
+  regression is caught on the merge commit's run, not before it
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
   `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`

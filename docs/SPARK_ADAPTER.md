@@ -3374,7 +3374,9 @@ Stryker4s's glob matcher) — with `--thresholds.high 90 --thresholds.low 80
 still exists to pin every module's incremental, changed-files-only run to
 the same 70% new-code bar regardless of what each module's own
 whole-module thresholds happen to be set to, without touching either
-module's `build.sbt`.
+module's `build.sbt`. (`spark-adapter` is the exception: its changed files
+are mutated inside the whole-module shards, under build.sbt's own 90/80/70,
+the same bar — see "Sharding `spark-adapter`'s whole-module run" below.)
 A module with no changed files under `src/main/scala` is skipped entirely
 rather than run with an empty `--mutate` (which Stryker4s tolerates —
 exits 0 reporting "0 mutant(s)" — but still pays the full test-runner
@@ -3429,13 +3431,15 @@ overhead. The two levers above reduced wasted time around that core cost
 
 #### Sharding `spark-adapter`'s whole-module run
 
-> **When the shards run.** The sharded whole-module job runs on pushes to
-> `main`/`develop`/`feature/**`, not on pull-request pushes: a PR is held to
-> the 70% bar on the files it changed by the incremental job, and the
-> merge commit's push run re-checks the whole module against its `break`
-> threshold. (`ir`, `fingerprint` and `verification-core` follow the same
-> rule — their whole-module step is skipped on PRs; their incremental step
-> still runs.)
+> **When the shards run.** On a push to `main`/`develop`/`feature/**` each
+> shard mutates every file in its list: the whole-module run. On a pull
+> request each shard mutates only the files in its list that the PR changed
+> (diffed against the PR's base commit) and skips its remaining steps when
+> there are none, so a PR is held to the 70% bar on exactly the files it
+> changed, and the merge commit's push run re-checks the whole module
+> against its `break` threshold. (`ir`, `fingerprint` and
+> `verification-core` follow the same rule with a single job each — their
+> whole-module step is skipped on PRs; their incremental step still runs.)
 
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to `verification-core`, 8 now — see "Runner memory and runner loss" below)
@@ -3480,12 +3484,24 @@ locally below 70% now fails CI even in a hypothetical case where other
 shards' higher scores would have pulled a single whole-module average
 back above the bar.
 
-The changed-files incremental check (above) moved out into its own
-standalone job (`mutation-testing-spark-adapter-incremental`) rather than
-being sharded too — it already only mutates what a PR touched, so it was
-never the source of the 30-40 minute cost, and running it standalone lets
-it start immediately alongside all of the shards instead of waiting behind
-whichever shard it used to run after.
+The changed-files incremental check (above) first moved out into its own
+standalone job (`mutation-testing-spark-adapter-incremental`), on the
+reasoning that it only mutates what a PR touched and so could never be the
+bottleneck. That held for small PRs and failed for large ones: it diffs
+against the PR's base, so it mutates every file the whole PR changed, on one
+runner at `--concurrency 2`, rerunning the real-Spark suite per mutant (~9
+minutes for Stryker's initial run; a mutant that hangs costs its full
+~13-minute timeout, and 9 of the first 77 mutants on the three largest files
+did). PR #92 (13 files) and PR #237 (18 files, 312 mutants, ~1.3 mutants a
+minute) were both cancelled at GitHub's 360-minute maximum with no score at
+all. It was therefore folded into the shards: on a pull request each shard
+mutates only its changed files (see "When the shards run" above), so the
+PR's files spread over the same 8 runners and the slowest shard, not the
+sum of all of them, sets the wall clock — the largest single file, ~50-90
+minutes, inside each shard's 180-minute limit. The bar is unchanged: each
+shard's run is held to build.sbt's 70% break threshold, as the separate job
+was by its CLI override. `--concurrency` stays at 2: 4 test runners lost
+runners to memory exhaustion (see the memory note on the job).
 
 A new `mutation-shard-drift-check` job guards the one real risk a
 hand-written per-shard file list introduces: a new file added to
