@@ -105,4 +105,33 @@ class SparkConfigSourceSpec extends AnyFunSuite {
         s"(The settings Invaract reads: ${SparkSettingNames.SettingsPage})"
     )
   }
+
+  test("every entry point checks the setting names: both forContract overloads refuse a misspelt one, dryRun only warns") {
+    val spark = SparkSession.builder().master("local[1]").appName("SparkConfigSourceSpec").config("spark.ui.enabled", "false").getOrCreate()
+    try {
+      val contract = com.invaract.contract.ContractParser.parse(
+        """id: names
+          |version: "1.0.0"
+          |outputs:
+          |  - { name: out, location: /tmp/names-out, schema: { fields: [ { name: id, type: long } ] } }
+          |""".stripMargin
+      )
+      // A session is checked once, so each entry point gets a session of its own with the misspelt key.
+      def withTypo = { val s = spark.newSession(); s.conf.set("spark.invaract.rejectUndeclaredInput", "true"); s }
+      val refusals = List(
+        "forContract(contract, options)" -> (() => ContractEnforcementRule.forContract(contract, com.invaract.verification.VerificationOptions())(withTypo)),
+        "forContract(contract, options, sink)" -> (() =>
+          ContractEnforcementRule.forContract(contract, com.invaract.verification.VerificationOptions(), new com.invaract.verification.notification.LoggingNotificationSink)(withTypo)
+        )
+      )
+      refusals.foreach { case (entry, build) =>
+        val e = intercept[IllegalArgumentException](build())
+        assert(e.getMessage.contains("'spark.invaract.rejectUndeclaredInput'") && e.getMessage.contains("spark.invaract.rejectUndeclaredInputs"), entry)
+      }
+      val (_, warned) = LogCapture.messages(SparkSettingNames.getClass.getName, org.apache.logging.log4j.Level.WARN) {
+        ContractEnforcementRule.dryRun(_ => ())(withTypo) // must not throw
+      }
+      assert(warned.count(_.contains("'spark.invaract.rejectUndeclaredInput'")) == 1, warned)
+    } finally spark.stop()
+  }
 }

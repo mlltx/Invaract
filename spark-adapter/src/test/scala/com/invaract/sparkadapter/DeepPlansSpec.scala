@@ -126,6 +126,16 @@ class DeepPlansSpec extends ConnectorSpecBase {
     ContractEnforcementRule.tooDeep(c, OneRowRelation(), None, None, None) // must not throw
   }
 
+  test("a plan too deep that writes nothing is warned about once per JVM, not on every query") {
+    val c = contract(dir.resolve("w").toString)
+    ContractEnforcementRule.warnedTooDeep.set(false)
+    val (_, logged) = LogCapture.messages(LogCapture.EnforcementRule, org.apache.logging.log4j.Level.WARN) {
+      ContractEnforcementRule.tooDeep(c, OneRowRelation(), None, None, None)
+      ContractEnforcementRule.tooDeep(c, OneRowRelation(), None, None, None)
+    }
+    assert(logged.count(_.contains("too deeply nested to translate")) == 1, logged)
+  }
+
   test("end to end: a count() over a thousand withColumn calls runs under a contract") {
     val df = (1 to 1000).foldLeft(spark.range(3).toDF("v"))((d, i) => d.withColumn("v", col("v") + i))
     assume(scala.util.Try(df.count()).isSuccess, "Spark itself cannot analyze this plan on this JVM")

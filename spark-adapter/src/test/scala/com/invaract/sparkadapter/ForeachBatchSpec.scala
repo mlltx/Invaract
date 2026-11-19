@@ -135,6 +135,24 @@ class ForeachBatchSpec extends AnyFunSuite {
     }
   }
 
+  test("a foreachBatch stream is noted in the log once per JVM, however many streams are checked") {
+    val out = Files.createTempDirectory("fb-out").resolve("out").toString
+    withSession(dir => enforcing(dir, out)) { (spark, dir) =>
+      ContractEnforcementRule.loggedForeachBatch.set(false)
+      val (_, logged) = LogCapture.messages(LogCapture.EnforcementRule, org.apache.logging.log4j.Level.INFO) {
+        List("first", "second").foreach { name =>
+          spark.readStream.schema("id long, value long").parquet(dir.resolve("events").toString).writeStream
+            .foreachBatch((batch: DataFrame, _: Long) => batch.write.mode("append").parquet(out))
+            .option("checkpointLocation", dir.resolve(s"checkpoint-$name").toString)
+            .trigger(Trigger.AvailableNow())
+            .start()
+            .awaitTermination()
+        }
+      }
+      assert(logged.count(_.contains("a foreachBatch stream is checked through the writes its function makes")) == 1, logged)
+    }
+  }
+
   test("PASS: a Delta table written inside the function") {
     val out = Files.createTempDirectory("fb-out").resolve("delta_out").toString
     withSession(dir => enforcing(dir, out)) { (spark, dir) =>

@@ -735,8 +735,9 @@ object ContractEnforcementRule {
       )
     }
 
-  private val warnedTooDeep = new java.util.concurrent.atomic.AtomicBoolean(false)
-  private val loggedForeachBatch = new java.util.concurrent.atomic.AtomicBoolean(false)
+  // Once per JVM. Package-visible so a test can reset them and see each message logged exactly once.
+  private[sparkadapter] val warnedTooDeep = new java.util.concurrent.atomic.AtomicBoolean(false)
+  private[sparkadapter] val loggedForeachBatch = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   /** The refusal, under `rejectUndeclaredInputs`, of a write that reads a Dataset built from an RDD. */
   private[sparkadapter] val RddBackedSource = com.invaract.verification.UnverifiableOperation(
