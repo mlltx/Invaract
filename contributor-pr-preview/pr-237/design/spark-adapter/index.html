@@ -3364,7 +3364,9 @@ Stryker4s’s glob matcher) — with <code dir="auto">--thresholds.high 90 --thr
 still exists to pin every module’s incremental, changed-files-only run to
 the same 70% new-code bar regardless of what each module’s own
 whole-module thresholds happen to be set to, without touching either
-module’s <code dir="auto">build.sbt</code>.
+module’s <code dir="auto">build.sbt</code>. (<code dir="auto">spark-adapter</code> is the exception: its changed files
+are mutated inside the whole-module shards, under build.sbt’s own 90/80/70,
+the same bar — see “Sharding <code dir="auto">spark-adapter</code>’s whole-module run” below.)
 A module with no changed files under <code dir="auto">src/main/scala</code> is skipped entirely
 rather than run with an empty <code dir="auto">--mutate</code> (which Stryker4s tolerates —
 exits 0 reporting “0 mutant(s)” — but still pays the full test-runner
@@ -3411,13 +3413,15 @@ overhead. The two levers above reduced wasted time around that core cost
 (serialization, under-utilized cores), not the cost itself.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="sharding-spark-adapters-whole-module-run">Sharding <code dir="auto">spark-adapter</code>’s whole-module run</h4><a class="sl-anchor-link" href="#sharding-spark-adapters-whole-module-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sharding spark-adapter’s whole-module run”</span></a></div>
 <blockquote>
-<p><strong>When the shards run.</strong> The sharded whole-module job runs on pushes to
-<code dir="auto">main</code>/<code dir="auto">develop</code>/<code dir="auto">feature/**</code>, not on pull-request pushes: a PR is held to
-the 70% bar on the files it changed by the incremental job, and the
-merge commit’s push run re-checks the whole module against its <code dir="auto">break</code>
-threshold. (<code dir="auto">ir</code>, <code dir="auto">fingerprint</code> and <code dir="auto">verification-core</code> follow the same
-rule — their whole-module step is skipped on PRs; their incremental step
-still runs.)</p>
+<p><strong>When the shards run.</strong> On a push to <code dir="auto">main</code>/<code dir="auto">develop</code>/<code dir="auto">feature/**</code> each
+shard mutates every file in its list: the whole-module run. On a pull
+request each shard mutates only the files in its list that the PR changed
+(diffed against the PR’s base commit) and skips its remaining steps when
+there are none, so a PR is held to the 70% bar on exactly the files it
+changed, and the merge commit’s push run re-checks the whole module
+against its <code dir="auto">break</code> threshold. (<code dir="auto">ir</code>, <code dir="auto">fingerprint</code> and
+<code dir="auto">verification-core</code> follow the same rule with a single job each — their
+whole-module step is skipped on PRs; their incremental step still runs.)</p>
 </blockquote>
 <p>The bottleneck named above was addressed directly by splitting
 <code dir="auto">mutation-testing-spark-adapter</code> itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to <code dir="auto">verification-core</code>, 8 now — see “Runner memory and runner loss” below)
@@ -3459,12 +3463,24 @@ aggregate number. It’s actually a little stricter: a shard that dips
 locally below 70% now fails CI even in a hypothetical case where other
 shards’ higher scores would have pulled a single whole-module average
 back above the bar.</p>
-<p>The changed-files incremental check (above) moved out into its own
-standalone job (<code dir="auto">mutation-testing-spark-adapter-incremental</code>) rather than
-being sharded too — it already only mutates what a PR touched, so it was
-never the source of the 30-40 minute cost, and running it standalone lets
-it start immediately alongside all of the shards instead of waiting behind
-whichever shard it used to run after.</p>
+<p>The changed-files incremental check (above) first moved out into its own
+standalone job (<code dir="auto">mutation-testing-spark-adapter-incremental</code>), on the
+reasoning that it only mutates what a PR touched and so could never be the
+bottleneck. That held for small PRs and failed for large ones: it diffs
+against the PR’s base, so it mutates every file the whole PR changed, on one
+runner at <code dir="auto">--concurrency 2</code>, rerunning the real-Spark suite per mutant (~9
+minutes for Stryker’s initial run; a mutant that hangs costs its full
+~13-minute timeout, and 9 of the first 77 mutants on the three largest files
+did). PR #92 (13 files) and PR #237 (18 files, 312 mutants, ~1.3 mutants a
+minute) were both cancelled at GitHub’s 360-minute maximum with no score at
+all. It was therefore folded into the shards: on a pull request each shard
+mutates only its changed files (see “When the shards run” above), so the
+PR’s files spread over the same 8 runners and the slowest shard, not the
+sum of all of them, sets the wall clock — the largest single file, ~50-90
+minutes, inside each shard’s 180-minute limit. The bar is unchanged: each
+shard’s run is held to build.sbt’s 70% break threshold, as the separate job
+was by its CLI override. <code dir="auto">--concurrency</code> stays at 2: 4 test runners lost
+runners to memory exhaustion (see the memory note on the job).</p>
 <p>A new <code dir="auto">mutation-shard-drift-check</code> job guards the one real risk a
 hand-written per-shard file list introduces: a new file added to
 <code dir="auto">spark-adapter/src/main/scala</code> that nobody assigns to a shard would
