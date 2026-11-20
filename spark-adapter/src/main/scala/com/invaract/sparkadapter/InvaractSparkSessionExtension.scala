@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{AttachPlan, AttachSetup, VerificationOptions}
+import com.invaract.verification.{AttachPlan, AttachSetup, ConfigSource, InvaractConf, VerificationOptions}
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.verification.notification.NotificationSink
 
@@ -50,8 +50,10 @@ import org.slf4j.LoggerFactory
   * duplicate handling for any of them.
   */
 class InvaractSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+  // Listed twice (by a platform and by the job, or by `InvaractSparkPlugin` and a user), Spark calls this twice with the
+  // same extensions: the check rule is injected once, so every check runs once.
   override def apply(extensions: SparkSessionExtensions): Unit =
-    extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)
+    if (InvaractSparkSessionExtension.firstTime(extensions)) extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)
 }
 
 object InvaractSparkSessionExtension {
@@ -101,8 +103,18 @@ object InvaractSparkSessionExtension {
     */
   val ContractMetadataConfPrefix: String = DryRunReporter.ContractMetadataConfPrefix
 
+  private val installed = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[SparkSessionExtensions, java.lang.Boolean]())
+
+  /** Whether `extensions` has not had Invaract installed yet; it has from now on. */
+  private[sparkadapter] def firstTime(extensions: SparkSessionExtensions): Boolean =
+    installed.putIfAbsent(extensions, java.lang.Boolean.TRUE) == null
+
   private[sparkadapter] def checkRuleFor: SparkSession => LogicalPlan => Unit =
-    session =>
+    session => {
+      // A misspelt spark.invaract.* key is refused first, so `spark.invaract.dryrun=true` is reported as the typo it is,
+      // not as a missing contract. A dryRun value that is not true/false is left to AttachSetup to refuse.
+      val dryRun = scala.util.Try(ConfigSource.flag(SparkConfigSource(session), InvaractConf.DryRun)).getOrElse(false)
+      SparkSettingNames.check(session, enforcing = !dryRun)
       // What to attach (dry-run or a contract, and which sink) is decided from configuration alone, by
       // verification-core's AttachSetup; installing it on this session is the only Spark-specific part.
       AttachSetup.select(SparkConfigSource(session)) match {
@@ -120,6 +132,7 @@ object InvaractSparkSessionExtension {
         case AttachPlan.Enforce(contract, None) =>
           ContractEnforcementRule.forContract(contract)(session)
       }
+    }
 
   /** The sink dry-run mode should report to, or `None` for the log-only behavior.
     *

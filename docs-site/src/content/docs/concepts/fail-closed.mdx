@@ -61,6 +61,43 @@ violation found" with nothing actually checked, this case is classified
 contract actually declares a rule that operation kind would need to be checked against;
 an unrelated rule never blocks an operation it doesn't apply to.
 
+## Statements that remove data
+
+`DROP TABLE`, `TRUNCATE TABLE` and `ALTER TABLE ... DROP PARTITION` remove a table's data
+without a query Invaract could check. A contract lists what a job may change, so on Spark
+they are judged against it:
+
+| The table is | `DROP TABLE`, `TRUNCATE TABLE` | `TRUNCATE TABLE ... PARTITION`, `ALTER TABLE ... DROP PARTITION` |
+|---|---|---|
+| a declared output with no `saveMode`, or `saveMode: overwrite` | allowed | allowed |
+| a declared output with another `saveMode` (`append`, ...) | `OUTPUT_SAVE_MODE_MISMATCH` | `OUTPUT_SAVE_MODE_MISMATCH` |
+| a declared output, and the contract has `forbid_unconditional_delete` | `RULE_UNCONDITIONAL_DELETE` | allowed |
+| a declared output, and the contract has a [custom rule](/guides/enforcing-dml-rules/) about deletes | `RULE_UNVERIFIABLE_DML` | allowed |
+| not a declared output (including one that does not exist, with `IF EXISTS`) | `UNVERIFIABLE_WRITE` | `UNVERIFIABLE_WRITE` |
+
+A table is a declared output when the contract names it by its location or by its table
+name, the same way a write to it is matched. An allowed statement publishes a `PASSED`
+validation. It is not a write: a job that drops a declared output and never rebuilds it
+still ends with `MISSING_OUTPUT`.
+
+`DROP VIEW` and `CLEAR CACHE` remove no data, and pass under any contract.
+
+## Statements that change a table without writing to it
+
+Some `ALTER TABLE` statements change what a contract says about an output without writing
+a row: its columns, or where it is. On Spark they are checked when the table is a declared
+output, and pass on any other table:
+
+| Statement | On a declared output |
+|---|---|
+| `ADD COLUMNS`, `RENAME COLUMN`, `DROP COLUMN`, `ALTER COLUMN`, `REPLACE COLUMNS`, `CHANGE COLUMN` | The columns the table will have are checked as a write's are: `MISSING_OUTPUT_FIELD`, `UNDECLARED_OUTPUT_COLUMN` (with `rejectUndeclaredFields`), `OUTPUT_FIELD_TYPE_MISMATCH`. The statement does not run if they fail. |
+| `SET LOCATION`, of the table or of one partition | `UNVERIFIABLE_WRITE`: the output would serve data no checked write produced. |
+| `ADD PARTITION ... LOCATION` | `UNVERIFIABLE_WRITE`, for the same reason. `ADD PARTITION` without a location passes. |
+| `RENAME TO` | Renaming a declared output away is `UNVERIFIABLE_WRITE`. Renaming another table onto a declared output's name checks its columns as the output's. |
+
+A column statement publishes one validation, `PASSED` or `FAILED`, for any table: on a
+table the contract does not declare it is `PASSED` with no violations.
+
 ## On Apache Beam
 
 The Beam adapters apply the same rule to a pipeline before it runs:
@@ -74,6 +111,12 @@ The Beam adapters apply the same rule to a pipeline before it runs:
 - A contract that needs a check the engine can't make (a row-level DML rule, a static
   data-quality proof on Beam) is refused with `UNSUPPORTED_CONTRACT_FEATURE` before the
   pipeline runs.
+
+## What fail-closed cannot cover
+
+Fail-closed applies to what Invaract sees: a query plan it cannot translate. A job can also
+read and write without one (an RDD action, code on the executors, data collected to the
+driver): see [What Invaract on Spark Cannot See](/concepts/what-invaract-cannot-see/).
 
 ## What this means in practice
 

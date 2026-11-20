@@ -3,7 +3,10 @@
 
 package com.invaract.sparkadapter
 
-import org.apache.spark.sql.catalyst.plans.logical.OneRowRelation
+import org.apache.spark.sql.catalyst.analysis.UnresolvedNamespace
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.{DropNamespace, OneRowRelation}
+import org.apache.spark.sql.execution.command.{ClearCacheCommand, DropTableCommand}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Direct, session-free unit coverage for `isKnownSafeIcebergProcedureCall`'s
@@ -21,11 +24,38 @@ class FailClosedCommandsSpec extends AnyFunSuite {
     assert(!FailClosedCommands.isKnownSafeIcebergProcedureCall(OneRowRelation()))
   }
 
-  test("an unverifiable command is described in Spark's own terms: its class, the known-safe list, the translation gap") {
+  test("an unverifiable command is described by its class, with advice a job's owner can act on") {
     val op = FailClosedCommands.unverifiable("MergeIntoCommand")
     assert(op.name == "MergeIntoCommand")
     assert(op.problem == "'MergeIntoCommand' looks like it may write or otherwise mutate data, but Invaract has no translation for it")
-    assert(op.remediation.startsWith("If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list"))
-    assert(op.remediation.contains("SparkPlanAdapter") && op.remediation.contains("docs/SPARK_ADAPTER.md"))
+    assert(
+      op.remediation == "Invaract cannot check 'MergeIntoCommand'. If the statement only reads or manages metadata, please report it: " +
+        "https://github.com/mlltx/Invaract/issues. Otherwise write this output with a statement Invaract recognizes " +
+        "(see https://mlltx.github.io/Invaract/reference/connector-support/)."
+    )
+    assert(!op.remediation.contains("FailClosedCommands") && !op.remediation.contains("SparkPlanAdapter"), "nothing only a contributor can do")
+  }
+
+  private def dropDatabase(cascade: Boolean) = DropNamespace(UnresolvedNamespace(Seq("db")), ifExists = false, cascade = cascade)
+
+  test("DROP DATABASE is known safe without CASCADE and not with it") {
+    assert(FailClosedCommands.isKnownSafe(dropDatabase(cascade = false)))
+    assert(!FailClosedCommands.isKnownSafe(dropDatabase(cascade = true)))
+  }
+
+  test("a DROP DATABASE ... CASCADE is described in its own words; any other plan by its class") {
+    val cascade = FailClosedCommands.unverifiable(dropDatabase(cascade = true))
+    assert(cascade.name == "DropNamespace")
+    assert(cascade.problem.startsWith("DROP DATABASE ... CASCADE deletes every table in the database"))
+    assert(cascade.remediation.startsWith("Drop the tables this job is allowed to remove one at a time"))
+    assert(FailClosedCommands.unverifiable(dropDatabase(cascade = false)) == FailClosedCommands.unverifiable("DropNamespace"))
+    assert(FailClosedCommands.unverifiable(OneRowRelation()) == FailClosedCommands.unverifiable("OneRowRelation"))
+  }
+
+  test("DropTableCommand is known safe for a view, which holds no data, and not for a table; CLEAR CACHE is safe") {
+    def drop(isView: Boolean) = DropTableCommand(TableIdentifier("t"), ifExists = true, isView = isView, purge = false)
+    assert(FailClosedCommands.isKnownSafe(drop(isView = true)))
+    assert(!FailClosedCommands.isKnownSafe(drop(isView = false)))
+    assert(FailClosedCommands.isKnownSafe(ClearCacheCommand))
   }
 }

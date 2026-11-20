@@ -170,14 +170,17 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     }
   }
 
-  /** Spark's representative of "a data-changing operation the adapter has no translation for": `TRUNCATE TABLE` on a
+  /** Spark's representative of "a data-changing operation the adapter has no translation for": `LOAD DATA` into a
     * managed table, which Catalyst plans as a command `SparkPlanAdapter` does not turn into a write and that is not
-    * on the known-safe list. The table is created while no contract is active, so only the truncate is checked.
+    * on the known-safe list. (`TRUNCATE TABLE`, which this used to be, is now judged against the contract's outputs.)
+    * The table and the files it loads are made while no contract is active, so only the load is checked.
     */
   private def runUntranslatable(scenarioId: String, contract: Contract, options: VerificationOptions): ScenarioOutcome = {
     val table = tableName(scenarioId)
+    val source = path(scenarioId, "load_source")
     spark.sql(s"CREATE TABLE IF NOT EXISTS $table (id BIGINT) USING parquet")
-    enforced(contract, options)(spark.sql(s"TRUNCATE TABLE $table"))
+    spark.range(1).write.mode("overwrite").parquet(source)
+    enforced(contract, options)(spark.sql(s"LOAD DATA LOCAL INPATH '$source' INTO TABLE $table"))
   }
 
   /** Spark's representative of a row-level change: a Delta `DELETE FROM` on a catalog table over a Delta path.

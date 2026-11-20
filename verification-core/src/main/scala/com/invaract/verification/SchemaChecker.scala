@@ -176,8 +176,16 @@ private[invaract] object SchemaChecker {
         case Some(parsed) if sameShape(parsed, actual, caseSensitive) => None
         case _                                                        => Some(describeActual)
       }
-    } else Some(describeActual)
+    }
+    // A scalar spelt another way the type parser knows (`int`, `bigint`, `smallint`, `tinyint`, `real`: what DESCRIBE
+    // TABLE prints) is the type it names - as it already was inside `array<int>`. A bare `decimal`, `dec` or `numeric`
+    // is not: it names no precision, so it must not match a column that has one.
+    else if (!BareDecimal.contains(written.toLowerCase(Locale.ROOT)) && parseDeclared(written).exists(d => !d.isNested && d.typeName == actual.typeName))
+      None
+    else Some(describeActual)
   }
+
+  private val BareDecimal = Set("decimal", "dec", "numeric")
 
   // A contract's declared types are few and fixed, but `check` runs on every
   // write the session performs: parse each distinct string once.

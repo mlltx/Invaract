@@ -269,6 +269,12 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.result.violations.head.message.contains("catalog-required"))
     assert(ex.result.violations.head.location.contains("some/output/path"))
     assert(ex.getMessage.contains("rejected by organizational policy before any plan was analyzed"))
+    assert(
+      ex.getMessage.startsWith(s"Contract '${plainContract.id}@${plainContract.version}' does not meet the organizational policy, " +
+        "so Invaract will not run this job's queries.\n"),
+      "every query is refused, not only a write"
+    )
+    assert(!ex.getMessage.contains("Write aborted"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
     assert(validationEvents(sink).head.runId.contains("app-3"))
     assert(validationEvents(sink).head.job.isEmpty, "no job was supplied")

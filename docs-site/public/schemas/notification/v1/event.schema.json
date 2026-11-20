@@ -153,7 +153,8 @@
         "dataQuality": { "type": "array", "items": { "$ref": "#/$defs/DataQualityCheckResult" } },
         "roleConformance": { "type": "array", "items": { "$ref": "#/$defs/RoleConformanceCheckResult" } },
         "unverifiableInputs": { "type": "array", "items": { "$ref": "#/$defs/UnverifiableInput" } },
-        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }], "description": "Which engine and which job produced the event (engine, engineVersion, jobId, runId, attributes). null only if the adapter supplied none." }
+        "job": { "oneOf": [{ "$ref": "#/$defs/JobInfo" }, { "type": "null" }], "description": "Which engine and which job produced the event (engine, engineVersion, jobId, runId, attributes). null only if the adapter supplied none." },
+        "writeKey": { "type": ["string", "null"], "description": "The write this check was of. One statement can be checked more than once (Spark checks a saveAsTable and the insert it runs inside it); those events share a writeKey, so count writes by writeKey, not by event. null when the adapter cannot tell, and for a check that is not of a write." }
       }
     },
     "WriteEvent": {

@@ -57,12 +57,27 @@ class SchemaCheckerSpec extends AnyFunSuite {
     assert(vs.head.expected.contains("decimal") && vs.head.actual.contains("decimal(10,2)"))
   }
 
-  test("a plain (non-nested) declared type must be the contract vocabulary's own keyword: 'int' is not 'integer'") {
-    // Only types written with '<' are parsed as Spark DDL; a plain keyword keeps the strict, existing comparison.
-    val schema = Cols().add("id", IntegerType)
-    val vs = check(List(CField("id", "int")), schema)
+  test("a scalar spelt as DESCRIBE TABLE prints it is the type it names: int, bigint, smallint, tinyint, real") {
+    val schema = Cols().add("i", IntegerType).add("l", LongType).add("s", ShortType).add("b", ByteType).add("f", FloatType)
+    val aliases = List(CField("i", "int"), CField("l", "BIGINT"), CField("s", " smallint "), CField("b", "tinyint"), CField("f", "real"))
+    assert(check(aliases, schema).isEmpty)
+  }
+
+  test("an alias still names only its own type: int is not long, and a bare decimal or its aliases match no precision") {
+    val vs = check(List(CField("l", "int")), Cols().add("l", LongType))
     assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
-    assert(vs.head.expected.contains("int") && vs.head.actual.contains("integer"))
+    assert(vs.head.expected.contains("int") && vs.head.actual.contains("long"))
+    val amount = Cols().add("amt", DecimalType(38, 18))
+    List("decimal", "dec", "NUMERIC", "Decimal").foreach { bare =>
+      assert(types(check(List(CField("amt", bare)), amount)) == List(ViolationType.OutputFieldTypeMismatch), bare)
+    }
+    assert(types(check(List(CField("amt", "decimal")), Cols().add("amt", DecimalType(10, 0)))) == List(ViolationType.OutputFieldTypeMismatch),
+      "not even the precision a bare decimal parses to")
+    assert(check(List(CField("amt", "dec(38,18)")), amount).isEmpty, "an alias with a precision names that precision")
+    assert(types(check(List(CField("amt", "decimal(10,2)")), amount)) == List(ViolationType.OutputFieldTypeMismatch))
+    assert(types(check(List(CField("amt", "nonsense")), amount)) == List(ViolationType.OutputFieldTypeMismatch), "what does not parse")
+    assert(types(check(List(CField("amt", "array<decimal(38,18)>")), amount)) == List(ViolationType.OutputFieldTypeMismatch),
+      "a nested type is not a scalar alias")
   }
 
   test("input and output sides differ only in violation types and wording") {
@@ -74,7 +89,7 @@ class SchemaCheckerSpec extends AnyFunSuite {
     assert(types(out) == List(ViolationType.OutputFieldTypeMismatch, ViolationType.MissingOutputField, ViolationType.OutputFieldNullabilityMismatch))
     assert(in.forall(_.message.contains("INPUT")) && out.forall(_.message.contains("OUTPUT")))
     assert(in(1).remediation.contains("to the input") && out(1).remediation.contains("to the output"))
-    assert(in(2).remediation.contains("before the input is produced") && out(2).remediation.contains("before the output is produced"))
+    assert(in(2).remediation.startsWith("The input's schema allows nulls in 'n'") && out(2).remediation.startsWith("Give 'n' a value that cannot be null"))
     val undeclaredIn = check(List(CField("a", "string")), Cols().add("a", StringType).add("z", StringType), Side.Input, rejectUndeclared = true)
     val undeclaredOut = check(List(CField("a", "string")), Cols().add("a", StringType).add("z", StringType), Side.Output, rejectUndeclared = true)
     assert(types(undeclaredIn) == List(ViolationType.UndeclaredInputColumn) && types(undeclaredOut) == List(ViolationType.UndeclaredOutputColumn))

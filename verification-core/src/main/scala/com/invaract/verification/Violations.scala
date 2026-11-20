@@ -261,8 +261,14 @@ private[invaract] object Violations {
     Violation(
       side.nullabilityMismatch,
       s"field '$path' is declared non-nullable but the actual ${side.label} schema permits nulls",
+      // On Spark, filtering nulls out does not help: Spark marks a column non-null from how its values are computed (a
+      // coalesce does it, a filter on isNotNull does not, since the check sees the plan before it is optimized). An engine
+      // that judges the rows themselves (plain Python) is satisfied by either, so the caveat is named as Spark's.
       remediation =
-        s"Filter or coalesce nulls out of '$path' before the ${side.noun} is produced, or relax the contract to allow nulls if they're expected.",
+        if (side == Side.Output)
+          s"Give '$path' a value that cannot be null, for example coalesce($path, <default>), or set nullable: true in the " +
+            "contract if nulls are expected. On Spark, filtering nulls out is not enough: the column still allows nulls when it is checked."
+        else s"The input's schema allows nulls in '$path': set nullable: true in the contract if nulls are expected.",
       column = Some(path),
       location = Some(location),
       expected = Some("not null"),

@@ -144,6 +144,56 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     }
   }
 
+  test("a misspelt spark.invaract.* setting is refused with the setting it was probably meant to be") {
+    val outputPath = scratchDir.resolve("typo.parquet").toString
+    val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
+    Files.write(contractFile, passingContractYaml.replace("OUTPUT_PATH", outputPath).getBytes("UTF-8"))
+    val spark = buildSession(
+      InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
+      "spark.invaract.rejectUndeclaredInput" -> "true"
+    )
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("'spark.invaract.rejectUndeclaredInput'"))
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.rejectUndeclaredInputs'?"))
+      // Still refused on the next query: a refusal is not remembered as "checked".
+      intercept[IllegalArgumentException](spark.range(5).count())
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("a dryRun that is not true or false counts as enforcing for the typo check: a misspelt setting next to it is refused") {
+    val spark = buildSession("spark.invaract.dryRun" -> "yes", "spark.invaract.rejectUndeclaredInput" -> "true")
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.rejectUndeclaredInputs'?"), ex.getMessage)
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("a misspelt dryRun is reported as the typo it is, not as a missing contract") {
+    val spark = buildSession("spark.invaract.dryrun" -> "true")
+    try {
+      val ex = intercept[IllegalArgumentException](spark.range(5).count())
+      assert(ex.getMessage.contains("Did you mean 'spark.invaract.dryRun'?"))
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("in dry-run mode a misspelt setting is only warned about: the job is never stopped") {
+    val outputPath = scratchDir.resolve("dry_run_typo.parquet").toString
+    val spark = buildSession(InvaractSparkSessionExtension.DryRunConfKey -> "true", "spark.invaract.rejectUndeclaredInput" -> "true")
+    try {
+      spark.range(5).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally {
+      spark.stop()
+    }
+  }
+
   test("spark.invaract.notifyConfig attaches a real sink and listener purely via conf") {
     val outputPath = scratchDir.resolve("with_sink.parquet").toString
     val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
@@ -189,6 +239,77 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     } finally {
       spark.stop()
     }
+  }
+
+  test("the contract, the org policy, its overlays and the location map may each be named by a file: URI") {
+    val out = scratchDir.resolve("uri_out.parquet").toString
+    val locations = new java.util.Properties()
+    locations.setProperty("report", out)
+    val locationsFile = Files.createTempFile(scratchDir, "locations", ".properties")
+    val locationsOut = Files.newOutputStream(locationsFile)
+    try locations.store(locationsOut, null)
+    finally locationsOut.close()
+    def policy(id: String) =
+      Files.write(
+        Files.createTempFile(scratchDir, id, ".yaml"),
+        s"""version: "1.0"
+           |policies:
+           |  - id: $id
+           |    type: require_dataset_description
+           |    scope: outputs
+           |    description: "$id"
+           |""".stripMargin.getBytes("UTF-8")
+      ).toUri.toString
+    val (base, overlayA, overlayB) = (policy("base-policy"), policy("overlay-a"), policy("overlay-b"))
+    def contract(description: Boolean) = {
+      val yaml = passingContractYaml.replace("OUTPUT_PATH", "ref://report")
+      val described = if (description) yaml.replace("  - name: out\n", "  - name: out\n    description: the report\n") else yaml
+      Files.write(Files.createTempFile(scratchDir, "contract", ".yaml"), described.getBytes("UTF-8")).toUri.toString
+    }
+    def write(contractUri: String): Unit = {
+      val spark = buildSession(
+        InvaractSparkSessionExtension.ContractConfKey -> contractUri,
+        ContractEnforcementRule.OrgPolicyConfKey -> base,
+        ContractEnforcementRule.OrgPolicyOverlaysConfKey -> s"$overlayA, $overlayB",
+        ContractEnforcementRule.LocationMapConfKey -> locationsFile.toUri.toString
+      )
+      try spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(out)
+      finally spark.stop()
+    }
+    assert(contract(description = true).startsWith("file:"))
+    write(contract(description = true)) // must not throw: every file was read, the ref:// location resolved
+    assert(Files.exists(java.nio.file.Paths.get(out)))
+    val e = intercept[ContractViolationException](write(contract(description = false)))
+    val refusedBy = e.result.violations.map(_.message).flatMap(m => List("base-policy", "overlay-a", "overlay-b").filter(id => m.contains(s"'$id'")))
+    assert(refusedBy.toSet == Set("base-policy", "overlay-a", "overlay-b"), e.getMessage)
+  }
+
+  test("listed twice in spark.sql.extensions, Invaract checks each write once") {
+    def validationsFor(extensions: String): Int = {
+      val outputPath = scratchDir.resolve(s"twice_${extensions.count(_ == ',')}.parquet").toString
+      val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
+      Files.write(contractFile, passingContractYaml.replace("OUTPUT_PATH", outputPath).getBytes("UTF-8"))
+      val eventsFile = Files.createTempDirectory(scratchDir, "events").resolve("events.jsonl")
+      val notifyProps = new java.util.Properties()
+      notifyProps.setProperty("sink.enabled", "true")
+      notifyProps.setProperty("sink.class", "com.invaract.verification.notification.FileNotificationSink")
+      notifyProps.setProperty("sink.property.path", eventsFile.toString)
+      val notifyPropsFile = Files.createTempFile(scratchDir, "notify", ".properties")
+      val notifyOut = new java.io.FileOutputStream(notifyPropsFile.toFile)
+      try notifyProps.store(notifyOut, null)
+      finally notifyOut.close()
+      val spark = buildSession(
+        "spark.sql.extensions" -> extensions,
+        InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
+        InvaractSparkSessionExtension.NotifyConfigConfKey -> notifyPropsFile.toString
+      )
+      try spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      finally spark.stop()
+      "\"eventType\": \"CONTRACT_VALIDATION\"".r.findAllMatchIn(new String(Files.readAllBytes(eventsFile), "UTF-8")).size
+    }
+    val name = classOf[InvaractSparkSessionExtension].getName
+    assert(validationsFor(name) == 1)
+    assert(validationsFor(s"$name, $name") == 1)
   }
 
   test("checkRuleFor: a contract satisfied still runs cleanly when accessed directly (no SparkSessionExtensions indirection)") {

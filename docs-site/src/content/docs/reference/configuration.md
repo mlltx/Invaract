@@ -17,12 +17,29 @@ settings have the same meaning on every engine. Each engine spells them its own 
 | Python | `INVARACT_<SNAKE_NAME>` | An environment variable of the job's process |
 
 On Spark, Invaract itself is installed with
-`--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`; on
+`--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin` (or
+`--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`; see
+[Install the Enforcement Rule on Spark](/guides/installing-the-enforcement-rule/) for the difference); on
 Beam, by the `--runner` above; a Python job, by reading and writing through the `invaract` package
 ([Use Invaract with Python Jobs](/guides/using-invaract-with-python/)). The settings below then apply. Every setting is optional.
 Settings that switch something on take `true` or `false` (in any case), and are off unless
 set to `true`. Any other value, such as `yes`, is refused when the job starts, with an error
 naming the setting.
+
+On Spark, a setting that names a file (`contract`, `orgPolicy`, `orgPolicyOverlays`,
+`locationMap`, `notifyConfig`) takes a local path or any URI the job's Hadoop configuration can
+read (`s3a://`, `hdfs://`, `abfss://`, `gs://`, `dbfs:/`, `file:/`); see
+[Where the contract file can live](/guides/installing-the-enforcement-rule/#where-the-contract-file-can-live).
+
+A setting Invaract does not read is refused too, so a typo can't leave a check switched off
+without anyone noticing. On Spark, a `spark.invaract.*` key that is not on this page stops the
+job at its first query, naming the setting it was probably meant to be:
+
+```
+Invaract does not read 'spark.invaract.rejectUndeclaredInput'. Did you mean 'spark.invaract.rejectUndeclaredInputs'?
+```
+
+In dry-run mode the same message is a warning and the job carries on.
 
 ## Choosing what to enforce
 
@@ -42,7 +59,7 @@ naming the setting.
 
 | Setting | Spark | Beam Java | Beam Python | Python | What it does | Guide |
 |---|---|---|---|---|---|---|
-| Reject undeclared inputs | `spark.invaract.rejectUndeclaredInputs` | `--invaractRejectUndeclaredInputs` | `--invaract_reject_undeclared_inputs` | `INVARACT_REJECT_UNDECLARED_INPUTS` | `true`: a read the contract doesn't declare blocks the write (`UNDECLARED_INPUT`). | [Violation types](/reference/violation-types/) |
+| Reject undeclared inputs | `spark.invaract.rejectUndeclaredInputs` | `--invaractRejectUndeclaredInputs` | `--invaract_reject_undeclared_inputs` | `INVARACT_REJECT_UNDECLARED_INPUTS` | `true`: a read the contract doesn't declare blocks the write (`UNDECLARED_INPUT`), including one inside a subquery or in the second path of a read. On Spark, a write that reads a DataFrame built from an RDD is blocked too (`UNVERIFIABLE_WRITE`), since what the RDD was computed from can't be seen. | [Violation types](/reference/violation-types/) |
 | Reject undeclared fields | `spark.invaract.rejectUndeclaredFields` | `--invaractRejectUndeclaredFields` | `--invaract_reject_undeclared_fields` | `INVARACT_REJECT_UNDECLARED_FIELDS` | `true`: an output column the contract doesn't declare blocks the write (`UNDECLARED_FIELD`). | [Violation types](/reference/violation-types/) |
 | Static data quality | `spark.invaract.staticDataQuality` | `--invaractStaticDataQuality` | `--invaract_static_data_quality` | `INVARACT_STATIC_DATA_QUALITY` | `true`: prove the contract's value constraints from the job's logic. | [Verify static data quality](/guides/verifying-static-data-quality/) |
 | Runtime data quality | `spark.invaract.runtimeDataQuality` | `--invaractRuntimeDataQuality` | `--invaract_runtime_data_quality` | `INVARACT_RUNTIME_DATA_QUALITY` | `true`: check every row a job writes against its outputs' declared value constraints before publishing (Python jobs; Spark and Beam refuse constrained outputs). | [Check data values at run time](/guides/checking-data-values-at-run-time/) |
@@ -87,6 +104,26 @@ These control the Beam wrapper runner itself, not what Invaract checks.
 | — | `--invaract_checker_jar` | Path of the checker jar. Default: the `INVARACT_BEAM_CHECKER_JAR` environment variable. |
 | — | `--invaract_java` | The `java` program that runs the checker. Default: `$JAVA_HOME/bin/java`, else `java` on the `PATH`. |
 | — | `--invaract_java_options` | Options for the checker's JVM, for example `-Xmx512m`. |
+
+## Pinned settings (Spark)
+
+A job's own code can set any Spark setting, including `spark.invaract.*` ones: a
+`SparkSession.builder.config(...)` in the job replaces what `spark-submit --conf` gave. A
+platform that must stop a job loosening Invaract's settings pins them: the environment variable
+`INVARACT_PINNED_CONF` of the driver names a `.properties` file of settings, spelt as above.
+
+```properties
+spark.invaract.contract=/contracts/orders.yaml
+spark.invaract.dryRun=false
+spark.invaract.orgPolicy=/policies/org.yaml
+```
+
+Invaract reads a pinned setting from that file whatever the job's Spark configuration says,
+including a `spark.conf.set(...)` made while it runs. A file that cannot be read, or that
+names a setting not on this page, stops the job. `spark.invaract.job.metadata.*` and
+`spark.invaract.contract.metadata.*` cannot be pinned. See
+[Lock Settings for a Platform](/guides/locking-settings-for-a-platform/) for how to set the
+variable on each scheduler, and what pinning does and does not promise.
 
 ## Python-only settings
 

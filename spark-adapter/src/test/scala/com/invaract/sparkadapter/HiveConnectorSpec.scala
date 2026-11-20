@@ -776,20 +776,21 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_load_data_tbl").count() == 0, "a rejected LOAD DATA must never have committed")
   }
 
-  // --- Fail-closed: TRUNCATE TABLE - genuinely data-mutating (deletes every
-  // row), already generically excluded from FailClosedCommands' safe list;
-  // confirmed here for real against a Hive table with actual data. ---
+  // --- TRUNCATE TABLE - deletes every row. Judged against the contract's
+  // outputs (DestructiveDdlSupport): refused for a table the contract does
+  // not declare, allowed for a declared output that may be overwritten.
+  // Confirmed here for real against a Hive table with actual data. ---
 
-  test("fails closed: TRUNCATE TABLE is rejected, the table's data is left unchanged") {
+  test("TRUNCATE TABLE of an undeclared Hive table is refused and the data is left unchanged; of a declared output it passes") {
     spark.sql("CREATE TABLE hive_truncate_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
     spark.sql("INSERT INTO hive_truncate_tbl VALUES (1, 10)")
 
-    val yaml =
+    def yaml(location: String) =
       s"""id: enforcement_demo
          |version: "1.0.0"
          |outputs:
          |  - name: out
-         |    location: ${tableLocation("hive_truncate_tbl")}
+         |    location: $location
          |    schema:
          |      fields:
          |        - name: id
@@ -797,12 +798,15 @@ class HiveConnectorSpec extends ConnectorSpecBase {
          |          required: true
          |""".stripMargin
 
-    withContract(yaml) {
-      intercept[ContractViolationException] {
+    withContract(yaml(tableLocation("hive_truncate_tbl") + "_elsewhere")) {
+      val ex = intercept[ContractViolationException] {
         spark.sql("TRUNCATE TABLE hive_truncate_tbl")
       }
+      assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     }
     assert(spark.table("hive_truncate_tbl").count() == 1, "a rejected TRUNCATE must never have removed data")
+    withContract(yaml(tableLocation("hive_truncate_tbl")))(spark.sql("TRUNCATE TABLE hive_truncate_tbl"))
+    assert(spark.table("hive_truncate_tbl").count() == 0)
   }
 
   // --- Fail-closed: MERGE INTO / UPDATE against a plain Hive table -
@@ -1247,30 +1251,25 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     }
   }
 
-  // --- Fail-closed: DROP TABLE on an EXTERNAL table -----------------------
+  // --- DROP TABLE on an EXTERNAL table -----------------------------------
   //
   // Confirmed (not assumed): dropping an EXTERNAL table leaves its data
-  // files on disk - only the metastore entry is removed. Invaract's
-  // fail-closed policy nonetheless rejects DropTable unconditionally
-  // (it's neither a recognized write nor on FailClosedCommands' safe
-  // list), regardless of table type. This is a deliberate, accepted false
-  // rejection, not a bug: the class-name-only check can't distinguish "this
-  // specific DROP is harmless" from "this one deletes a managed table's
-  // real data" without inspecting the instance, and FailClosedCommands'
-  // own asymmetry (a safe command wrongly missing costs one rejection; one
-  // wrongly present could silently defeat the feature) already accepts that
-  // tradeoff. See docs/connectors/hive.md's "External tables" section.
-  test("fails closed: DROP TABLE on an EXTERNAL table is rejected, even though the underlying data would have survived") {
+  // files on disk - only the metastore entry is removed. DROP TABLE is
+  // judged against the contract's outputs (DestructiveDdlSupport), whatever
+  // the table type: allowed for a declared output that may be overwritten,
+  // refused for any other table. It used to be refused unconditionally, a
+  // deliberate false rejection docs/connectors/hive.md recorded.
+  test("DROP TABLE on an EXTERNAL table: refused when undeclared, allowed for a declared output, and its data survives") {
     val loc = extScratchDir("drop_ext")
     spark.sql(s"CREATE EXTERNAL TABLE hive_drop_ext_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
     spark.sql("INSERT INTO hive_drop_ext_tbl SELECT 1, 10")
 
-    val yaml =
+    def yaml(location: String) =
       s"""id: enforcement_demo
          |version: "1.0.0"
          |outputs:
          |  - name: out
-         |    location: ${loc.stripPrefix("file:")}
+         |    location: $location
          |    schema:
          |      fields:
          |        - name: id
@@ -1278,16 +1277,18 @@ class HiveConnectorSpec extends ConnectorSpecBase {
          |          required: true
          |""".stripMargin
 
-    withContract(yaml) {
+    withContract(yaml(loc.stripPrefix("file:") + "_elsewhere")) {
       val ex = intercept[ContractViolationException] {
         spark.sql("DROP TABLE hive_drop_ext_tbl")
       }
-      assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     }
     assert(spark.sessionState.catalog.tableExists(TableIdentifier("hive_drop_ext_tbl")), "a rejected DROP must never have removed the catalog entry")
+    withContract(yaml(loc.stripPrefix("file:")))(spark.sql("DROP TABLE hive_drop_ext_tbl"))
+    assert(!spark.sessionState.catalog.tableExists(TableIdentifier("hive_drop_ext_tbl")))
     assert(
       Files.list(java.nio.file.Paths.get(loc.stripPrefix("file:"))).count() > 0,
-      "an EXTERNAL table's data is never deleted by DROP TABLE in the first place - confirming what the rejection is (over-)protecting against"
+      "an EXTERNAL table's data is never deleted by DROP TABLE"
     )
   }
 

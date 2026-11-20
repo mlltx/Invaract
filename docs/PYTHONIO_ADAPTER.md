@@ -641,8 +641,9 @@ Arrow frames are untouched, since they can hold the declared types and a mismatc
 gets a note in pandas' terms, added to the refusal's explanation (`ContractViolation.add_notes`); a named index level the
 contract declares is written as a column (a `groupby` result); an `object` column of mixed values raises a `TypeError` naming
 it; `invaract.read(..., dtype_backend=)` takes pandas' own `numpy_nullable`/`pyarrow`. Nothing changes for the checker or the
-protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented: a bare
-top-level `type: int` is not `integer` (docs-site's contract format says so), for every engine.
+protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented then: a bare
+top-level `type: int` was not `integer`. It is now, for every engine (the scalar aliases the type parser knows match the type
+they name; docs/SPARK_ADAPTER_HARDENING_PLAN.md, H-17f).
 
 **pandas, second pass (2026-11-06).** The user asked for every remaining pandas gap, and chose: a dry run writes named index
 levels as pandas' `to_parquet` does (it dropped them, so a migrated `groupby` job lost its keys and the draft never declared

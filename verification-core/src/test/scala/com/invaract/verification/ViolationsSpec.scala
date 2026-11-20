@@ -254,6 +254,18 @@ class ViolationsSpec extends AnyFunSuite {
     val undocumented = allViolationTypes.filterNot(t => text.contains(s"`$t`"))
     assert(undocumented.isEmpty, s"ViolationTypes missing from violation-types.md: $undocumented")
   }
+
+  test("a nullability mismatch says how to make an output column non-null, which on Spark filtering does not; an input's says to relax the contract") {
+    assert(
+      Violations.fieldNullabilityMismatch(Side.Output, "gold/out", "id").remediation ==
+        "Give 'id' a value that cannot be null, for example coalesce(id, <default>), or set nullable: true in the contract if " +
+        "nulls are expected. On Spark, filtering nulls out is not enough: the column still allows nulls when it is checked."
+    )
+    assert(
+      Violations.fieldNullabilityMismatch(Side.Input, "bronze/in", "id").remediation ==
+        "The input's schema allows nulls in 'id': set nullable: true in the contract if nulls are expected."
+    )
+  }
 }
 
 object ViolationsSpec {

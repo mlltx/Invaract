@@ -4,7 +4,8 @@
 package com.invaract.sparkadapter
 
 import com.invaract.verification.UnverifiableOperation
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{DropNamespace, LogicalPlan}
+import org.apache.spark.sql.execution.command.DropTableCommand
 
 /** The known-safe exemption list for `ContractEnforcementRule`'s fail-closed
   * policy on unverifiable writes (see that object's "Fail-closed on
@@ -46,20 +47,47 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
   */
 private[sparkadapter] object FailClosedCommands {
 
-  /** A command this list does not exempt and `SparkPlanAdapter` does not translate, as the rejection describes it. */
+  /** Where a user reports a statement Invaract refuses though it changes no data. */
+  val IssuesPage = "https://github.com/mlltx/Invaract/issues"
+
+  /** The statements Invaract recognizes, for a user choosing another way to write an output. */
+  val ConnectorSupportPage = "https://mlltx.github.io/Invaract/reference/connector-support/"
+
+  /** A command this list does not exempt and `SparkPlanAdapter` does not translate, as the rejection describes it. The
+    * advice is for the job's owner, who cannot change this list: what to do instead, and where to report a command that
+    * only reads or manages metadata. (How a contributor extends the list is in docs/SPARK_ADAPTER.md.) */
   def unverifiable(commandClassName: String): UnverifiableOperation =
     UnverifiableOperation(
       commandClassName,
       s"'$commandClassName' looks like it may write or otherwise mutate data, but Invaract has no translation for it",
-      "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-        "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-        "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-        "\"Fail-closed on unverifiable writes\" section."
+      s"Invaract cannot check '$commandClassName'. If the statement only reads or manages metadata, please report it: " +
+        s"$IssuesPage. Otherwise write this output with a statement Invaract recognizes (see $ConnectorSupportPage)."
     )
 
-  def isKnownSafe(plan: LogicalPlan): Boolean =
-    if (plan.getClass.getName == icebergCallClassName) isKnownSafeIcebergProcedureCall(plan)
-    else knownSafe.contains(plan.getClass.getName)
+  /** The command `plan` is, as the rejection describes it: its own words for a statement that deletes whole databases. */
+  def unverifiable(plan: LogicalPlan): UnverifiableOperation = plan match {
+    case d: DropNamespace if d.cascade =>
+      UnverifiableOperation(
+        plan.getClass.getSimpleName,
+        "DROP DATABASE ... CASCADE deletes every table in the database, so Invaract cannot check it against the contract",
+        "Drop the tables this job is allowed to remove one at a time, then drop the empty database without CASCADE."
+      )
+    case _ => unverifiable(plan.getClass.getSimpleName)
+  }
+
+  /** Whether `plan` is known not to change any table's rows. Keyed by the class of the *analyzed* plan (what the check
+    * rule sees), which for many statements is a catalyst command, not the `execution.command` class it later becomes.
+    */
+  def isKnownSafe(plan: LogicalPlan): Boolean = plan match {
+    // DROP DATABASE without CASCADE: Spark refuses to drop a database that still holds a table, so it deletes no data.
+    // With CASCADE it deletes every table in the database, so it is not safe.
+    case d: DropNamespace                                   => !d.cascade
+    // DROP VIEW of a persistent view arrives as DropTableCommand with `isView` (not the catalyst DropView listed below):
+    // a view holds no data. DROP TABLE is judged against the contract instead (DestructiveDdlSupport).
+    case d: DropTableCommand                                => d.isView
+    case _ if plan.getClass.getName == icebergCallClassName => isKnownSafeIcebergProcedureCall(plan)
+    case _                                                  => knownSafe.contains(plan.getClass.getName)
+  }
 
   // Iceberg's Call node (see the "Iceberg CALL procedures" comment at the
   // bottom of the knownSafe set below for the full background) always has this one
@@ -158,7 +186,6 @@ private[sparkadapter] object FailClosedCommands {
     "org.apache.spark.sql.catalyst.plans.logical.DropColumns",
     "org.apache.spark.sql.catalyst.plans.logical.DropFunction",
     "org.apache.spark.sql.catalyst.plans.logical.DropIndex",
-    "org.apache.spark.sql.catalyst.plans.logical.DropNamespace",
     "org.apache.spark.sql.catalyst.plans.logical.DropView",
     "org.apache.spark.sql.catalyst.plans.logical.NoopCommand",
     "org.apache.spark.sql.catalyst.plans.logical.RecoverPartitions", // MSCK REPAIR-style discovery of existing partitions, writes no data
@@ -186,6 +213,8 @@ private[sparkadapter] object FailClosedCommands {
     "org.apache.spark.sql.catalyst.plans.logical.ShowTables",
     "org.apache.spark.sql.catalyst.plans.logical.ShowViews",
     "org.apache.spark.sql.catalyst.plans.logical.UncacheTable",
+    // CLEAR CACHE: an object, hence the `$`; drops cached copies only, like UNCACHE TABLE.
+    "org.apache.spark.sql.execution.command.ClearCacheCommand$",
     "org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties",
     "org.apache.spark.sql.catalyst.plans.logical.UnsetViewProperties",
 
@@ -300,14 +329,19 @@ private[sparkadapter] object FailClosedCommands {
     // here with the same reasoning): anything that adds, modifies, drops,
     // or copies row content - DeleteFromTable(WithFilters), MergeIntoTable/
     // DeltaMergeInto, UpdateTable, LoadData(Command), TruncateTable(Command
-    // /Partition), DropTable(Command)/DropDatabaseCommand (can delete a
-    // managed table's/database's data), DropPartitions/
-    // AlterTableDropPartitionCommand (deletes the partition's data),
+    // /Partition) and DropTable(Command) (judged against the contract by
+    // DestructiveDdlSupport before this list is consulted),
+    // DropNamespace with CASCADE (DROP DATABASE ... CASCADE: deletes every
+    // table in it - the analyzed plan is this catalyst class, never
+    // DropDatabaseCommand, so it is judged in isKnownSafe by its `cascade`
+    // flag rather than listed), DropPartitions/
+    // AlterTableDropPartitionCommand (deletes the partition's data; also
+    // judged by DestructiveDdlSupport),
     // ReplaceTable (drops+recreates), Delta's WriteIntoDelta/
     // CloneTableCommand/ConvertToDeltaCommand/CreateDeltaTableCommand/
     // DeltaReorgTable(Command)/DeltaGenerateCommand/RestoreTableCommand,
-    // InsertIntoDataSourceCommand/InsertIntoDataSourceDirCommand (real
-    // writes, just not yet translated), and ExternalCommandExecutor
+    // InsertIntoDataSourceCommand (a real write, just not yet translated),
+    // and ExternalCommandExecutor
     // (arbitrary passthrough to an external system - can't be classified
     // either way). See docs/SPARK_ADAPTER.md's "Fail-closed on
     // unverifiable writes" section for the per-class reasoning.

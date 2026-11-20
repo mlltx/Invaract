@@ -1,0 +1,89 @@
+---
+title: Lock Settings for a Platform
+description: Attach Invaract to Spark jobs you don't own so that a job's own configuration cannot remove it or loosen its settings.
+sidebar:
+  order: 3.5
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A platform team that attaches Invaract to other teams' Spark jobs needs two things from it:
+that Invaract is never missing from a job by accident, and that a job's own configuration
+cannot loosen what the platform set. This guide sets up both.
+
+## What can and cannot be promised
+
+A job's code runs inside the Spark driver with every permission the driver has, so nothing
+inside that process can stop an author who sets out to defeat a check. What this setup does
+promise:
+
+1. **Invaract is never missing by accident.** A misspelt class name or a missing jar stops
+   the job before it runs, and a job that sets its own `spark.sql.extensions` keeps Invaract.
+2. **A setting the platform pins cannot be changed** through any Spark configuration call the
+   job makes: `SparkSession.builder.config(...)`, `spark.conf.set(...)`, or its own
+   `--conf`.
+3. Anything else a job's code does (installing its own check rule in code, editing the
+   pinned file it can reach) is outside what Invaract can see; keep the pinned file somewhere
+   the job's user cannot write.
+
+<Steps>
+
+1. ### Attach Invaract with `spark.plugins`
+
+   ```bash
+   spark-submit \
+     --jars invaract-spark-adapter-0.11.0.jar \
+     --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
+     my-job.py
+   ```
+
+   Spark refuses to start an application whose `spark.plugins` names a class it cannot load,
+   so a missing jar or a typo fails the job at once. The plugin runs before any Spark
+   session exists and adds Invaract to the job's `spark.sql.extensions`, logging a warning
+   when the job's configuration had left it out:
+
+   ```
+   Invaract: spark.sql.extensions did not name Invaract (the job's own configuration may have replaced it); added it.
+   ```
+
+2. ### Write the settings to pin
+
+   A `.properties` file, with the settings spelt as on Spark
+   ([Configuration Settings](/reference/configuration/)):
+
+   ```properties
+   spark.invaract.contract=/contracts/orders.yaml
+   spark.invaract.dryRun=false
+   spark.invaract.rejectUndeclaredInputs=true
+   spark.invaract.orgPolicy=/policies/org.yaml
+   ```
+
+   Pin `spark.invaract.dryRun=false` explicitly: otherwise a job could set it to `true` and
+   be reported on rather than enforced.
+
+3. ### Point the driver at it
+
+   Set the environment variable `INVARACT_PINNED_CONF` for the driver to the file's path.
+   An environment variable is used because a job's Spark calls cannot change it:
+
+   | Where the driver runs | Setting |
+   |---|---|
+   | YARN, cluster mode | `--conf spark.yarn.appMasterEnv.INVARACT_PINNED_CONF=/etc/invaract/pins.properties` |
+   | Kubernetes | `--conf spark.kubernetes.driverEnv.INVARACT_PINNED_CONF=/etc/invaract/pins.properties` |
+   | Standalone, client mode, local | `export INVARACT_PINNED_CONF=/etc/invaract/pins.properties` in `spark-env.sh` or the launching shell |
+   | A managed cluster (Databricks and similar) | the cluster's environment variables |
+
+</Steps>
+
+Invaract then reads each pinned setting from the file, whatever the job's configuration
+says. The plugin also writes the pinned values back into the application's configuration,
+with a warning naming each setting the job had changed (the values are not logged).
+
+<Aside type="caution" title="A pinned file must be readable and correct">
+If the file named by `INVARACT_PINNED_CONF` cannot be read, or names a key Invaract does not
+read (a typo would otherwise pin nothing), the job stops with an error naming the variable
+and the file.
+</Aside>
+
+`spark.invaract.job.metadata.*` and `spark.invaract.contract.metadata.*`, the labels
+[dry-run reporting](/guides/dry-run-mode/) attaches to its events, cannot be pinned.

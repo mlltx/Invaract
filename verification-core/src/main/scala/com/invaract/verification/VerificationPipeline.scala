@@ -123,11 +123,25 @@ object VerificationPipeline {
       runId: Option[String] = None,
       capabilities: Option[AdapterCapabilities] = None,
       job: Option[JobInfo] = None
+  ): Unit = verifyWrite(contract, write, options, sink, runId, capabilities, job, None)
+
+  /** The same, for an adapter that may check one write more than once (Spark checks a `saveAsTable` and the insert it
+    * runs inside it): `writeKey` names the write, and every check of it publishes the same key
+    * (`ContractValidationEvent.writeKey`), so a consumer counts writes, not checks. */
+  def verifyWrite(
+      contract: Contract,
+      write: => CheckedWrite,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      capabilities: Option[AdapterCapabilities],
+      job: Option[JobInfo],
+      writeKey: Option[String]
   ): Unit = {
     requireValidContract(contract, sink, runId, job)
     val checked = write
     val result = evaluateWrite(contract, checked, options, capabilities)
-    publishValidation(contract, result, sink, runId, job)
+    publishValidation(contract, result, sink, runId, job, writeKey)
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -430,6 +444,16 @@ object VerificationPipeline {
       sink: Option[NotificationSink],
       runId: Option[String],
       job: Option[JobInfo] = None
+  ): Unit = publishValidation(contract, result, sink, runId, job, None)
+
+  /** The same, for the check of the write `writeKey` names (`ContractValidationEvent.writeKey`). */
+  private[invaract] def publishValidation(
+      contract: Contract,
+      result: VerificationResult,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo],
+      writeKey: Option[String]
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -445,7 +469,8 @@ object VerificationPipeline {
           dataQuality = result.dataQuality,
           roleConformance = result.roleConformance,
           unverifiableInputs = result.unverifiableInputs,
-          job = job
+          job = job,
+          writeKey = writeKey
         )
       )
     }
@@ -455,10 +480,15 @@ object VerificationPipeline {
     * violates the contract, and how to correct it - a developer reading only
     * this text, with no other context, should be able to answer all four.
     */
-  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult): String = {
+  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult): String =
+    explain(contract, plan, result, s"Contract violation: '${result.contract}' rejected this transformation. Write aborted.")
+
+  /** The same, with `headline` as its first line: for a refusal that is not of one write (an organizational policy
+    * that refuses the contract refuses every query). */
+  private[invaract] def explain(contract: Contract, plan: ir.Plan, result: VerificationResult, headline: String): String = {
     val sb = new StringBuilder
 
-    sb.append(s"Contract violation: '${result.contract}' rejected this transformation. Write aborted.\n")
+    sb.append(headline).append("\n")
 
     sb.append("\nWhat the contract expects:\n")
     contract.inputs.foreach { input =>

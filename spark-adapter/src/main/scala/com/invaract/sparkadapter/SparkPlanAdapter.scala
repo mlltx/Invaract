@@ -23,6 +23,8 @@ import org.apache.spark.sql.catalyst.expressions.{
   Not,
   NullsFirst,
   Or,
+  ScalarSubquery,
+  SubqueryExpression,
   UnaryMinus,
   WindowExpression,
   Literal => CatalystLiteral,
@@ -53,9 +55,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Sort,
   SubqueryAlias,
   Union,
-  Window
+  View,
+  Window,
+  WithCTE
 }
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
+import org.apache.spark.sql.catalyst.optimizer.InlineCTE
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.columnar.InMemoryRelation
@@ -138,8 +143,18 @@ case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
   */
 private[sparkadapter] object SparkPlanAdapter {
 
-  def translate(plan: LogicalPlan): TranslationResult = {
-    val translator = new Translator(computeAliasDisambiguation(plan))
+  /** `ir.UnknownPlan.sourceType` of a Dataset backed directly by an RDD (`createDataFrame(rdd)`, `rdd.toDF`): a source
+    * whose origin Invaract cannot see, which `ContractEnforcementRule` refuses under `rejectUndeclaredInputs`.
+    */
+  val RddRelationSourceType = "RDDRelation"
+
+  def translate(plan: LogicalPlan): TranslationResult = translate(plan, Nil)
+
+  /** `translate`, with a read inside one of `declaredInputs` (a partition folder, a file, a glob of files) reported at
+    * that input's location, and every root path of a multi-path read reported (`ReadLocations`).
+    */
+  def translate(plan: LogicalPlan, declaredInputs: Seq[String]): TranslationResult = {
+    val translator = new Translator(computeAliasDisambiguation(plan, declaredInputs), declaredInputs)
     val irPlan = translator.translatePlan(plan)
     TranslationResult(irPlan, translator.diagnostics)
   }
@@ -268,7 +283,7 @@ private[sparkadapter] object SparkPlanAdapter {
     * covered read - this is what actually fixes the false negative above,
     * not merely relabels it.
     */
-  private def computeAliasDisambiguation(plan: LogicalPlan): Map[Long, String] = {
+  private def computeAliasDisambiguation(plan: LogicalPlan, declaredInputs: Seq[String]): Map[Long, String] = {
     def disambiguateByKey(occurrences: Seq[(String, Seq[Long])]): Map[Long, String] = {
       val countByKey: Map[String, Int] = occurrences.groupBy(_._1).map { case (key, group) => key -> group.size }
       val nextIndex = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
@@ -283,7 +298,7 @@ private[sparkadapter] object SparkPlanAdapter {
       }.toMap
     }
 
-    val subqueryAliases: Seq[SubqueryAlias] = plan.collect { case sa: SubqueryAlias => sa }
+    val subqueryAliases: Seq[SubqueryAlias] = plan.collectWithSubqueries { case sa: SubqueryAlias => sa }
     val fromSubqueryAlias: Map[Long, String] =
       disambiguateByKey(subqueryAliases.map(sa => sa.identifier.name -> sa.output.map(_.exprId.id)))
 
@@ -306,9 +321,9 @@ private[sparkadapter] object SparkPlanAdapter {
     // every attribute list this is ever called with.
     def isBare(attrs: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): Boolean =
       attrs.nonEmpty && attrs.forall(a => !alreadyCovered(a.exprId.id))
-    val bareLeafOccurrences: Seq[(String, Seq[Long])] = plan.collect {
+    val bareLeafOccurrences: Seq[(String, Seq[Long])] = plan.collectWithSubqueries {
       case lr: LogicalRelation if isBare(lr.output) =>
-        SparkPlanAdapter.locationOf(lr) -> lr.output.map(_.exprId.id)
+        SparkPlanAdapter.locationsOf(lr, declaredInputs).head -> lr.output.map(_.exprId.id)
       case htr: HiveTableRelation if isBare(htr.output) =>
         SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.output.map(_.exprId.id)
       case dsv2: DataSourceV2Relation if isBare(dsv2.output) =>
@@ -331,10 +346,10 @@ private[sparkadapter] object SparkPlanAdapter {
     * is ignored.
     */
   def translateAsWrite(plan: LogicalPlan, dataset: ir.DatasetRef): TranslationResult = {
-    val result = translate(plan)
-    result.plan match {
-      case _: ir.Write => result
-      case other        => result.copy(plan = ir.Write(dataset, other))
+    val translator = new Translator(computeAliasDisambiguation(plan, Nil), Nil)
+    translator.translatePlan(plan) match {
+      case w: ir.Write => TranslationResult(w, translator.diagnostics)
+      case other        => TranslationResult(ir.Write(dataset, translator.withOutputProjection(plan, other)), translator.diagnostics)
     }
   }
 
@@ -344,6 +359,15 @@ private[sparkadapter] object SparkPlanAdapter {
     * needs this to collect input schemas before deciding whether
     * verification even applies to a given analyzed plan.
     */
+  /** Every location `lr` reads, as `ReadLocations` attributes them: one per root path of a file relation (a read of
+    * several paths, or a glob Spark expanded into several), each reported at the declared input it lies inside, if
+    * any; `locationOf` for any other relation. Never empty.
+    */
+  def locationsOf(lr: LogicalRelation, declaredInputs: Seq[String]): List[String] = lr.relation match {
+    case h: HadoopFsRelation if h.location.rootPaths.nonEmpty => ReadLocations.of(h.location.rootPaths.map(_.toString), declaredInputs)
+    case _                                                    => List(locationOf(lr))
+  }
+
   def locationOf(lr: LogicalRelation): String = lr.relation match {
     case h: HadoopFsRelation => h.location.rootPaths.headOption.map(_.toString).getOrElse(lr.relation.toString)
     case other                =>
@@ -430,9 +454,14 @@ private[sparkadapter] object SparkPlanAdapter {
     if (relation.getClass.getSimpleName == "JDBCRelation") {
       scala.util.Try {
         val opts = relation.getClass.getMethod("jdbcOptions").invoke(relation).asInstanceOf[JDBCOptions]
-        s"jdbc:${opts.url}/${opts.tableOrQuery}"
+        jdbcLocation(opts.url, opts.tableOrQuery)
       }.toOption
     } else None
+
+  /** How a JDBC table is located: `jdbc:` + the connection URL + `/` + the table, for a read and a write alike, so a
+    * contract names a table the same way whichever the job does to it.
+    */
+  private[sparkadapter] def jdbcLocation(url: String, table: String): String = s"jdbc:$url/$table"
 
   /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
     * `FileFormat`) and non-file data sources written via `.save(...)`
@@ -515,7 +544,10 @@ private[sparkadapter] object SparkPlanAdapter {
     */
   private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator(Map.empty).translateExpr(expr)
 
-  private class Translator(aliasDisambiguation: Map[Long, String]) {
+  private class Translator(initialAliases: Map[Long, String], declaredInputs: Seq[String]) {
+    // Replaced, for the attributes of an inlined CTE, by the map of the inlined plan (see the WithCTE case).
+    private var aliasDisambiguation: Map[Long, String] = initialAliases
+
     // A secondary, no-arg constructor kept purely for binary compatibility:
     // MiMa flags the loss of the old `Translator()` constructor as a real
     // break even though this class is Scala-`private` - `SparkPlanAdapter`'s
@@ -527,7 +559,10 @@ private[sparkadapter] object SparkPlanAdapter {
     // solely to keep `com.invaract:invaract-spark-adapter`'s previously-
     // published jar binary-compatible with this one, per CLAUDE.md's API
     // Compatibility Requirement's "restore the old signature" option.
-    def this() = this(Map.empty)
+    def this() = this(Map.empty, Nil)
+
+    // The same, for the one-map constructor this class had before it took the declared inputs (H-03).
+    def this(initialAliases: Map[Long, String]) = this(initialAliases, Nil)
 
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList
@@ -545,15 +580,84 @@ private[sparkadapter] object SparkPlanAdapter {
       // touches this method — it touches WriteCommandSupport instead.
       case Some(info) =>
         info.diagnostic.foreach(d => report(d.nodeType, d.message))
-        ir.Write(ir.DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode, info.catalogIdentity)
+        ir.Write(ir.DatasetRef(info.location), withOutputProjection(info.query, translatePlan(info.query)), info.format, info.saveMode, info.catalogIdentity)
 
       case None => translateNonWritePlan(plan)
     }
 
-    private def translateNonWritePlan(plan: LogicalPlan): ir.Plan = plan match {
+    /** `translated` with an explicit list of `query`'s own output columns on top, unless it already ends in one.
+      *
+      * An `ir.Read` declares no columns (the IR carries no schema), so a write whose query has no projection of its own
+      * - a plain copy, a filter, a sort, a union of reads - would have no output columns for `ir.Lineage` to trace, and
+      * a sensitive input column copied straight to an output would be reported nowhere. The IR's own design leaves it
+      * to a front end to make every output list explicit (docs/TRANSFORMATION_IR.md, "`SELECT *` isn't supported").
+      */
+    def withOutputProjection(query: LogicalPlan, translated: ir.Plan): ir.Plan = translated match {
+      case _: ir.Project | _: ir.Aggregate => translated
+      case other                           => ir.Project(other, query.output.map(translateNamed).toList)
+    }
+
+    // Subqueries of the node being translated, numbered in encounter order (deterministic for a given plan, so a
+    // fingerprint does not depend on Spark's session-specific expression ids), by the subquery expression's own id.
+    private val subqueryNumbers = scala.collection.mutable.HashMap.empty[Long, Int]
+    private var nextSubquery = 0
+
+    /** A node with its subqueries attached (`attachSubqueries`): a subquery's plan hangs off an expression - `IN`,
+      * `EXISTS`, a scalar subquery - not off the plan's children, so without this its reads, joins and filters were
+      * invisible to every check, and its value had no lineage.
+      */
+    private def translateNonWritePlan(plan: LogicalPlan): ir.Plan = {
+      val subqueries = subqueryExpressionsOf(plan)
+      subqueries.foreach { s =>
+        if (!subqueryNumbers.contains(s.exprId.id)) {
+          subqueryNumbers(s.exprId.id) = nextSubquery
+          nextSubquery += 1
+        }
+      }
+      val node = translateNode(plan)
+      if (subqueries.isEmpty) node
+      else attachSubqueries(node, subqueries.map(s => translateSubquery(subqueryNumbers(s.exprId.id), s.plan)))
+    }
+
+    /** The subquery expressions in `plan`'s own expressions (not in its children's), each once. */
+    private def subqueryExpressionsOf(plan: LogicalPlan): List[SubqueryExpression] =
+      plan.expressions.flatMap(_.collect { case s: SubqueryExpression => s }).toList.distinct
+
+    /** A subquery's plan, its output columns renamed into a scope of its own (`subquery#<n>`). Lineage resolves a column
+      * of a projection by its name, so a subquery column that kept its name (`SELECT id FROM sec`) would be taken for the
+      * outer query's `id` and give it a second, wrong source.
+      */
+    private def translateSubquery(n: Int, subquery: LogicalPlan): ir.Plan =
+      ir.Project(translatePlan(subquery), subquery.output.map(a => ir.NamedExpr(subqueryColumn(n, a.name), translateExpr(a))).toList)
+
+    private def subqueryScope(n: Int): String = s"subquery#$n"
+    private def subqueryColumn(n: Int, name: String): String = s"${subqueryScope(n)}.$name"
+
+    /** Each subquery joins the input of the node that uses it, the way Spark's optimizer rewrites `IN`/`EXISTS` into a
+      * semi join and a scalar subquery into an outer join. The condition is the literal `true`, not none: a join with no
+      * condition is what `forbid_cross_join` refuses, and this is not one.
+      */
+    private def attachSubqueries(node: ir.Plan, subqueries: List[ir.Plan]): ir.Plan = {
+      def joined(base: ir.Plan): ir.Plan =
+        subqueries.foldLeft(base)((acc, s) => ir.Join(acc, s, ir.JoinType.LeftSemi, Some(ir.Literal(true, "boolean"))))
+      node match {
+        case p: ir.Project   => p.copy(input = joined(p.input))
+        case f: ir.Filter    => f.copy(input = joined(f.input))
+        case a: ir.Aggregate => a.copy(input = joined(a.input))
+        case w: ir.Window    => w.copy(input = joined(w.input))
+        case s: ir.Sort      => s.copy(input = joined(s.input))
+        case j: ir.Join      => j.copy(left = joined(j.left))
+        case other           => joined(other)
+      }
+    }
+
+    private def translateNode(plan: LogicalPlan): ir.Plan = plan match {
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
           case r: ir.Read => r.copy(alias = Some(disambiguatedAliasOf(sa)))
+          // A read of several paths (see the LogicalRelation case): the alias names the read the columns come from.
+          case ir.Union((primary: ir.Read) :: extras) if sa.child.isInstanceOf[LogicalRelation] =>
+            ir.Union(primary.copy(alias = Some(disambiguatedAliasOf(sa))) :: extras)
           case other =>
             report(
               "SubqueryAlias",
@@ -574,12 +678,15 @@ private[sparkadapter] object SparkPlanAdapter {
             "LogicalRelation",
             s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
           )
-        val lrLocation = SparkPlanAdapter.locationOf(lr)
-        ir.Read(
-          ir.DatasetRef(lrLocation),
-          bareLeafAliasOf(lrLocation, lr.output),
+        // One read per location it reads (`locationsOf`). The columns are traced to the first, as they always were;
+        // the others are there so the input checks see every dataset the read touches.
+        val locations = SparkPlanAdapter.locationsOf(lr, declaredInputs)
+        val primary = ir.Read(
+          ir.DatasetRef(locations.head),
+          bareLeafAliasOf(locations.head, lr.output),
           lr.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
         )
+        if (locations.size == 1) primary else ir.Union(primary :: locations.tail.map(l => ir.Read(ir.DatasetRef(l))))
 
       // A real Hive-format catalog table read - confirmed empirically (a
       // real embedded-Derby Hive session, not assumed) to be a genuine,
@@ -734,6 +841,36 @@ private[sparkadapter] object SparkPlanAdapter {
       // RepartitionByExpression (.repartition()/.coalesce()) only change
       // physical partitioning. Previously these all fell through to the
       // opaque UnknownPlan placeholder — none of them actually needed one.
+      // A temp or persistent view: Spark wraps the view's own analyzed query in a `View` node, which changes no column.
+      // Without this case it was an opaque UnknownPlan, through which no output column could be traced - so the
+      // commonest PySpark style (createOrReplaceTempView, then spark.sql) reported no lineage and no sensitivity tags.
+      case v: View =>
+        translatePlan(v.child)
+
+      // A query with a WITH clause keeps its CTEs as definitions and references (`WithCTE`, `CTERelationDef`,
+      // `CTERelationRef`) in a write's analyzed query. Inlining every reference by the CTE's body - what Spark's own
+      // optimizer does for a CTE used once - gives the same plan the query would have without the WITH clause. A plan
+      // that cannot be inlined (still a WithCTE afterwards) stays opaque rather than being followed in a loop.
+      //
+      // The alias map is recomputed for the inlined plan. It was computed from the plan with its CTEs still apart, where
+      // a definition and the references to it are separate subtrees, so two columns of one read could be named after
+      // different aliases (one the read's own, one an alias over a reference), and lineage could not follow them back.
+      // In the inlined plan every alias sits above the read it names, as in a query written without WITH.
+      case w: WithCTE =>
+        scala.util.Try(InlineCTE(alwaysInline = true).apply(w)).toOption.filterNot(_.isInstanceOf[WithCTE]) match {
+          case Some(inlined) =>
+            aliasDisambiguation = aliasDisambiguation ++ computeAliasDisambiguation(inlined, declaredInputs)
+            translatePlan(inlined)
+          case None => opaque(w)
+        }
+
+      // A V1 streaming sink's micro-batch: the batch's query, wrapped for the sink. It is a pass-through, so that the
+      // batch DataFrame a `foreachBatch` function receives - which `CheckpointRegistry` resolves to this plan - is
+      // translated as the query that produced it. At the top of a plan it writes nothing Invaract checks per batch (the
+      // stream itself is checked once, when it starts), as before.
+      case mb if mb.getClass.getSimpleName == "WriteToMicroBatchDataSourceV1" && mb.children.size == 1 =>
+        translatePlan(mb.children.head)
+
       case d: Deduplicate =>
         translatePlan(d.child)
       case r: Repartition =>
@@ -816,16 +953,20 @@ private[sparkadapter] object SparkPlanAdapter {
 
       case lrdd: LogicalRDD =>
         report(
-          "RDDRelation",
+          SparkPlanAdapter.RddRelationSourceType,
           "This Dataset is backed directly by an RDD (createDataFrame(rdd), rdd.toDF, ...); Invaract cannot see " +
             "what the RDD was computed from"
         )
-        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", "RDDRelation")
+        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", SparkPlanAdapter.RddRelationSourceType)
 
-      case other =>
-        val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
-        report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
-        ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
+      case other => opaque(other)
+    }
+
+    /** A plan node with no translation: an opaque placeholder over its translated children, with a diagnostic. */
+    private def opaque(other: LogicalPlan): ir.Plan = {
+      val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
+      report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
+      ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
     }
 
     /** A LIMIT clause's row cap is virtually always a plain integer literal
@@ -978,6 +1119,14 @@ private[sparkadapter] object SparkPlanAdapter {
       // Expression fallback so an opaque UDF is always visibly distinct
       // from a built-in, never merely a `Function` whose name happens to
       // look unfamiliar.
+      // A scalar subquery's value is its one output column, which `translateSubquery` renamed into the subquery's scope;
+      // the subquery itself is joined below the node using it, so lineage follows the value into it. Outside a plan
+      // being translated (no number assigned) it stays the generic function it was.
+      case s: ScalarSubquery if subqueryNumbers.contains(s.exprId.id) && s.plan.output.nonEmpty =>
+        val n = subqueryNumbers(s.exprId.id)
+        val out = s.plan.output.head
+        ir.ColumnReference(ir.ColumnRef(subqueryColumn(n, out.name), Some(subqueryScope(n)), Some(out.exprId.id)))
+
       case udf: Expression if isOpaqueUdf(udf) =>
         val engineType = udf.getClass.getSimpleName
         report(

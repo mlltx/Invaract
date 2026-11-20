@@ -258,26 +258,48 @@ class SparkPartitioningSpec extends ConnectorSpecBase {
     }
   }
 
-  /** A stream handed to `foreachBatch`, whose sink (a V1 one) says nothing of how the function lays its writes out. */
-  private def streamToFunction(): Unit = {
+  private val jdbcUrl = "jdbc:derby:memory:partitioning_spec;create=true"
+
+  /** A JDBC save, which says nothing of how the rows are laid out: Spark states no partitioning for it. */
+  private def saveOverJdbc(): Unit = {
+    val props = new java.util.Properties()
+    props.setProperty("driver", "org.apache.derby.jdbc.EmbeddedDriver")
+    frame().write.mode("overwrite").jdbc(jdbcUrl, "REPORT", props)
+  }
+
+  /** A stream into `foreachBatch` whose function writes each batch, partitioned by `region`, to `path`. */
+  private def streamToFunctionWriting(path: String): Unit = {
     streamInput
     spark.readStream.schema(frame().schema).parquet(streamInput).writeStream
-      .foreachBatch((batch: org.apache.spark.sql.DataFrame, _: Long) => ())
+      .foreachBatch((batch: org.apache.spark.sql.DataFrame, _: Long) => batch.write.mode("append").partitionBy("region").parquet(path))
       .option("checkpointLocation", at("checkpoint_foreach")).trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
       .start().awaitTermination()
   }
 
-  test("a stream into a memory sink is unpartitioned; one into foreachBatch states nothing, so a partitioned output refuses it") {
+  test("a stream into a memory sink is unpartitioned; a JDBC save states nothing, so a partitioned output refuses it") {
     streamInput
     withContract(partitioned("MemorySink", List("region"), format = "memory")) {
       val types = refused(spark.readStream.schema(frame().schema).parquet(streamInput).writeStream.format("memory").queryName("partitioned_memory")
         .start().awaitTermination()).result.violations.map(v => v.violationType -> v.actual)
       assert(types.contains(ViolationType.OutputPartitioningMismatch -> Some("none")), types)
     }
-    withContract(partitioned("anywhere", List("region"))) {
-      val List(v) = refused(streamToFunction()).result.violations
-      assert(v.violationType == ViolationType.UnverifiableWrite && v.message.contains("WriteToStream"))
+    withContract(partitioned("\"jdbc:" + jdbcUrl + "/REPORT\"", List("region"), format = "jdbc")) {
+      val List(v) = refused(saveOverJdbc()).result.violations
+      assert(v.violationType == ViolationType.UnverifiableWrite && v.message.contains("SaveIntoDataSourceCommand"))
     }
+  }
+
+  test("a foreachBatch stream is not judged as a write; a partitioned write inside its function is checked like any batch write") {
+    val path = at("foreach_partitioned")
+    withContract(partitioned(path, List("region"))) {
+      // The stream's sink is the job's function; the write the function makes is what is checked.
+      scala.util.Try(streamToFunctionWriting(path)).failed.toOption.foreach { e =>
+        val violations = Iterator.iterate[Throwable](e)(_.getCause).takeWhile(_ != null)
+          .collectFirst { case c: ContractViolationException => c.result.violations.map(_.violationType) }
+        fail(s"expected the partitioned write inside the function to pass, got $violations / $e")
+      }
+    }
+    assert(new java.io.File(path).listFiles().exists(_.getName.startsWith("region=")), "the batch was written, partitioned")
   }
 
   test("a Delta table write states its table's partitioning (V2): an append is checked against the declared keys") {
@@ -294,7 +316,7 @@ class SparkPartitioningSpec extends ConnectorSpecBase {
 
   test("an invalid contract is reported as invalid, not as an unverifiable partitioning") {
     val invalid = partitioned("anywhere", List("region")).replace("id: partitioning", "id: \" \"")
-    val types = refused(withContract(invalid)(streamToFunction())).result.violations.map(_.violationType)
+    val types = refused(withContract(invalid)(saveOverJdbc())).result.violations.map(_.violationType)
     assert(types.nonEmpty && !types.contains(ViolationType.UnverifiableWrite), types)
   }
 

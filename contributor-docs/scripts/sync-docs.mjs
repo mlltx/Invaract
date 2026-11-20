@@ -61,6 +61,13 @@ const PAGES = [
     order: 4,
   },
   {
+    src: 'docs/SPARK_ADAPTER_HARDENING_PLAN.md',
+    slug: 'design/spark-adapter-hardening-plan',
+    section: 'Design Docs',
+    label: 'Spark Adapter Hardening Plan',
+    order: 3,
+  },
+  {
     src: 'docs/ADDING_A_SPARK_CONNECTOR.md',
     slug: 'design/adding-a-spark-connector',
     section: 'Design Docs',
@@ -207,6 +214,13 @@ const PAGES = [
     section: 'Connectors',
     label: 'CSV',
     order: 6,
+  },
+  {
+    src: 'docs/connectors/jdbc.md',
+    slug: 'connectors/jdbc',
+    section: 'Connectors',
+    label: 'JDBC',
+    order: 8,
   },
   {
     src: 'docs/connectors/clickhouse.md',

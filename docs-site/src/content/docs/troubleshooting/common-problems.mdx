@@ -40,10 +40,39 @@ Check whether your write goes through a shape listed in
 (a DataSourceV2 catalog write, or `MERGE`/`UPDATE`/`DELETE` outside the connectors this
 covers), support for it may not exist yet.
 
+A statement that removes or moves a table's data names the table in the message rather than a
+Spark class. There are three cases:
+
+- **`DROP TABLE`, `TRUNCATE TABLE` or `ALTER TABLE ... DROP PARTITION` on a table the contract
+  does not declare**, such as a job that begins `DROP TABLE IF EXISTS top_customers` before
+  rebuilding it. Declare the table as an output: the statement is allowed on a declared output
+  that may be overwritten (no `saveMode`, or `saveMode: overwrite`). The job must then write
+  it too, or it ends with `MISSING_OUTPUT`. See
+  [Fail-Closed by Default](/concepts/fail-closed/#statements-that-remove-data).
+- **`ALTER TABLE ... SET LOCATION`, `ADD PARTITION ... LOCATION` or `RENAME TO` on a declared
+  output.** The output would hold data no checked write produced, or stop existing under the
+  name the contract gives. Write the output with a query instead, or change the contract's
+  location in the same change.
+- **A column change Invaract could not work out** on a declared output (rare; it depends on a
+  Spark method that may differ in a Spark release Invaract has not been tested with).
+
 On Beam, the same violation names the step that ends the pipeline without a recognized
 write. If that step only reports (it sends metrics or a notification, and writes no governed
 data), a platform can let it through with the
 [trusted steps setting](/reference/configuration/#making-the-checks-stricter).
+
+## A write is rejected as "too deeply nested"
+
+```
+[UNVERIFIABLE_WRITE] 'DeeplyNestedPlan' ... this write's plan is too deeply nested for Invaract to verify
+```
+
+The write's plan is so deep (thousands of chained steps, typically a loop of `withColumn` or
+`union` calls) that even Invaract's retry, on a thread with a very large stack, could not walk
+it. Rather than let the write through unchecked, Invaract refuses it. Shorten the plan before
+writing: call `.checkpoint()` or `.localCheckpoint()` part way through the loop, or write an
+intermediate table and read it back. Queries that write nothing (`count()`, `show()`) are never
+refused for this.
 
 ## A rule check is rejected with `RULE_UNVERIFIABLE_DML`
 
@@ -108,6 +137,20 @@ Every setting that switches something on (`dryRun`, `rejectUndeclaredFields`,
 A notification config's `sink.enabled` is held to the same rule, and the message names the
 file. A value Invaract can't read is never quietly taken to mean `false`.
 
+## The job stops with "Invaract does not read 'spark.invaract.…'"
+
+A `spark.invaract.*` setting is misspelt, or isn't one Invaract has. The message names the
+setting you probably meant:
+
+```
+Invaract does not read 'spark.invaract.rejectUndeclaredInput'. Did you mean 'spark.invaract.rejectUndeclaredInputs'?
+```
+
+Fix the spelling where the job is launched. The names are case-sensitive, as all Spark settings
+are: `spark.invaract.dryrun` is refused, `spark.invaract.dryRun` is read. Every setting is listed
+in [Configuration Settings](/reference/configuration/). In dry-run mode the same message is only
+a warning, and the misspelt setting has no effect.
+
 ## A location doesn't match even though it "looks right"
 
 A declared location matches the place the job reads or writes when it is that place, or the
@@ -120,8 +163,9 @@ examples. The usual reasons it still doesn't match:
   `hdfs://nn:8020/data/orders`: write `data/orders`, or the whole URL.
 - **A dotted table name.** `gold.orders` is one segment and never matches the table. Write
   `gold/orders` (see [Tables](/reference/contract-format/#tables)).
-- **A partition's folder.** A job that reads `/data/orders/date=2024-01-01` reads that folder,
-  not `orders`.
+- **A partition's folder of an output.** A read of `/data/orders/date=2024-01-01` counts as a
+  read of a declared input `orders` ([Reading part of an input](/reference/contract-format/#reading-part-of-an-input)),
+  but a write into it is a write somewhere other than a declared output `orders`.
 
 The violation names the location the job actually used, so compare the two from there.
 
@@ -163,21 +207,23 @@ configured, dry-run mode reports every write-shaped command it couldn't infer a 
 Running this through `spark-sql` is a real example:
 
 ```sql
-INSERT OVERWRITE DIRECTORY '/data/out/orders_doubled' USING parquet
-SELECT id, value * 2 AS doubled FROM orders;
+CREATE TABLE orders_archive (id INT, value INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+LOAD DATA LOCAL INPATH '/tmp/invaract-example/data/orders.csv' INTO TABLE orders_archive;
 ```
 
 ```
-"'InsertIntoDataSourceDirCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE"
+"'LoadDataCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE"
 ```
 
-The write itself works. The point is what enforcement would do with it: Invaract has no
-translation for that command, so with a contract active it would reject the write as an
+The statement itself works. The point is what enforcement would do with it: Invaract has no
+translation for that command, so with a contract active it would reject it as an
 [`UNVERIFIABLE_WRITE`](#a-write-is-rejected-with-unverifiable_write). Dry-run is telling you
-so now, before you turn enforcement on. Write to a table or a path with the DataFrame API or
-`INSERT INTO`, or check [Connector Support](/reference/connector-support/) for the shape you need.
-(You will often see an `INFERRED` event for the same statement too: the command is executed as
-a supported write underneath.)
+so now, before you turn enforcement on. Write the table with the DataFrame API or `INSERT INTO`,
+or check [Connector Support](/reference/connector-support/) for the shape you need.
+
+A `DROP TABLE`, `TRUNCATE TABLE` or `ALTER TABLE ... DROP PARTITION` is reported
+`SKIPPED_UNSUPPORTED` instead, not as a blocker: enforcement allows it on a declared output that
+may be overwritten (see [Fail-Closed by Default](/concepts/fail-closed/#statements-that-remove-data)).
 
 ## Dry-run reporting prints a warning and no events arrive
 
@@ -195,6 +241,39 @@ file is shipped there (for example with `--files`). A `sink.class` that doesn't 
 sink whose own required property is missing, is reported the same way. When Invaract is
 enforcing a contract rather than in dry-run mode, each of these stops the job at start-up
 instead, with the same message.
+
+## Spark: `Contract file not found` in cluster mode
+
+```
+Contract file not found: /path/to/contract.yaml. If a Spark job runs in cluster mode, ship the file with --files and name it by its file name.
+```
+
+With `--deploy-mode cluster` the driver runs on a machine of the cluster, where the path you
+gave does not exist. Name the file by a URI the cluster can read
+(`--conf spark.invaract.contract=s3a://bucket/contracts/orders.yaml`), or ship it with
+`--files /path/to/contract.yaml` and set `spark.invaract.contract=contract.yaml`. See
+[Where the contract file can live](/guides/installing-the-enforcement-rule/#where-the-contract-file-can-live).
+
+## Spark: the job runs, but nothing is checked
+
+No `CONTRACT_VALIDATION` events, no `Invaract` lines in the driver log, and writes to places
+the contract does not declare go through. Invaract was never installed in the session. With
+`spark.sql.extensions` alone, Spark only logs one warning when it cannot load a class:
+
+```
+WARN SparkSession: Cannot use com.invaract.sparkadapter.InvaractSparkSessionExtension to configure session extensions.
+```
+
+That happens when the class name is misspelt or the jar is not on `--jars`. It also happens
+with no warning at all when the job's own code sets `spark.sql.extensions` (for Delta Lake or
+Iceberg), which replaces the list `spark-submit` gave. Attach Invaract with
+`--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin` instead: a plugin Spark
+cannot load stops the job, and the plugin adds Invaract to whatever extensions the job sets.
+See [Install the Enforcement Rule on Spark](/guides/installing-the-enforcement-rule/).
+
+If Invaract is installed but only reports (`CONTRACT_INFERENCE` events, no blocking), the job's
+configuration has turned on `spark.invaract.dryRun`. A platform can stop that by pinning the
+setting: see [Lock Settings for a Platform](/guides/locking-settings-for-a-platform/).
 
 ## Beam: the pipeline runs, but nothing is checked
 

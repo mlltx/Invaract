@@ -37,11 +37,12 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("Duplicate field name 'customer_id'")))
   }
 
-  test("validate should warn when a field is both required and nullable") {
+  test("a field both required and nullable is not warned about: the column is there, and its values may be null") {
     val contract = ContractParser.parseFile(fixture("warnings_field_issues.yaml"))
     val result = ContractValidator.validate(contract)
 
-    assert(result.warnings.exists(_.message.contains("required but also nullable")))
+    assert(contract.outputs.exists(_.schema.fields.exists(f => f.required && f.nullable)), "the fixture has such a field")
+    assert(!result.warnings.exists(_.message.contains("nullable")))
   }
 
   test("validate should warn on an unrecognized field type") {
@@ -65,6 +66,9 @@ class ContractValidatorTest extends AnyFunSuite {
       ContractValidator.validate(contract).warnings.filter(_.message.contains("Unrecognized field type"))
     }
     List("decimal(10,2)", "DECIMAL( 12 , 4 )", "array<int>", "map<string,array<long>>", "struct<a:int,b:string>", "Array<String>", "  array<int>  ")
+      .foreach(t => assert(warnings(t).isEmpty, s"'$t' should be recognized"))
+    // the aliases the type parser accepts, at the top level too (what DESCRIBE TABLE prints):
+    List("int", "bigint", "smallint", "tinyint", "real", "dec(10,2)", "numeric", " INT ")
       .foreach(t => assert(warnings(t).isEmpty, s"'$t' should be recognized"))
     // a genuinely unknown keyword is still flagged, parameters or not:
     assert(warnings("variant").size == 1)

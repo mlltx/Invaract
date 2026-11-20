@@ -187,4 +187,19 @@ class AttachSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(log.split("\n").count(_.contains("outputs[0].format")) == 1)
     assert(!stderrOf(AttachSetup.select(config(InvaractConf.Contract -> contractPath))).contains("Invaract: contract"))
   }
+
+  test("a notifyConfig file whose sink is not enabled is warned about once; an enabled one is not") {
+    val off = file("off-warned.properties", s"sink.class=${classOf[RecordingTestSink].getName}\n")
+    val loadedOff = com.invaract.verification.notification.NotificationConfig.load(off)
+    assert(AttachSetup.warnIfDisabled("spark.invaract.notifyConfig", off, loadedOff), "warned the first time")
+    assert(!AttachSetup.warnIfDisabled("spark.invaract.notifyConfig", off, loadedOff), "and not again")
+    assert(AttachSetup.warnIfDisabled("--invaractNotifyConfig", off, loadedOff), "a different setting naming it is its own warning")
+    val on = com.invaract.verification.notification.NotificationConfig.load(goodSink)
+    assert(!AttachSetup.warnIfDisabled("spark.invaract.notifyConfig", goodSink, on))
+    assert(
+      AttachSetup.disabledSinkMessage("spark.invaract.notifyConfig", off) ==
+        s"'spark.invaract.notifyConfig' names '$off', but sink.enabled is not true in it, so no events are published."
+    )
+    assert(AttachSetup.select(config(InvaractConf.Contract -> contractPath, InvaractConf.NotifyConfig -> off)).sink.isEmpty)
+  }
 }

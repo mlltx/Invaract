@@ -104,7 +104,7 @@ final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
   * With `untranslatableWrite` set the job is not that read-transform-write at all: it is a
   * data-changing operation on `output` that looks like a write but that the adapter has no
   * translation for, and an adapter must refuse it (`UNVERIFIABLE_WRITE`) rather than let it through
-  * unchecked. The adapter picks its own engine's representative (Spark: `TRUNCATE TABLE`); the
+  * unchecked. The adapter picks its own engine's representative (Spark: `LOAD DATA`); the
   * inputs and columns are not used.
   *
   * With `rowChange` set the job changes the rows of `output` in place instead, and `columns` describe

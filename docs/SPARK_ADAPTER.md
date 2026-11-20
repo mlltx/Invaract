@@ -170,6 +170,19 @@ crash.**
   case) is combined into a synthetic `ARGS(...)` wrapper (an `ir.Function`)
   with a `Diagnostic`, since `AggregateCall` models exactly one argument.
 
+**A plan too deep for the stack.** Translation recurses once per plan node, and the
+enforcement rule translates every plan Spark analyzes (it must, to remember what a later
+`.checkpoint()` was made from), so a plan Spark itself handles — a loop of a thousand
+`withColumn` calls before a `count()` — once ran the analyzer thread out of stack inside
+Invaract and failed a query that writes nothing. `ContractEnforcementRule.verifyOrThrow`
+now runs the translation and the check through `DeepPlans`: an overflow on the analyzer
+thread is retried on a thread with a 512 MB stack (which inherits the active session), and
+only a plan too deep even for that is decided without checking it — a write (or anything
+that may be one) is refused as `UNVERIFIABLE_WRITE` (`DeeplyNestedPlan`), and any other plan
+runs unchecked with one warning. Log-only dry-run skips such a plan with a warning.
+`DeepPlansSpec` exercises the retry deterministically, on a thread with a deliberately tiny
+stack.
+
 Every degradation is paired with a `Diagnostic(nodeType, message)`, and
 `TranslationResult(plan, diagnostics)` carries the complete list. A
 partially understood pipeline is more useful to a verification engine than
@@ -191,6 +204,8 @@ part of).
 |---|---|
 | `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
 | `SaveIntoDataSourceCommand` (Delta and other `CreatableRelationProvider`-based `.save(...)` writes) | `Write(DatasetRef(options("path")), ..., format, saveMode)` — `format` from the write's `dataSource` via `DataSourceRegister.shortName()`, the same mechanism as above, just for the other provider trait Spark routes non-`FileFormat` writes through (see "Delta Lake support" below) |
+| `SaveIntoDataSourceCommand` with no `path` but a JDBC `url` and `dbtable` (`df.write.jdbc(...)`) | `Write(DatasetRef("jdbc:<url>/<table>"), ...)` — the same location string a JDBC read gets, so one contract entry names the table whether a job reads or writes it. A save with neither is located as `<source class>(no path)` with a diagnostic; the options map itself is never used as a location or shown in a message, since it can hold a password |
+| `InsertIntoDataSourceDirCommand` (`INSERT [OVERWRITE] DIRECTORY '<path>' USING <format> SELECT ...`) | `Write(DatasetRef(path), ..., format, saveMode)` — `overwrite`/`append` from the statement; the nested `InsertIntoHadoopFsRelationCommand` Spark runs for the same directory is checked too |
 | `CreateDataSourceTableAsSelectCommand` (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data source table) | `Write(DatasetRef(storageLocation), ..., format, saveMode)` — `format` straight from `table.provider` (already the clean identifier `DataSourceRegister.shortName()` gives the other two write cases); a third, distinct write shape from both of the above (see "Fail-closed on unverifiable writes" below) |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` — also covers Delta reads (`.load(path)` and catalog table references alike): Delta's read relation is an anonymous subclass of `HadoopFsRelation`, matched here via ordinary subtyping, no dedicated case needed (see "Delta Lake reads" below) |
 | `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
@@ -204,6 +219,11 @@ part of).
 | `Sort` | `Sort(input, order)` |
 | `Window` | `Window(input, windowExpressions, partitionSpec, orderSpec)` |
 | `GlobalLimit` + `LocalLimit` (`.limit(n)`) | `Limit(input, limitValue, offset = 0)` — both nodes (sharing one literal) collapse to one `ir.Limit`, not two |
+| `View` (a temp or persistent view, as `spark.sql` over `createOrReplaceTempView` produces) | transparent pass-through to the view's own query — it was an opaque `UnknownPlan`, so no lineage (and no sensitivity tag) could be traced through a view |
+| `WithCTE` / `CTERelationDef` / `CTERelationRef` (a `WITH` clause) | every reference inlined by the CTE's body (`InlineCTE(alwaysInline = true)`, Spark's own rule), then translated, with the alias map recomputed for the inlined plan so a read and its columns are named after the same alias; a plan that cannot be inlined stays an opaque `UnknownPlan` |
+| a write's query with no projection of its own (a copy, a filter, a sort, a union of reads) | `Project(<translated query>, <the query's own output columns>)` (`withOutputProjection`) — an `ir.Read` declares no columns, so without it the write had no output columns for `ir.Lineage` to trace; a query already ending in `Project`/`Aggregate` is unchanged |
+| a subquery expression in a node (`IN`/`ListQuery`, `EXISTS`, a scalar subquery) | the subquery's plan, its output columns renamed into a scope of its own (`subquery#<n>`, numbered per plan so a fingerprint doesn't depend on Spark's expression ids), joined to the input of the node that uses it as a `LeftSemi` join on the literal `true` — the shape Spark's optimizer rewrites it to. A scalar subquery's value is a `ColumnReference` to that renamed column, so lineage follows it. Before, a subquery's plan (which hangs off an expression, not off the plan's children) was a no-argument function: its reads, joins and filters were invisible to every check |
+| `LogicalRelation` (+ `HadoopFsRelation`) reading several root paths (`spark.read.parquet(a, b)`, a glob Spark expands) | `Union(Read(first), Read(second), ...)` — one read per distinct location (`ReadLocations.of`); columns are traced to the first, as before. Under a contract, a root path inside a declared input is reported at that input's location (`ReadLocations.attribute`), so a partition folder, a file or a glob of files inside a declared input is a read of it; outputs are unaffected. Dry-run attributes each root path to its own dataset (`ReadLocations.datasetRoot`: a file's folder, without trailing `name=value` folders) |
 | `Deduplicate` (`.distinct()`) | transparent pass-through (row count only, no column change) |
 | `Repartition` / `RepartitionByExpression` (`.repartition()`, `.coalesce()`) | transparent pass-through (physical partitioning only) |
 | `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier, Some(exprId.id)))` — the `id` is translator-assigned identity, opaque outside this module |
@@ -430,7 +450,9 @@ and none for an overwrite with `overwriteSchema`, which Delta really leaves unpa
 (`SparkPartitioningSpec` reads the log after one); a streaming write (`PartitioningSupport.streamSink`):
 a `DeltaSink`'s `partitionColumns`, else the table's as above, a `FileStreamSink`'s
 `partitionColumnNames`, or a V2 sink table's identity transforms (a memory sink has none), but
-never a V1 `Sink`'s empty default (`foreachBatch`, console, Kafka), which says nothing; and
+never a V1 `Sink`'s empty default (Kafka), which says nothing (a console or memory stream is a V2
+table with no partitioning, so it is checked as unpartitioned; a `foreachBatch` stream is not judged
+as a write at all, see "`foreachBatch` streams"); and
 the V2 writes, from `Table.partitioning()` (or a CTAS/RTAS's own `partitioning`) when every
 transform is an identity on one column (`OverwritePartitionsDynamic` dynamic, the rest
 static). Everything else (another streaming sink, an unconverted `InsertIntoHiveTable`, Hive CTAS, a
@@ -869,6 +891,7 @@ belongs on which side of it.
 | [CSV](connectors/csv.md) | Same shape as Parquet — Spark's own bundled `FileFormat`. | [Operation](connectors/csv.md#csv-operation-surface-coverage-ledger) · [Feature](connectors/csv.md#csv-feature-surface-coverage-ledger) |
 | [Hive](connectors/hive.md) | `HiveTableRelation` reads plus three newly-translated write shapes; a static-partition `INSERT` false-rejection bug found and fixed. | [Operation](connectors/hive.md#hive-operation-surface-coverage-ledger) · [Feature](connectors/hive.md#hive-feature-surface-coverage-ledger) |
 | [Avro](connectors/avro.md) | Reuses existing generic write cases with zero new `WriteCommandSupport` code; one general (non-Avro-specific) location bug found and fixed. | [Operation](connectors/avro.md#avro-operation-surface-coverage-ledger) · [Feature](connectors/avro.md#avro-feature-surface-coverage-ledger) |
+| [JDBC](connectors/jdbc.md) | Reads, and `df.write.jdbc(...)` writes, located as `jdbc:<url>/<table>` on both sides. Tested against embedded Derby. | [Operation](connectors/jdbc.md#jdbc-operation-surface-coverage-ledger) · [Feature](connectors/jdbc.md#jdbc-feature-surface-coverage-ledger) |
 | [ClickHouse](connectors/clickhouse.md) | Redirected from an infeasible BigQuery attempt; one new `deleteFromTable` write case; tested against a real standalone-binary server (no Docker in this environment). | [Operation](connectors/clickhouse.md#clickhouse-operation-surface-coverage-ledger) · [Feature](connectors/clickhouse.md#clickhouse-feature-surface-coverage-ledger) |
 
 ## Fail-closed on unverifiable writes
@@ -926,10 +949,23 @@ has no compile-time Delta dependency (see "Delta Lake support" above) —
 importing those classes directly would reintroduce exactly the dependency
 this module was built to avoid.
 
+**The list is keyed by the class of the *analyzed* plan**, which is what the check rule
+sees — and for many statements that is a catalyst command, not the `execution.command`
+class the statement later runs as. `DROP DATABASE` is the case that showed why this
+matters: the rule sees `org.apache.spark.sql.catalyst.plans.logical.DropNamespace`, never
+`DropDatabaseCommand`. `DropNamespace` used to be on the safe list, so `DROP DATABASE ...
+CASCADE` — which deletes every table in the database, declared outputs included — passed.
+It is now judged by its `cascade` flag in `FailClosedCommands.isKnownSafe`: without
+`CASCADE` Spark itself refuses to drop a database that still holds a table, so that form is
+safe; with it, the statement fails closed with its own explanation.
+`FailClosedStatementsSpec` runs the statements themselves (not class names) under a
+contract, so a statement whose analyzed class differs from what this list expects shows up
+as a test failure.
+
 Genuinely data-mutating commands the survey found (`DeleteFromTable(WithFilters)`,
 `MergeIntoTable`/`DeltaMergeInto`, `UpdateTable`, `LoadData(Command)`,
-`TruncateTable(Command/Partition)`, `DropTable(Command)`/
-`DropDatabaseCommand` (can delete a managed table's/database's data),
+`TruncateTable(Command/Partition)`, `DropTable(Command)`, `DropNamespace` with
+`CASCADE` (can delete a managed table's/database's data),
 `DropPartitions`/`AlterTableDropPartitionCommand`, `ReplaceTable`, and
 Delta's `DeleteCommand`/`UpdateCommand`/`MergeIntoCommand`/`WriteIntoDelta`/
 `CloneTableCommand`/`ConvertToDeltaCommand`/`CreateDeltaTableCommand`/
@@ -939,10 +975,13 @@ are deliberately **not** on the safe list — they fail closed until
 `ir.Write`'s "write a dataset to a location" shape at all — `MERGE`/
 `DELETE`/`UPDATE` are row-level operations the IR wasn't designed to
 represent, a real future modeling question, not just a missing case
-arm). `InsertIntoDataSourceCommand`/`InsertIntoDataSourceDirCommand` are
-real writes with a shape similar to `SaveIntoDataSourceCommand` that could
-plausibly be added later; left off for now rather than expanding this
-change's scope further. `FailClosedCommands`' own doc comment carries the
+arm); the table-removal ones among them (`DROP TABLE`, `TRUNCATE`, `DROP PARTITION`) are
+now judged against the contract's outputs before this list is consulted - see "Statements
+that remove data or change a table" below. `InsertIntoDataSourceCommand` is a real write with a shape similar to
+`SaveIntoDataSourceCommand` that could plausibly be added later; left off for now.
+`InsertIntoDataSourceDirCommand` (`INSERT [OVERWRITE] DIRECTORY ... USING <format>`) is
+now a recognized write (`WriteCommandSupport.insertIntoDataSourceDir`), the data-source
+counterpart of the Hive form `insertIntoHiveDir` already covered. `FailClosedCommands`' own doc comment carries the
 full list and the categorization rule ("does it change a table's
 committed row content?") so it can be extended consistently.
 
@@ -1048,6 +1087,91 @@ real code running in the driver: a contract is therefore an input to trust like 
 that serves contracts must authenticate its publishers. The registry client class is instantiated without this
 check because it can only come from platform configuration, never from a contract.
 
+## Statements that remove data or change a table
+
+Two kinds of statement change a table without a query to check. Both used to be decided by
+the safe list alone: the first kind was always refused, the second always passed. Both are
+now judged against what the contract says about the table they name, before the fail-closed
+catch-all, in `ContractEnforcementRule`'s non-write branch. A table is named as a write to it
+is: its location and its table name (`TableTargets`, shared by both).
+
+**Removing data** (`DestructiveDdlSupport`): `DROP TABLE`, `TRUNCATE TABLE [PARTITION]`,
+`ALTER TABLE ... DROP PARTITION`. The analyzed plan is catalyst `DropTable(ResolvedIdentifier)`
+for any `DROP TABLE` (existing or not; `DropTableCommand` only under
+`spark.sql.legacy.useV1Command`), `TruncateTableCommand`/`AlterTableDropPartitionCommand` for a
+V1 table, and `TruncateTable`/`TruncatePartition`/`DropPartitions` on a `ResolvedTable` for a
+V2 one. A contract lists what a job may change, so (`DestructiveDdlSupport.judge`):
+
+| The table is | Whole table | One partition |
+|---|---|---|
+| a declared output, no `saveMode` or `overwrite` | allowed, `PASSED` event | allowed |
+| a declared output, another `saveMode` | `OUTPUT_SAVE_MODE_MISMATCH` | same |
+| a declared output, a rule about deletes applies (`RuleVerifier.anyRuleAppliesTo`) | `RULE_UNCONDITIONAL_DELETE` for `forbid_unconditional_delete`, else `RULE_UNVERIFIABLE_DML` | allowed |
+| not a declared output | `UNVERIFIABLE_WRITE`, naming the table and telling the user to declare it | same |
+
+A table that does not exist (`DROP TABLE IF EXISTS`) is located where Spark would create it
+(`defaultTablePath`), so a dry run's draft, which declares a new table by that path, covers
+the drop that precedes its rebuild. An allowed removal is not a write (`DeclaredOutputs` is not
+told): a job that drops a declared output and never rebuilds it still ends with
+`MISSING_OUTPUT`. Dry-run reports a removal `SKIPPED_UNSUPPORTED` rather than
+`SKIPPED_UNRECOGNIZED`, since enforcement can allow it, and the summary's merged draft declares no
+`saveMode` for an output the job removed data from (`DryRunReporter.withoutSaveModeOf`): the
+commonest rebuild, `DROP TABLE IF EXISTS t` then `saveAsTable(t)`, writes with the default mode
+`error`, and a draft declaring it refused its own job's drop (found running the plan's newcomer
+check as a real PySpark job; `DestructiveDdlSupportSpec` now runs it). `DROP VIEW` (`DropTableCommand` with
+`isView`) and `CLEAR CACHE` (`ClearCacheCommand$`) are on the safe list: they remove no data.
+`DestructiveDdlSupportSpec` holds every row of the table.
+
+**Changing a table** (`SchemaDdlSupport`): `ALTER TABLE` statements that change the columns
+or the location of a table. They change no rows, which is why they were on the safe list,
+but they change what the contract describes, so an output could lose a required column or be
+repointed at other data with no validation at all. They are checked the way an Iceberg
+procedure that changes a table's state is (`StateChangingCallSupport`):
+
+- a column change (catalyst `AddColumns`/`RenameColumn`/`DropColumns`/`AlterColumn`/
+  `ReplaceColumns` on a `ResolvedTable`, for Delta and Iceberg; `AlterTableAddColumnsCommand`
+  and `AlterTableChangeColumnCommand` for a V1 table) goes through
+  `VerificationPipeline.verifyStateChange` with the columns the table will have. For a V2
+  table those are worked out by Spark's own `CatalogV2Util.applySchemaChanges`, called by
+  reflection since it is not public API; if it cannot be called, the statement is refused on
+  a declared output rather than passed. `verifyStateChange` lets a table no declared output
+  names through, with a `PASSED` event.
+- `SET LOCATION` (table or partition) and `ADD PARTITION ... LOCATION` on a declared output
+  are refused, `UNVERIFIABLE_WRITE`: the output would serve data no checked write produced.
+  On any other table they pass, with no event.
+- `RENAME TO` is both: renaming a declared output away is refused, and the table is then
+  checked as the one its new name is, so renaming a staging table onto a declared output's
+  name has its columns checked as the output's.
+
+A statement `SchemaDdlSupport` does not recognize (properties, constraints, a view) keeps its
+place on the safe list. `SchemaDdlSupportSpec` holds these on parquet and Delta tables.
+
+## `foreachBatch` streams
+
+`df.writeStream.foreachBatch(f).start()` analyzes to a `WriteToStream` whose sink is Spark's
+`ForeachBatchSink`: the job's own function. It used to be judged as a write to a place named
+`ForeachBatchSink`, so every such stream - the standard way to upsert a stream into Delta - was
+refused under any contract, and no contract could let it through. Now
+`WriteCommandSupport.writeToStream` does not match a `ForeachBatchSink`
+(`WriteCommandSupport.isForeachBatch`); the stream is not itself a write, and each write the
+function makes is checked as the batch write it is.
+
+What such a write reads is found through the checkpoint registry. Per micro-batch the rule sees
+`WriteToMicroBatchDataSourceV1` (the batch's query, wrapped for the sink), then the bare
+`LogicalRDD` Spark builds the batch DataFrame from, carrying the same output attribute ids - so
+`CheckpointRegistry` records the first and binds the second to it, exactly as it does for a
+`.checkpoint()`, and the function's write is resolved back to the files the micro-batch read.
+`SparkPlanAdapter` translates `WriteToMicroBatchDataSourceV1` as a pass-through to its query.
+Those files lie inside the stream's source folder, so a contract that declares the folder as an
+input is satisfied (`ReadLocations`). Each session builds its own registry, and a stream runs in
+a clone of the job's session with its own rule and registry, which sees both plans.
+
+A non-file source (`rate`, Kafka) has no location: its batches read nothing a contract can
+declare, so the function's write passes a contract that declares no input, and fails one that
+declares the source (`MISSING_INPUT`). `ForeachBatchSpec` records this. `.foreach(writer)`,
+`console`, `memory` and `noop` streams are still judged as writes, to a place a contract can
+name but no output usually is.
+
 ## Declared outputs never written (`DeclaredOutputs`)
 
 A contract that declares an output promises the job writes it (`check.outputsWritten`). Spark checks each write as it
@@ -1086,6 +1210,22 @@ ends each scenario's job with `DeclaredOutputs.finishAll`, which is how `declare
   declares the output's location rejects it with `OUTPUT_LOCATION_MISMATCH`. A catalog-registered Delta
   table is unaffected, which is why the conformance kit's DML scenarios run on one.
 
+- **Reads and writes outside a query plan are not seen**: RDD actions (`saveAsTextFile`),
+  `foreachPartition`/`ForeachWriter` bodies, data collected to the driver and written there, a
+  file moved with `FileSystem.rename`. Invisible by nature; the user page "What Invaract on Spark
+  Cannot See" lists them and the settings (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, a
+  `require_absolute_location` policy) that close the gaps that can be closed.
+- **A contract cannot name a view as its input.** A read through a view is reported as a read of
+  the tables under it (H-14), so declaring those works. Answering to the view's name too would
+  need an `ir.Read` with two identities: an IR change left for a separate design.
+- **`console`, `memory`, `noop` and `.foreach(writer)` streaming sinks stay refused** under a
+  contract: they have no location a contract could name. A non-file source (`rate`, Kafka) inside
+  `foreachBatch` reads nothing a contract can declare (see "`foreachBatch` streams").
+- **Sensitivity tags are reported, not enforced** (the contract format reference says so).
+- **Not exercised for the table statements** (`DestructiveDdlSupport`, `SchemaDdlSupport`): Spark
+  Connect, the Iceberg forms (covered by construction where a catalyst class such as
+  `AlterTableCommand`, `DropTable` or `TruncateTable` is matched), and cluster managers other
+  than `local`.
 - **No `SparkSessionExtensions`-based capture.** Only a `DataFrame`'s own
   `.queryExecution` or a registered `QueryExecutionListener` are used to
   obtain a plan. This is deliberate (see *Integration point* above), not
@@ -1157,7 +1297,11 @@ every real run for a reason unrelated to actual contract compliance, so
 locations are matched by normalized suffix instead (both sides in
 `contract.Locations`' canonical form - no `file:` scheme, no repeated or
 trailing slashes, `s3a://` as `s3://` - then a declared location matches if
-it equals, or is a path-boundary suffix of, the actual one). A read or write
+it equals, or is a path-boundary suffix of, the actual one). A *read* whose root path lies
+inside a declared input (a partition folder, a file, a glob of files) is reported at that
+input's location before matching (`ReadLocations`, applied by `SparkPlanAdapter.locationsOf`),
+and every root path of a multi-path read is a read of its own; schemas, formats and CSV
+options are keyed by the same attributed locations. A read or write
 of a catalog table also answers to its table name, `catalog/namespace/table`
 (`LocationMatching.namesOf`), so a contract can name the table; see
 "`StructuralVerifier` internals" below.
@@ -2110,6 +2254,32 @@ dependency at all, so it's fully and directly testable with a real
 without needing a Spark job to prove anything a Spark job wouldn't
 actually exercise differently.
 
+### One write, several checks: `writeKey`
+
+Spark checks some statements more than once: a `saveAsTable` as the table's creation and again
+as the insert it runs inside it, a Delta `CREATE TABLE ... AS SELECT` three times (as analyzed,
+as the copy the analyzer marks analyzed, then the `AppendData` it runs). Every check still runs
+(a nested write that fails is blocked), so each publishes a `ContractValidationEvent`, and a
+consumer counting events over-counted writes. `WriteKeys` gives every check of one write the
+same `writeKey` (`<canonical location>#<n>`), passed to `VerificationPipeline.verifyWrite`'s
+overload that takes one:
+
+- a check made while a checked write is executing is of that write, when the two answer to a
+  common name (location or table name). Spark runs a command inside
+  `SQLExecution.withNewExecutionId`, which records the command's `QueryExecution` against the
+  execution id it puts on the thread as an inheritable local property; the key is a tree node
+  tag on the plan the rule was given, found again through `SQLExecution.getQueryExecution` of
+  the innermost and the outermost (`EXECUTION_ROOT_ID_KEY`) execution;
+- an `AnalysisOnlyCommand` marked analyzed is the same statement as the unmarked one checked just
+  before it on the same thread, when marking that one gives exactly it;
+- anything else gets a new key: a second write to the same place, each batch write a
+  `foreachBatch` function makes (it runs inside the micro-batch's execution, whose plan is no
+  checked write).
+
+The plan (H-16) suggested a per-thread "same location within 60 seconds" rule; it would have
+merged two genuine writes of the same place and missed the marked twin, which the probe that
+drove this design found. `WriteKeysSpec` holds the cases.
+
 ## Location resolution
 
 `com.invaract.verification.location`
@@ -2255,6 +2425,44 @@ enforces a PASS and a FAIL, runs dry-run mode, fails closed with a clear
 message when neither conf key is set, and (with `spark.invaract.notifyConfig`
 also set) publishes both `ContractValidationEvent` and `WriteEvent` to a
 real `FileNotificationSink`.
+
+### Attaching with `spark.plugins`, and pinned settings
+
+`InvaractSparkPlugin` (a `SparkPlugin` with a driver half only) is the recommended way to
+attach: `--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin`. Its
+`DriverPlugin.init` runs before any session exists and adds this extension to the
+application's `spark.sql.extensions` when it is missing (`InvaractSparkPlugin.withInvaract`),
+with a `WARN`. That closes three ways the extension alone could be missing unnoticed: a
+misspelt class name and a missing jar (Spark only warns for an extension it cannot load, but
+fails an application whose plugin it cannot load), and a job whose own builder sets
+`spark.sql.extensions`. The extension injects its check rule once per
+`SparkSessionExtensions` (`InvaractSparkSessionExtension.firstTime`), so listing it twice, or
+in both places, checks each write once.
+
+`PinnedSettings` reads the `.properties` file the driver's environment variable
+`INVARACT_PINNED_CONF` names. `SparkConfigSource` looks every key up there before the
+session's conf, so a pinned setting cannot be changed by the job's `builder.config`,
+`spark.conf.set` or `--conf`. The plugin also writes pinned values back into the live
+`SparkConf`, warning with the key (never the value) for each one the job had changed. A file
+that cannot be read, or that names a key Invaract does not read (`SparkSettingNames`), stops
+the job. The two prefix families dry-run reporting reads with `session.conf.getAll`
+(`spark.invaract.job.metadata.*`, `spark.invaract.contract.metadata.*`) are not pinned. This
+promises that Invaract is not missing or loosened *by accident or by configuration*; a job's
+code runs with the driver's permissions, so no in-process check can stop code written to
+defeat it. `InvaractSparkPluginJobSpec` runs a real job in its own JVM that sets its own
+extensions and `dryRun=true`, and is still enforced.
+
+### File settings from any Hadoop file system
+
+The settings that name a file (`contract`, `orgPolicy`, `orgPolicyOverlays`, `locationMap`,
+`notifyConfig`) used to be read as local paths only: even a `file:` URI failed, and in
+cluster deploy mode every file had to be shipped with `--files`. `SparkConfigSource` now
+passes their values through `RemoteFiles.localizeSetting`: a value with a URL scheme (two
+letters or more, so `C:/` stays a path; not `registry://` or `ref://`) is copied to a local
+temporary file with the session's `hadoopConfiguration`, once per session per value, and the
+setting reads as that copy. A plain path is unchanged; a URI that cannot be read is refused
+naming the setting. `ContractParser.parseFile`'s "not found" message now says to ship the file
+with `--files` in cluster mode.
 
 ## Contract resolution: `registry://`
 
@@ -3166,7 +3374,9 @@ Stryker4s's glob matcher) — with `--thresholds.high 90 --thresholds.low 80
 still exists to pin every module's incremental, changed-files-only run to
 the same 70% new-code bar regardless of what each module's own
 whole-module thresholds happen to be set to, without touching either
-module's `build.sbt`.
+module's `build.sbt`. (`spark-adapter` is the exception: its changed files
+are mutated inside the whole-module shards, under build.sbt's own 90/80/70,
+the same bar — see "Sharding `spark-adapter`'s whole-module run" below.)
 A module with no changed files under `src/main/scala` is skipped entirely
 rather than run with an empty `--mutate` (which Stryker4s tolerates —
 exits 0 reporting "0 mutant(s)" — but still pays the full test-runner
@@ -3221,13 +3431,15 @@ overhead. The two levers above reduced wasted time around that core cost
 
 #### Sharding `spark-adapter`'s whole-module run
 
-> **When the shards run.** The sharded whole-module job runs on pushes to
-> `main`/`develop`/`feature/**`, not on pull-request pushes: a PR is held to
-> the 70% bar on the files it changed by the incremental job, and the
-> merge commit's push run re-checks the whole module against its `break`
-> threshold. (`ir`, `fingerprint` and `verification-core` follow the same
-> rule — their whole-module step is skipped on PRs; their incremental step
-> still runs.)
+> **When the shards run.** On a push to `main`/`develop`/`feature/**` each
+> shard mutates every file in its list: the whole-module run. On a pull
+> request each shard mutates only the files in its list that the PR changed
+> (diffed against the PR's base commit) and skips its remaining steps when
+> there are none, so a PR is held to the 70% bar on exactly the files it
+> changed, and the merge commit's push run re-checks the whole module
+> against its `break` threshold. (`ir`, `fingerprint` and
+> `verification-core` follow the same rule with a single job each — their
+> whole-module step is skipped on PRs; their incremental step still runs.)
 
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to `verification-core`, 8 now — see "Runner memory and runner loss" below)
@@ -3272,12 +3484,28 @@ locally below 70% now fails CI even in a hypothetical case where other
 shards' higher scores would have pulled a single whole-module average
 back above the bar.
 
-The changed-files incremental check (above) moved out into its own
-standalone job (`mutation-testing-spark-adapter-incremental`) rather than
-being sharded too — it already only mutates what a PR touched, so it was
-never the source of the 30-40 minute cost, and running it standalone lets
-it start immediately alongside all of the shards instead of waiting behind
-whichever shard it used to run after.
+The changed-files incremental check (above) first moved out into its own
+standalone job (`mutation-testing-spark-adapter-incremental`), on the
+reasoning that it only mutates what a PR touched and so could never be the
+bottleneck. That held for small PRs and failed for large ones: it diffs
+against the PR's base, so it mutates every file the whole PR changed, on one
+runner at `--concurrency 2`, rerunning the real-Spark suite per mutant (~9
+minutes for Stryker's initial run; a mutant that hangs costs its full
+~13-minute timeout, and 9 of the first 77 mutants on the three largest files
+did). PR #92 (13 files) and PR #237 (18 files, 312 mutants, ~1.3 mutants a
+minute) were both cancelled at GitHub's 360-minute maximum with no score at
+all. It was therefore folded into the shards: on a pull request each shard
+mutates only its changed files (see "When the shards run" above), so the
+PR's files spread over the same 8 runners and the slowest shard, not the
+sum of all of them, sets the wall clock — the largest single file. That is
+longer than the whole-module estimates suggested: on PR #237 most shards
+took 40-60 minutes, but `SparkPlanAdapter.scala` alone (shard-4) was
+cancelled at the 180-minute limit the shards then had, with 59 of its 61
+mutants tested (a 17-minute initial test run; 10 mutants hung until their
+~13-minute timeout), so the shard limit is now 300 minutes. The bar is unchanged: each
+shard's run is held to build.sbt's 70% break threshold, as the separate job
+was by its CLI override. `--concurrency` stays at 2: 4 test runners lost
+runners to memory exhaustion (see the memory note on the job).
 
 A new `mutation-shard-drift-check` job guards the one real risk a
 hand-written per-shard file list introduces: a new file added to

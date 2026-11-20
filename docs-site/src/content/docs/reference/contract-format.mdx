@@ -109,17 +109,17 @@ Types can carry parameters, written as Spark writes them — `decimal(10,2)`,
 leading keyword is checked against the list above.
 
 These are *logical* types: Invaract defines what they mean, independent of any one
-engine, and maps each engine's own column types onto them before comparing. Inside
-`array<...>`, `map<...>` and `struct<...>` the usual SQL aliases are also accepted
-(`int`, `bigint`, `smallint`, `tinyint`, `real`, `dec`/`numeric`, `timestamp_ltz`; a
-struct member may be written `name:type` or `name type`, with `NOT NULL`); a bare
-top-level `type:` must use the keyword from the list above — `integer`, not `int`. Note
-that a plain `decimal` does not match a column of a particular precision: declare
-`decimal(10,2)`.
+engine, and maps each engine's own column types onto them before comparing. The usual
+SQL aliases are also accepted, at the top level and inside `array<...>`, `map<...>` and
+`struct<...>`: `int`, `bigint`, `smallint`, `tinyint`, `real`, `dec`/`numeric`,
+`timestamp_ltz`, as `DESCRIBE TABLE` prints them (a struct member may be written
+`name:type` or `name type`, with `NOT NULL`). `type: int` matches an `integer` column. Note
+that a plain `decimal` (or `dec`, `numeric`) does not match a column of a particular
+precision: declare `decimal(10,2)`.
 
 ### How a declared type is compared
 
-- A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type.
+- A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type, written as above or as one of its aliases (`int` for `integer`).
 - `array<...>`, `map<...>` and `struct<...>` are compared structurally against the actual
   type: element, key, value and member types must match, and a struct's member names and
   count must too. Nullability *inside* a container (`containsNull`, a nested field's
@@ -163,7 +163,6 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
-| Field marked both `required` and `nullable` | Warning |
 | Output `saveMode`, dataset `format` or `catalog.technology` outside the canonical names | Warning |
 | A partition key that is nested, or not a scalar type; a position below 1 or used twice; every field a key; a `partitionOverwriteMode` other than `static`/`dynamic` | Error |
 | A `partitionKeyPosition` without `partitioned: true`; a `partitionOverwriteMode` with no partition keys | Warning |
@@ -206,7 +205,8 @@ it — directly, or through however many computation steps sit in between — vi
 `spark-adapter`'s `SensitivityLineage`, surfaced in `demo/output/report.json`'s
 `transformationIR.lineage[].sensitivityTags` (see
 [Concepts → The Transformation IR](/concepts/transformation-ir/)'s "Column-level
-lineage"), including through an aliased read, a self-join, or a `.checkpoint()`
+lineage"), including through an aliased read, a self-join, a temporary or persistent view, a
+`WITH` clause, a plain copy with no `select`, or a `.checkpoint()`
 in the middle of the job. This is reporting, for a human or downstream tooling auditing a
 transformation, not enforcement: a tagged field never causes `StructuralVerifier` to
 reject a write on its own — there is no "forbid this tag from reaching that output"
@@ -326,7 +326,25 @@ policy.
 | `/data/orders` | `/archive/data/orders` | ❌ it starts from the root |
 | `/data/orders` | `hdfs://nn:8020/data/orders` | ❌ write `data/orders`, or the whole URL |
 | `Orders` | `/data/orders` | ❌ case matters |
-| `orders` | `/data/orders/date=2024-01-01` | ❌ a partition's folder isn't the dataset |
+| `orders` (an output) | `/data/orders/date=2024-01-01` | ❌ a write into a partition's folder is somewhere else |
+| `orders` (an input) | `/data/orders/date=2024-01-01` | ✅ a read inside a declared input (below) |
+
+### Reading part of an input
+
+An input matches a read of any part of it: a partition's folder
+(`/data/orders/date=2024-01-01`), one file, or a glob of files (`/data/orders/*.parquet`) inside
+the place the contract declares. The read counts as a read of that input, so a contract declares
+`orders` once and the job may read one day of it today and another tomorrow. A part is a whole
+number of `/`-separated segments, so `/data/orders2` is not part of `orders`. A path that climbs
+out with `..` after the declared part is never counted as inside it.
+
+When a read names several paths (`spark.read.parquet(a, b)`), or a glob matches several datasets
+(`/data/orders*`), each is a read of its own: with
+[`rejectUndeclaredInputs`](/reference/configuration/#making-the-checks-stricter), each must be a
+declared input.
+
+This applies to inputs only. A write into a folder inside a declared output is a write to another
+place, and is refused as `OUTPUT_LOCATION_MISMATCH`.
 
 ### Tables
 
@@ -345,6 +363,22 @@ Write the parts with `/`. A dotted name such as `gold.orders` is one segment: it
 location spelt exactly that way, never the table. An engine that names other data by parts is
 converted the same way: BigQuery's `project.dataset.table` is `project/dataset/table`, so
 `dataset/table` matches that table in any project and the full form pins one.
+
+### JDBC tables
+
+A table read or written over JDBC (`spark.read.jdbc(...)`, `df.write.jdbc(...)`) is located as
+`jdbc:`, then the connection URL, then `/` and the table name. The URL begins with `jdbc:`
+itself, so the prefix appears twice. Quote the value, since it holds `:` and `;`:
+
+```yaml
+outputs:
+  - name: orders
+    location: "jdbc:jdbc:derby:memory:orders_db;create=true/ORDERS"
+    format: jdbc
+```
+
+The same string names the table whether the job reads it or writes it. Write the table name as
+the job passes it to Spark.
 
 ### Resolving a location at runtime
 

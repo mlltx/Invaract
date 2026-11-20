@@ -229,7 +229,12 @@ object VerificationSetup {
           val describedPlan = ir.UnknownPlan(
             "no transformation plan exists yet - rejected by organizational policy before any plan was analyzed"
           )
-          throw new ContractViolationException(result, VerificationPipeline.explain(governedContract, describedPlan, result))
+          // Its own headline: the policy refuses the contract, so every query of the job is refused (a count() too),
+          // and "Write aborted" would describe a write there may never have been.
+          throw new ContractViolationException(
+            result,
+            VerificationPipeline.explain(governedContract, describedPlan, result, orgPolicyHeadline(governedContract))
+          )
         } else if (evaluation.warnViolations.nonEmpty) {
           // Built directly rather than via VerificationResult.of: that helper
           // infers FAILED from a non-empty violation list, which would
@@ -285,6 +290,10 @@ object VerificationSetup {
   }
 
   /** Splits a comma-separated configuration value into its trimmed, non-blank entries. */
+  /** The first line of the explanation when the organizational policy refuses `contract`. */
+  private[invaract] def orgPolicyHeadline(contract: Contract): String =
+    s"Contract '${contract.id}@${contract.version}' does not meet the organizational policy, so Invaract will not run this job's queries."
+
   private[invaract] def splitCommaSeparated(raw: String): List[String] =
     raw.split(",").map(_.trim).filter(_.nonEmpty).toList
 }

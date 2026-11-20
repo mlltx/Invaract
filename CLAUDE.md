@@ -89,7 +89,8 @@ don't present it as something external consumers would bind to.
   publishing to Kafka — see "Notification sinks" in
   docs/SPARK_ADAPTER.md; not part of the engine's own dependency
   footprint, not built by `./dev/build`, opt-in like `plugin`/`runner`)
-- **Spark Version**: 3.5.1
+- **Spark Version**: 3.5.9 (`spark.primary` in `spark-adapter/src/main/resources/supported-versions.properties`,
+  the one source for the versions built and tested against)
 - **Scala Version**: 2.12.18
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
@@ -186,10 +187,13 @@ further if that single run turns up a real survivor.
 
 This is a manual, PR-scoped check — Stryker4s has no incremental/diff
 mode, so CI cannot enforce "the new code specifically" on its own. (It
-*is* automated for PRs: see `.github/workflows/test.yml`'s
-`mutation-testing` job, which diffs each PR against its previous push and
-reruns `sbt stryker` scoped to just the changed files — see
-docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
+*is* automated for PRs: each module's `mutation-testing-<name>` job diffs
+the PR against its base commit and reruns `sbt stryker` scoped to just the
+changed files; for `spark-adapter` that happens inside the same 8 shards as
+the whole-module run, each shard mutating only its changed files, so a PR
+touching many files is spread over 8 runners instead of outrunning one
+runner's 6-hour limit — see docs/SPARK_ADAPTER.md's "Incremental checking
+in CI.")
 
 **Adding a new file under `spark-adapter/src/main/scala` also means updating
 `.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
@@ -384,7 +388,11 @@ per-session configuration it isn't handed directly — via the check-rule
 LogicalPlan => Unit` shape `forContract` itself already returns, invoked by
 Spark once the real session exists. Every `spark.invaract.*` key documented
 elsewhere in this file composes with it for free, since it calls the same
-`forContract`. `ContractEnforcementRule.forContract`/`.dryRun`, called
+`forContract`. The recommended form is `--conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin`
+(`InvaractSparkPlugin`), which fails the job when Invaract cannot be loaded and keeps the extension installed
+when the job's own code sets `spark.sql.extensions`; a platform pins settings a job's configuration must not
+change in the file the driver's `INVARACT_PINNED_CONF` environment variable names (`PinnedSettings`, ADR-008's
+amendment). `ContractEnforcementRule.forContract`/`.dryRun`, called
 directly in code, remain available for anything the conf-driven path can't
 express — a contract loaded from somewhere `spark.invaract.contract` can't
 name, a resolver `spark.invaract.locationMap` can't express, a custom
@@ -736,7 +744,7 @@ When opening the repository in GitHub Codespaces:
 # - JDK 21
 # - sbt
 # - Scala 2.12.18
-# - Apache Spark 3.5.1
+# - Apache Spark 3.5.9
 # - Node.js 20
 
 # After container is ready, nothing else is needed
@@ -980,8 +988,8 @@ To modify it:
 | Component | Version | Reason |
 |-----------|---------|--------|
 | JDK       | 21      | Latest LTS, Spark 3.5 compatible |
-| Scala     | 2.12.18 | Spark 3.5.1 standard binary |
-| Spark     | 3.5.1   | Latest stable, well-supported |
+| Scala     | 2.12.18 | Spark 3.5 standard binary |
+| Spark     | 3.5.9   | `spark.primary` in `spark-adapter/src/main/resources/supported-versions.properties`; CI also tests 3.5.6 and 3.5.7 |
 | sbt       | 1.9.8 (`contract`/`plugin`/`runner`), 1.11.7 (`ir`/`spark-adapter`) | Stryker4s 1.1.1 needs sbt ≥ 1.11.2; the other three modules stayed on the older, more broadly-tested version |
 | Next.js   | 14.1.0  | Latest stable, Vercel-maintained |
 | Node.js   | 20      | LTS, stable |
@@ -1009,10 +1017,11 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   changed-files check on PRs (70% bar) — see "Mutation Testing
   Requirement" above
   The whole-module runs (every `ir`/`fingerprint`/`verification-core`
-  file, and all `spark-adapter` shards) execute on pushes to `main`/
-  `develop`/`feature/**` only; a PR push runs just the incremental
-  changed-files check, so a whole-module regression is caught on the merge
-  commit's run, not before it
+  file, and every file of every `spark-adapter` shard) execute on pushes to
+  `main`/`develop`/`feature/**` only; a PR push runs just the incremental
+  changed-files check (for `spark-adapter`, each shard on its own changed
+  files, skipping a shard the PR does not touch), so a whole-module
+  regression is caught on the merge commit's run, not before it
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
   `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`
@@ -1123,11 +1132,11 @@ versioned API — see "Build Artifacts and Outputs" above). To add fields:
 
 ### Supporting Multiple Spark Versions
 
-Currently pinned to Spark 3.5.1, only in `spark-adapter` (and thus the
-harness). This is one of the outstanding regression-testing guardrails
-(ROADMAP.md) — a matrix run of `spark-adapter`'s suite against several
-Spark versions would catch Catalyst plan-shape drift the adapter would
-otherwise silently mistranslate.
+Built against Spark 3.5.9 (`spark.primary` in
+`spark-adapter/src/main/resources/supported-versions.properties`, the one source every other
+copy derives from). CI's `spark-version-matrix` job runs `spark-adapter`'s suite against each
+version that file lists as verified (3.5.6, 3.5.7, 3.5.9), catching Catalyst plan-shape drift
+the adapter would otherwise silently mistranslate.
 
 ## Common Development Tasks
 

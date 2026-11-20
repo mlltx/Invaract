@@ -35,7 +35,7 @@ capabilities:
   write.streaming:
     status: partial
     summary: "Streaming writes are checked for file and Delta Lake streams; a connector without a streaming sink of its own cannot be written to as a stream at all."
-    note: Recognized for file and Delta streaming sinks (WriteToStream). Connectors that do not implement a streaming sink at all (for example ClickHouse) cannot be written to by Spark itself.
+    note: Recognized for file and Delta streaming sinks (WriteToStream). A foreachBatch stream is checked through the batch writes its function makes, each the write it is. Connectors that do not implement a streaming sink at all (for example ClickHouse) cannot be written to by Spark itself.
     docs: connectors/delta.md
   write.rowLevelDml:
     status: supported
@@ -43,7 +43,7 @@ capabilities:
     docs: connectors/iceberg.md
   write.stateChange:
     status: supported
-    note: Nine Iceberg CALL procedures that commit a schema change are checked against the contract.
+    note: Nine Iceberg CALL procedures that commit a schema change, and ALTER TABLE statements that change a declared output's columns, are checked against the contract; SET LOCATION, ADD PARTITION ... LOCATION and RENAME TO of a declared output are refused. DROP TABLE, TRUNCATE TABLE and DROP PARTITION are allowed on a declared output that may be overwritten, and refused on any other table.
     docs: connectors/iceberg.md
 
   check.inputExistence:
@@ -85,8 +85,9 @@ capabilities:
       takes its value from the data), a new data source table, a Delta save(path) (its partitionBy, else the table's own
       partition columns read from its log, none for a new table or an overwrite with overwriteSchema), a DataSource V2 write
       into a table partitioned by plain columns (overwritePartitions is dynamic), and a stream into a file, Delta or V2
-      sink. A foreachBatch, console or Kafka stream, a Hive serde write Spark does not convert, another source's save with
-      no partitionBy and a V2 table partitioned by a derived transform (days(ts), bucket) do not state it, so a write of one
+      sink (a console or memory sink is a V2 table with no partitioning). A Kafka stream, a Hive serde write Spark does not
+      convert, another source's save with no partitionBy (a JDBC save) and a V2 table partitioned by a derived transform
+      (days(ts), bucket) do not state it, so a write of one
       onto an output that declares partition keys is refused as unverifiable (UNVERIFIABLE_WRITE) rather than passed unchecked.
   check.csvOptions:
     status: partial
@@ -151,7 +152,7 @@ capabilities:
 
   config.zeroCodeInstall:
     status: supported
-    note: spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension with spark.invaract.* settings; no change to the job.
+    note: spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin with spark.invaract.* settings, no change to the job; the job fails if Invaract cannot be loaded, and Invaract stays installed when the job sets its own spark.sql.extensions. spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension works too. Settings in the file named by the INVARACT_PINNED_CONF environment variable cannot be changed by the job's Spark configuration.
   config.locationRefs:
     status: supported
     note: Resolved from spark.invaract.locationMap (a .properties file) and spark.invaract.locationUrl (a location service), the map first.

@@ -72,6 +72,57 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     assert(failed.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/audit"))))
   }
 
+  test("a write the check blocked does not count as the output having been written") {
+    val out = Files.createTempDirectory("declared-outputs-blocked")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.range(3).write.parquet(s"$out/report")
+    // `audit` declares id as long; an int column is refused, and the job carries on, as a job catching the error would.
+    intercept[com.invaract.verification.ContractViolationException](spark.range(3).selectExpr("cast(id as int) as id").write.parquet(s"$out/audit"))
+    assert(!Files.exists(out.resolve("audit")), "the blocked write never landed")
+    spark.stop()
+    val last = sink.validations.last
+    assert(last.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/audit"))))
+  }
+
+  test("a blocked write followed by one of the same output that passes: the output was written") {
+    val out = Files.createTempDirectory("declared-outputs-blocked-then-written")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    spark.range(3).write.parquet(s"$out/report")
+    intercept[com.invaract.verification.ContractViolationException](spark.range(3).selectExpr("cast(id as int) as id").write.parquet(s"$out/audit"))
+    spark.range(3).write.parquet(s"$out/audit")
+    spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "FAILED", "PASSED"), "no MISSING_OUTPUT at the end")
+  }
+
+  test("dropping a declared output is allowed, but is not writing it: a job that never rebuilds it ends with MISSING_OUTPUT") {
+    val out = Files.createTempDirectory("declared-outputs-dropped")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    // stopped whatever happens: a session left running keeps its contract installed for the next test
+    try {
+      spark.sql(s"CREATE TABLE dropped_report (id BIGINT) USING parquet LOCATION '${out.toString.replace('\\', '/')}/report'")
+      spark.sql("DROP TABLE dropped_report")
+      spark.range(3).write.parquet(s"$out/audit")
+    } finally spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "FAILED"), "the drop, the audit write, then the job's end")
+    assert(sink.validations.last.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some(s"$out/report"))))
+  }
+
+  test("a job that drops a declared output and then rebuilds it ends clean") {
+    val out = Files.createTempDirectory("declared-outputs-dropped-rebuilt")
+    val sink = new Capture
+    val spark = session(contract(out), sink)
+    try {
+      spark.sql(s"CREATE TABLE rebuilt_report (id BIGINT) USING parquet LOCATION '${out.toString.replace('\\', '/')}/report'")
+      spark.sql("DROP TABLE rebuilt_report")
+      spark.range(3).write.mode("overwrite").parquet(s"$out/report")
+      spark.range(3).write.parquet(s"$out/audit")
+    } finally spark.stop()
+    assert(sink.validations.map(_.status) == List("PASSED", "PASSED", "PASSED"), "no MISSING_OUTPUT at the end")
+  }
+
   test("a job's record is decided once: a second ending publishes nothing more and gives the same answer") {
     val out = Files.createTempDirectory("declared-outputs-once")
     val sink = new Capture
