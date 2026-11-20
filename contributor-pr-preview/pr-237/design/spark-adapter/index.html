@@ -3476,8 +3476,12 @@ minute) were both cancelled at GitHub’s 360-minute maximum with no score at
 all. It was therefore folded into the shards: on a pull request each shard
 mutates only its changed files (see “When the shards run” above), so the
 PR’s files spread over the same 8 runners and the slowest shard, not the
-sum of all of them, sets the wall clock — the largest single file, ~50-90
-minutes, inside each shard’s 180-minute limit. The bar is unchanged: each
+sum of all of them, sets the wall clock — the largest single file. That is
+longer than the whole-module estimates suggested: on PR #237 most shards
+took 40-60 minutes, but <code dir="auto">SparkPlanAdapter.scala</code> alone (shard-4) was
+cancelled at the 180-minute limit the shards then had, with 59 of its 61
+mutants tested (a 17-minute initial test run; 10 mutants hung until their
+~13-minute timeout), so the shard limit is now 300 minutes. The bar is unchanged: each
 shard’s run is held to build.sbt’s 70% break threshold, as the separate job
 was by its CLI override. <code dir="auto">--concurrency</code> stays at 2: 4 test runners lost
 runners to memory exhaustion (see the memory note on the job).</p>
