@@ -1172,8 +1172,9 @@ Arrow frames are untouched, since they can hold the declared types and a mismatc
 gets a note in pandas’ terms, added to the refusal’s explanation (<code dir="auto">ContractViolation.add_notes</code>); a named index level the
 contract declares is written as a column (a <code dir="auto">groupby</code> result); an <code dir="auto">object</code> column of mixed values raises a <code dir="auto">TypeError</code> naming
 it; <code dir="auto">invaract.read(..., dtype_backend=)</code> takes pandas’ own <code dir="auto">numpy_nullable</code>/<code dir="auto">pyarrow</code>. Nothing changes for the checker or the
-protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented: a bare
-top-level <code dir="auto">type: int</code> is not <code dir="auto">integer</code> (docs-site’s contract format says so), for every engine.</p>
+protocol: it is told the converted schema, and judges it as before. Found on the way, and left as documented then: a bare
+top-level <code dir="auto">type: int</code> was not <code dir="auto">integer</code>. It is now, for every engine (the scalar aliases the type parser knows match the type
+they name; docs/SPARK_ADAPTER_HARDENING_PLAN.md, H-17f).</p>
 <p><strong>pandas, second pass (2026-11-06).</strong> The user asked for every remaining pandas gap, and chose: a dry run writes named index
 levels as pandas’ <code dir="auto">to_parquet</code> does (it dropped them, so a migrated <code dir="auto">groupby</code> job lost its keys and the draft never declared
 them); enforced runs still write only the levels the contract declares. Also: in a dry run a pandas column of <code dir="auto">Decimal</code> values
