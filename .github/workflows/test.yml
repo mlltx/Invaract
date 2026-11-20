@@ -1067,9 +1067,12 @@ jobs:
     # the same parallel shards. This replaced a single PR-only job that mutated every
     # changed file on one runner: a PR changing 13 files (#92) or 18 (#237) needed
     # longer than GitHub's 360-minute maximum and was cancelled with no score.
-    # Shards take 50-90 min. Without this the 360-minute default would let a hung runner
-    # (or a Stryker run wedged on a stuck test JVM) hold a slot for six hours.
-    timeout-minutes: 180
+    # Below the 360-minute default so a hung runner (or a Stryker run wedged on a stuck test
+    # JVM) does not hold a slot for six hours, but well above a normal shard: on PR #237,
+    # SparkPlanAdapter.scala alone (shard-4) was cancelled at the old 180-minute limit with 59
+    # of its 61 mutants tested - a 17-minute initial test run, and 10 mutants that hung until
+    # their ~13-minute per-mutant timeout. 300 leaves headroom as the suite grows.
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
