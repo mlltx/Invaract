@@ -113,5 +113,53 @@ class SbtRetry(unittest.TestCase):
         self.assertIn("no sbt on PATH besides this wrapper", result.stderr)
 
 
+
+class SbtCiSetup(unittest.TestCase):
+    """sbt-ci-setup.sh, run as a CI step: the repositories file, SBT_OPTS and the wrapper on PATH."""
+
+    def run_setup(self, sbt_opts=None):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        env = dict(os.environ)
+        env.update(RUNNER_TEMP=tmp, GITHUB_ENV=os.path.join(tmp, "env"), GITHUB_PATH=os.path.join(tmp, "path"))
+        env.pop("SBT_OPTS", None)
+        if sbt_opts is not None:
+            env["SBT_OPTS"] = sbt_opts
+        subprocess.run(["bash", os.path.join(HERE, "sbt-ci-setup.sh")], env=env, check=True, capture_output=True)
+        def read(name):
+            with open(os.path.join(tmp, name)) as f:
+                return f.read()
+
+        return tmp, read
+
+    def test_downloads_go_to_the_mirror_first_then_maven_central_with_local_ahead_of_both(self):
+        tmp, read = self.run_setup()
+        repos = [line.strip() for line in read("sbt-ci/repositories").splitlines()]
+        self.assertEqual(repos[0], "[repositories]")
+        self.assertEqual(repos[1], "local")
+        self.assertEqual(repos[2], "maven-central-mirror: https://maven-central.storage-download.googleapis.com/maven2/")
+        self.assertEqual(repos[3], "maven-central")
+        self.assertTrue(repos[4].startswith("sbt-plugin-releases: https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/, "))
+
+    def test_sbt_is_told_to_use_that_file_for_every_build(self):
+        tmp, read = self.run_setup()
+        self.assertEqual(
+            read("env").strip(),
+            "SBT_OPTS=-Dsbt.override.build.repos=true -Dsbt.repository.config=" + os.path.join(tmp, "sbt-ci", "repositories"),
+        )
+
+    def test_existing_sbt_opts_are_kept(self):
+        _, read = self.run_setup(sbt_opts="-Xmx2g")
+        self.assertTrue(read("env").startswith("SBT_OPTS=-Xmx2g -Dsbt.override.build.repos=true "))
+
+    def test_the_retry_wrapper_is_installed_as_sbt_on_path(self):
+        tmp, read = self.run_setup()
+        installed = os.path.join(tmp, "sbt-ci", "sbt")
+        self.assertEqual(read("path").strip(), os.path.join(tmp, "sbt-ci"))
+        self.assertTrue(os.access(installed, os.X_OK))
+        with open(installed) as f, open(WRAPPER) as g:
+            self.assertEqual(f.read(), g.read())
+
+
 if __name__ == "__main__":
     unittest.main()

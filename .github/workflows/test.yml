@@ -63,15 +63,10 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # The same retry .github/actions/setup-jdk-sbt installs (this job sets up sbt itself).
-      - name: Retry sbt when a dependency download is refused
+      # The same as .github/actions/setup-jdk-sbt does (this job sets up sbt itself).
+      - name: Make sbt's downloads resilient to Maven Central refusing them
         shell: bash
-        run: |
-          dir="$RUNNER_TEMP/sbt-retry"
-          mkdir -p "$dir"
-          cp "$GITHUB_WORKSPACE/.github/scripts/sbt-retry.sh" "$dir/sbt"
-          chmod +x "$dir/sbt"
-          echo "$dir" >> "$GITHUB_PATH"
+        run: bash .github/scripts/sbt-ci-setup.sh
 
       # Run from inside a module directory, not the repo root: the sbt
       # launcher picks its actual sbt version from project/build.properties

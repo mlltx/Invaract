@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # sbt, run again when it failed only because a dependency could not be downloaded.
 #
-# Installed as `sbt`, ahead of the real one on PATH, by .github/actions/setup-jdk-sbt (and the
-# test matrix job). Maven Central answers bursts of requests with HTTP 429 ("too many requests"),
-# and sbt's resolver (coursier) reports a 429 as "not found": the build fails on an artifact that
-# exists. Coursier's own retry covers connection errors, not this, and cannot reach the sbt
+# Installed as `sbt`, ahead of the real one on PATH, by .github/scripts/sbt-ci-setup.sh, which also
+# sends sbt's downloads to a mirror first; this is the second line of defence. Maven Central answers
+# bursts of requests with HTTP 429 ("too many requests"), and sbt's resolver (coursier) reports a 429
+# as "not found": the build fails on an artifact that exists. Coursier's own retry covers connection errors, not this, and cannot reach the sbt
 # launcher fetching sbt itself, which fails the same way. Five CI jobs on PR #237 were lost to it.
 #
 # So: run the real sbt; if it fails and its output shows one of sbt's own download failures, wait
@@ -45,7 +45,8 @@ while :; do
     exit "$status"
   fi
   wait_for=$((delay * attempt))
-  echo "::warning::sbt could not download a dependency (attempt $attempt of $attempts; Maven Central rate-limits bursts). Running it again in ${wait_for}s."
+  # A new line first: sbt ends its output without one, and an annotation must start a line.
+  printf '\n::warning::sbt could not download a dependency (attempt %s of %s; Maven Central rate-limits bursts). Running it again in %ss.\n' "$attempt" "$attempts" "$wait_for"
   sleep "$wait_for"
   attempt=$((attempt + 1))
 done
