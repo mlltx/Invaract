@@ -1036,7 +1036,10 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   example job with it (`.github/scripts/python_wheel.py`), on changes to how they are built; on a `python-v<version>`
   tag it also publishes them to PyPI and to a GitHub release (docs/RELEASING.md, "The Python packages")
 - **Shared steps**: `.github/actions/setup-jdk-sbt` (JDK + sbt) and `.github/actions/publish-engine-modules`
-  (the local publish of the engine modules, cached) are used by the jobs above instead of copying the steps
+  (the local publish of the engine modules, cached) are used by the jobs above instead of copying the steps.
+  `setup-jdk-sbt` also runs `.github/scripts/sbt-ci-setup.sh`: Maven Central answers bursts with HTTP 429, which sbt
+  reports as "not found", so CI's sbt downloads from Google's Maven Central mirror first (then Maven Central), and
+  `sbt-retry.sh` runs sbt again (up to 3 times) when it still failed only on a dependency download
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

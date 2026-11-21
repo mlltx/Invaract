@@ -29,3 +29,10 @@ runs:
 
     - name: Set up sbt
       uses: sbt/setup-sbt@v1
+
+    # Maven Central answers bursts with HTTP 429, which sbt reports as "not found" and never
+    # retries: send sbt's downloads to a mirror first, and run sbt again when it still fails only on
+    # a download. See .github/scripts/sbt-ci-setup.sh.
+    - name: Make sbt's downloads resilient to Maven Central refusing them
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../../scripts/sbt-ci-setup.sh"
