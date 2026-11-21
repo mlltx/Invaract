@@ -29,3 +29,15 @@ runs:
 
     - name: Set up sbt
       uses: sbt/setup-sbt@v1
+
+    # Maven Central answers bursts with HTTP 429, which sbt reports as "not found" and never
+    # retries; .github/scripts/sbt-retry.sh, installed ahead of sbt on PATH, runs sbt again when
+    # it failed only on a dependency download. See that script.
+    - name: Retry sbt when a dependency download is refused
+      shell: bash
+      run: |
+        dir="$RUNNER_TEMP/sbt-retry"
+        mkdir -p "$dir"
+        cp "$GITHUB_ACTION_PATH/../../scripts/sbt-retry.sh" "$dir/sbt"
+        chmod +x "$dir/sbt"
+        echo "$dir" >> "$GITHUB_PATH"

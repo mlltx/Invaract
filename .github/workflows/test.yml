@@ -63,6 +63,16 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # The same retry .github/actions/setup-jdk-sbt installs (this job sets up sbt itself).
+      - name: Retry sbt when a dependency download is refused
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/sbt-retry"
+          mkdir -p "$dir"
+          cp "$GITHUB_WORKSPACE/.github/scripts/sbt-retry.sh" "$dir/sbt"
+          chmod +x "$dir/sbt"
+          echo "$dir" >> "$GITHUB_PATH"
+
       # Run from inside a module directory, not the repo root: the sbt
       # launcher picks its actual sbt version from project/build.properties
       # in the current directory (each module pins its own sbt.version --
@@ -1766,6 +1776,10 @@ jobs:
         run: cd .github/scripts && python3 -m unittest -v test_check_modules test_new_adapter
 
       # python_wheel.py tags the invaract package's platform wheels from the native checker each carries (release-python.yml)
+      - name: Unit-test sbt-retry.sh (sbt run again only on a refused dependency download)
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_sbt_retry
+
       - name: Unit-test python_wheel.py
         shell: bash
         run: cd .github/scripts && python3 -m unittest -v test_python_wheel
