@@ -27,6 +27,10 @@ transformation IR the checks run on is engine-independent (see
 
 Yes, and that is the intended way. On Spark, add `spark.sql.extensions` and
 `spark.invaract.contract` to `spark-submit`; on Beam, set `--runner` and the contract option.
+For a plain Python job, install the `invaract` package and set `INVARACT_AUTO_RUN=true` and
+`INVARACT_CONTRACT`: only the reads and writes the job makes through the package are checked
+against the contract, and strict mode refuses or reports the others (see [Decide how Invaract
+attaches to your jobs](/guides/using-invaract-with-python/#decide-how-invaract-attaches-to-your-jobs)).
 Every other setting works the same way: see [Configuration Settings](/reference/configuration/).
 
 ### Can I try it on a job without blocking anything?
