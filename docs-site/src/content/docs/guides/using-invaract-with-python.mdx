@@ -509,7 +509,9 @@ however the code that made it is written, and with `enforce` it is stopped befor
 | `enforce` | The same, and a read or write no marker explains is refused where it is about to be made: the call raises `ContractViolation`, the file is not read or written, nothing the run staged is published, and the run ends with exit status 1 even if the job catches the error. |
 
 It needs `invaract-lint` installed beside the package (`pip install invaract[lint]`), because the list of what counts as
-a read or a write is the lint's: one list, used by the scan and by the watch. What it sees:
+a read or a write is the lint's: one list, used by the scan and by the watch. Without it a run that opens is not checked
+(`CheckNotRun`), and a job Invaract opens the run for (`INVARACT_AUTO_RUN`) ends not checked, with exit status 2, rather
+than passing unwatched. What it sees:
 
 - **Files written.** Every file Python opens to write, and every rename, delete, link and truncation: this is how
   `open`, pandas (`to_csv`, `to_json`, `to_pickle`, `to_excel`), numpy, `json`, `csv`, `pickle`, `zipfile` and `shutil`

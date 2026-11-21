@@ -240,7 +240,7 @@ only when, one of these happens:
 |---|---|---|
 | **T1** | the job calls `invaract.read` or `invaract.write` | `_run.current()` opens it instead of raising. This is what makes the annotation optional. |
 | **T2** | something must be refused: the watch is at `enforce` and records a finding nothing explains | The run opens inside the watcher, takes over the collected findings (the existing `_take_over`), and the checker's refusal is raised at the job's call, as in an annotated run. In `report` mode this trigger never fires (P-1). |
-| **T3** | the process is ending, and there is something to report: at least one collected finding (explained or not), or, with `INVARACT_LINT` on, a scan of the job's loaded code that has findings or errors | Opened and closed by the end-of-process handler. |
+| **T3** | the process is ending, and there is something to report: at least one collected finding (explained or not), or, with `INVARACT_LINT` on, a scan of the job's loaded code that has findings or errors, or, with `INVARACT_STRICT` on, a watch that could not start (invaract-lint not installed: nothing is known of what the job did, so the run opens to say why, and the job ends not checked) | Opened and closed by the end-of-process handler. |
 
 Never otherwise. A job process that touches no data and whose code has nothing to report never starts a checker.
 

@@ -163,8 +163,9 @@ capabilities:
       `python -m invaract job.py` does the same for a platform that owns the start command. Partial: only reads and writes
       through the package are checked against the contract; one the job makes itself (pandas, open, ...) is refused or
       reported by strict mode, whatever its shape, and one strict mode cannot see (another program, compiled code) is missed.
-      A job started with `python -S` (no site processing), or where the package is not installed, is not reached. Shown by
-      PythonIoAttachSpec on real jobs with the wheel's .pth installed.
+      Strict mode needs the lint extra (invaract[lint]); without it a job Invaract opens the run for ends not checked. A job
+      started with `python -S` (no site processing), or where the package is not installed, is not reached. Shown by
+      PythonIoAttachSpec on real jobs, attached at start-up by the .pth file's own line.
   config.locationRefs:
     status: supported
     note: Resolved when the run opens, from INVARACT_LOCATION_MAP (a .properties file) and INVARACT_LOCATION_URL (a location service), the map first.

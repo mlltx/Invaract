@@ -88,7 +88,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 
 | Check | Apache Beam (Java SDK) | Apache Beam (Python SDK) | Apache Spark 3.5 | Python (invaract package) |
 |---|---|---|---|---|
-| [Turn it on without changing the job](#turn-it-on-without-changing-the-job) | ◐ Partly | ◐ Partly | ✅ Yes | ✖ No |
+| [Turn it on without changing the job](#turn-it-on-without-changing-the-job) | ◐ Partly | ◐ Partly | ✅ Yes | ◐ Partly |
 | [Locations resolved when the job starts](#locations-resolved-when-the-job-starts) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [Contracts from a registry](#contracts-from-a-registry) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
@@ -209,6 +209,7 @@ Everything not listed here is checked in full.
 - [Outputs are partitioned as declared](#outputs-are-partitioned-as-declared): Files, Delta and Iceberg tables are written partitioned as the contract (or the job) says, and checked. A dynamic overwrite of an existing Delta table needs a recent deltalake; a PostgreSQL or SQLite table is not written partitioned.
 - [Datasets are registered in a catalog](#datasets-are-registered-in-a-catalog): Iceberg, PostgreSQL and SQLite tables are checked against the catalog, namespace and table they are registered in. Files and Delta tables, named by their path, have no catalog, so a requirement on them is never met.
 - [Written values meet their constraints](#written-values-meet-their-constraints): Every row a job writes is checked against its output fields' declared constraints before anything is published. Constraints on fields nested in a struct are not checked.
+- [Turn it on without changing the job](#turn-it-on-without-changing-the-job): Installing the invaract package and setting `INVARACT_AUTO_RUN=true` with a contract turns Invaract on for a job without changing it. Reads and writes made through the package are checked against the contract; a job's own reads and writes can only be refused or reported (`INVARACT_STRICT`), not checked.
 - [Refuses writes it cannot understand](#refuses-writes-it-cannot-understand): A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is found in the job's code by invaract-lint (in CI, or with INVARACT_LINT=enforce as the run starts) and, with INVARACT_STRICT=enforce, stopped as it is about to happen; neither is on unless the platform turns it on.
 
 **Not checked**
@@ -223,7 +224,6 @@ Everything not listed here is checked in full.
 - [Recognizes built-in functions](#recognizes-built-in-functions): Which functions a Python job calls is its own code, which is not checked. Only fingerprints use it.
 - [Tracks sensitive columns](#tracks-sensitive-columns): Sensitivity is followed through column lineage, which a Python job's own code does not give. No sensitivity report is produced; tags on the contract's fields are kept but not followed through the job.
 - [Traces each output column to its inputs](#traces-each-output-column-to-its-inputs): Which input columns feed which output columns is the job's own code, which is not checked. Checks that rely on it, such as proving value constraints, are not available.
-- [Turn it on without changing the job](#turn-it-on-without-changing-the-job): A Python job adopts Invaract with a one-time change, reading and writing through the invaract package; its settings then come from INVARACT_ environment variables. The job's own code has to install Invaract.
 
 **Does not apply**
 

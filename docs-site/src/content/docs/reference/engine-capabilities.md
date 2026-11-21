@@ -89,7 +89,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ✖ | ✅ |
+| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ◐ | ✅ |
 | `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | verified (4) | ✅ | ✅ | ✅ | ✅ |
 | `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | verified (3) | ✅ | ✅ | ✅ | ✅ |
 
@@ -233,7 +233,7 @@ The suite has 72 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Column lineage needs the transformation; the checker sees only reads and writes.
 - `lineage.boundaryResolution` — not-applicable: No checkpoint or cache stands between a read and a write in the package.
 - `policy.organizational` — supported: Set with INVARACT_ORG_POLICY, applied when the run opens.
-- `config.zeroCodeInstall` — unsupported: Adopting the package is a one-time change to the job's code by design (docs/PYTHON_IO_ADAPTER_DESIGN.md); settings are environment variables, so a platform configures a job without touching it.
+- `config.zeroCodeInstall` — partial: The wheel's start-up hook (00_invaract_attach.pth) attaches Invaract before the job's first line once an INVARACT_* variable asks for it, and INVARACT_AUTO_RUN opens the run the job never opens (docs/PYTHONIO_ATTACH_DESIGN.md); `python -m invaract job.py` does the same for a platform that owns the start command. Partial: only reads and writes through the package are checked against the contract; one the job makes itself (pandas, open, ...) is refused or reported by strict mode, whatever its shape, and one strict mode cannot see (another program, compiled code) is missed. Strict mode needs the lint extra (invaract[lint]); without it a job Invaract opens the run for ends not checked. A job started with `python -S` (no site processing), or where the package is not installed, is not reached. Shown by PythonIoAttachSpec on real jobs, attached at start-up by the .pth file's own line.
 - `config.locationRefs` — supported: Resolved when the run opens, from INVARACT_LOCATION_MAP (a .properties file) and INVARACT_LOCATION_URL (a location service), the map first.
 - `config.contractRegistry` — supported: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
 - `reporting.notifications` — supported: Set with INVARACT_NOTIFY_CONFIG. Every check publishes a CONTRACT_VALIDATION event, every output the run publishes a WRITE event (rows, files, bytes, the Delta version or Iceberg snapshot its commit made), and every run ends with a JOB_SUMMARY; the checker delivers a run's events before it ends.

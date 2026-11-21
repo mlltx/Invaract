@@ -462,6 +462,18 @@ def test_without_a_contract_or_a_dry_run_the_job_is_not_checked(job, source):
     assert "no contract says what the job may do: set INVARACT_CONTRACT, or INVARACT_DRY_RUN=true to observe it" in ran.stderr
 
 
+@pytest.mark.parametrize("point", EVERY_POINT)
+@pytest.mark.parametrize("source", [AMBIENT, RAW])
+def test_with_auto_run_a_job_that_cannot_be_watched_is_not_checked(job, point, source):
+    """Strict mode asked for and invaract-lint missing: the watch never starts, so a job writing around the package gives
+    nothing to open the run that judges it. A run opens anyway, says why, and the job ends not checked: it never passes
+    unwatched."""
+    missing = {"invaract_lint.py": "raise ImportError('No module named invaract_lint')\n"}
+    ran = job(source, point, env={**AUTO, "INVARACT_STRICT": "enforce"}, files=missing)
+    assert ran.status == 2 and not ran.published(), ran.said
+    assert "invaract-lint, which names what to watch, is not installed" in ran.said
+
+
 def test_an_annotated_job_runs_as_written_and_what_it_did_before_is_in_its_run(job):
     ran = job("open('before.txt', 'w').write('x')\n" + RUN, env={**AUTO, "INVARACT_STRICT": "report"})
     assert ran.status == 0 and ran.published(), ran.said
