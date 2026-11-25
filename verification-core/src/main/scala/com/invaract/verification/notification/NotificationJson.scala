@@ -178,6 +178,9 @@ object NotificationJson {
     case Some(v) => render(v, sortKeys)
     case None => "null"
     case s: String => quote(s)
+    // JSON has no NaN or Infinity: a non-finite double is null, as JsonText writes it
+    case d: java.lang.Double if d.isNaN || d.isInfinite => "null"
+    case f: java.lang.Float if f.isNaN || f.isInfinite => "null"
     case n: Number => n.toString
     case b: Boolean => b.toString
     case null => "null"
@@ -191,12 +194,9 @@ object NotificationJson {
 
   private def renderArray(items: Iterable[_], sortKeys: Boolean): String = "[" + items.map(render(_, sortKeys)).mkString(", ") + "]"
 
-  private def quote(s: String): String = "\"" + escape(s) + "\""
+  // JsonText's escaping: every control character, not only \n, \r and \t, so a job's text (a column name, a message)
+  // never makes an event that is not JSON. Text with none of them renders exactly as before, so eventIds are unchanged.
+  private def quote(s: String): String = JsonText.quote(s)
 
-  private def escape(s: String): String =
-    s.replace("\\", "\\\\")
-      .replace("\"", "\\\"")
-      .replace("\n", "\\n")
-      .replace("\r", "\\r")
-      .replace("\t", "\\t")
+  private def escape(s: String): String = { val q = JsonText.quote(s); q.substring(1, q.length - 1) }
 }

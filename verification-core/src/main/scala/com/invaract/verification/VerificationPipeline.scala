@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractValidator, LogicalSchema}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir
 import com.invaract.ir.PlanPrinter
-import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, NotificationSink}
+import com.invaract.verification.notification.{CatalogInfo, ContractValidationEvent, JobInfo, LineageDataset, NotificationSink, WriteLineage}
 
 import org.slf4j.LoggerFactory
 
@@ -141,7 +141,7 @@ object VerificationPipeline {
     requireValidContract(contract, sink, runId, job)
     val checked = write
     val result = evaluateWrite(contract, checked, options, capabilities)
-    publishValidation(contract, result, sink, runId, job, writeKey)
+    publishValidation(contract, result, sink, runId, job, writeKey, lineageOf(contract, checked))
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -454,6 +454,17 @@ object VerificationPipeline {
       runId: Option[String],
       job: Option[JobInfo],
       writeKey: Option[String]
+  ): Unit = publishValidation(contract, result, sink, runId, job, writeKey, None)
+
+  /** The same, carrying what the write read and wrote (`ContractValidationEvent.lineage`). */
+  private[invaract] def publishValidation(
+      contract: Contract,
+      result: VerificationResult,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo],
+      writeKey: Option[String],
+      lineage: Option[WriteLineage]
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -470,9 +481,39 @@ object VerificationPipeline {
           roleConformance = result.roleConformance,
           unverifiableInputs = result.unverifiableInputs,
           job = job,
-          writeKey = writeKey
+          writeKey = writeKey,
+          lineage = lineage
         )
       )
+    }
+
+  /** What `checked` read and wrote, from what the check already holds (`WriteLineage`): references, so it costs the job
+    * nothing; column lineage is traced only if a sink asks. `None` for a plan with no write at its root. */
+  private[invaract] def lineageOf(contract: Contract, checked: CheckedWrite): Option[WriteLineage] =
+    checked.plan match {
+      case w: ir.Write =>
+        val facts = PlanFacts.of(w)
+        def declared(datasets: List[com.invaract.contract.Dataset], location: String) =
+          datasets.find(d => LocationMatching.matchesAny(d.location, facts.namesOf(location))).map(_.name)
+        val schemas = checked.inputSchemas.toMap
+        val inputs = facts.reads.groupBy(_.dataset.location).toList.sortBy(_._1).map { case (location, reads) =>
+          LineageDataset(
+            location,
+            checked.inputFormats.get(location),
+            schemas.get(location),
+            reads.flatMap(_.catalog).headOption.map(CatalogInfo.from),
+            declared(contract.inputs, location)
+          )
+        }
+        val output = LineageDataset(
+          w.dataset.location,
+          w.format,
+          Some(checked.outputSchema),
+          w.catalog.map(CatalogInfo.from),
+          declared(contract.outputs, w.dataset.location)
+        )
+        Some(WriteLineage(output, inputs, w.saveMode, checked.partitioning.toList.flatMap(_.columns), Some(w)))
+      case _ => None
     }
 
   /** The complete, human-readable explanation a `ContractViolationException`

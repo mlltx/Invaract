@@ -4,7 +4,8 @@
 package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, ContractValidator, ValidationIssue}
-import com.invaract.verification.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory}
+import com.invaract.verification.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SafeNotificationSink, TeeNotificationSink}
+import com.invaract.verification.openlineage.{OpenLineageSettings, OpenLineageSink}
 
 import org.slf4j.LoggerFactory
 
@@ -81,9 +82,27 @@ object AttachSetup {
     keys ++ ContractValidator.validate(contract).warnings
   }
 
-  /** The sink `notifyConfig` names, failing loudly if it cannot be built. */
+  /** The sinks the settings name - `notifyConfig`'s, and OpenLineage's (`openLineageUrl`/`openLineageConfig`) - failing
+    * loudly if one cannot be built. */
   def strictSink(config: ConfigSource): Option[NotificationSink] =
-    config.get(InvaractConf.NotifyConfig).flatMap(path => NotificationSinkFactory.create(notificationConfig(config, path)))
+    combine(config.get(InvaractConf.NotifyConfig).flatMap(path => NotificationSinkFactory.create(notificationConfig(config, path))), openLineageSink(config))
+
+  /** The OpenLineage sink the settings ask for (docs/OPENLINEAGE.md), or `None`; throws `IllegalArgumentException` naming the
+    * setting for one it cannot use. One per distinct set of settings in a process, so a job building several sessions
+    * (Spark) publishes one run, from one worker. */
+  def openLineageSink(config: ConfigSource): Option[NotificationSink] =
+    OpenLineageSettings.from(config).map { settings =>
+      openLineageSinks.computeIfAbsent(settings, s => new SafeNotificationSink(new OpenLineageSink(s)))
+    }
+
+  private val openLineageSinks = new java.util.concurrent.ConcurrentHashMap[OpenLineageSettings, NotificationSink]()
+
+  /** Both sinks, each isolated from the other's failures; either alone; or none. */
+  private[verification] def combine(first: Option[NotificationSink], second: Option[NotificationSink]): Option[NotificationSink] =
+    (first, second) match {
+      case (Some(a), Some(b)) => Some(new TeeNotificationSink(List(a, b)))
+      case (a, b)             => a.orElse(b)
+    }
 
   /** The file `notifyConfig` names, refused with the setting's name when it is not there. */
   private def notificationConfig(config: ConfigSource, path: String): NotificationConfig = {
@@ -109,8 +128,19 @@ object AttachSetup {
   private[verification] def disabledSinkMessage(setting: String, path: String): String =
     s"'$setting' names '$path', but sink.enabled is not true in it, so no events are published."
 
-  /** The sink `notifyConfig` names, or `None` (after one WARN) if it cannot be built. */
-  def lenientSink(config: ConfigSource): Option[NotificationSink] =
+  /** The sinks the settings name, each one that cannot be built leaving `None` in its place after one WARN. */
+  def lenientSink(config: ConfigSource): Option[NotificationSink] = {
+    val openLineage =
+      try openLineageSink(config)
+      catch {
+        case NonFatal(e) =>
+          logger.warn(s"Invaract dry-run mode: could not set up OpenLineage publishing ($e); continuing without it. The job is not affected.")
+          None
+      }
+    combine(lenientNotifySink(config), openLineage)
+  }
+
+  private def lenientNotifySink(config: ConfigSource): Option[NotificationSink] =
     config.get(InvaractConf.NotifyConfig).flatMap { path =>
       try NotificationSinkFactory.create(notificationConfig(config, path))
       catch {

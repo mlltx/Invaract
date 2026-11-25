@@ -743,3 +743,21 @@ private[notification] object FanOutNotificationSink {
     }
   }
 }
+
+/** Publishes every event to each of `sinks`, in order, none of their failures reaching the others or the caller: how
+  * `AttachSetup` joins the `notifyConfig` sink and the OpenLineage one. */
+private[invaract] final class TeeNotificationSink(sinks: List[NotificationSink]) extends NotificationSink {
+  private val logger = LoggerFactory.getLogger(classOf[TeeNotificationSink])
+
+  override def publish(event: NotificationEvent): Unit =
+    sinks.foreach { sink =>
+      try sink.publish(event)
+      catch { case NonFatal(e) => logger.warn(s"Notification sink ${sink.getClass.getName} failed to publish a ${event.eventType} event; continuing without it.", e) }
+    }
+
+  override def flush(timeoutMs: Long): Unit =
+    sinks.foreach { sink =>
+      try sink.flush(timeoutMs)
+      catch { case NonFatal(e) => logger.warn(s"Notification sink ${sink.getClass.getName} failed to flush; continuing without it.", e) }
+    }
+}
