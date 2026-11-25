@@ -34,7 +34,7 @@ private[openlineage] final class OpenLineageDelivery(
     transport: Transport,
     mapper: OpenLineageMapper,
     deadLetter: Option[Transport],
-    sleep: Long => Unit = ms => Thread.sleep(ms),
+    sleep: Long => Unit = null,
     nanoTime: () => Long = () => System.nanoTime()
 ) {
   import OpenLineageDelivery._
@@ -42,6 +42,10 @@ private[openlineage] final class OpenLineageDelivery(
   private val logger = LoggerFactory.getLogger(classOf[OpenLineageDelivery])
   private val queue = new ArrayBlockingQueue[Item](settings.queueCapacity)
   private val closed = new AtomicBoolean(false)
+  /** Released by `close`: a backoff waits on it, so a job that is ending is not held for a retry's wait. */
+  private val closing = new CountDownLatch(1)
+  private val pause: Long => Unit =
+    if (sleep != null) sleep else ms => try closing.await(ms, TimeUnit.MILLISECONDS) catch { case _: InterruptedException => Thread.currentThread().interrupt() }
 
   private val accepted = new AtomicLong
   private val delivered = new AtomicLong
@@ -74,6 +78,7 @@ private[openlineage] final class OpenLineageDelivery(
   def close(timeoutMs: Long): Boolean =
     if (!closed.compareAndSet(false, true)) true
     else {
+      closing.countDown()
       val done = await(new Close(new CountDownLatch(1)), timeoutMs)
       if (!done) logger.warn(s"Invaract OpenLineage: ${queue.size} event(s) were still queued for ${transport.describe} when the job ended; they are not published")
       logSummary(force = true)
@@ -153,12 +158,10 @@ private[openlineage] final class OpenLineageDelivery(
 
   private def attempt(json: String, n: Int): Outcome =
     transport.send(json) match {
-      case r: Outcome.Retryable if n < settings.retryMaxAttempts && !closed.get() =>
-        sleep(backoffMs(n))
+      // once closing, a failure is not retried: the job is ending, and what is not delivered goes to the dead letter
+      case _: Outcome.Retryable if n < settings.retryMaxAttempts && !closed.get() =>
+        pause(backoffMs(n))
         attempt(json, n + 1)
-      case r: Outcome.Retryable if n < settings.retryMaxAttempts =>
-        // closing: one more try, no waiting - the job is ending
-        attempt(json, settings.retryMaxAttempts)
       case outcome => outcome
     }
 
