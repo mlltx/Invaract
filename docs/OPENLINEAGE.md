@@ -1,0 +1,257 @@
+# OpenLineage: Design
+
+Invaract publishes what it verified as [OpenLineage](https://openlineage.io) run events, so the lineage tools a data
+platform already runs (Marquez, DataHub, Atlan, Collibra, OpenMetadata, ...) show, for every run of every job, which
+datasets it read and wrote, their columns, how each output column was derived, and whether the write passed its contract.
+MISSION.md §5: OpenLineage stays the ecosystem's interoperability layer for lineage; Invaract adds the verification that
+gives those relationships confidence. This document is the design and the record of how it was built.
+
+## 1. Goals and non-goals
+
+Goals:
+
+1. **One implementation, every engine.** The mapping, the delivery and the settings live in `verification-core`; an adapter
+   gets OpenLineage by doing what it already does (calling `VerificationPipeline` and `AttachSetup`). Spark, Beam (Java and
+   Python) and plain Python jobs publish it from the first commit, and an adapter added later gets it by default.
+2. **Attached by configuration alone** (CLAUDE.md's External Attachability Requirement): neutral settings in
+   `InvaractConf`, spelled by each engine its own way (`spark.invaract.openLineageUrl`, `--invaractOpenLineageUrl`,
+   `--invaract_open_lineage_url`, `INVARACT_OPEN_LINEAGE_URL`).
+3. **Checked by the conformance kit** on every adapter: a new capability, `reporting.openLineage`, which every adapter
+   declares, and scenarios that hold each adapter's events to the OpenLineage specification and to what the adapter
+   declares (column lineage only from an adapter that declares it).
+4. **Cheap and safe to turn on.** Nothing on the job's own thread but handing a reference to a bounded queue; mapping,
+   serialization and delivery happen on one background thread. A slow, failing or unreachable endpoint never fails,
+   blocks or slows the job, and memory stays bounded however long the endpoint is down.
+5. **Correct to the specification**, held to it by tests: every event the tests produce is validated against the official
+   OpenLineage JSON Schema (pinned, vendored), dataset names follow the OpenLineage naming conventions, and Invaract's own
+   facets have published schemas.
+6. **Honest.** A fact Invaract does not know is left out, never guessed: no column lineage from a plan Invaract cannot see
+   into (a Python job's own code, a Beam step's function), no completion where the adapter saw none.
+
+Non-goals (this version):
+
+- Replacing an engine's own OpenLineage integration (`openlineage-spark`). The two can run side by side; section 9 says how
+  they relate.
+- A Kafka transport. HTTP covers Marquez and every hosted backend; a file transport covers a log-shipping pipeline.
+  Kafka can follow as an opt-in module the way `notification-kafka` did.
+- Consuming OpenLineage (reading other tools' lineage to verify against).
+
+## 2. What is published
+
+### 2.1 Runs
+
+One OpenLineage **run per Invaract run**: a Spark application, a Beam pipeline submission, a Python job's run. The
+specification requires each run to have one `START` and one terminal event (`COMPLETE`, `FAIL` or `ABORT`):
+
+| When | OpenLineage event | Carries |
+|---|---|---|
+| The run's first Invaract event | `START` | job and run facets |
+| Each contract check of a write | `RUNNING` | that write's inputs and output, with their facets; on a refused write, the `errorMessage` run facet |
+| Each completed write (Spark, Python) | `RUNNING` | the output, with `outputStatistics`, `datasetVersion`, `lifecycleStateChange` |
+| The run ends | `COMPLETE`, or `FAIL` when a write was refused | the run's totals (`invaract_run` facet) |
+
+`RUNNING` events let a backend show a long Spark application's lineage while it runs, and a `RUNNING` event is never
+needed for correctness: OpenLineage backends merge the inputs and outputs of every event of a run. For fewer requests,
+`emission=endOfRun` sends only `START` and the terminal event, the terminal one carrying every dataset seen.
+
+The run ends when the adapter says so (a `JobSummaryEvent`, published by every adapter at the end of a job) or, failing
+that, when the process ends (a JVM shutdown hook, bounded by `shutdownTimeoutMs`). A run the hook closes after a refused
+write is `FAIL`; otherwise `COMPLETE`. A process killed outright (`SIGKILL`, `os._exit`) runs no hook: its run has no
+terminal event, which OpenLineage backends show as still running - the honest picture of a run nobody saw end.
+
+**Run identity.** OpenLineage requires a UUID. The run's id is a name-based UUID (version 5) of the engine and Invaract's
+own run id (`JobInfo.runId`: Spark's application id, Beam's job id, the Python run's id), so every event of a run, from
+every process that publishes for it, carries the same id, and the same run published twice is the same run.
+
+**Job identity.** `namespace` (setting `openLineageNamespace`, else the configuration file's `namespace`, else the
+`OPENLINEAGE_NAMESPACE` environment variable, else `default`, OpenLineage's own default) and `name`: the job's stable id
+(`jobId`), else the engine's name for the job, else the contract's id. A configured `jobName` wins over all three.
+
+**Parent run.** When the job runs inside an orchestrator that publishes OpenLineage itself (Airflow, Dagster), the
+`parent` run facet links the two: from the configuration file (`parent.runId`, `parent.job.namespace`,
+`parent.job.name`) or from the `OPENLINEAGE_PARENT_ID` environment variable (`<namespace>/<name>/<runId>`, the form
+Airflow's integration sets).
+
+### 2.2 Datasets and their names
+
+Dataset names follow the [OpenLineage naming conventions](https://openlineage.io/docs/spec/naming), so the same dataset
+published by Invaract, by Spark's integration and by a warehouse's own integration is one node in the graph:
+
+| Location | namespace | name |
+|---|---|---|
+| `/data/out/report`, `file:/data/out/report` | `file` | `/data/out/report` |
+| a relative path (`data/out/report`) | `file` | the absolute path, resolved against the working directory |
+| `hdfs://nn:8020/warehouse/t` | `hdfs://nn:8020` | `/warehouse/t` |
+| `s3://bucket/key`, `s3a://`, `s3n://` | `s3://bucket` | `key` |
+| `gs://bucket/key` | `gs://bucket` | `key` |
+| `abfss://container@account.dfs.core.windows.net/path` | the same, up to the host | `/path` |
+| `postgresql://host:5432/db` and a table | `postgres://host:5432` | `db.schema.table` |
+| `bigquery:project.dataset.table` (Beam) | `bigquery` | `project.dataset.table` |
+| any other `scheme://authority/path` | `scheme://authority` | `/path` |
+
+Credentials in a location (`s3://key:secret@bucket`, `postgresql://user:pass@host`) are always removed. A dataset that
+resolved to a catalog table also carries the `symlinks` facet naming the table (`TABLE`), and `catalog` when the catalog
+is known.
+
+### 2.3 Facets
+
+Standard facets (OpenLineage 2-0-2, the versions pinned in `verification-core/src/test/resources/openlineage/`):
+
+| Facet | On | From |
+|---|---|---|
+| `schema` | inputs, outputs | the schemas the adapter reports (`CheckedWrite.inputSchemas`, `.outputSchema`; `WriteEvent.schema`), nested fields for structs |
+| `columnLineage` | outputs | `ir.Lineage.trace` over the write's plan, each source column resolved to its read (`PlanFacts.locationResolver`); `DIRECT`/`INDIRECT` with Invaract's derivation (`IDENTITY`, `TRANSFORMATION`, `AGGREGATION`, ...) |
+| `dataQualityAssertions` | outputs | the contract check: one assertion for the contract as a whole, one per violation (its type, column, expected, actual), and the static data-quality results |
+| `outputStatistics` | outputs of completed writes | `WriteEvent`'s rows, bytes and files, where the engine reports them |
+| `datasetVersion` | outputs of completed writes | the Delta version or Iceberg snapshot the write committed |
+| `lifecycleStateChange` | outputs | `OVERWRITE` for an overwrite, `CREATE` for a write that creates its table |
+| `storage` | inputs, outputs | the format (`parquet`, `delta`, ...) and the storage layer for table formats |
+| `symlinks`, `catalog` | inputs, outputs | the catalog table a dataset resolved to |
+| `processing_engine` | run | the engine and its version, and Invaract's version as the adapter |
+| `parent` | run | section 2.1 |
+| `errorMessage` | run | a refused write's explanation (`VerificationPipeline.explain`) |
+| `jobType` | job | `BATCH` (or `STREAMING`), integration `INVARACT`, the engine's job type |
+
+Invaract's own facets, each with a JSON Schema published by the docs site
+(`docs-site/public/schemas/openlineage/1-0-0/`):
+
+- `invaract_contract` (output dataset): the contract (`id@version`), the dataset's name in it, the verdict (`PASSED`,
+  `FAILED`), every violation (type, message, column, expected, actual, remediation), the inputs it could not verify, and
+  the transformation fingerprint when one was computed.
+- `invaract_run` (run): the adapter, how it attached (`enforce`, `dryRun`), and on the terminal event the run's totals
+  (checks passed and failed, violations, writes).
+
+### 2.4 Scope settings
+
+What is published is configurable, for cost and for privacy: `facets.disabled` (a comma-separated list of facet names,
+for instance `columnLineage,schema`), `schema.maxFields` and `columnLineage.maxFields` (larger schemas are truncated, and
+the truncation recorded on the `invaract_run` facet), `failuresOnly=true` (only runs with a refused write publish at
+all - for a team that wants lineage tools to show problems only), `emission=perCheck|endOfRun`.
+
+## 3. Settings
+
+Three neutral settings in `InvaractConf`, so the conformance kit checks every adapter reaches them:
+
+| Setting | Meaning |
+|---|---|
+| `openLineageUrl` | The OpenLineage HTTP endpoint's base URL (`http://marquez:5000`): publishing is on, with every default |
+| `openLineageConfig` | A `.properties` file with every setting below; publishing is on when it names a transport |
+| `openLineageNamespace` | The job namespace |
+
+The configuration file (keys without a prefix):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `transport` | `http` when a URL is set | `http`, `file` or `console` |
+| `url` | `openLineageUrl` | HTTP base URL |
+| `endpoint` | `api/v1/lineage` | path under `url` |
+| `apiKeyEnv` | `OPENLINEAGE_API_KEY` | environment variable holding a bearer token; never the token itself |
+| `header.<Name>` | | extra request headers |
+| `compression` | `none` | `gzip` |
+| `timeoutMs` | `5000` | per request |
+| `path` | | the `file` transport's file (one event per line) |
+| `namespace`, `jobName`, `parent.*` | | section 2.1 |
+| `queue.capacity` | `10000` | events held for delivery; beyond it the newest are dropped, counted and logged |
+| `retry.maxAttempts` | `3` | per event, for a failure another try could fix (connection, timeout, 408, 429, 5xx) |
+| `retry.initialBackoffMs`, `retry.maxBackoffMs` | `200`, `5000` | |
+| `circuit.failures` | `5` | consecutive failed deliveries that stop delivery attempts... |
+| `circuit.cooldownMs` | `30000` | ...for this long; events meanwhile are dropped (or dead-lettered), counted and logged |
+| `deadLetter.path` | | a file that keeps what could not be delivered, one event per line, for replay |
+| `maxEventBytes` | `1048576` | an event larger than this sheds `columnLineage`, then `schema`, before it is dropped |
+| `shutdownTimeoutMs` | `5000` | how long the process end waits to close runs and deliver what is queued |
+| `facets.disabled`, `schema.maxFields`, `columnLineage.maxFields`, `failuresOnly`, `emission` | | section 2.4 |
+
+A setting that cannot be used (an unknown `transport`, a number that is not one, an `apiKeyEnv` naming a variable that is
+not set when one was asked for explicitly) fails the job at start-up under enforcement, as a broken notification sink
+does, and is said once and ignored in dry-run mode, whose promise is never to fail a job.
+
+OpenLineage publishing composes with `notifyConfig`: both can be on, and they never share a failure.
+
+## 4. Architecture
+
+```
+adapter ─ VerificationPipeline.verifyWrite ──► ContractValidationEvent (+ WriteLineage: references only)
+        ─ WriteEvent / JobSummaryEvent ──────┐
+                                             ▼
+                              OpenLineageSink.publish  (job's thread: enqueue a reference, O(1))
+                                             │ bounded queue
+                                             ▼
+                              worker thread: OpenLineageMapper (run state, facets, naming)
+                                             → OpenLineageJson → Transport (http | file | console)
+                                                 retry, circuit breaker, dead letter
+```
+
+- `WriteLineage` (`verification-core`): the write's plan, its output and inputs (location, format, schema, catalog), as
+  references the pipeline already holds. Carried on `ContractValidationEvent.lineage`, not serialized into Invaract's own
+  event JSON (whose schema is unchanged). Column lineage is computed from it lazily, on the worker thread.
+- `OpenLineageSink` (`com.invaract.verification.openlineage`): a `NotificationSink`. `AttachSetup` builds it from the
+  settings and combines it with the `notifyConfig` sink, if any, so every adapter that already uses `AttachSetup` publishes
+  OpenLineage with no change of its own.
+- `OpenLineageMapper`: pure functions from Invaract's events to OpenLineage events, with the per-run state (started,
+  refused, totals) kept in a bounded map.
+- `OpenLineageNaming`: section 2.2.
+- `OpenLineageJson`: the event JSON, written by hand (no JSON library at runtime, like `NotificationJson`).
+- `Transport`: `HttpTransport` (`java.net.http`, optional gzip), `FileTransport` (appends one line per event, under a
+  lock, so concurrent processes interleave whole lines), `ConsoleTransport` (SLF4J).
+
+## 5. Performance
+
+What turning it on costs the job:
+
+- On the job's thread: building `WriteLineage` from references the pipeline already holds, and one `offer` to a bounded
+  queue. No mapping, no JSON, no I/O. Measured in section 8.
+- Off the job's thread: column lineage (`Lineage.trace`, already trampolined for deep plans), JSON, delivery. One daemon
+  thread per sink.
+- Memory: at most `queue.capacity` events, each one a reference to data the job already built.
+- At the job's end: at most `shutdownTimeoutMs` (default five seconds) waiting for delivery - only when there is still
+  something to deliver.
+
+## 6. Hardening
+
+- Never throws into the job: the sink is wrapped (`SafeNotificationSink`), and the worker catches everything.
+- A slow endpoint is bounded by `timeoutMs`; a down one by the circuit breaker; a flood by the queue's capacity. Every drop
+  is counted, and said at WARN once per minute at most, never once per event.
+- Secrets: a bearer token only from an environment variable; credentials removed from every dataset name and from every
+  URL a log line shows.
+- Text: every string the job controls (column names, messages, locations) is escaped; property tests hold the JSON
+  well-formed for any string, control characters and unpaired surrogates included.
+- Size: `maxEventBytes`, then shedding, then dropping with a WARN.
+- Concurrency: one worker; state per run in a bounded map (oldest runs closed first when it is full).
+
+## 7. The conformance kit
+
+A capability every adapter declares, `reporting.openLineage` ("publishes OpenLineage run events through configuration
+alone"), and scenarios that attach a real job through configuration (`ConformanceAdapter.attached`) with
+`openLineageUrl` set to an endpoint the kit serves, then hold what arrives to:
+
+- the OpenLineage JSON Schema, every event;
+- one `START` and one terminal event per run, in that order, all with the run's id;
+- the output dataset named per section 2.2, with the `schema` facet's fields equal to the written schema;
+- the contract's verdict on `dataQualityAssertions` and `invaract_contract`: `PASSED` for an allowed write; for a
+  refused one, `FAILED`, the violation, and a `FAIL` terminal event with `errorMessage`;
+- `columnLineage` exactly when the adapter declares `lineage.columnLevel` supported or partial, and its edges naming real
+  input columns;
+- a job that is refused still publishes; an unreachable endpoint does not fail the job.
+
+`BrokenAdapterSpec` gains the broken adapters these scenarios exist to catch (one that drops OpenLineage, one that never
+closes its run).
+
+## 8. Test plan and results
+
+Recorded as the work lands.
+
+## 9. Alongside openlineage-spark
+
+`openlineage-spark` publishes one run per Spark SQL execution, with the plan's lineage as Spark sees it; Invaract publishes
+one run per application with what it verified. Both can be on: they are different jobs in the graph (set
+`openLineageNamespace` and `jobName` to keep them apart, or the same `parent` to group them under one orchestrator run),
+and the datasets are the same nodes, since both follow the naming conventions.
+
+## 10. Progress
+
+- [ ] Design (this document)
+- [ ] Core: model, naming, mapping, JSON, transports, delivery, settings
+- [ ] Kit: capability, scenarios, broken adapters, declarations and baselines
+- [ ] Adapters: Spark, Beam Java, Beam Python, Python I/O
+- [ ] Hardening and performance, measured
+- [ ] User documentation, gates, PR
