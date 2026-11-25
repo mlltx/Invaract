@@ -159,8 +159,8 @@ object PythonIoAttachSpec {
     "import os, pyarrow as pa, pyarrow.parquet as pq\nos.makedirs('data/out/report')\n" +
       "pq.write_table(pa.table({'region': ['north'], 'total': [10]}), 'data/out/report/part-0.parquet')\nprint('the job ended')\n"
 
-  /** Reads and writes through the package, and opens no run. */
-  val Ambient: String = "import invaract\ninvaract.write(invaract.read('orders'), 'report')\nprint('the job ended')\n"
+  /** Reads and writes through the package, and opens no run. Read as an Arrow table: the jobs need nothing but pyarrow. */
+  val Ambient: String = "import invaract\ninvaract.write(invaract.read('orders', as_='arrow'), 'report')\nprint('the job ended')\n"
 
   /** The same, writing a table without the required `total`. */
   val MissingColumn: String =
