@@ -141,7 +141,7 @@ object VerificationPipeline {
     requireValidContract(contract, sink, runId, job)
     val checked = write
     val result = evaluateWrite(contract, checked, options, capabilities)
-    publishValidation(contract, result, sink, runId, job, writeKey, lineageOf(contract, checked))
+    publishValidation(contract, result, sink, runId, job, writeKey, lineageOf(contract, checked, tracesColumns(capabilities)))
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -489,7 +489,13 @@ object VerificationPipeline {
 
   /** What `checked` read and wrote, from what the check already holds (`WriteLineage`): references, so it costs the job
     * nothing; column lineage is traced only if a sink asks. `None` for a plan with no write at its root. */
-  private[invaract] def lineageOf(contract: Contract, checked: CheckedWrite): Option[WriteLineage] =
+  /** Whether an adapter's events carry column-level lineage: exactly when it declares `lineage.columnLevel` supported or
+    * partial (an adapter that declares nothing - a caller without capabilities - is taken at its plan). An adapter whose
+    * plan is opaque declares it unsupported, and its events then claim nothing about columns. */
+  private[invaract] def tracesColumns(capabilities: Option[AdapterCapabilities]): Boolean =
+    capabilities.forall(c => c.supportOf(Capability.LineageColumnLevel) == Support.Supported || c.supportOf(Capability.LineageColumnLevel) == Support.Partial)
+
+  private[invaract] def lineageOf(contract: Contract, checked: CheckedWrite, columns: Boolean = true): Option[WriteLineage] =
     checked.plan match {
       case w: ir.Write =>
         val facts = PlanFacts.of(w)
@@ -512,7 +518,7 @@ object VerificationPipeline {
           w.catalog.map(CatalogInfo.from),
           declared(contract.outputs, w.dataset.location)
         )
-        Some(WriteLineage(output, inputs, w.saveMode, checked.partitioning.toList.flatMap(_.columns), Some(w)))
+        Some(WriteLineage(output, inputs, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(w) else None))
       case _ => None
     }
 

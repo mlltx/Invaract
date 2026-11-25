@@ -114,6 +114,18 @@ class OpenLineageAttachSpec extends AnyFunSuite {
     assert(events(out).map(j => json.readTree(j).get("eventType").asText()) == List("START", "RUNNING", "FAIL"))
   }
 
+  test("column lineage is published exactly when the adapter declares lineage.columnLevel supported or partial") {
+    val toy = AdapterCapabilities.fromResource("capabilities-toy-fixture.yaml", getClass.getClassLoader).get.toOption.get
+    def declaring(s: Support) = toy.copy(entries = toy.entries.updated(Capability.LineageColumnLevel, toy.entryOf(Capability.LineageColumnLevel).copy(support = s)))
+    def hasColumns(caps: Option[AdapterCapabilities]): Boolean = {
+      val sink = new TestNotificationSink
+      VerificationPipeline.verifyWrite(contract, CheckedWrite(goodPlan, List(orders -> inputSchema), goodOutput, false, None, Set.empty), VerificationOptions(), Some(sink), None, caps, Some(job))
+      sink.events.collect { case e: ContractValidationEvent => e }.head.lineage.get.columnLineage.nonEmpty
+    }
+    assert(hasColumns(None) && hasColumns(Some(declaring(Support.Supported))) && hasColumns(Some(declaring(Support.Partial))))
+    assert(!hasColumns(Some(declaring(Support.Unsupported))) && !hasColumns(Some(declaring(Support.NotApplicable))))
+  }
+
   test("every wrapping sink passes endRun on; a failing one is contained") {
     final class Recording extends NotificationSink {
       val ended = new java.util.concurrent.ConcurrentLinkedQueue[Option[JobInfo]]()

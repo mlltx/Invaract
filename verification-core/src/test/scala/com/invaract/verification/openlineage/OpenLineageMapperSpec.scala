@@ -227,6 +227,50 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(!bare.get("invaract_run").has("attributes") && !bare.get("invaract_run").has("jobId") && !bare.get("invaract_run").has("invaractRunId"))
   }
 
+  test("the run's totals are on its terminal event only: checks passed and failed, violations, writes") {
+    val m = mapper()
+    val events = published(m, check(), check(outputSchema = Cols(("id", LongType, false))))
+    assert(events.forall(e => !e.path("run").path("facets").get("invaract_run").has("checksPassed")), "START and RUNNING carry no totals")
+    val totals = closed(m).head.path("run").path("facets").get("invaract_run")
+    assert((totals.get("checksPassed").asLong, totals.get("checksFailed").asLong, totals.get("writes").asLong) == ((1L, 1L, 0L)))
+    assert(totals.get("violations").asLong >= 1)
+  }
+
+  test("the contract assertion says whether the write kept to the contract or broke it") {
+    def assertion(e: ContractValidationEvent) = published(mapper(), e)(1).get("outputs").get(0).path("outputFacets").path("dataQualityAssertions").get("assertions").get(0)
+    val kept = assertion(check())
+    assert(kept.get("success").asBoolean && kept.get("description").asText().contains("keeps to"))
+    val broken = assertion(check(outputSchema = Cols(("id", LongType, false))))
+    assert(!broken.get("success").asBoolean && broken.get("description").asText().contains("breaks"))
+  }
+
+  test("only statistics a write reports are published, and one is enough for the facet") {
+    val write = WriteEvent(None, "/out/x", None, None, Nil, 3L, Map.empty, job = Some(job))
+    def stats(w: WriteEvent) = published(mapper(), w)(1).get("outputs").get(0).path("outputFacets").get("outputStatistics")
+    assert(stats(write) == null)
+    assert(stats(write.copy(rowCount = Some(5))).get("rowCount").asLong == 5 && !stats(write.copy(rowCount = Some(5))).has("size"))
+    assert(stats(write.copy(bytesWritten = Some(9))).get("size").asLong == 9)
+    assert(stats(write.copy(fileCount = Some(2))).get("fileCount").asLong == 2)
+  }
+
+  test("dataset-level lineage (filters, joins, groupings) is under columnLineage.dataset, only when there is some") {
+    def lineage(plan: Plan) = published(mapper(), check(plan = plan))(1).get("outputs").get(0).path("facets").get("columnLineage")
+    val grouped = lineage(groupedJoinPlan)
+    assert(grouped.has("dataset") && grouped.get("dataset").size > 0 && grouped.get("fields").size > 0)
+    val plain = WriteLineage(LineageDataset("out/x"), Nil, plan = Some(goodPlan)).columnLineage
+    assert(lineage(goodPlan).has("dataset") == plain.exists(_.field.isEmpty))
+    val onlyColumnLineage = published(mapper(settings.copy(disabledFacets = Set("columnLineage"))), check())(1).get("outputs").get(0).get("facets")
+    assert(!facetNames(onlyColumnLineage).contains("columnLineage") && facetNames(onlyColumnLineage).contains("schema"))
+  }
+
+  test("failuresOnly holds at most MaxHeldEvents of a run; its terminal event is always published") {
+    val m = mapper(settings.copy(failuresOnly = true))
+    (1 to OpenLineageMapper.MaxHeldEvents + 5).foreach(i => assert(m.map(WriteEvent(None, s"/out/$i", None, None, Nil, 1L, Map.empty, job = Some(job))).isEmpty))
+    val ended = m.map(JobSummaryEvent(0, 0, 1, 1, 0, 1L, Map.empty, job = Some(job)))
+    assert(ended.size == OpenLineageMapper.MaxHeldEvents + 1)
+    assert(types(ended.map(e => json.readTree(JsonText.render(e)))).last == "FAIL")
+  }
+
   test("dry run: each inferred write is an output marked with the inference, and the dry-run summary ends the run") {
     val m = mapper()
     val inferred = ContractInferenceEvent(InferenceStatus.Inferred, None, Some("/data/out"), Some("id: x"), None, Nil, Nil, None, job, 1L, Map.empty)

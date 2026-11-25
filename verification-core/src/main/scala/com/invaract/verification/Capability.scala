@@ -95,6 +95,7 @@ object Capability {
   // --- reporting --------------------------------------------------------------------------------
   val ReportingNotifications = Capability("reporting.notifications", Reporting, "Validation and write events are published to a notification sink.", enforcesContract = false)
   val ReportingDryRun = Capability("reporting.dryRunInference", Reporting, "Dry-run mode infers a draft contract from a real write.", enforcesContract = false)
+  val ReportingOpenLineage = Capability("reporting.openLineage", Reporting, "OpenLineage run events are published through configuration alone: one run per job, START to COMPLETE or FAIL, its datasets with their schemas and the contract's verdict.", enforcesContract = false)
 
   // --- fail-closed ------------------------------------------------------------------------------
   val FailClosedUnverifiableWrites = Capability("failClosed.unverifiableWrites", FailClosed, "An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked.", enforcesContract = false)
@@ -107,7 +108,7 @@ object Capability {
     AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,
     ConfigZeroCodeInstall, ConfigLocationRefs, ConfigContractRegistry,
-    ReportingNotifications, ReportingDryRun,
+    ReportingNotifications, ReportingDryRun, ReportingOpenLineage,
     FailClosedUnverifiableWrites
   )
 

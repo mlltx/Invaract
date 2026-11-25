@@ -183,6 +183,10 @@ capabilities:
     note: >-
       Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract
       (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
+  reporting.openLineage:
+    status: supported
+    note: INVARACT_OPEN_LINEAGE_URL or INVARACT_OPEN_LINEAGE_CONFIG; one run per job, ended when the job finishes. No columnLineage facet (lineage.columnLevel is not declared).
+    docs: OPENLINEAGE.md
   failClosed.unverifiableWrites:
     status: partial
     summary: "A table handed to the invaract package that it cannot describe is refused. A write made around the package (straight to a file) is found in the job's code by invaract-lint (in CI, or with INVARACT_LINT=enforce as the run starts) and, with INVARACT_STRICT=enforce, stopped as it is about to happen; neither is on unless the platform turns it on."

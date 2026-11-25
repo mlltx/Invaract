@@ -39,7 +39,6 @@ private[openlineage] final class OpenLineageMapper(
       run.checksPassed += (if (failed) 0 else 1)
       run.checksFailed += (if (failed) 1 else 0)
       run.violations += e.violations.size
-      if (failed) run.refused = true
       val (inputs, outputs) = e.lineage.fold((List.empty[Obj], List.empty[Obj]))(l => (l.inputs.map(input), List(checkedOutput(l, e))))
       val runFacets = if (failed) errorMessage(e).toList else Nil
       progress(run, inputs, outputs, runFacets)
@@ -106,7 +105,7 @@ private[openlineage] final class OpenLineageMapper(
 
   private def end(run: RunState): List[Obj] = {
     runs.find(_._2 eq run).foreach { case (key, _) => runs.remove(key) }
-    val failed = run.refused || run.checksFailed > 0
+    val failed = run.checksFailed > 0
     val terminal = event(if (failed) "FAIL" else "COMPLETE", run, run.inputs.values.toList, run.outputs.values.toList, run.endFacets.toList, terminal = true)
     if (settings.failuresOnly && !failed) Nil else run.held.toList ++ List(terminal)
   }
@@ -307,7 +306,6 @@ private[openlineage] object OpenLineageMapper {
 
   final class RunState(val uuid: String, val namespace: String, val name: String, val job: Option[JobInfo]) {
     var started = false
-    var refused = false
     var dryRun = false
     var checksPassed = 0L
     var checksFailed = 0L

@@ -47,6 +47,14 @@ class OpenLineageNamingSpec extends AnyFunSuite {
     assert(named("hdfs://user:pw@nn:8020/w") == DatasetId("hdfs://nn:8020", "/w"))
   }
 
+  test("a password holding '@' is still stripped whole; an empty user part is no part of the host") {
+    assert(named("s3a://user:p@ss@bucket/key") == DatasetId("s3://bucket", "key"))
+    assert(named("hdfs://u:a@b@nn:8020/w") == DatasetId("hdfs://nn:8020", "/w"))
+    assert(named("hdfs://@nn:8020/w") == DatasetId("hdfs://nn:8020", "/w"))
+    assert(named("hdfs://nn/a?x=1?y=2#f") == DatasetId("hdfs://nn", "/a"), "the first ? ends the path")
+    assert(named("hdfs://nn/a#f?x") == DatasetId("hdfs://nn", "/a"), "so does the first #, whichever comes first")
+  }
+
   test("other hierarchical schemes: namespace scheme://authority, name the path; a query or fragment is not part of it") {
     assert(named("hdfs://nn:8020/warehouse/t") == DatasetId("hdfs://nn:8020", "/warehouse/t"))
     assert(named("hdfs://nn:8020") == DatasetId("hdfs://nn:8020", "/"))

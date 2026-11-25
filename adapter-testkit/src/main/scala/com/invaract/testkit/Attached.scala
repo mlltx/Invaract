@@ -32,7 +32,12 @@ object Attached {
     val root = Files.createTempDirectory(s"invaract-attach-${scenario.id}-")
     val events = root.resolve("events.jsonl")
     val sink = write(root, "sink.properties", s"sink.enabled=true\nsink.class=com.invaract.verification.notification.FileNotificationSink\nsink.property.path=${slashes(events)}\n")
-    val (services, settings, resolved) = prepare(attachment, scenario.contract, root, adapter.bundlesRegistryClient)
+    val lineage = attachment match {
+      case Attachment.OpenLineage(true) => Some(OpenLineageConformance.endpoint())
+      case _                            => None
+    }
+    val (prepared, settings, resolved) = prepare(attachment, scenario.contract, root, adapter.bundlesRegistryClient, lineage.map(_.url))
+    val services = prepared ++ lineage.map(_.server)
     try {
       adapter.attached(scenario.id, resolved, scenario.job, settings + (InvaractConf.NotifyConfig -> slashes(sink))) match {
         case None =>
@@ -52,7 +57,13 @@ object Attached {
           expected match {
             case Conformance.Expected.Stopped(mentioning) =>
               ScenarioVerdict.Diverges(s"expected Invaract to stop the job before it ran, naming ${show(mentioning)}, but the job ran")
-            case other => Conformance.judge(other, outcomeOf(events), capabilities, None, Analysis(), scenario.job.writes)
+            case other =>
+              Conformance.judge(other, outcomeOf(events), capabilities, None, Analysis(), scenario.job.writes) match {
+                case ScenarioVerdict.Conforms if other != Conformance.Expected.RejectedAsUnsupported =>
+                  lineage.flatMap(l => OpenLineageConformance.judge(l.received, scenario, capabilities, refused = other != Conformance.Expected.Pass))
+                    .fold[ScenarioVerdict](ScenarioVerdict.Conforms)(ScenarioVerdict.Diverges(_))
+                case verdict => verdict
+              }
           }
       }
     } finally {
@@ -63,8 +74,15 @@ object Attached {
 
   /** The services `attachment` needs, the settings that name them, and the contract the settings lead to (its `ref://`
     * locations resolved), for an adapter that names its datasets by the contract's names. */
-  private def prepare(attachment: Attachment, contract: Contract, root: Path, bundlesClient: Boolean): (List[HttpServer], Map[String, String], Contract) =
+  private def prepare(attachment: Attachment, contract: Contract, root: Path, bundlesClient: Boolean, lineageUrl: Option[String]): (List[HttpServer], Map[String, String], Contract) =
     attachment match {
+      case Attachment.OpenLineage(reachable) =>
+        val settings = Map(
+          InvaractConf.Contract -> slashes(contractFile(root, contract)),
+          InvaractConf.OpenLineageUrl -> (if (reachable) lineageUrl.get else OpenLineageConformance.unreachableUrl()),
+          InvaractConf.OpenLineageNamespace -> OpenLineageConformance.Namespace
+        )
+        (Nil, settings, contract)
       case Attachment.Registry(held) =>
         val path = s"/contracts/${encode(contract.id)}/versions/${encode(contract.version.toString)}"
         val registry = serve(if (held) Map(path -> (200 -> ContractParser.write(contract))) else Map.empty)

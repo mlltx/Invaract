@@ -181,6 +181,10 @@ capabilities:
     status: partial
     summary: "Drafts list every read and write the pipeline locates, with columns where it states them; one without columns gets a draft that declares none, and says so."
     note: Every located read and write is in the draft, with columns where the graph states them; one with none (a text write of strings) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+  reporting.openLineage:
+    status: supported
+    note: --invaractOpenLineageUrl or --invaractOpenLineageConfig; one run per pipeline run, ended when the pipeline finishes. No columnLineage facet (lineage.columnLevel is not declared).
+    docs: OPENLINEAGE.md
   failClosed.unverifiableWrites:
     status: partial
     summary: "A step that ends the pipeline without being a write Invaract recognizes is refused. A step that writes to an outside system in the middle of the pipeline cannot be seen before it runs."

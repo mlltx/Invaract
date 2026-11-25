@@ -98,6 +98,7 @@ For the same facts in more detail, with the notes each engine's adapter keeps, s
 |---|---|---|---|---|
 | [Sends events to your systems](#sends-events-to-your-systems) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | [Writes a starting contract for you](#writes-a-starting-contract-for-you) | ◐ Partly | ◐ Partly | ✅ Yes | ✅ Yes |
+| [Shows your jobs in a lineage graph](#shows-your-jobs-in-a-lineage-graph) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Safety net
 
@@ -437,6 +438,12 @@ Where an engine does not do it: No events are published. [Read more](/guides/not
 In dry-run mode, blocks nothing and writes out the contract each write would need, as a draft to review.
 
 Where an engine does not do it: There is no dry-run mode: contracts are written by hand. [Read more](/guides/dry-run-mode/)
+
+### Shows your jobs in a lineage graph
+
+Publishes OpenLineage events (to Marquez, DataHub or any OpenLineage backend) for each job: what it read and wrote, the schemas, and whether the contract passed, set through the job's configuration.
+
+Where an engine does not do it: Nothing is published to a lineage backend. [Read more](/guides/openlineage/)
 
 ### Refuses writes it cannot understand
 

@@ -81,5 +81,7 @@ capabilities:
     status: supported
   reporting.dryRunInference:
     status: supported
+  reporting.openLineage:
+    status: supported
   failClosed.unverifiableWrites:
     status: supported

@@ -86,11 +86,11 @@ object OpenLineageNaming {
 
   private def withoutCredentials(authority: String): String = {
     val at = authority.lastIndexOf('@')
-    // `abfss://container@account...` keeps its container: only `user:secret@` is a credential.
+    // `abfss://container@account...` keeps its container: only `user:secret@` (or an empty `@`) is user information.
     if (at < 0) authority
     else {
       val user = authority.substring(0, at)
-      if (user.contains(':')) authority.substring(at + 1) else authority
+      if (user.isEmpty || user.contains(':')) authority.substring(at + 1) else authority
     }
   }
 

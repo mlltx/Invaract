@@ -168,6 +168,26 @@ class OpenLineageDeliverySpec extends AnyFunSuite with org.scalatest.OneInstance
     assert(JsonText.render(OpenLineageDelivery.without(e, Set("schema"))) == """{"inputs":[{"name":"a","facets":{"storage":2}}],"outputs":["not a dataset"],"run":"kept"}""")
   }
 
+  test("the worker is a daemon thread: it never keeps a finished job's process alive") {
+    val d = delivery(new Scripted())
+    d.submit(write())
+    assert(d.flush(5000))
+    val worker = Thread.getAllStackTraces.keySet.asScala.filter(_.getName == "invaract-openlineage")
+    assert(worker.nonEmpty && worker.forall(_.isDaemon))
+    d.close(1000)
+  }
+
+  test("an interrupted caller gets false from flush and endRun, at once, and keeps its interrupt") {
+    val d = delivery(new Scripted())
+    Thread.currentThread().interrupt()
+    assert(!d.flush(5000) && Thread.interrupted())
+    Thread.currentThread().interrupt()
+    assert(!d.endRun(Some(job), 5000) && Thread.interrupted())
+    assert(d.endRun(Some(job), 5000), "uninterrupted, endRun is queued")
+    d.close(1000)
+    assert(!d.endRun(Some(job), 5000), "after close, there is nothing to end")
+  }
+
   test("close ends every open run, delivers what is queued, and takes nothing after; it is idempotent") {
     val t = new Scripted
     val d = delivery(t)

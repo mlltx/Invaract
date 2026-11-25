@@ -288,6 +288,11 @@ object Attachment {
   /** The contract is a file, and its `ref://<id>` locations resolve through a location service the kit runs (`locationUrl`),
     * which answers for the ids in `locations` and holds no other. */
   final case class LocationService(locations: Map[String, String]) extends Attachment
+
+  /** The contract is a file, and OpenLineage is on: `openLineageUrl` names an endpoint the kit runs (`reachable = false`: a
+    * URL nothing answers at, which must cost the job nothing) and `openLineageNamespace` the namespace the events must carry
+    * (`OpenLineageConformance`). */
+  final case class OpenLineage(reachable: Boolean = true) extends Attachment
 }
 
 /** What an adapter reports of a job it ran attached through configuration (`ConformanceAdapter.attached`). Whether its write

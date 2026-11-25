@@ -113,6 +113,11 @@ class OpenLineageSettingsSpec extends AnyFunSuite {
     assert(refused("url" -> "http://h", "circuit.failures" -> "0").contains("'circuit.failures' must be at least 1"))
   }
 
+  test("numbers: the largest whole number a setting holds is accepted") {
+    assert(parse("url" -> "http://h", "queue.capacity" -> "2147483647").queueCapacity == Int.MaxValue)
+    assert(refused("url" -> "http://h", "queue.capacity" -> "2147483648").contains("at most 2147483647"))
+  }
+
   test("flags, compression and emission take only their values") {
     assert(refused("url" -> "http://h", "failuresOnly" -> "yes").contains("'failuresOnly' must be true or false, not 'yes'"))
     assert(!parse("url" -> "http://h", "failuresOnly" -> "False").failuresOnly)
