@@ -141,7 +141,9 @@ mimaBinaryIssueFilters ++= Seq(
   // engine can tell them apart (docs/MULTI_ENGINE_ADAPTERS.md, "Every event names its engine and job"). A new case
   // class field changes `apply`/`copy`/the constructor. VerificationPipeline's three entry points and
   // VerificationSetup.enforceOrgPolicy gained a trailing `job` parameter so an adapter can pass it. No consumers exist
-  // outside this repository; these are the exact lines MiMa's own output suggests.
+  // outside this repository; these are the exact lines MiMa's own output suggests. The ContractValidationEvent lines
+  // also cover its later trailing `lineage: Option[WriteLineage]` (what an OpenLineage sink publishes about the write,
+  // docs/OPENLINEAGE.md): the same kind of change, to the same three methods.
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.rejectUnverifiableWrite"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.verifyStateChange"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.verifyWrite"),
