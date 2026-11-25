@@ -182,7 +182,7 @@ private[openlineage] final class OpenLineageMapper(
 
   private def datasetFacets(d: LineageDataset, id: DatasetId): List[(String, Any)] =
     List(
-      d.schema.filter(_.fields.nonEmpty).flatMap(s => facet("schema", standard("SchemaDatasetFacet", "1-2-0"), "fields" -> fields(s.fields.take(settings.schemaMaxFields)))),
+      d.schema.map(_.fields.take(settings.schemaMaxFields)).filter(_.nonEmpty).flatMap(fs => facet("schema", standard("SchemaDatasetFacet", "1-2-0"), "fields" -> fields(fs))),
       d.format.flatMap(f => facet("storage", standard("StorageDatasetFacet", "1-0-1"), "storageLayer" -> storageLayer(f), "fileFormat" -> fileFormat(f))),
       d.catalog.flatMap(OpenLineageNaming.table).filter(_ != id).flatMap(t => facet("symlinks", standard("SymlinksDatasetFacet", "1-0-1"),
         "identifiers" -> List(obj("namespace" -> t.namespace, "name" -> t.name, "type" -> "TABLE")))),

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mlltx.github.io/Invaract/schemas/openlineage/1-0-0/InvaractContractDatasetFacet.json",
+  "$defs": {
+    "InvaractContractDatasetFacet": {
+      "allOf": [
+        { "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetFacet" },
+        {
+          "type": "object",
+          "description": "What Invaract verified about this output dataset when the write was checked against its data contract.",
+          "properties": {
+            "contract": { "type": "string", "description": "The contract, as id@version." },
+            "dataset": { "type": "string", "description": "The dataset's name in the contract." },
+            "status": {
+              "type": "string",
+              "description": "PASSED or FAILED for a checked write; DRY_RUN_<status> for a write dry-run mode inferred a contract for."
+            },
+            "dryRun": { "type": "boolean", "description": "Present and true for dry-run mode, which enforces nothing." },
+            "violations": {
+              "type": "array",
+              "description": "Every violation the check found; empty when it passed.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "description": "The violation type (docs: Violation Types)." },
+                  "message": { "type": "string" },
+                  "remediation": { "type": "string" },
+                  "column": { "type": "string" },
+                  "location": { "type": "string" },
+                  "expected": { "type": "string" },
+                  "actual": { "type": "string" },
+                  "rule": { "type": "string" }
+                },
+                "required": ["type", "message", "remediation"],
+                "additionalProperties": true
+              }
+            },
+            "unverifiableInputs": {
+              "type": "array",
+              "description": "Declared inputs the check could neither confirm were read nor report as missing.",
+              "items": {
+                "type": "object",
+                "properties": { "name": { "type": "string" }, "location": { "type": "string" } },
+                "required": ["name", "location"],
+                "additionalProperties": true
+              }
+            },
+            "fingerprint": {
+              "type": "object",
+              "description": "The transformation's semantic fingerprint, when one was computed.",
+              "properties": { "algorithm": { "type": "string" }, "value": { "type": "string" } },
+              "required": ["algorithm", "value"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["status"],
+          "additionalProperties": true
+        }
+      ],
+      "type": "object"
+    }
+  },
+  "type": "object",
+  "properties": {
+    "invaract_contract": { "$ref": "#/$defs/InvaractContractDatasetFacet" }
+  }
+}

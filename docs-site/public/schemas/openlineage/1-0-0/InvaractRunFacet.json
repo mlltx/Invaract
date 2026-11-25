@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mlltx.github.io/Invaract/schemas/openlineage/1-0-0/InvaractRunFacet.json",
+  "$defs": {
+    "InvaractRunFacet": {
+      "allOf": [
+        { "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunFacet" },
+        {
+          "type": "object",
+          "description": "The Invaract run this OpenLineage run publishes: how Invaract was attached, and, on the run's terminal event, its totals.",
+          "properties": {
+            "mode": { "type": "string", "enum": ["enforce", "dryRun"], "description": "enforce: writes that break their contract are refused; dryRun: nothing is enforced." },
+            "invaractRunId": { "type": "string", "description": "The engine's own id for the run (Spark's application id, the Python run's id)." },
+            "jobId": { "type": "string", "description": "The job's stable id across runs (the jobId setting)." },
+            "attributes": {
+              "type": "object",
+              "description": "What the platform attached to the run (the jobAttributes setting).",
+              "additionalProperties": { "type": "string" }
+            },
+            "checksPassed": { "type": "integer", "description": "On the terminal event: the writes checked that kept to their contract." },
+            "checksFailed": { "type": "integer", "description": "On the terminal event: the writes refused." },
+            "violations": { "type": "integer", "description": "On the terminal event: the violations found." },
+            "writes": { "type": "integer", "description": "On the terminal event: the writes the engine reported completed." }
+          },
+          "required": ["mode"],
+          "additionalProperties": true
+        }
+      ],
+      "type": "object"
+    }
+  },
+  "type": "object",
+  "properties": {
+    "invaract_run": { "$ref": "#/$defs/InvaractRunFacet" }
+  }
+}
