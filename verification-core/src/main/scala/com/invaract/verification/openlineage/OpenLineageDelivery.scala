@@ -3,7 +3,7 @@
 
 package com.invaract.verification.openlineage
 
-import com.invaract.verification.notification.{JsonText, NotificationEvent}
+import com.invaract.verification.notification.{JobInfo, JsonText, NotificationEvent}
 import com.invaract.verification.notification.JsonText.Obj
 
 import org.slf4j.LoggerFactory
@@ -30,7 +30,7 @@ final case class DeliveryStats(accepted: Long, delivered: Long, droppedQueueFull
   * waiting at most the given time.
   */
 private[openlineage] final class OpenLineageDelivery(
-    settings: OpenLineageSettings,
+    val settings: OpenLineageSettings,
     transport: Transport,
     mapper: OpenLineageMapper,
     deadLetter: Option[Transport],
@@ -71,6 +71,11 @@ private[openlineage] final class OpenLineageDelivery(
     else if (queue.offer(Publish(event))) { accepted.incrementAndGet(); true }
     else { droppedQueueFull.incrementAndGet(); false }
 
+  /** Ends the run `job` names, after what was submitted before; `false` when delivery has closed (which ended it) or the
+    * queue stayed full for `waitMs` - the run is then closed when the process ends. */
+  def endRun(job: Option[JobInfo], waitMs: Long): Boolean =
+    !closed.get() && (try queue.offer(EndRun(job), waitMs, TimeUnit.MILLISECONDS) catch { case _: InterruptedException => Thread.currentThread().interrupt(); false })
+
   /** Waits, at most `timeoutMs`, until everything submitted before it has been delivered or given up on. */
   def flush(timeoutMs: Long): Boolean = await(new Flush(new CountDownLatch(1)), timeoutMs)
 
@@ -106,6 +111,7 @@ private[openlineage] final class OpenLineageDelivery(
       try {
         queue.take() match {
           case Publish(event) => mapper.map(event).foreach(deliver)
+          case EndRun(job)    => mapper.endRun(job).foreach(deliver)
           case f: Flush       => f.latch.countDown()
           case c: Close =>
             mapper.closeAll().foreach(deliver)
@@ -113,6 +119,7 @@ private[openlineage] final class OpenLineageDelivery(
             while (next != null) {
               next match {
                 case Publish(event) => mapper.map(event).foreach(deliver)
+                case EndRun(_)      => () // closeAll ended every run
                 case m: Marker      => m.latch.countDown()
               }
               next = queue.poll()
@@ -231,6 +238,7 @@ private[openlineage] object OpenLineageDelivery {
 
   sealed trait Item
   final case class Publish(event: NotificationEvent) extends Item
+  final case class EndRun(job: Option[JobInfo]) extends Item
   sealed abstract class Marker(val latch: CountDownLatch) extends Item
   final class Flush(latch: CountDownLatch) extends Marker(latch)
   final class Close(latch: CountDownLatch) extends Marker(latch)

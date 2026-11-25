@@ -61,6 +61,9 @@ private[openlineage] final class OpenLineageMapper(
     case _: CodeScanEvent => Nil
   }
 
+  /** The terminal event of the run `job` names, if it is open: the adapter saw the run end (`NotificationSink.endRun`). */
+  def endRun(job: Option[JobInfo]): List[Obj] = runs.get(keyOf(job, None)).toList.flatMap(end)
+
   /** The terminal event of every run still open, for when the process ends: `FAIL` for a run with a refused write, else
     * `COMPLETE`. */
   def closeAll(): List[Obj] = runs.values.toList.flatMap(end)

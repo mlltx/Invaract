@@ -6,6 +6,7 @@ package com.invaract.verification.openlineage
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.invaract.verification._
 import com.invaract.verification.notification._
+import com.invaract.contract.LogicalType.LongType
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -84,6 +85,53 @@ class OpenLineageAttachSpec extends AnyFunSuite {
     sink.flush(5000)
     assert(events(out).map(j => json.readTree(j).get("eventType").asText()) == List("START", "RUNNING"))
     intercept[IllegalArgumentException](new OpenLineageSink().configure(Map("transport" -> "nope")))
+  }
+
+  test("endRun ends the run it names, and only that run, once; the sink stays open for the next") {
+    val out = Files.createTempDirectory("ol").resolve("events.jsonl")
+    val config = file("openlineage.properties", "transport=file", s"path=$out")
+    val sink = AttachSetup.strictSink(ConfigSource.fromMap(Map(InvaractConf.OpenLineageConfig -> config.toString))).get
+    val (a, b) = (job.copy(runId = Some("run-a")), job.copy(runId = Some("run-b")))
+    sink.endRun(Some(a)) // a run never started: nothing
+    sink.publish(WriteEvent(None, "/x", None, None, Nil, 1L, Map.empty, job = Some(a)))
+    sink.publish(WriteEvent(None, "/y", None, None, Nil, 1L, Map.empty, job = Some(b)))
+    sink.endRun(Some(a))
+    sink.endRun(Some(a)) // a second end of the same run publishes nothing more
+    sink.publish(WriteEvent(None, "/z", None, None, Nil, 1L, Map.empty, job = Some(b)))
+    sink.flush(5000)
+    val seen = events(out).map(j => json.readTree(j)).map(n => n.get("eventType").asText() -> n.path("run").get("runId").asText())
+    val (runA, runB) = (OpenLineageMapper.runUuid("spark", "run-a"), OpenLineageMapper.runUuid("spark", "run-b"))
+    assert(seen == List("START" -> runA, "RUNNING" -> runA, "START" -> runB, "RUNNING" -> runB, "COMPLETE" -> runA, "RUNNING" -> runB), seen)
+  }
+
+  test("endRun after a refused write ends the run FAIL") {
+    val out = Files.createTempDirectory("ol").resolve("events.jsonl")
+    val sink = new OpenLineageSink(OpenLineageSettings(TransportSettings.File(out.toString)))
+    val refused = job.copy(runId = Some("refused"))
+    intercept[ContractViolationException](VerificationPipeline.verifyWrite(contract, CheckedWrite(goodPlan, List(orders -> inputSchema), Cols(("id", LongType, false)), false, None, Set.empty), VerificationOptions(), Some(sink), None, None, Some(refused)))
+    sink.endRun(Some(refused))
+    sink.flush(5000)
+    assert(events(out).map(j => json.readTree(j).get("eventType").asText()) == List("START", "RUNNING", "FAIL"))
+  }
+
+  test("every wrapping sink passes endRun on; a failing one is contained") {
+    final class Recording extends NotificationSink {
+      val ended = new java.util.concurrent.ConcurrentLinkedQueue[Option[JobInfo]]()
+      def publish(event: NotificationEvent): Unit = ()
+      override def endRun(job: Option[JobInfo]): Unit = ended.add(job)
+    }
+    val failing = new NotificationSink {
+      def publish(event: NotificationEvent): Unit = ()
+      override def endRun(job: Option[JobInfo]): Unit = throw new IllegalStateException("boom")
+    }
+    val target = new Recording
+    val wrapped: List[NotificationSink] = List(
+      new SafeNotificationSink(target), new SummarizingNotificationSink(target), new FailureOnlyNotificationSink(target),
+      new RetryingNotificationSink(target, failing), new TeeNotificationSink(List(failing, target)))
+    wrapped.foreach(_.endRun(Some(job)))
+    new SafeNotificationSink(failing).endRun(Some(job))
+    assert(target.ended.size == wrapped.size && target.ended.asScala.forall(_.contains(job)))
+    assert({ new LoggingNotificationSink().endRun(None); true }, "the default does nothing")
   }
 
   test("close ends the runs still open; nothing is published after") {

@@ -3,7 +3,7 @@
 
 package com.invaract.verification.openlineage
 
-import com.invaract.verification.notification.{NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{JobInfo, NotificationEvent, NotificationSink}
 
 import org.slf4j.LoggerFactory
 
@@ -36,6 +36,10 @@ final class OpenLineageSink private[openlineage] (settings0: Option[OpenLineageS
 
   /** Waits (at most `timeoutMs`) for what is queued to be delivered. Runs stay open: `close` ends them. */
   override def flush(timeoutMs: Long): Unit = delivery.foreach(_.flush(timeoutMs))
+
+  /** Publishes the run's terminal event (after what it already published): `FAIL` if a write was refused, else
+    * `COMPLETE`. Waits for room in the queue at most `shutdownTimeoutMs`, as the process end would. */
+  override def endRun(job: Option[JobInfo]): Unit = delivery.foreach(d => d.endRun(job, d.settings.shutdownTimeoutMs))
 
   /** Ends every open run and delivers what is queued, at most `timeoutMs`; publishes nothing after. */
   def close(timeoutMs: Long): Unit = delivery.foreach(_.close(timeoutMs))
