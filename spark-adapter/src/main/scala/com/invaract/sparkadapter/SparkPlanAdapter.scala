@@ -19,6 +19,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   Expression,
   GetStructField,
   If,
+  ListQuery,
   NamedExpression,
   Not,
   NullsFirst,
@@ -44,7 +45,10 @@ import org.apache.spark.sql.catalyst.plans.{
 import org.apache.spark.sql.catalyst.plans.logical.{
   Aggregate,
   Deduplicate,
+  Distinct,
+  Expand,
   Filter,
+  Generate,
   GlobalLimit,
   Join,
   LocalLimit,
@@ -463,6 +467,29 @@ private[sparkadapter] object SparkPlanAdapter {
     */
   private[sparkadapter] def jdbcLocation(url: String, table: String): String = s"jdbc:$url/$table"
 
+  /** The directories of the files `rdd` reads, in the order its lineage reaches them: the parents of the files every
+    * file scan (`FileScanRDD`) in its dependencies scans. The walk only follows dependencies (nothing is computed), and
+    * stops after `maxRdds` RDDs - a lineage longer than that is reported as far as it was walked.
+    */
+  private[sparkadapter] def scannedDirectories(rdd: org.apache.spark.rdd.RDD[_], maxRdds: Int = 10000): List[String] = {
+    val seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[org.apache.spark.rdd.RDD[_], java.lang.Boolean]())
+    val found = scala.collection.mutable.LinkedHashSet.empty[String]
+    var pending = List[org.apache.spark.rdd.RDD[_]](rdd)
+    while (pending.nonEmpty && seen.size < maxRdds) {
+      val next = pending.head
+      pending = pending.tail
+      if (seen.add(next)) {
+        next match {
+          case scan: org.apache.spark.sql.execution.datasources.FileScanRDD =>
+            scan.filePartitions.flatMap(_.files).foreach(f => Option(f.toPath.getParent).foreach(p => found += p.toString))
+          case _ => ()
+        }
+        pending = scala.util.Try(next.dependencies.map(_.rdd).toList).getOrElse(Nil) ++ pending
+      }
+    }
+    found.toList
+  }
+
   /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
     * `FileFormat`) and non-file data sources written via `.save(...)`
     * (Delta, JDBC, ..., `CreatableRelationProvider`) mix in
@@ -871,8 +898,24 @@ private[sparkadapter] object SparkPlanAdapter {
       case mb if mb.getClass.getSimpleName == "WriteToMicroBatchDataSourceV1" && mb.children.size == 1 =>
         translatePlan(mb.children.head)
 
+      // A generator (explode, posexplode, inline, ...): the child's columns and the generated ones. Before this it was
+      // an opaque UnknownPlan, through which no column - not even the child's own, passed through - could be traced.
+      case g: Generate =>
+        ir.Generate(translatePlan(g.child), translateExpr(g.generator), g.generatorOutput.map(_.name).toList, g.outer)
+
+      // ROLLUP, CUBE and GROUPING SETS: the child's rows, once per grouping set, with the keys not in a set nulled and a
+      // grouping id. Opaque before, so the aggregate above it traced nothing (and its grouping id passed for a column).
+      case e: Expand =>
+        ir.Expand(translatePlan(e.child), e.projections.map(_.map(translateExpr).toList).toList, e.output.map(_.name).toList)
+
+      // `.distinct()`, `.dropDuplicates(keys)` and `SELECT DISTINCT`: what Spark's own optimizer turns them into
+      // (ReplaceDeduplicateWithAggregate, ReplaceDistinctWithAggregate) - a grouping by the keys, every other column
+      // the first value of its group. Translated as passing straight through before, they had no grouping lineage, and
+      // `SELECT DISTINCT` had no translation at all.
       case d: Deduplicate =>
-        translatePlan(d.child)
+        deduplicated(translatePlan(d.child), d.keys.map(_.exprId).toSet, d.child.output)
+      case d: Distinct =>
+        deduplicated(translatePlan(d.child), d.child.output.map(_.exprId).toSet, d.child.output)
       case r: Repartition =>
         translatePlan(r.child)
       case r: RepartitionByExpression =>
@@ -951,15 +994,31 @@ private[sparkadapter] object SparkPlanAdapter {
         )
         ir.UnknownPlan(s"LogicalRDD(checkpointed relation, ${lrdd.output.size} column(s))", "LogicalRDD")
 
+      // The RDD's own computation is opaque, but the files it read are not: an RDD made from a DataFrame's `.rdd` (or
+      // any file source) still holds the scan of them, whose directories are this relation's inputs - with no column
+      // traced through the RDD, which no plan describes.
       case lrdd: LogicalRDD =>
         report(
           SparkPlanAdapter.RddRelationSourceType,
           "This Dataset is backed directly by an RDD (createDataFrame(rdd), rdd.toDF, ...); Invaract cannot see " +
-            "what the RDD was computed from"
+            "what the RDD computes, only the files it read"
         )
-        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", SparkPlanAdapter.RddRelationSourceType)
+        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", SparkPlanAdapter.RddRelationSourceType,
+          SparkPlanAdapter.scannedDirectories(lrdd.rdd).map(location => ir.Read(ir.DatasetRef(location))))
 
       case other => opaque(other)
+    }
+
+    /** The rows of `child` with duplicates of `keys` dropped: grouped by the keys, each other column its group's first
+      * value. */
+    private def deduplicated(child: ir.Plan, keys: Set[org.apache.spark.sql.catalyst.expressions.ExprId],
+                             output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): ir.Plan = {
+      val columns = output.map(a => a -> translateExpr(a)).toList
+      ir.Aggregate(
+        child,
+        columns.collect { case (a, e) if keys(a.exprId) => e },
+        columns.map { case (a, e) => ir.NamedExpr(a.name, if (keys(a.exprId)) e else ir.AggregateCall("FIRST", e)) }
+      )
     }
 
     /** A plan node with no translation: an opaque placeholder over its translated children, with a diagnostic. */
@@ -1126,6 +1185,15 @@ private[sparkadapter] object SparkPlanAdapter {
         val n = subqueryNumbers(s.exprId.id)
         val out = s.plan.output.head
         ir.ColumnReference(ir.ColumnRef(subqueryColumn(n, out.name), Some(subqueryScope(n)), Some(out.exprId.id)))
+
+      // The subquery of an `IN (subquery)`: its value is the subquery's columns (renamed into its scope, as a scalar
+      // subquery's is), so the condition depends on them - which values of `customers.customer_id` an
+      // `orders.customer_id IN (SELECT customer_id FROM customers)` keeps. Without them the condition named only the
+      // outer column. Correlated columns, its children, stay arguments.
+      case l: ListQuery if subqueryNumbers.contains(l.exprId.id) =>
+        val n = subqueryNumbers(l.exprId.id)
+        val columns = l.plan.output.map(a => ir.ColumnReference(ir.ColumnRef(subqueryColumn(n, a.name), Some(subqueryScope(n)), Some(a.exprId.id))))
+        ir.Function(SparkFunctionAliases.canonicalName(l.prettyName), (columns ++ l.children.map(translateExpr)).toList)
 
       case udf: Expression if isOpaqueUdf(udf) =>
         val engineType = udf.getClass.getSimpleName

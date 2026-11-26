@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.connector.catalog.StagedTable
 import org.apache.spark.sql.execution.command.{CreateDataSourceTableAsSelectCommand, InsertIntoDataSourceDirCommand}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.execution.datasources.{DataSourceUtils, InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.execution.datasources.{DataSourceUtils, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
@@ -981,7 +981,13 @@ private[sparkadapter] object WriteCommandSupport {
           val target = plan.getClass.getMethod("target").invoke(plan).asInstanceOf[LogicalPlan]
           val catalogTable =
             plan.getClass.getMethod("catalogTable").invoke(plan).asInstanceOf[Option[SparkCatalogTable]]
-          val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString) match {
+          // A path-based table (`MERGE INTO delta.`path``, `DeltaTable.forPath`) has no catalog entry; its target is
+          // still a relation over the table's own directory, which Delta's file index reports as its root path - the
+          // same location a read of the table is given.
+          val targetPath = target.collectFirst {
+            case LogicalRelation(h: HadoopFsRelation, _, _, _) if h.location.rootPaths.size == 1 => h.location.rootPaths.head.toString
+          }
+          val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString).orElse(targetPath) match {
             case Some(loc) => (loc, None)
             case None =>
               // .canonicalized, not target's plain LogicalPlan.toString this

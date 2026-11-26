@@ -2518,59 +2518,33 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   // Every DML PASS/FAIL pair above targets a catalog table, where
   // catalogTable is always populated - real, but not the only shape.
-  // `UPDATE delta.\`path\`` operates directly on a path with no catalog
-  // entry at all (confirmed empirically: catalogTable is None, not just
-  // missing a location), exercising deltaRowLevelDml's fallback branch -
-  // no active contract needed, direct inspection instead, the same
-  // pattern as the streaming format-detection test above.
-  //
-  // This is also the regression test for a real, fixed instability in that
-  // fallback: it used to report `target.toString` (raw LogicalPlan.toString,
-  // which renders any attribute reference as "name#<exprId>", a per-session
-  // counter, not a property of the query) as the write's location. Confirmed
-  // directly: running the identical MERGE against two separately-created,
-  // equivalently-shaped path tables produces two different raw
-  // `target.toString` values purely from exprId allocation order (a
-  // `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for
-  // one table, `Relation [id#1762L,v#1763L] parquet` for the other), while
-  // `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its
-  // own `EliminateSubqueryAliases` rule) renders both as the identical
-  // `Relation [none#0L,none#1L] parquet`. Fixed by switching to
-  // `target.canonicalized.toString`, mirroring deleteFromTable's own fix
-  // below for the same underlying reason.
-  test("WriteCommandSupport falls back to the target plan's canonicalized toString for a path-based DML op with no catalog table, stable across separate tables") {
-    val tablePath = scratchDir.resolve("path_dml_target").toString
-    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
-    capturedPlans.clear()
-
-    spark.sql(s"UPDATE delta.`${tablePath.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
-
-    val upd = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
-      .getOrElse(fail("no UpdateCommand plan observed"))
-    val info = WriteCommandSupport.combined.lift(upd).getOrElse(fail("path-based UpdateCommand should still be recognized"))
+  // `UPDATE delta.\`path\`` (and `MERGE INTO delta.\`path\``, `DeltaTable.forPath`) operates directly on a path with
+  // no catalog entry at all (catalogTable is None). Its target is still a relation over the table's directory, whose
+  // file index reports that directory as its root path: that is the write's location, the same one a read of the table
+  // gets. Before, it was the target plan's canonicalized toString (`Relation [none#0L,none#1L] parquet`) - a location
+  // no contract could sensibly declare, so a correct MERGE was refused, and the same string for any two tables of one
+  // shape, so a contract for one table matched DML against another. The lineage cross-check found it (a path MERGE
+  // refused for OUTPUT_LOCATION_MISMATCH).
+  test("a path-based Delta UPDATE or MERGE writes to the table's own path, each table its own, with no fallback") {
+    def dml(sql: String, command: String) = {
+      capturedPlans.clear()
+      spark.sql(sql).collect()
+      val plan = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == command => p }.getOrElse(fail(s"no $command observed"))
+      WriteCommandSupport.combined.lift(plan).getOrElse(fail(s"path-based $command should be recognized"))
+    }
+    val tablePath = scratchDir.resolve("path_dml_target").toString.replace('\\', '/')
+    val tablePath2 = scratchDir.resolve("path_dml_target_2").toString.replace('\\', '/')
+    for (path <- List(tablePath, tablePath2))
+      spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(path)
+    val info = dml(s"UPDATE delta.`$tablePath` SET doubled = doubled + 1 WHERE id > 2", "UpdateCommand")
     assert(info.format.contains("delta"))
-    assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
-
-    // A second, entirely separate path-based Delta table of the identical
-    // shape - different physical path, and (since Spark's exprId counter is
-    // session-global and monotonic) necessarily different exprIds for its
-    // own "id"/"doubled" columns - must still resolve to the exact same
-    // fallback location string, since the fallback's whole purpose is a
-    // location Invaract can compare across runs of the "same" job, not one
-    // that happens to differ only because Spark allocated different exprIds
-    // this time.
-    val tablePath2 = scratchDir.resolve("path_dml_target_2").toString
-    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath2)
-    capturedPlans.clear()
-    spark.sql(s"UPDATE delta.`${tablePath2.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
-    val upd2 = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
-      .getOrElse(fail("no UpdateCommand plan observed for the second table"))
-    val info2 = WriteCommandSupport.combined.lift(upd2).getOrElse(fail("path-based UpdateCommand should still be recognized"))
-    assert(
-      info.location == info2.location,
-      s"the fallback location must be stable across two structurally-identical path tables with necessarily " +
-        s"different exprIds, got '${info.location}' vs '${info2.location}'"
-    )
+    assert(info.diagnostic.isEmpty, s"the path is known: no fallback diagnostic, got ${info.diagnostic}")
+    assert(info.location.stripSuffix("/").endsWith("/path_dml_target"), info.location)
+    val info2 = dml(s"UPDATE delta.`$tablePath2` SET doubled = doubled + 1 WHERE id > 2", "UpdateCommand")
+    assert(info2.location.stripSuffix("/").endsWith("/path_dml_target_2") && info.location != info2.location)
+    spark.range(3).withColumn("doubled", col("id")).createOrReplaceTempView("path_dml_source")
+    val merge = dml(s"MERGE INTO delta.`$tablePath` t USING path_dml_source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.doubled = s.doubled", "MergeIntoCommand")
+    assert(merge.location == info.location && merge.diagnostic.isEmpty)
   }
 
   // --- Feature surface: WriteCommandInfo.partitionColumns across Delta's
