@@ -135,6 +135,7 @@ permanent as the recorded fixtures. What building it added:
 | `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry` (the user adds the registry client to the checker's classpath with `--invaract_java_options`); `BeamPythonAttachSpec` |
 | `reporting.notifications` | supported | every scenario reads the checker's events |
 | `reporting.dryRunInference` | partial | `BeamPythonAttachSpec` (a real Python job) |
+| `reporting.openLineage` | supported | the kit's `openlineage-*` scenarios (BeamPythonConformanceSpec, a real Python pipeline); the run ends when the checker is done (docs/OPENLINEAGE.md) |
 | `failClosed.unverifiableWrites` | partial | scenario 52; `PythonStepsSpec` |
 
 ## Operation surface

@@ -168,6 +168,7 @@ checker the same protocol lines through `Run.answer`, so it needs no Python and 
 | `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry`, against a registry the kit serves, through the client the checker carries (CI also against the native checker); the `registry` case, and the package's `test_run.py` |
 | `reporting.notifications` | supported | every conforming scenario publishes its validations to the kit's sink; the `notifications`, `notifications-fan-out` and `events-delivered-without-finish` cases. A `WRITE` event for each output published and a `JOB_SUMMARY` for each run (2026-11-08): the `published-write-events` and `published-misuse` cases, and the package's tests of Delta, Iceberg and plain-file outputs and of a publish that fails part way |
 | `reporting.dryRunInference` | supported | attested: `PythonIoProtocolCasesSpec` (the `dry-run-infers` and `dry-run-unverifiable-write` cases) |
+| `reporting.openLineage` | supported | the kit's `openlineage-*` scenarios (PythonIoConformanceSpec, and PythonIoPackageConformanceSpec with real Python jobs); the run ends with the job's run (docs/OPENLINEAGE.md) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed` (a table with no Arrow stream); the `unverifiable-write-refused` case. A write made around the package is not seen; the lint is the guard |
 
 42 of the kit's scenarios conform (`conformance-baseline-pythonio.txt`); the rest are skipped by the declaration.
