@@ -304,7 +304,7 @@ class RealRepository(unittest.TestCase):
         names = [m["name"] for m in modules]
         self.assertEqual(len(names), len(set(names)))
         for m in modules:
-            self.assertIn(m["role"], {"engine", "kit", "adapter", "harness", "extension"})
+            self.assertIn(m["role"], {"engine", "kit", "adapter", "harness", "extension", "crosscheck"})
             self.assertIn("published", m)
             self.assertIn("mutation", m)
         self.assertEqual([m["role"] for m in modules if m["role"] == "kit"], ["kit"])
