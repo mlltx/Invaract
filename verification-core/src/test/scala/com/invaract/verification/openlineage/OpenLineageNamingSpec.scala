@@ -27,7 +27,7 @@ class OpenLineageNamingSpec extends AnyFunSuite {
   }
 
   test("the default working directory is the process's own") {
-    assert(OpenLineageNaming.dataset("rel") == DatasetId("file", java.nio.file.Paths.get(System.getProperty("user.dir"), "rel").normalize.toString))
+    assert(OpenLineageNaming.dataset("rel") == DatasetId("file", java.nio.file.Paths.get(System.getProperty("user.dir"), "rel").normalize.toString.replace('\\', '/')))
   }
 
   test("object storage: the bucket is the namespace, the key the name; s3a and s3n are s3, gcs is gs") {

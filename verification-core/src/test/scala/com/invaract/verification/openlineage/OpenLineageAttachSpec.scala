@@ -26,6 +26,9 @@ class OpenLineageAttachSpec extends AnyFunSuite {
     f
   }
 
+  /** A path as a .properties file can hold it: backslashes there are escapes. */
+  private def slashes(path: Path): String = path.toString.replace('\\', '/')
+
   private def events(path: Path): List[String] = if (Files.exists(path)) Files.readAllLines(path).asScala.toList else Nil
 
   private def contractFile: String = file("contract.yaml",
@@ -35,7 +38,7 @@ class OpenLineageAttachSpec extends AnyFunSuite {
 
   test("openLineageConfig alone attaches OpenLineage to an enforced job: a check publishes, valid, through the file transport") {
     val out = Files.createTempDirectory("ol").resolve("events.jsonl")
-    val config = file("openlineage.properties", "transport=file", s"path=$out", "namespace=platform").toString
+    val config = file("openlineage.properties", "transport=file", s"path=${slashes(out)}", "namespace=platform").toString
     val plan = AttachSetup.select(ConfigSource.fromMap(Map(InvaractConf.Contract -> contractFile, InvaractConf.OpenLineageConfig -> config)))
     val sink = plan.sink.get
     VerificationPipeline.verifyWrite(contract, CheckedWrite(goodPlan, List(orders -> inputSchema), goodOutput, false, None, Set.empty), VerificationOptions(), Some(sink), None, None, Some(job))
@@ -50,8 +53,8 @@ class OpenLineageAttachSpec extends AnyFunSuite {
   test("it composes with notifyConfig: both sinks get every event, neither's failure reaching the other") {
     val out = Files.createTempDirectory("ol").resolve("ol.jsonl")
     val notified = Files.createTempDirectory("notify").resolve("events.jsonl")
-    val notify = file("notify.properties", "sink.enabled=true", "sink.class=com.invaract.verification.notification.FileNotificationSink", s"sink.property.path=$notified")
-    val config = file("openlineage.properties", "transport=file", s"path=$out")
+    val notify = file("notify.properties", "sink.enabled=true", "sink.class=com.invaract.verification.notification.FileNotificationSink", s"sink.property.path=${slashes(notified)}")
+    val config = file("openlineage.properties", "transport=file", s"path=${slashes(out)}")
     val sink = AttachSetup.strictSink(ConfigSource.fromMap(Map(InvaractConf.NotifyConfig -> notify.toString, InvaractConf.OpenLineageConfig -> config.toString))).get
     sink.publish(WriteEvent(None, "/x", None, None, Nil, 1L, Map.empty, job = Some(job.copy(runId = Some("compose")))))
     sink.flush(5000)
@@ -104,7 +107,7 @@ class OpenLineageAttachSpec extends AnyFunSuite {
 
   test("endRun ends the run it names, and only that run, once; the sink stays open for the next") {
     val out = Files.createTempDirectory("ol").resolve("events.jsonl")
-    val config = file("openlineage.properties", "transport=file", s"path=$out")
+    val config = file("openlineage.properties", "transport=file", s"path=${slashes(out)}")
     val sink = AttachSetup.strictSink(ConfigSource.fromMap(Map(InvaractConf.OpenLineageConfig -> config.toString))).get
     val (a, b) = (job.copy(runId = Some("run-a")), job.copy(runId = Some("run-b")))
     sink.endRun(Some(a)) // a run never started: nothing

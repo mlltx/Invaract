@@ -18,6 +18,9 @@ import scala.collection.JavaConverters._
 class SparkOpenLineageSpec extends AnyFunSuite {
   private val json = new ObjectMapper()
 
+  /** A path as a .properties file holds it and as OpenLineage names it: forward slashes. */
+  private def slashes(path: Path): String = path.toString.replace('\\', '/')
+
   private def run(contractOutput: String => String, write: (SparkSession, Path) => Unit): (List[JsonNode], Path) = {
     val dir = Files.createTempDirectory("spark-openlineage")
     val input = dir.resolve("orders").toString
@@ -33,7 +36,7 @@ class SparkOpenLineageSpec extends AnyFunSuite {
          |""".stripMargin.getBytes(StandardCharsets.UTF_8))
     val events = dir.resolve("lineage.jsonl")
     val config = dir.resolve("openlineage.properties")
-    Files.write(config, s"transport=file\npath=$events\nnamespace=spark-test\n".getBytes(StandardCharsets.UTF_8))
+    Files.write(config, s"transport=file\npath=${slashes(events)}\nnamespace=spark-test\n".getBytes(StandardCharsets.UTF_8))
     val setup = SparkSession.builder().master("local[1]").appName("setup").config("spark.ui.enabled", "false").getOrCreate()
     try setup.range(3).write.parquet(input) finally setup.stop()
     val spark = SparkSession.builder().master("local[1]").appName("SparkOpenLineageSpec").config("spark.ui.enabled", "false")
@@ -59,15 +62,15 @@ class SparkOpenLineageSpec extends AnyFunSuite {
     assert(types.count(_ == "START") == 1, "one sink: nothing published twice")
     assert(events.map(_.path("run").get("runId").asText()).distinct.size == 1)
     assert(events.forall(_.path("job").get("namespace").asText() == "spark-test"))
-    val outputs = events.flatMap(_.get("outputs").elements().asScala).filter(_.get("name").asText() == dir.resolve("report").toString)
+    val outputs = events.flatMap(_.get("outputs").elements().asScala).filter(_.get("name").asText() == slashes(dir.resolve("report")))
     assert(outputs.nonEmpty && outputs.forall(_.get("namespace").asText() == "file"))
     val checked = outputs.find(_.path("facets").has("invaract_contract")).get
     assert(checked.path("facets").path("invaract_contract").get("status").asText() == "PASSED")
     assert(checked.path("facets").path("schema").get("fields").elements().asScala.map(_.get("name").asText()).toList == List("id", "doubled"))
     val lineage = checked.path("facets").path("columnLineage").path("fields").path("doubled").get("inputFields").get(0)
-    assert(lineage.get("name").asText() == dir.resolve("orders").toString && lineage.get("field").asText() == "id", "Spark traces columns: lineage.columnLevel is partial")
+    assert(lineage.get("name").asText() == slashes(dir.resolve("orders")) && lineage.get("field").asText() == "id", "Spark traces columns: lineage.columnLevel is partial")
     val inputs = events.flatMap(_.get("inputs").elements().asScala).map(_.get("name").asText())
-    assert(inputs.contains(dir.resolve("orders").toString))
+    assert(inputs.contains(slashes(dir.resolve("orders"))))
     val engine = events.head.path("run").path("facets").get("processing_engine")
     assert(engine.get("name").asText() == "spark" && engine.get("version").asText() == org.apache.spark.SPARK_VERSION)
   }
@@ -123,7 +126,7 @@ class SparkOpenLineageSpec extends AnyFunSuite {
          |""".stripMargin)
     val events = dir.resolve("lineage.jsonl")
     val config = dir.resolve("openlineage.properties")
-    Files.write(config, List("transport=file", s"path=$events").mkString("\n").getBytes(StandardCharsets.UTF_8))
+    Files.write(config, List("transport=file", s"path=${slashes(events)}").mkString("\n").getBytes(StandardCharsets.UTF_8))
     val own = new com.invaract.verification.notification.NotificationSink {
       val seen = new java.util.concurrent.atomic.AtomicInteger()
       def publish(event: com.invaract.verification.notification.NotificationEvent): Unit = seen.incrementAndGet()

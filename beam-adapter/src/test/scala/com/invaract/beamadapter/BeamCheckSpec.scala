@@ -58,7 +58,7 @@ class BeamCheckSpec extends AnyFunSuite {
     val dir = java.nio.file.Files.createTempDirectory("beam-openlineage")
     val events = dir.resolve("lineage.jsonl")
     val config = dir.resolve("openlineage.properties")
-    java.nio.file.Files.write(config, List("transport=file", s"path=$events").mkString("\n").getBytes("UTF-8"))
+    java.nio.file.Files.write(config, List("transport=file", s"path=${events.toString.replace('\\', '/')}").mkString("\n").getBytes("UTF-8"))
     val check = InvaractBeam.enforce(ExampleJob.contract("out/lines"), sink = Some(capture),
       config = ConfigSource.fromMap(Map(InvaractConf.OpenLineageConfig -> config.toString)),
       job = com.invaract.verification.notification.JobInfo(runId = Some("beam-in-code"), engine = Some(InvaractBeam.Engine)))

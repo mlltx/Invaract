@@ -109,7 +109,8 @@ object OpenLineageNaming {
       if (slash < 0) "/" else rest.substring(slash)
     } else absolute(rest, workingDirectory)
 
+  // forward slashes on every platform: Windows' Paths normalizes `/data/out` to `\data\out`, which no other integration
+  // publishes for the same dataset
   private def absolute(path: String, workingDirectory: => String): String =
-    if (path.startsWith("/")) Paths.get(path).normalize.toString
-    else Paths.get(workingDirectory).resolve(path).normalize.toString.replace('\\', '/')
+    (if (path.startsWith("/")) Paths.get(path) else Paths.get(workingDirectory).resolve(path)).normalize.toString.replace('\\', '/')
 }
