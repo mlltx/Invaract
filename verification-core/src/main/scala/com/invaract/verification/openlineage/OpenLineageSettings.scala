@@ -149,6 +149,9 @@ object OpenLineageSettings {
         headers.keys.foreach { name =>
           if (!name.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]+")) fail(s"'header.$name' is not a valid header name")
           if (name.equalsIgnoreCase("Authorization") && apiKey.isDefined) fail("'header.Authorization' and an API key both set the Authorization header; keep one")
+          // the HTTP client sets these itself, and refuses a request that sets them: refused here, not on every event
+          if (ClientHeaders.contains(name.toLowerCase)) fail(s"'header.$name' is set by the HTTP client itself and cannot be configured")
+          if (TransportHeaders.contains(name.toLowerCase)) fail(s"'header.$name' is set by the transport (JSON, and gzip with compression=gzip) and cannot be configured")
         }
         val gzip = text("compression").map(_.toLowerCase) match {
           case None | Some("none") => false
@@ -212,6 +215,12 @@ object OpenLineageSettings {
   private def uuid(what: String, value: String, fail: String => Nothing): String =
     try java.util.UUID.fromString(value).toString
     catch { case _: IllegalArgumentException => fail(s"$what must be a UUID, not '$value'") }
+
+  /** Headers java.net.http sets itself and refuses to be given. */
+  private val ClientHeaders = Set("connection", "content-length", "expect", "host", "upgrade")
+
+  /** Headers the HTTP transport sets from its own settings. */
+  private val TransportHeaders = Set("content-type", "content-encoding")
 
   private def load(path: String, setting: String): Map[String, String] = {
     val file = new File(path)

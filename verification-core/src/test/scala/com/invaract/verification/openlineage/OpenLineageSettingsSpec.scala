@@ -99,6 +99,16 @@ class OpenLineageSettingsSpec extends AnyFunSuite {
     assert(parse("url" -> "http://h", "header." -> "v").transport.asInstanceOf[TransportSettings.Http].headers.isEmpty)
   }
 
+  test("headers the HTTP client or the transport set themselves are refused at setup, not failed on every event") {
+    List("Host", "connection", "Content-Length", "Expect", "Upgrade").foreach { h =>
+      assert(refused("url" -> "http://h", s"header.$h" -> "v").contains(s"'header.$h' is set by the HTTP client itself"), h)
+    }
+    List("Content-Type", "content-encoding").foreach { h =>
+      assert(refused("url" -> "http://h", s"header.$h" -> "v").contains(s"'header.$h' is set by the transport"), h)
+    }
+    assert(parse("url" -> "http://h", "header.X-Host" -> "v").transport.asInstanceOf[TransportSettings.Http].headers == Map("X-Host" -> "v"))
+  }
+
   test("numbers: whole, and not below their minimum") {
     assert(refused("url" -> "http://h", "timeoutMs" -> "fast").contains("'timeoutMs' must be a whole number, not 'fast'"))
     assert(refused("url" -> "http://h", "timeoutMs" -> "0").contains("'timeoutMs' must be at least 1, not 0"))

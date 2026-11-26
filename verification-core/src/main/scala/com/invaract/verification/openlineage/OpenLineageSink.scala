@@ -62,7 +62,7 @@ object OpenLineageSink {
     val hook = new Thread(() => delivery.close(settings.shutdownTimeoutMs), "invaract-openlineage-shutdown")
     try Runtime.getRuntime.addShutdownHook(hook)
     catch { case NonFatal(e) => logger.debug(s"OpenLineage: no shutdown hook ($e); runs still open when the process ends are not closed") }
-    logger.info(s"Invaract publishes OpenLineage events to ${settings.transport} (namespace '${settings.namespace}')")
+    logger.info(s"Invaract publishes OpenLineage events to ${delivery.target} (namespace '${settings.namespace}')")
     delivery
   }
 }

@@ -90,6 +90,9 @@ private[openlineage] final class OpenLineageDelivery(
       done
     }
 
+  /** Where events go, as a log line may show it (no credentials). */
+  def target: String = transport.describe
+
   def stats: DeliveryStats =
     DeliveryStats(accepted.get, delivered.get, droppedQueueFull.get, failed.get, skippedCircuitOpen.get, shed.get, tooLarge.get)
 
