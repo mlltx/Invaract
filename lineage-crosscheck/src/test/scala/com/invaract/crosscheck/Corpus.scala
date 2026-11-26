@@ -204,7 +204,7 @@ object Corpus {
       import s.implicits._
       f.orders(s).as[OrderRow].map(o => Doubled(o.id, o.amount * 2)).toDF()
     }),
-    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows")((s, f) => {
+    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows", Spline -> theirs("Spline does not look into an RDD for the files it read; Invaract, like openlineage-spark, reports them as the input (with no column traced through the RDD)."))((s, f) => {
       val rows = f.orders(s).rdd
       s.createDataFrame(rows, f.orders(s).schema).select("id")
     }),
@@ -294,7 +294,8 @@ object Corpus {
           .writeStream.format("parquet").option("checkpointLocation", out.at("checkpoint"))
           .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start(out.at("out"))
         q.awaitTermination()
-      }),
+      },
+      notes = Map(OLS -> theirs("openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract checks a stream once, when it starts, and publishes its lineage then; Spline records the same lineage."))),
 
     // --- Hive ---------------------------------------------------------------------------------------------------------
     Job("hive-insert", "Hive tables", "INSERT INTO a Hive SerDe (text) table from a query",

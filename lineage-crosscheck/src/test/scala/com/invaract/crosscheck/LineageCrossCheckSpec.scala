@@ -31,7 +31,7 @@ class LineageCrossCheckSpec extends AnyFunSuite {
     val observed = Harness.run(job, fixture)
     assert(observed.refused.isEmpty, s"Invaract refused the job's write, so it published no lineage of it: ${observed.refused.getOrElse("")}")
     assert(observed.invaract.output.isDefined, "Invaract published nothing for the write")
-    assert(observed.openLineageSpark.output.isDefined, "openlineage-spark published nothing for the write: the harness is not capturing it")
+    // a reference publishing nothing for a write is a difference like any other: it needs a note saying why
     val diffs = Reference.all.map(r => r -> Comparison.against(r, observed, Harness.slashes(fixture.root.resolve("inputs")))).toMap
     results(job) = diffs
     for (reference <- Reference.all) {
