@@ -65,6 +65,21 @@ class OpenLineageAttachSpec extends AnyFunSuite {
     assert(AttachSetup.openLineageSink(ConfigSource.empty).isEmpty)
   }
 
+  test("withOpenLineage joins the OpenLineage sink to a sink installed in code, once") {
+    val config = ConfigSource.fromMap(Map(InvaractConf.OpenLineageUrl -> "http://127.0.0.1:1/with"))
+    val openLineage = AttachSetup.openLineageSink(config).get
+    val own = new TestNotificationSink
+    assert(AttachSetup.withOpenLineage(Some(own), ConfigSource.empty).contains(own), "no OpenLineage settings: the sink as it is")
+    assert(AttachSetup.withOpenLineage(None, ConfigSource.empty).isEmpty)
+    assert(AttachSetup.withOpenLineage(None, config).contains(openLineage))
+    val joined = AttachSetup.withOpenLineage(Some(own), config).get.asInstanceOf[TeeNotificationSink]
+    assert(joined.members == List(own, openLineage))
+    assert(AttachSetup.withOpenLineage(Some(joined), config).contains(joined), "already carried: not added twice")
+    assert(AttachSetup.withOpenLineage(Some(openLineage), config).contains(openLineage))
+    val nested = new TeeNotificationSink(List(new TestNotificationSink, joined))
+    assert(AttachSetup.withOpenLineage(Some(nested), config).contains(nested), "found inside a tee inside a tee")
+  }
+
   test("enforcement refuses settings it cannot use, naming the setting; dry-run says so once and carries on without them") {
     val bad = ConfigSource.fromMap(Map(InvaractConf.Contract -> contractFile, InvaractConf.OpenLineageUrl -> "ftp://nope"))
     assert(intercept[IllegalArgumentException](AttachSetup.select(bad)).getMessage.contains("(openLineageUrl)"))

@@ -775,6 +775,8 @@ private[notification] object FanOutNotificationSink {
 /** Publishes every event to each of `sinks`, in order, none of their failures reaching the others or the caller: how
   * `AttachSetup` joins the `notifyConfig` sink and the OpenLineage one. */
 private[invaract] final class TeeNotificationSink(sinks: List[NotificationSink]) extends NotificationSink {
+  private[invaract] def members: List[NotificationSink] = sinks
+
   private val logger = LoggerFactory.getLogger(classOf[TeeNotificationSink])
 
   override def publish(event: NotificationEvent): Unit =

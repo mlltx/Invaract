@@ -97,6 +97,21 @@ object AttachSetup {
 
   private val openLineageSinks = new java.util.concurrent.ConcurrentHashMap[OpenLineageSettings, NotificationSink]()
 
+  /** `sink` with the OpenLineage sink the settings in `config` ask for joined to it, for an adapter installed in code with a
+    * sink of its own (Spark's `forContract`): OpenLineage is still attached through configuration alone. A `sink` that already
+    * carries that OpenLineage sink (one `strictSink` built) is returned as it is, so no event is published twice. */
+  def withOpenLineage(sink: Option[NotificationSink], config: ConfigSource): Option[NotificationSink] =
+    openLineageSink(config) match {
+      case Some(openLineage) if !sink.exists(carries(_, openLineage)) => combine(sink, Some(openLineage))
+      case _                                                          => sink
+    }
+
+  private def carries(sink: NotificationSink, member: NotificationSink): Boolean = sink match {
+    case same if same eq member  => true
+    case tee: TeeNotificationSink => tee.members.exists(carries(_, member))
+    case _                        => false
+  }
+
   /** Both sinks, each isolated from the other's failures; either alone; or none. */
   private[verification] def combine(first: Option[NotificationSink], second: Option[NotificationSink]): Option[NotificationSink] =
     (first, second) match {

@@ -56,6 +56,7 @@ class SparkOpenLineageSpec extends AnyFunSuite {
     val (events, dir) = run(identity, (spark, dir) => doubled(spark, dir, dir.resolve("report").toString))
     val types = events.map(_.get("eventType").asText())
     assert(types.head == "START" && types.last == "COMPLETE" && types.count(t => t == "COMPLETE" || t == "FAIL") == 1, types)
+    assert(types.count(_ == "START") == 1, "one sink: nothing published twice")
     assert(events.map(_.path("run").get("runId").asText()).distinct.size == 1)
     assert(events.forall(_.path("job").get("namespace").asText() == "spark-test"))
     val outputs = events.flatMap(_.get("outputs").elements().asScala).filter(_.get("name").asText() == dir.resolve("report").toString)
@@ -109,6 +110,39 @@ class SparkOpenLineageSpec extends AnyFunSuite {
       assert(on - off < math.max(2000L, off / 2), "OpenLineage adds no more than noise to a real job")
       assert(received.get() > 0)
     } finally server.stop(0)
+  }
+
+  test("a job that installs Invaract in code (forContract) gets OpenLineage from configuration alone, with its own sink too") {
+    val dir = Files.createTempDirectory("spark-openlineage-code")
+    val output = dir.resolve("report").toString
+    val contract = com.invaract.contract.ContractParser.parse(
+      s"""id: in_code
+         |version: "1.0.0"
+         |outputs:
+         |  - { name: report, location: $output, format: parquet }
+         |""".stripMargin)
+    val events = dir.resolve("lineage.jsonl")
+    val config = dir.resolve("openlineage.properties")
+    Files.write(config, List("transport=file", s"path=$events").mkString("\n").getBytes(StandardCharsets.UTF_8))
+    val own = new com.invaract.verification.notification.NotificationSink {
+      val seen = new java.util.concurrent.atomic.AtomicInteger()
+      def publish(event: com.invaract.verification.notification.NotificationEvent): Unit = seen.incrementAndGet()
+    }
+    for (withOwn <- List(false, true)) {
+      Files.deleteIfExists(events)
+      val spark = SparkSession.builder().master("local[1]").appName("in-code").config("spark.ui.enabled", "false")
+        .config("spark.invaract.openLineageConfig", config.toString)
+        .withExtensions(_.injectCheckRule(s =>
+          if (withOwn) ContractEnforcementRule.forContract(contract, com.invaract.verification.VerificationOptions(), own)(s)
+          else ContractEnforcementRule.forContract(contract)(s)))
+        .getOrCreate()
+      try spark.range(3).write.mode("overwrite").parquet(output) finally spark.stop()
+      val deadline = System.nanoTime() + 30L * 1000000000L
+      def types = if (Files.exists(events)) Files.readAllLines(events).asScala.toList.map(l => json.readTree(l).get("eventType").asText()) else Nil
+      while (!types.contains("COMPLETE") && System.nanoTime() < deadline) Thread.sleep(50)
+      assert(types.headOption.contains("START") && types.last == "COMPLETE" && types.count(_ == "START") == 1, s"withOwn=$withOwn: $types")
+    }
+    assert(own.seen.get() > 0, "the job's own sink still gets its events")
   }
 
   test("a refused write: the verdict FAILED, and the run ends FAIL with the reason when the application stops") {

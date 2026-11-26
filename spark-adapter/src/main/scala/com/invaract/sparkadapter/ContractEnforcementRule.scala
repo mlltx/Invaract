@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{AdapterCapabilities, StructuralVerifier, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
+import com.invaract.verification.{AdapterCapabilities, AttachSetup, StructuralVerifier, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 
@@ -87,6 +87,14 @@ object ContractEnforcementRule {
     * asynchronous, so there is no timing window.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
+    session =>
+      // OpenLineage attaches through configuration alone, to a job that installs Invaract in code too
+      AttachSetup.openLineageSink(SparkConfigSource(session)) match {
+        case Some(openLineage) => forContract(contract, options, openLineage)(session)
+        case None              => withoutSink(contract, options)(session)
+      }
+
+  private def withoutSink(contract: Contract, options: VerificationOptions): SparkSession => LogicalPlan => Unit =
     session => {
       SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
@@ -118,6 +126,9 @@ object ContractEnforcementRule {
     * example.
     */
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
+    session => withSink(contract, options, AttachSetup.withOpenLineage(Some(sink), SparkConfigSource(session)).get)(session)
+
+  private def withSink(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
     session => {
       SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
