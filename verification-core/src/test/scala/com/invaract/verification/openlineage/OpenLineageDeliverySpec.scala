@@ -235,8 +235,9 @@ class OpenLineageDeliverySpec extends AnyFunSuite with org.scalatest.OneInstance
     val started = System.nanoTime()
     assert(d.close(10000), "closed within the time given")
     assert(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 5000, "not a minute's wait")
-    // START: its first try, and the try its wait was for, woken by closing; RUNNING and the terminal event: one try each
-    assert(calls.get == 4)
+    // START: its first try, then - if closing found the worker already waiting - the try its wait was for, woken by
+    // closing (if closing came first, no retry at all); RUNNING and the terminal event: one try each, never retried
+    assert(calls.get == 3 || calls.get == 4, calls.get)
   }
 
   test("many threads submitting at once: every event is accepted or counted as dropped, and each accepted one delivered") {

@@ -524,7 +524,13 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractTrustedSteps"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractTrustedSteps"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractCheckOnly"),
-  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractCheckOnly")
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractCheckOnly"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractOpenLineageUrl"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractOpenLineageUrl"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractOpenLineageConfig"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractOpenLineageConfig"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractOpenLineageNamespace"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractOpenLineageNamespace")
 )
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating

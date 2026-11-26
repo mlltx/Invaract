@@ -141,7 +141,7 @@ object VerificationPipeline {
     requireValidContract(contract, sink, runId, job)
     val checked = write
     val result = evaluateWrite(contract, checked, options, capabilities)
-    publishValidation(contract, result, sink, runId, job, writeKey, lineageOf(contract, checked, tracesColumns(capabilities)))
+    publishValidation(contract, result, sink, runId, job, writeKey, if (sink.isEmpty) None else lineageOf(contract, checked, tracesColumns(capabilities)))
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -411,7 +411,7 @@ object VerificationPipeline {
       capabilities: Option[AdapterCapabilities],
       job: Option[JobInfo]
   ): Nothing = {
-    publishValidation(contract, result, sink, runId, job, None, lineageOf(contract, checked, tracesColumns(capabilities)))
+    publishValidation(contract, result, sink, runId, job, None, if (sink.isEmpty) None else lineageOf(contract, checked, tracesColumns(capabilities)))
     throw new ContractViolationException(result, explain(contract, checked.plan, result))
   }
 

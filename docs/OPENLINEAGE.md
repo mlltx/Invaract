@@ -151,7 +151,7 @@ The configuration file (keys without a prefix):
 | `timeoutMs` | `5000` | per request |
 | `path` | | the `file` transport's file (one event per line) |
 | `namespace`, `jobName`, `parent.*` | | section 2.1 |
-| `queue.capacity` | `10000` | events held for delivery; beyond it the newest are dropped, counted and logged |
+| `queue.capacity` | `1000` | events held for delivery; beyond it the newest are dropped, counted and logged. A queued event holds its plan until it is published, so this bounds memory: a thousand events of a 200-column job are about 100 MB at worst (an endpoint that hangs), a few MB for an ordinary one |
 | `retry.maxAttempts` | `3` | per event, for a failure another try could fix (connection, timeout, 408, 429, 5xx) |
 | `retry.initialBackoffMs`, `retry.maxBackoffMs` | `200`, `5000` | |
 | `circuit.failures` | `5` | consecutive failed deliveries that stop delivery attempts... |

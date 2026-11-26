@@ -40,7 +40,7 @@ class OpenLineageSettingsSpec extends AnyFunSuite {
     assert(s.transport == TransportSettings.Http("http://marquez:5000", "api/v1/lineage", Map.empty, None, gzip = false, 5000L))
     assert(s == OpenLineageSettings(s.transport), "every other setting is its default")
     assert(s.namespace == "default" && s.emission == Emission.PerCheck && !s.failuresOnly && s.parent.isEmpty)
-    assert((s.queueCapacity, s.retryMaxAttempts, s.retryInitialBackoffMs, s.retryMaxBackoffMs) == ((10000, 3, 200L, 5000L)))
+    assert((s.queueCapacity, s.retryMaxAttempts, s.retryInitialBackoffMs, s.retryMaxBackoffMs) == ((1000, 3, 200L, 5000L)))
     assert((s.circuitFailures, s.circuitCooldownMs, s.maxEventBytes, s.shutdownTimeoutMs) == ((5, 30000L, 1048576, 5000L)))
     assert((s.schemaMaxFields, s.columnLineageMaxFields, s.deadLetterPath, s.disabledFacets) == ((1000, 1000, None, Set.empty)))
   }
