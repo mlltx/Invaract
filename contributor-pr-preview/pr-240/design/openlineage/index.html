@@ -1,0 +1,618 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>OpenLineage: Design | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-240/design/openlineage/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-240/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-240/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.11"/><meta name="generator" content="Starlight v0.42.11"/><meta property="og:title" content="OpenLineage: Design"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-240/design/openlineage/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Invaract publishes what it verified as OpenLineage run events, so the lineage tools a data platform already runs (Marquez, DataHub, Atlan, Collibra, Ope..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Invaract publishes what it verified as OpenLineage run events, so the lineage tools a data platform already runs (Marquez, DataHub, Atlan, Collibra, Ope..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-240/_astro/print.C9eyqPGL.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-240/_astro/common.DBvFT8MH.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-240/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-240/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-240/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding: 0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/Search.astro_astro_type_script_index_0_lang.8ZeAw53g.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="1uelemi" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-goals-and-non-goals" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Goals and non-goals</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-what-is-published" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. What is published</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#21-runs" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.1 Runs</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#22-datasets-and-their-names" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.2 Datasets and their names</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#23-facets" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.3 Facets</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#24-scope-settings" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.4 Scope settings</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-settings" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. Settings</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-architecture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Architecture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-performance" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Performance</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-hardening" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Hardening</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-the-conformance-kit" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. The conformance kit</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-test-plan-and-results" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Test plan and results</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-alongside-openlineage-spark" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Alongside openlineage-spark</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-progress" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Progress</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-goals-and-non-goals" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Goals and non-goals</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-what-is-published" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. What is published</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#21-runs" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.1 Runs</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#22-datasets-and-their-names" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.2 Datasets and their names</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#23-facets" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.3 Facets</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#24-scope-settings" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">2.4 Scope settings</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-settings" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. Settings</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-architecture" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Architecture</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-performance" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Performance</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-hardening" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Hardening</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-the-conformance-kit" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. The conformance kit</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-test-plan-and-results" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Test plan and results</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#9-alongside-openlineage-spark" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">9. Alongside openlineage-spark</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#10-progress" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">10. Progress</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">OpenLineage: Design</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/OPENLINEAGE.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>Invaract publishes what it verified as <a href="https://openlineage.io">OpenLineage</a> run events, so the lineage tools a data
+platform already runs (Marquez, DataHub, Atlan, Collibra, OpenMetadata, …) show, for every run of every job, which
+datasets it read and wrote, their columns, how each output column was derived, and whether the write passed its contract.
+MISSION.md §5: OpenLineage stays the ecosystem’s interoperability layer for lineage; Invaract adds the verification that
+gives those relationships confidence. This document is the design and the record of how it was built.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="1-goals-and-non-goals">1. Goals and non-goals</h2><a class="sl-anchor-link" href="#1-goals-and-non-goals"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “1. Goals and non-goals”</span></a></div>
+<p>Goals:</p>
+<ol>
+<li><strong>One implementation, every engine.</strong> The mapping, the delivery and the settings live in <code dir="auto">verification-core</code>; an adapter
+gets OpenLineage by doing what it already does (calling <code dir="auto">VerificationPipeline</code> and <code dir="auto">AttachSetup</code>). Spark, Beam (Java and
+Python) and plain Python jobs publish it from the first commit, and an adapter added later gets it by default.</li>
+<li><strong>Attached by configuration alone</strong> (CLAUDE.md’s External Attachability Requirement): neutral settings in
+<code dir="auto">InvaractConf</code>, spelled by each engine its own way (<code dir="auto">spark.invaract.openLineageUrl</code>, <code dir="auto">--invaractOpenLineageUrl</code>,
+<code dir="auto">--invaract_open_lineage_url</code>, <code dir="auto">INVARACT_OPEN_LINEAGE_URL</code>).</li>
+<li><strong>Checked by the conformance kit</strong> on every adapter: a new capability, <code dir="auto">reporting.openLineage</code>, which every adapter
+declares, and scenarios that hold each adapter’s events to the OpenLineage specification and to what the adapter
+declares (column lineage only from an adapter that declares it).</li>
+<li><strong>Cheap and safe to turn on.</strong> Nothing on the job’s own thread but handing a reference to a bounded queue; mapping,
+serialization and delivery happen on one background thread. A slow, failing or unreachable endpoint never fails,
+blocks or slows the job, and memory stays bounded however long the endpoint is down.</li>
+<li><strong>Correct to the specification</strong>, held to it by tests: every event the tests produce is validated against the official
+OpenLineage JSON Schema (pinned, vendored), dataset names follow the OpenLineage naming conventions, and Invaract’s own
+facets have published schemas.</li>
+<li><strong>Honest.</strong> A fact Invaract does not know is left out, never guessed: no column lineage from a plan Invaract cannot see
+into (a Python job’s own code, a Beam step’s function), no completion where the adapter saw none.</li>
+</ol>
+<p>Non-goals (this version):</p>
+<ul>
+<li>Replacing an engine’s own OpenLineage integration (<code dir="auto">openlineage-spark</code>). The two can run side by side; section 9 says how
+they relate.</li>
+<li>A Kafka transport. HTTP covers Marquez and every hosted backend; a file transport covers a log-shipping pipeline.
+Kafka can follow as an opt-in module the way <code dir="auto">notification-kafka</code> did.</li>
+<li>Consuming OpenLineage (reading other tools’ lineage to verify against).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="2-what-is-published">2. What is published</h2><a class="sl-anchor-link" href="#2-what-is-published"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. What is published”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="21-runs">2.1 Runs</h3><a class="sl-anchor-link" href="#21-runs"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2.1 Runs”</span></a></div>
+<p>One OpenLineage <strong>run per Invaract run</strong>: a Spark application, a Beam pipeline submission, a Python job’s run. The
+specification requires each run to have one <code dir="auto">START</code> and one terminal event (<code dir="auto">COMPLETE</code>, <code dir="auto">FAIL</code> or <code dir="auto">ABORT</code>):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>When</th><th>OpenLineage event</th><th>Carries</th></tr></thead><tbody><tr><td>The run’s first Invaract event</td><td><code dir="auto">START</code></td><td>job and run facets</td></tr><tr><td>Each contract check of a write</td><td><code dir="auto">RUNNING</code></td><td>that write’s inputs and output, with their facets; on a refused write, the <code dir="auto">errorMessage</code> run facet</td></tr><tr><td>Each completed write (Spark, Python)</td><td><code dir="auto">RUNNING</code></td><td>the output, with <code dir="auto">outputStatistics</code>, <code dir="auto">datasetVersion</code>, <code dir="auto">lifecycleStateChange</code></td></tr><tr><td>The run ends</td><td><code dir="auto">COMPLETE</code>, or <code dir="auto">FAIL</code> when a write was refused</td><td>the run’s totals (<code dir="auto">invaract_run</code> facet)</td></tr></tbody></table>
+<p><code dir="auto">RUNNING</code> events let a backend show a long Spark application’s lineage while it runs, and a <code dir="auto">RUNNING</code> event is never
+needed for correctness: OpenLineage backends merge the inputs and outputs of every event of a run. For fewer requests,
+<code dir="auto">emission=endOfRun</code> sends only <code dir="auto">START</code> and the terminal event, the terminal one carrying every dataset seen.</p>
+<p>The run ends when the adapter says so - <code dir="auto">NotificationSink.endRun(job)</code>, a neutral signal every wrapping sink passes on and
+every other sink ignores (a <code dir="auto">JobSummaryEvent</code> or <code dir="auto">DryRunSummaryEvent</code> ends it too) - or, failing that, when the process
+ends (a JVM shutdown hook, bounded by <code dir="auto">shutdownTimeoutMs</code>). A run that saw a refused write ends <code dir="auto">FAIL</code>; otherwise
+<code dir="auto">COMPLETE</code>. Where each adapter ends it:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Adapter</th><th>Ends the run</th></tr></thead><tbody><tr><td>Spark</td><td>at application end: <code dir="auto">DeclaredOutputs</code>, already the end-of-application hook for <code dir="auto">check.outputsWritten</code>, calls <code dir="auto">endRun</code> after any <code dir="auto">MISSING_OUTPUT</code> it reports (and for a job discarded unjudged)</td></tr><tr><td>Beam Java</td><td><code dir="auto">InvaractRunner.run</code>, in a <code dir="auto">finally</code>: the pipeline was refused, or checked and handed to its runner (for a blocking runner, finished)</td></tr><tr><td>Beam Python</td><td><code dir="auto">PortableCheck.run</code>, in a <code dir="auto">finally</code>: the checker’s verdict is the end of Invaract’s part of the run</td></tr><tr><td>Python I/O</td><td>the run’s end (<code dir="auto">finish</code>/<code dir="auto">published</code>, or the checker’s <code dir="auto">close</code> at end of input), after the <code dir="auto">JobSummaryEvent</code></td></tr></tbody></table>
+<p>The kit holds every adapter to it (section 7): a run with no terminal event within 30 seconds of the job returning is a
+divergence. A process killed outright (<code dir="auto">SIGKILL</code>, <code dir="auto">os._exit</code>) runs no hook: its run has no
+terminal event, which OpenLineage backends show as still running - the honest picture of a run nobody saw end.</p>
+<p><strong>Run identity.</strong> OpenLineage requires a UUID. The run’s id is a name-based UUID (version 5) of the engine and Invaract’s
+own run id (<code dir="auto">JobInfo.runId</code>: Spark’s application id, Beam’s job id, the Python run’s id), so every event of a run, from
+every process that publishes for it, carries the same id, and the same run published twice is the same run.</p>
+<p><strong>Job identity.</strong> <code dir="auto">namespace</code> (setting <code dir="auto">openLineageNamespace</code>, else the configuration file’s <code dir="auto">namespace</code>, else the
+<code dir="auto">OPENLINEAGE_NAMESPACE</code> environment variable, else <code dir="auto">default</code>, OpenLineage’s own default) and <code dir="auto">name</code>: the job’s stable id
+(<code dir="auto">jobId</code>), else the engine’s name for the job, else the contract’s id. A configured <code dir="auto">jobName</code> wins over all three.</p>
+<p><strong>Parent run.</strong> When the job runs inside an orchestrator that publishes OpenLineage itself (Airflow, Dagster), the
+<code dir="auto">parent</code> run facet links the two: from the configuration file (<code dir="auto">parent.runId</code>, <code dir="auto">parent.job.namespace</code>,
+<code dir="auto">parent.job.name</code>) or from the <code dir="auto">OPENLINEAGE_PARENT_ID</code> environment variable (<code dir="auto">&#x3C;namespace>/&#x3C;name>/&#x3C;runId></code>, the form
+Airflow’s integration sets).</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="22-datasets-and-their-names">2.2 Datasets and their names</h3><a class="sl-anchor-link" href="#22-datasets-and-their-names"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2.2 Datasets and their names”</span></a></div>
+<p>Dataset names follow the <a href="https://openlineage.io/docs/spec/naming">OpenLineage naming conventions</a>, so the same dataset
+published by Invaract, by Spark’s integration and by a warehouse’s own integration is one node in the graph:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Location</th><th>namespace</th><th>name</th></tr></thead><tbody><tr><td><code dir="auto">/data/out/report</code>, <code dir="auto">file:/data/out/report</code></td><td><code dir="auto">file</code></td><td><code dir="auto">/data/out/report</code></td></tr><tr><td>a relative path (<code dir="auto">data/out/report</code>)</td><td><code dir="auto">file</code></td><td>the absolute path, resolved against the working directory</td></tr><tr><td><code dir="auto">hdfs://nn:8020/warehouse/t</code></td><td><code dir="auto">hdfs://nn:8020</code></td><td><code dir="auto">/warehouse/t</code></td></tr><tr><td><code dir="auto">s3://bucket/key</code>, <code dir="auto">s3a://</code>, <code dir="auto">s3n://</code></td><td><code dir="auto">s3://bucket</code></td><td><code dir="auto">key</code></td></tr><tr><td><code dir="auto">gs://bucket/key</code></td><td><code dir="auto">gs://bucket</code></td><td><code dir="auto">key</code></td></tr><tr><td><code dir="auto">abfss://container@account.dfs.core.windows.net/path</code></td><td>the same, up to the host</td><td><code dir="auto">/path</code></td></tr><tr><td><code dir="auto">postgresql://host:5432/db</code> and a table</td><td><code dir="auto">postgres://host:5432</code></td><td><code dir="auto">db.schema.table</code></td></tr><tr><td><code dir="auto">bigquery:project.dataset.table</code> (Beam)</td><td><code dir="auto">bigquery</code></td><td><code dir="auto">project.dataset.table</code></td></tr><tr><td>any other <code dir="auto">scheme://authority/path</code></td><td><code dir="auto">scheme://authority</code></td><td><code dir="auto">/path</code></td></tr></tbody></table>
+<p>Credentials in a location (<code dir="auto">s3://key:secret@bucket</code>, <code dir="auto">postgresql://user:pass@host</code>) are always removed. A dataset that
+resolved to a catalog table also carries the <code dir="auto">symlinks</code> facet naming the table (<code dir="auto">TABLE</code>), and <code dir="auto">catalog</code> when the catalog
+is known.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="23-facets">2.3 Facets</h3><a class="sl-anchor-link" href="#23-facets"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2.3 Facets”</span></a></div>
+<p>Standard facets (OpenLineage 2-0-2, the versions pinned in <code dir="auto">verification-core/src/test/resources/openlineage/</code>):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Facet</th><th>On</th><th>From</th></tr></thead><tbody><tr><td><code dir="auto">schema</code></td><td>inputs, outputs</td><td>the schemas the adapter reports (<code dir="auto">CheckedWrite.inputSchemas</code>, <code dir="auto">.outputSchema</code>; <code dir="auto">WriteEvent.schema</code>), nested fields for structs</td></tr><tr><td><code dir="auto">columnLineage</code></td><td>outputs</td><td><code dir="auto">ir.Lineage.trace</code> over the write’s plan, each source column resolved to its read (<code dir="auto">PlanFacts.locationResolver</code>); <code dir="auto">DIRECT</code>/<code dir="auto">INDIRECT</code> with Invaract’s derivation (<code dir="auto">IDENTITY</code>, <code dir="auto">TRANSFORMATION</code>, <code dir="auto">AGGREGATION</code>, …)</td></tr><tr><td><code dir="auto">dataQualityAssertions</code></td><td>outputs</td><td>the contract check: one assertion for the contract as a whole, one per violation (its type, column, expected, actual), and the static data-quality results</td></tr><tr><td><code dir="auto">outputStatistics</code></td><td>outputs of completed writes</td><td><code dir="auto">WriteEvent</code>’s rows, bytes and files, where the engine reports them</td></tr><tr><td><code dir="auto">datasetVersion</code></td><td>outputs of completed writes</td><td>the Delta version or Iceberg snapshot the write committed</td></tr><tr><td><code dir="auto">lifecycleStateChange</code></td><td>outputs</td><td><code dir="auto">OVERWRITE</code> for an overwrite, <code dir="auto">CREATE</code> for a write that creates its table</td></tr><tr><td><code dir="auto">storage</code></td><td>inputs, outputs</td><td>the format (<code dir="auto">parquet</code>, <code dir="auto">delta</code>, …) and the storage layer for table formats</td></tr><tr><td><code dir="auto">symlinks</code>, <code dir="auto">catalog</code></td><td>inputs, outputs</td><td>the catalog table a dataset resolved to</td></tr><tr><td><code dir="auto">processing_engine</code></td><td>run</td><td>the engine and its version, and Invaract’s version as the adapter</td></tr><tr><td><code dir="auto">parent</code></td><td>run</td><td>section 2.1</td></tr><tr><td><code dir="auto">errorMessage</code></td><td>run</td><td>a refused write’s explanation (<code dir="auto">VerificationPipeline.explain</code>)</td></tr><tr><td><code dir="auto">jobType</code></td><td>job</td><td><code dir="auto">BATCH</code>, integration <code dir="auto">INVARACT</code>, job type <code dir="auto">JOB</code></td></tr></tbody></table>
+<p>Invaract’s own facets, each with a JSON Schema published by the docs site
+(<code dir="auto">docs-site/public/schemas/openlineage/1-0-0/</code>):</p>
+<ul>
+<li><code dir="auto">invaract_contract</code> (output dataset): the contract (<code dir="auto">id@version</code>), the dataset’s name in it, the verdict (<code dir="auto">PASSED</code>,
+<code dir="auto">FAILED</code>), every violation (type, message, column, expected, actual, remediation), the inputs it could not verify, and
+the transformation fingerprint when one was computed.</li>
+<li><code dir="auto">invaract_run</code> (run): the adapter, how it attached (<code dir="auto">enforce</code>, <code dir="auto">dryRun</code>), and on the terminal event the run’s totals
+(checks passed and failed, violations, writes).</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="24-scope-settings">2.4 Scope settings</h3><a class="sl-anchor-link" href="#24-scope-settings"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2.4 Scope settings”</span></a></div>
+<p>What is published is configurable, for cost and for privacy: <code dir="auto">facets.disabled</code> (a comma-separated list of facet names,
+for instance <code dir="auto">columnLineage,schema</code>), <code dir="auto">schema.maxFields</code> and <code dir="auto">columnLineage.maxFields</code> (larger schemas and lineage are cut to
+that many fields), <code dir="auto">failuresOnly=true</code> (only runs with a refused write publish at
+all - for a team that wants lineage tools to show problems only), <code dir="auto">emission=perCheck|endOfRun</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="3-settings">3. Settings</h2><a class="sl-anchor-link" href="#3-settings"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “3. Settings”</span></a></div>
+<p>Three neutral settings in <code dir="auto">InvaractConf</code>, so the conformance kit checks every adapter reaches them:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Setting</th><th>Meaning</th></tr></thead><tbody><tr><td><code dir="auto">openLineageUrl</code></td><td>The OpenLineage HTTP endpoint’s base URL (<code dir="auto">http://marquez:5000</code>): publishing is on, with every default</td></tr><tr><td><code dir="auto">openLineageConfig</code></td><td>A <code dir="auto">.properties</code> file with every setting below; publishing is on when it names a transport</td></tr><tr><td><code dir="auto">openLineageNamespace</code></td><td>The job namespace</td></tr></tbody></table>
+<p>The configuration file (keys without a prefix):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead><tbody><tr><td><code dir="auto">transport</code></td><td><code dir="auto">http</code> when a URL is set</td><td><code dir="auto">http</code>, <code dir="auto">file</code> or <code dir="auto">console</code></td></tr><tr><td><code dir="auto">url</code></td><td><code dir="auto">openLineageUrl</code></td><td>HTTP base URL</td></tr><tr><td><code dir="auto">endpoint</code></td><td><code dir="auto">api/v1/lineage</code></td><td>path under <code dir="auto">url</code></td></tr><tr><td><code dir="auto">apiKeyEnv</code></td><td><code dir="auto">OPENLINEAGE_API_KEY</code></td><td>environment variable holding a bearer token; never the token itself</td></tr><tr><td><code dir="auto">header.&#x3C;Name></code></td><td></td><td>extra request headers</td></tr><tr><td><code dir="auto">compression</code></td><td><code dir="auto">none</code></td><td><code dir="auto">gzip</code></td></tr><tr><td><code dir="auto">timeoutMs</code></td><td><code dir="auto">5000</code></td><td>per request</td></tr><tr><td><code dir="auto">path</code></td><td></td><td>the <code dir="auto">file</code> transport’s file (one event per line)</td></tr><tr><td><code dir="auto">namespace</code>, <code dir="auto">jobName</code>, <code dir="auto">parent.*</code></td><td></td><td>section 2.1</td></tr><tr><td><code dir="auto">queue.capacity</code></td><td><code dir="auto">1000</code></td><td>events held for delivery; beyond it the newest are dropped, counted and logged. A queued event holds its plan until it is published, so this bounds memory: a thousand events of a 200-column job are about 100 MB at worst (an endpoint that hangs), a few MB for an ordinary one</td></tr><tr><td><code dir="auto">retry.maxAttempts</code></td><td><code dir="auto">3</code></td><td>per event, for a failure another try could fix (connection, timeout, 408, 429, 5xx)</td></tr><tr><td><code dir="auto">retry.initialBackoffMs</code>, <code dir="auto">retry.maxBackoffMs</code></td><td><code dir="auto">200</code>, <code dir="auto">5000</code></td><td></td></tr><tr><td><code dir="auto">circuit.failures</code></td><td><code dir="auto">5</code></td><td>consecutive failed deliveries that stop delivery attempts…</td></tr><tr><td><code dir="auto">circuit.cooldownMs</code></td><td><code dir="auto">30000</code></td><td>…for this long; events meanwhile are dropped (or dead-lettered), counted and logged</td></tr><tr><td><code dir="auto">deadLetter.path</code></td><td></td><td>a file that keeps what could not be delivered, one event per line, for replay</td></tr><tr><td><code dir="auto">maxEventBytes</code></td><td><code dir="auto">1048576</code></td><td>an event larger than this sheds <code dir="auto">columnLineage</code>, then <code dir="auto">schema</code>, before it is dropped</td></tr><tr><td><code dir="auto">shutdownTimeoutMs</code></td><td><code dir="auto">5000</code></td><td>how long the process end waits to close runs and deliver what is queued</td></tr><tr><td><code dir="auto">facets.disabled</code>, <code dir="auto">schema.maxFields</code>, <code dir="auto">columnLineage.maxFields</code>, <code dir="auto">failuresOnly</code>, <code dir="auto">emission</code></td><td></td><td>section 2.4</td></tr></tbody></table>
+<p>A setting that cannot be used (an unknown <code dir="auto">transport</code>, a number that is not one, an <code dir="auto">apiKeyEnv</code> naming a variable that is
+not set when one was asked for explicitly) fails the job at start-up under enforcement, as a broken notification sink
+does, and is said once and ignored in dry-run mode, whose promise is never to fail a job.</p>
+<p>OpenLineage publishing composes with <code dir="auto">notifyConfig</code>: both can be on, and they never share a failure.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="4-architecture">4. Architecture</h2><a class="sl-anchor-link" href="#4-architecture"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Architecture”</span></a></div>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-240/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">adapter ─ VerificationPipeline.verifyWrite ──► ContractValidationEvent (+ WriteLineage: references only)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">        </span></span><span style="--0:#d6deeb;--1:#403f53">─ WriteEvent / JobSummaryEvent ──────┐</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                             </span></span><span style="--0:#d6deeb;--1:#403f53">▼</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                              </span></span><span style="--0:#d6deeb;--1:#403f53">OpenLineageSink.publish  (job's thread: enqueue a reference, O(1))</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                             </span></span><span style="--0:#d6deeb;--1:#403f53">│ bounded queue</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                             </span></span><span style="--0:#d6deeb;--1:#403f53">▼</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                              </span></span><span style="--0:#d6deeb;--1:#403f53">worker thread: OpenLineageMapper (run state, facets, naming)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                             </span></span><span style="--0:#d6deeb;--1:#403f53">→ OpenLineageJson → Transport (http | file | console)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                                 </span></span><span style="--0:#d6deeb;--1:#403f53">retry, circuit breaker, dead letter</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="adapter ─ VerificationPipeline.verifyWrite ──► ContractValidationEvent (+ WriteLineage: references only)        ─ WriteEvent / JobSummaryEvent ──────┐                                             ▼                              OpenLineageSink.publish  (job&#x27;s thread: enqueue a reference, O(1))                                             │ bounded queue                                             ▼                              worker thread: OpenLineageMapper (run state, facets, naming)                                             → OpenLineageJson → Transport (http | file | console)                                                 retry, circuit breaker, dead letter"><div></div></button></div></figure></div>
+<ul>
+<li><code dir="auto">WriteLineage</code> (<code dir="auto">verification-core</code>): the write’s plan, its output and inputs (location, format, schema, catalog), as
+references the pipeline already holds. Carried on <code dir="auto">ContractValidationEvent.lineage</code>, not serialized into Invaract’s own
+event JSON (whose schema is unchanged). Column lineage is computed from it lazily, on the worker thread.</li>
+<li><code dir="auto">OpenLineageSink</code> (<code dir="auto">com.invaract.verification.openlineage</code>): a <code dir="auto">NotificationSink</code>. <code dir="auto">AttachSetup</code> builds it from the
+settings and combines it with the <code dir="auto">notifyConfig</code> sink, if any, so every adapter that already uses <code dir="auto">AttachSetup</code> publishes
+OpenLineage with no change of its own.</li>
+<li><code dir="auto">OpenLineageMapper</code>: pure functions from Invaract’s events to OpenLineage events, with the per-run state (started,
+totals, held events) kept in a bounded map. Only the worker thread touches it.</li>
+<li><code dir="auto">OpenLineageNaming</code>: section 2.2.</li>
+<li><code dir="auto">JsonText</code> (<code dir="auto">verification-core</code>’s notification package): an RFC 8259 writer, written by hand (no JSON library at
+runtime); <code dir="auto">NotificationJson</code> now escapes through it too, which fixed control characters and non-finite numbers in
+Invaract’s own events.</li>
+<li>Column lineage follows the adapter’s declaration: an event carries the plan for <code dir="auto">columnLineage</code> only when the adapter
+declares <code dir="auto">lineage.columnLevel</code> supported or partial (<code dir="auto">VerificationPipeline.tracesColumns</code>), so an adapter whose plans
+are opaque never claims column lineage it does not trace.</li>
+<li>A write refused before it is checked in full (Python I/O judges a write before it is staged) is refused through
+<code dir="auto">VerificationPipeline.rejectWrite</code>, whose event carries the write’s lineage as <code dir="auto">verifyWrite</code>’s does.</li>
+<li>An adapter installed in code with a sink of its own (Spark’s <code dir="auto">forContract</code>, Beam’s <code dir="auto">InvaractBeam.enforce</code>) still gets
+OpenLineage from configuration alone: <code dir="auto">AttachSetup.withOpenLineage</code> joins the OpenLineage sink the settings ask for,
+unless the sink already carries it.</li>
+<li>Dry run publishes each inferred write as an output; <code dir="auto">ContractInferenceEvent</code> carries no plan, so a dry run’s events
+have no inputs and no column lineage.</li>
+<li><code dir="auto">Transport</code>: <code dir="auto">HttpTransport</code> (<code dir="auto">java.net.http</code>, optional gzip), <code dir="auto">FileTransport</code> (appends one line per event, under a
+lock, so concurrent processes interleave whole lines), <code dir="auto">ConsoleTransport</code> (SLF4J).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="5-performance">5. Performance</h2><a class="sl-anchor-link" href="#5-performance"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Performance”</span></a></div>
+<p>What turning it on costs the job:</p>
+<ul>
+<li>On the job’s thread: building <code dir="auto">WriteLineage</code> from references the pipeline already holds, and one <code dir="auto">offer</code> to a bounded
+queue. No mapping, no JSON, no I/O. Measured in section 8.</li>
+<li>Off the job’s thread: column lineage (<code dir="auto">Lineage.trace</code>, already trampolined for deep plans), JSON, delivery. One daemon
+thread per sink.</li>
+<li>Memory: at most <code dir="auto">queue.capacity</code> events, each one a reference to data the job already built.</li>
+<li>At the job’s end: at most <code dir="auto">shutdownTimeoutMs</code> (default five seconds) waiting for delivery - only when there is still
+something to deliver.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="6-hardening">6. Hardening</h2><a class="sl-anchor-link" href="#6-hardening"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. Hardening”</span></a></div>
+<ul>
+<li>Never throws into the job: the sink is wrapped (<code dir="auto">SafeNotificationSink</code>), and the worker catches everything.</li>
+<li>A slow endpoint is bounded by <code dir="auto">timeoutMs</code>; a down one by the circuit breaker; a flood by the queue’s capacity. Every drop
+is counted, and said at WARN once per minute at most, never once per event.</li>
+<li>Secrets: a bearer token only from an environment variable; credentials removed from every dataset name and from every
+URL a log line shows.</li>
+<li>Text: every string the job controls (column names, messages, locations) is escaped; property tests hold the JSON
+well-formed for any string, control characters and unpaired surrogates included.</li>
+<li>Size: <code dir="auto">maxEventBytes</code>, then shedding, then dropping with a WARN.</li>
+<li>Concurrency: one worker; state per run in a bounded map (oldest runs closed first when it is full).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="7-the-conformance-kit">7. The conformance kit</h2><a class="sl-anchor-link" href="#7-the-conformance-kit"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7. The conformance kit”</span></a></div>
+<p>A capability every adapter declares, <code dir="auto">reporting.openLineage</code> (“publishes OpenLineage run events through configuration
+alone”), and scenarios that attach a real job through configuration (<code dir="auto">ConformanceAdapter.attached</code>) with
+<code dir="auto">openLineageUrl</code> set to an endpoint the kit serves, then hold what arrives to:</p>
+<ul>
+<li>every event’s required fields (<code dir="auto">eventType</code>, <code dir="auto">eventTime</code>, <code dir="auto">producer</code>, <code dir="auto">schemaURL</code>, a UUID run id, the job) - the events
+themselves are built by the core, whose tests hold every one to the official OpenLineage JSON Schema;</li>
+<li>one <code dir="auto">START</code> and one terminal event per run, in that order, all with the run’s id;</li>
+<li>the namespace <code dir="auto">openLineageNamespace</code> sets;</li>
+<li>the inputs and the output named for the locations the job read and wrote (section 2.2), the output’s <code dir="auto">schema</code> facet
+equal to the columns written;</li>
+<li>the contract’s verdict on <code dir="auto">dataQualityAssertions</code> and <code dir="auto">invaract_contract</code>: <code dir="auto">PASSED</code> for an allowed write; for a
+refused one, <code dir="auto">FAILED</code>, the violation, and a <code dir="auto">FAIL</code> terminal event with <code dir="auto">errorMessage</code>;</li>
+<li><code dir="auto">columnLineage</code> exactly when the adapter declares <code dir="auto">lineage.columnLevel</code> supported or partial, and its edges naming real
+input columns;</li>
+<li>a job that is refused still publishes; an unreachable endpoint does not fail the job.</li>
+</ul>
+<p>Three scenarios (<code dir="auto">openlineage-run</code>, <code dir="auto">openlineage-refused</code>, <code dir="auto">openlineage-unreachable</code>), attached through
+<code dir="auto">Attachment.OpenLineage</code>; <code dir="auto">OpenLineageConformance</code> judges them. <code dir="auto">BrokenAdapterSpec</code> gains the broken adapters they exist to
+catch: one that never sets the endpoint on its engine, one that loses the namespace, and one that never ends its run.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="8-test-plan-and-results">8. Test plan and results</h2><a class="sl-anchor-link" href="#8-test-plan-and-results"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “8. Test plan and results”</span></a></div>
+<p><strong>Core (<code dir="auto">verification-core</code>, <code dir="auto">com.invaract.verification.openlineage</code>, about 100 tests).</strong> <code dir="auto">JsonTextSpec</code> (property tests:
+any string, control characters and lone surrogates included, renders as JSON a strict parser reads back unchanged);
+<code dir="auto">OpenLineageNamingSpec</code>; <code dir="auto">OpenLineageSettingsSpec</code> (every key, every refusal); <code dir="auto">OpenLineageMapperSpec</code> (every event and
+facet, validated against the official OpenLineage 2-0-2 JSON Schema and each facet against its own versioned schema, the
+spec vendored at release 1.55.0; Invaract’s facets against the schemas the docs site publishes); <code dir="auto">OpenLineageSchemaSpec</code>
+(the validator itself catches what it should); <code dir="auto">OpenLineageDeliverySpec</code> (ordering, retries and backoff, the circuit
+breaker, dead letter, shedding, a full queue, bounded close, interrupts, many threads); <code dir="auto">OpenLineageTransportSpec</code> (a
+real HTTP server: statuses, no redirects, gzip, headers, timeouts, credentials never in a message; concurrent file
+writers interleave whole lines); <code dir="auto">OpenLineageAttachSpec</code> (through <code dir="auto">AttachSetup</code> as every adapter attaches it; a real JVM
+whose shutdown hook ends its run).</p>
+<p><strong>Kit.</strong> <code dir="auto">OpenLineageConformanceTest</code> breaks each rule of the judge one at a time; <code dir="auto">BrokenAdapterSpec</code> holds the three
+scenarios to the mistakes above. The reference adapter conforms.</p>
+<p><strong>Adapters, through the kit’s scenarios on real jobs.</strong> Spark (<code dir="auto">SparkConformanceSpec</code>), Beam Java
+(<code dir="auto">BeamConformanceSpec</code>), Beam Python (<code dir="auto">BeamPythonConformanceSpec</code>, a real Python pipeline and the checker), Python I/O
+(<code dir="auto">PythonIoConformanceSpec</code>, and <code dir="auto">PythonIoPackageConformanceSpec</code> with real Python jobs and the package): all three
+OpenLineage scenarios conform, and are on each adapter’s baseline. Plus <code dir="auto">SparkOpenLineageSpec</code> (a real application
+attached by <code dir="auto">spark.sql.extensions</code>, ended by <code dir="auto">spark.stop()</code>; one installed in code with <code dir="auto">forContract</code>) and a Beam test of a
+check built in code.</p>
+<p><strong>Mutation testing</strong> (Stryker4s, scoped to the new files): <code dir="auto">verification-core</code>’s OpenLineage files and <code dir="auto">JsonText</code>/
+<code dir="auto">WriteLineage</code> scored 83% (of covered code 85%) before the targeted tests were added for the real survivors (run
+eviction, the held-event cap, statistics, dataset-level lineage, credentials holding <code dir="auto">@</code>, a daemon worker, interrupted
+callers), which also found and fixed an empty user part (<code dir="auto">hdfs://@nn</code>) left in a namespace. What survives is in the
+rate-limited WARN summary’s arithmetic and log text, and two equivalent mutants (a boundary the map’s own invariant
+never reaches; a shortcut whose fallback computes the same answer).</p>
+<p><strong>Performance</strong> (<code dir="auto">OpenLineagePerformanceSpec</code>, <code dir="auto">SparkOpenLineageSpec</code>; a laptop-class container):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Measure</th><th>Result</th></tr></thead><tbody><tr><td>A check of a 200-column job (two inputs joined, filtered), OpenLineage off vs on</td><td>41-112 us vs 68-169 us across runs; the difference is within run-to-run noise (-50 to +57 us)</td></tr><tr><td>Publishing one event, on the job’s thread</td><td>about 1 us (an <code dir="auto">offer</code>), whatever the endpoint does</td></tr><tr><td>1,000 events against an endpoint answering in 1 s</td><td>0-14 ms on the job’s thread</td></tr><tr><td>50,000 events against a stalled endpoint, <code dir="auto">queue.capacity=1000</code></td><td>1,001 kept, 48,999 dropped and counted; 0.1-1.4 us each</td></tr><tr><td>The worker, 200-column events with column lineage</td><td>450-760 events/s; about 100 KB each uncompressed</td></tr><tr><td>A Spark job of 20 writes, OpenLineage off vs on (endpoint answering in 20 ms)</td><td>2,960 ms vs 2,939 ms</td></tr></tbody></table>
+<p>The worst case for memory is a wide job writing many times while the endpoint hangs: each queued event holds what
+describes its write, which is why <code dir="auto">queue.capacity</code> defaults to 1,000, not 10,000.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="9-alongside-openlineage-spark">9. Alongside openlineage-spark</h2><a class="sl-anchor-link" href="#9-alongside-openlineage-spark"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “9. Alongside openlineage-spark”</span></a></div>
+<p><code dir="auto">openlineage-spark</code> publishes one run per Spark SQL execution, with the plan’s lineage as Spark sees it; Invaract publishes
+one run per application with what it verified. Both can be on: they are different jobs in the graph (set
+<code dir="auto">openLineageNamespace</code> and <code dir="auto">jobName</code> to keep them apart, or the same <code dir="auto">parent</code> to group them under one orchestrator run),
+and the datasets are the same nodes, since both follow the naming conventions.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="10-progress">10. Progress</h2><a class="sl-anchor-link" href="#10-progress"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “10. Progress”</span></a></div>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> Design (this document)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Core: model, naming, mapping, JSON, transports, delivery, settings</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Kit: capability, scenarios, broken adapters, declarations and baselines</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Adapters: Spark, Beam Java, Beam Python, Python I/O</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Hardening and performance, measured</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> User documentation (<code dir="auto">docs-site</code>: “Publish Lineage to OpenLineage”, the configuration reference, the capability pages)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Gates on CI: coverage (blocked locally by Maven Central rate-limiting the scoverage reporter), the native checker build</li>
+</ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/OPENLINEAGE.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
