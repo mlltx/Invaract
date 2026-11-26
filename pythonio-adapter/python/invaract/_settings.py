@@ -35,6 +35,9 @@ SETTINGS = {
     "jobId": "The job's stable identity across runs, named by every event (job.jobId).",
     "jobAttributes": "Facts about this run every event carries (job.attributes): comma-separated key=value pairs, team=orders,dag=daily.",
     "contractMetadata": "Facts about the contract a dry run drafts, in every draft's extensions: comma-separated key=value pairs, owner=orders-team.",
+    "openLineageUrl": "The OpenLineage endpoint the job's lineage is published to (events go to <url>/api/v1/lineage). Unset: nothing is published.",
+    "openLineageConfig": "Path of a .properties file configuring OpenLineage publishing: transport, headers, compression, retries, facets, batching.",
+    "openLineageNamespace": "The OpenLineage namespace the job is published under. Default: the configuration file's, else OPENLINEAGE_NAMESPACE.",
 }
 
 #: The command that runs the checker, split as a shell would: the native program, or ``java -jar <checker jar>``. The

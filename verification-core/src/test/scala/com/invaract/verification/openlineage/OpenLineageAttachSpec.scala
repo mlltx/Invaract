@@ -126,6 +126,19 @@ class OpenLineageAttachSpec extends AnyFunSuite {
     assert(!hasColumns(Some(declaring(Support.Unsupported))) && !hasColumns(Some(declaring(Support.NotApplicable))))
   }
 
+  test("a write refused before it runs (rejectWrite) carries its lineage, as a checked one does") {
+    val sink = new TestNotificationSink
+    val checked = CheckedWrite(goodPlan, List(orders -> inputSchema), Cols(("id", LongType, false)), false, None, Set.empty)
+    val result = VerificationPipeline.evaluateWrite(contract, checked, VerificationOptions(), None)
+    assert(!result.passed)
+    val thrown = intercept[ContractViolationException](VerificationPipeline.rejectWrite(contract, result, checked, Some(sink), Some("r"), None, Some(job)))
+    assert(thrown.result == result)
+    val event = sink.events.collect { case e: ContractValidationEvent => e }.head
+    assert(event.status == "FAILED" && event.runId.contains("r") && event.job.contains(job))
+    assert(event.lineage.exists(l => l.output.location == "out/report" && l.inputs.map(_.location) == List(orders) && l.columnLineage.nonEmpty))
+    intercept[ContractViolationException](VerificationPipeline.rejectWrite(contract, result, checked, None, None, None, None))
+  }
+
   test("every wrapping sink passes endRun on; a failing one is contained") {
     final class Recording extends NotificationSink {
       val ended = new java.util.concurrent.ConcurrentLinkedQueue[Option[JobInfo]]()

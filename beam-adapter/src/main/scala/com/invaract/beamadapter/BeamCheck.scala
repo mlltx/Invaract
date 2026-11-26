@@ -44,6 +44,12 @@ final class BeamCheck private[beamadapter] (
     * (or that cannot be verified), publishing each outcome to the sink first. In dry-run mode it throws nothing. */
   def verify(pipeline: Pipeline): Unit = verifyTranslation(BeamTranslator.translate(pipeline))
 
+  /** Tells the sink this check's run is over (`NotificationSink.endRun`): the pipeline was refused, or checked and handed to its
+    * runner. A sink keeping state per run (OpenLineage) publishes its end then, not when the process exits. Never throws. */
+  def endRun(): Unit =
+    try sink.foreach(_.endRun(Some(job)))
+    catch { case scala.util.control.NonFatal(e) => logger.warn(s"Invaract: the notification sink could not end the run ($e)") }
+
   /** `verify`, for a pipeline already translated: how a pipeline read from its portable form is checked (`PortableCheck`). */
   private[beamadapter] def verifyTranslation(translated: BeamTranslation): Unit = {
     // a step that ends the pipeline is let through when it reads only what writes report, or when the platform trusts it (D14)

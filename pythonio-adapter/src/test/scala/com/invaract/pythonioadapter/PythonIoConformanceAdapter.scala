@@ -56,11 +56,13 @@ class PythonIoConformanceAdapter extends ConformanceAdapter {
     import PythonIoConformanceAdapter._
     val run = new Run
     val replies = (openRequest(scenarioId, settings) :: requests(contract, job, VerificationOptions())).iterator.map(run.answer)
-    Some(replies.find(_("ok") != true) match {
-      case None                                                   => AttachedRun.Ran
-      case Some(reply) if reply.get("status").contains("refused") => AttachedRun.Ran
-      case Some(reply)                                            => AttachedRun.Stopped(reply.get("reason").fold(reply.toString)(String.valueOf))
-    })
+    try
+      Some(replies.find(_("ok") != true) match {
+        case None                                                   => AttachedRun.Ran
+        case Some(reply) if reply.get("status").contains("refused") => AttachedRun.Ran
+        case Some(reply)                                            => AttachedRun.Stopped(reply.get("reason").fold(reply.toString)(String.valueOf))
+      })
+    finally run.close() // the job is over and the package closes its pipe: the checker ends the run, as its main does
   }
 
   /** The settings as the checker reads them from an `open` request: a setting the protocol drops is lost. */

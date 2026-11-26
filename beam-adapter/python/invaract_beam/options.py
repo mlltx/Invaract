@@ -31,6 +31,9 @@ SETTINGS = {
     "job_id": "The job's stable identity across runs, named by every event (job.jobId), where the job name may change per run.",
     "job_attributes": "Facts about this run every event carries (job.attributes): comma-separated key=value pairs, team=orders,dag=daily.",
     "contract_metadata": "Facts about the contract a dry run drafts, in every draft's extensions: comma-separated key=value pairs, owner=orders-team.",
+    "open_lineage_url": "The OpenLineage endpoint the job's lineage is published to (events go to <url>/api/v1/lineage). Unset: nothing is published.",
+    "open_lineage_config": "Path of a .properties file configuring OpenLineage publishing: transport, headers, compression, retries, facets, batching.",
+    "open_lineage_namespace": "The OpenLineage namespace the job is published under. Default: the configuration file's, else OPENLINEAGE_NAMESPACE.",
 }
 
 

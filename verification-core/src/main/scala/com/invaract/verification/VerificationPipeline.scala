@@ -399,6 +399,22 @@ object VerificationPipeline {
     throw new ContractViolationException(result, explain(contract, plan, result))
   }
 
+  /** `reject`, for a write refused before it runs whose `checked` form is known (an adapter that judges a write with
+    * `evaluateWrite` first): its validation event carries the write's lineage, as `verifyWrite`'s does, so a refusal is not
+    * missing from the lineage it concerns. */
+  private[invaract] def rejectWrite(
+      contract: Contract,
+      result: VerificationResult,
+      checked: CheckedWrite,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      capabilities: Option[AdapterCapabilities],
+      job: Option[JobInfo]
+  ): Nothing = {
+    publishValidation(contract, result, sink, runId, job, None, lineageOf(contract, checked, tracesColumns(capabilities)))
+    throw new ContractViolationException(result, explain(contract, checked.plan, result))
+  }
+
   /** Throws if `contract` itself is structurally unsound per
     * `ContractValidator` (e.g. no declared outputs), or names a custom rule
     * type whose class cannot be resolved - the check every other rejection in

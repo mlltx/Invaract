@@ -59,3 +59,6 @@ locations-from-map
 locations-from-map-enforced
 locations-from-service
 location-not-in-service
+openlineage-run
+openlineage-refused
+openlineage-unreachable

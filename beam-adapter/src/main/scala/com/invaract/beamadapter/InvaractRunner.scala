@@ -27,15 +27,16 @@ import scala.collection.JavaConverters._
   */
 final class InvaractRunner private (check: BeamCheck, delegate: Option[PipelineRunner[PipelineResult]]) extends PipelineRunner[PipelineResult] {
 
-  override def run(pipeline: Pipeline): PipelineResult = {
-    check.verify(pipeline)
-    delegate match {
-      case Some(runner) => runner.run(pipeline)
-      case None =>
-        InvaractRunner.Log.info("Invaract: the pipeline was checked against its contract and, as --invaractCheckOnly asks, not run")
-        CheckedOnly
-    }
-  }
+  override def run(pipeline: Pipeline): PipelineResult =
+    try {
+      check.verify(pipeline)
+      delegate match {
+        case Some(runner) => runner.run(pipeline)
+        case None =>
+          InvaractRunner.Log.info("Invaract: the pipeline was checked against its contract and, as --invaractCheckOnly asks, not run")
+          CheckedOnly
+      }
+    } finally check.endRun() // Invaract's part of the run is over: checked, and refused or handed to the runner
 }
 
 object InvaractRunner {
