@@ -181,7 +181,11 @@ divergence. A process killed outright (<code dir="auto">SIGKILL</code>, <code di
 terminal event, which OpenLineage backends show as still running - the honest picture of a run nobody saw end.</p>
 <p><strong>Run identity.</strong> OpenLineage requires a UUID. The run’s id is a name-based UUID (version 5) of the engine and Invaract’s
 own run id (<code dir="auto">JobInfo.runId</code>: Spark’s application id, Beam’s job id, the Python run’s id), so every event of a run, from
-every process that publishes for it, carries the same id, and the same run published twice is the same run.</p>
+every process that publishes for it, carries the same id, and the same run published twice is the same run.
+Once a run has ended, a completed write reported for it afterwards (Spark reports one from a listener thread, which can
+trail the end) is dropped rather than reopening the run, which OpenLineage’s one-terminal-event rule forbids. A new check
+under the same Invaract run id - a process whose engine gives its runs no id of their own runs one after another under the
+same key - is a new run: its id is the UUID of the key and its generation (<code dir="auto">&#x3C;runId>#1</code>, <code dir="auto">#2</code>, …), still deterministic.</p>
 <p><strong>Job identity.</strong> <code dir="auto">namespace</code> (setting <code dir="auto">openLineageNamespace</code>, else the configuration file’s <code dir="auto">namespace</code>, else the
 <code dir="auto">OPENLINEAGE_NAMESPACE</code> environment variable, else <code dir="auto">default</code>, OpenLineage’s own default) and <code dir="auto">name</code>: the job’s stable id
 (<code dir="auto">jobId</code>), else the engine’s name for the job, else the contract’s id. A configured <code dir="auto">jobName</code> wins over all three.</p>
