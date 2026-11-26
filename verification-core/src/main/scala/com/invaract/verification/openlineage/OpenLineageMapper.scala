@@ -31,14 +31,23 @@ private[openlineage] final class OpenLineageMapper(
 
   private val runs = mutable.LinkedHashMap.empty[String, RunState]
 
-  /** Runs that have ended, most recent last (bounded): an event that arrives for one after its terminal event - Spark reports
-    * a completed write from a listener thread, which can trail the run's end - is dropped, not taken for a new run under the
-    * same id, which OpenLineage does not allow. */
-  private val ended = mutable.LinkedHashSet.empty[String]
+  /** Runs that have ended, most recent last (bounded), with the generation each was: how many runs before it had the same
+    * key. A key comes back in two ways. A completed write reported after its run's end (Spark reports one from a listener
+    * thread, which can trail the end) belongs to the run that ended, and is dropped: reopening the run would break
+    * OpenLineage's one-terminal-event rule. A new check under the same key is a new run (a process whose engine gives its
+    * runs no id of their own runs one after another under the same key), and gets an id of its own. */
+  private val ended = mutable.LinkedHashMap.empty[String, Int]
+  private val nextGeneration = mutable.Map.empty[String, Int]
 
   /** What `event` is published as: nothing, or one or more OpenLineage events, in order. */
   def map(event: NotificationEvent): List[Obj] =
-    if (runKey(event).exists(ended.contains)) Nil else mapLive(event)
+    runKey(event).filter(ended.contains) match {
+      case Some(_) if event.isInstanceOf[WriteEvent] => Nil
+      case Some(key) =>
+        nextGeneration(key) = ended.remove(key).get + 1
+        mapLive(event)
+      case None => mapLive(event)
+    }
 
   /** The run an event belongs to, for the events that open or extend one. */
   private def runKey(event: NotificationEvent): Option[String] = event match {
@@ -97,7 +106,9 @@ private[openlineage] final class OpenLineageMapper(
       // a process serves one run at a time in practice; bounded all the same, the oldest run giving way
       if (runs.size >= maxOpenRuns) runs.headOption.foreach { case (oldest, _) => runs.remove(oldest) }
       val name = settings.jobName.orElse(job.flatMap(_.jobId)).orElse(job.flatMap(_.name)).getOrElse(fallbackName)
-      val state = new RunState(runUuid(job.flatMap(_.engine).getOrElse("invaract"), key), settings.namespace, name, job)
+      val generation = nextGeneration.remove(key).getOrElse(0)
+      val uuid = runUuid(job.flatMap(_.engine).getOrElse("invaract"), if (generation == 0) key else s"$key#$generation")
+      val state = new RunState(uuid, settings.namespace, name, job, generation)
       runs.put(key, state)
       state
     })
@@ -122,8 +133,8 @@ private[openlineage] final class OpenLineageMapper(
   private def end(run: RunState): List[Obj] = {
     runs.find(_._2 eq run).foreach { case (key, _) =>
       runs.remove(key)
-      ended += key
-      if (ended.size > maxOpenRuns * 4) ended -= ended.head
+      ended(key) = run.generation
+      if (ended.size > maxOpenRuns * 4) ended -= ended.head._1
     }
     val failed = run.checksFailed > 0
     val terminal = event(if (failed) "FAIL" else "COMPLETE", run, run.inputs.values.toList, run.outputs.values.toList, run.endFacets.toList, terminal = true)
@@ -324,7 +335,7 @@ private[openlineage] object OpenLineageMapper {
 
   def fileFormat(format: String): String = format.toLowerCase
 
-  final class RunState(val uuid: String, val namespace: String, val name: String, val job: Option[JobInfo]) {
+  final class RunState(val uuid: String, val namespace: String, val name: String, val job: Option[JobInfo], val generation: Int = 0) {
     var started = false
     var dryRun = false
     var checksPassed = 0L

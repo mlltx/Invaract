@@ -322,14 +322,22 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(!facetNames(none.get("facets")).contains("schema"), "no fields at all is no schema facet")
   }
 
-  test("an event for a run that has ended is dropped, not taken for a new run under the same id; other runs go on") {
+  test("a completed write reported after its run's end is dropped; a new check under the same key is a new run with its own id") {
     val m = mapper()
     val late = WriteEvent(None, "/out/x", None, None, Nil, 1L, Map.empty, job = Some(job))
-    assert(types(published(m, check())) == List("START", "RUNNING"))
-    assert(types(m.endRun(Some(job)).map(e => json.readTree(JsonText.render(e)))) == List("COMPLETE"))
-    assert(m.map(late).isEmpty && m.map(check()).isEmpty && m.openRuns == 0, "the ended run stays ended")
-    assert(m.map(ContractInferenceEvent(InferenceStatus.Inferred, None, Some("/out/x"), None, None, Nil, Nil, None, job, 1L, Map.empty)).isEmpty)
-    assert(types(published(m, late.copy(job = Some(job.copy(runId = Some("another")))))) == List("START", "RUNNING"))
+    def ids(events: List[JsonText.Obj]) = events.map(e => json.readTree(JsonText.render(e))).map(n => n.get("eventType").asText() -> n.path("run").get("runId").asText())
+    val first = OpenLineageMapper.runUuid("spark", "app-1")
+    assert(ids(m.map(check())) == List("START" -> first, "RUNNING" -> first))
+    assert(ids(m.endRun(Some(job))) == List("COMPLETE" -> first))
+    assert(m.map(late).isEmpty && m.openRuns == 0, "the ended run is not reopened by its own write's report")
+    val second = OpenLineageMapper.runUuid("spark", "app-1#1")
+    assert(ids(m.map(check())) == List("START" -> second, "RUNNING" -> second) && second != first)
+    assert(ids(m.endRun(Some(job))) == List("COMPLETE" -> second))
+    assert(ids(m.map(check())).head == ("START" -> OpenLineageMapper.runUuid("spark", "app-1#2")), "and a third")
+    val inferred = ContractInferenceEvent(InferenceStatus.Inferred, None, Some("/out/x"), None, None, Nil, Nil, None, job.copy(runId = Some("dry")), 1L, Map.empty)
+    m.map(inferred); m.endRun(Some(job.copy(runId = Some("dry"))))
+    assert(ids(m.map(inferred)).head == ("START" -> OpenLineageMapper.runUuid("spark", "dry#1")), "a dry run's new inference is a new run too")
+    assert(types(published(m, late.copy(job = Some(job.copy(runId = Some("another")))))) == List("START", "RUNNING"), "other runs go on")
   }
 
   test("the ended runs remembered are bounded, the oldest forgotten first") {
