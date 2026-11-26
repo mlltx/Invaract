@@ -4325,7 +4325,12 @@ separate repo, and remains unbuilt</li>
 inference, summaries) is JSON held to a published, versioned JSON Schema
 (<code dir="auto">schemas/notification/v1/event.schema.json</code>, served by the docs site), which the engine’s
 tests and the docs build validate every event against; <code dir="auto">VerificationResult</code> in code</li>
-<li class="task-list-item"><input type="checkbox" disabled> OpenLineage integration</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> OpenLineage integration: every adapter publishes OpenLineage run events through its own configuration alone
+(<code dir="auto">openLineageUrl</code>, <code dir="auto">openLineageConfig</code>, <code dir="auto">openLineageNamespace</code>): one run per job, its datasets named by the
+OpenLineage conventions with their schemas, column lineage where the adapter traces it, and the contract’s verdict
+on each write (<code dir="auto">invaract_contract</code>, <code dir="auto">dataQualityAssertions</code>), a refused write ending the run <code dir="auto">FAIL</code>. Delivery is off
+the job’s thread, bounded, retried and circuit-broken; the conformance kit holds every adapter to it
+(<code dir="auto">reporting.openLineage</code>). See docs/OPENLINEAGE.md</li>
 <li class="task-list-item"><input type="checkbox" disabled> AI agent interfaces</li>
 <li class="task-list-item"><input type="checkbox" disabled> Platform connectors (catalogues, lineage systems)</li>
 </ul>
