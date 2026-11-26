@@ -5,8 +5,6 @@ package com.invaract.verification.openlineage
 
 import com.invaract.verification.notification.CatalogInfo
 
-import java.nio.file.Paths
-
 /** A dataset's OpenLineage identity: `namespace` (where it lives) and `name` (what it is there). */
 final case class DatasetId(namespace: String, name: String)
 
@@ -39,7 +37,7 @@ object OpenLineageNaming {
     val trimmed = location.trim
     trimmed match {
       case bare if isBare(bare) && catalog.flatMap(table).isDefined => catalog.flatMap(table).get
-      case WindowsDrive() => DatasetId("file", trimmed.replace('\\', '/'))
+      case WindowsDrive() => DatasetId("file", absolute(trimmed, workingDirectory))
       case Scheme(rawScheme, rest) =>
         val scheme = rawScheme.toLowerCase
         if (scheme == "jdbc") dataset(rest, None, workingDirectory)
@@ -103,14 +101,30 @@ object OpenLineageNaming {
 
   /** What follows `file:`: `///abs`, `//host/abs`, `/abs` or a relative path. */
   private def fileName(rest: String, workingDirectory: => String): String =
-    if (rest.startsWith("///")) rest.substring(2)
+    if (rest.startsWith("///")) absolute(rest.substring(2), workingDirectory)
     else if (rest.startsWith("//")) {
       val slash = rest.indexOf('/', 2)
-      if (slash < 0) "/" else rest.substring(slash)
+      if (slash < 0) "/" else absolute(rest.substring(slash), workingDirectory)
     } else absolute(rest, workingDirectory)
 
-  // forward slashes on every platform: Windows' Paths normalizes `/data/out` to `\data\out`, which no other integration
-  // publishes for the same dataset
-  private def absolute(path: String, workingDirectory: => String): String =
-    (if (path.startsWith("/")) Paths.get(path) else Paths.get(workingDirectory).resolve(path)).normalize.toString.replace('\\', '/')
+  /** `path` made absolute and normal (no `.`, `..` or empty segments), with forward slashes on every platform: the name
+    * every other integration publishes for the same file. Plain string work, not `java.nio.file.Paths`, which names
+    * `/data/out` `\data\out` on Windows and refuses `/C:/data` (a Windows path as a `file:` URI carries it) outright. A
+    * Windows drive is kept as `C:/`. */
+  private def absolute(path: String, workingDirectory: => String): String = {
+    val slashed = path.replace('\\', '/')
+    val full =
+      if (slashed.startsWith("/") || isDrive(slashed)) slashed
+      else workingDirectory.replace('\\', '/').stripSuffix("/") + "/" + slashed
+    val unrooted = if (full.startsWith("/") && isDrive(full.substring(1))) full.substring(1) else full
+    val (root, rest) = if (isDrive(unrooted)) (unrooted.substring(0, 3), unrooted.substring(3)) else ("/", unrooted)
+    val segments = rest.split('/').foldLeft(List.empty[String]) {
+      case (kept, "" | ".") => kept
+      case (kept, "..")     => kept.drop(1)
+      case (kept, segment)  => segment :: kept
+    }
+    root + segments.reverse.mkString("/")
+  }
+
+  private def isDrive(path: String): Boolean = WindowsDrive.pattern.matcher(path).matches
 }

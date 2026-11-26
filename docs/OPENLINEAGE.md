@@ -96,6 +96,7 @@ published by Invaract, by Spark's integration and by a warehouse's own integrati
 |---|---|---|
 | `/data/out/report`, `file:/data/out/report` | `file` | `/data/out/report` |
 | a relative path (`data/out/report`) | `file` | the absolute path, resolved against the working directory |
+| `C:\data\out`, `file:/C:/data/out` (Windows) | `file` | `C:/data/out`: forward slashes, the drive kept |
 | `hdfs://nn:8020/warehouse/t` | `hdfs://nn:8020` | `/warehouse/t` |
 | `s3://bucket/key`, `s3a://`, `s3n://` | `s3://bucket` | `key` |
 | `gs://bucket/key` | `gs://bucket` | `key` |

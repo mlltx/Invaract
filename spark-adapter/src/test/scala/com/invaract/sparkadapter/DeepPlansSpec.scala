@@ -62,6 +62,14 @@ class DeepPlansSpec extends ConnectorSpecBase {
   private def deep(levels: Int): DataFrame =
     (1 to levels).foldLeft(spark.range(3).withColumn("v", col("id")))((df, i) => df.withColumn("v", col("v") + i))
 
+  /** The fewest levels whose translation overflows the small stack. How deep that is depends on the JVM and on how much
+    * of the translation the JIT has compiled by then (compiled frames are smaller), so it is measured rather than assumed. */
+  private lazy val tooDeepForSmallStack: Int =
+    Iterator.iterate(150)(_ * 2).takeWhile(_ <= 2400).find { levels =>
+      val plan = deep(levels).queryExecution.analyzed
+      onSmallStack(SparkPlanAdapter.translate(plan)).exists(_.isInstanceOf[StackOverflowError])
+    }.getOrElse(fail("even 2400 levels fit a 128 KB stack"))
+
   /** The analyzed plan of a real write of `df` to `path`, captured as the check rule saw it (no contract active). */
   private def analyzedWriteOf(df: DataFrame, path: String): LogicalPlan = {
     capturedPlans.clear()
@@ -90,7 +98,7 @@ class DeepPlansSpec extends ConnectorSpecBase {
 
   test("a write whose check overflows the analyzer thread's stack is checked on a large one: a wrong location is still refused") {
     val declared = dir.resolve("declared").toString
-    val plan = analyzedWriteOf(deep(150), dir.resolve("elsewhere").toString)
+    val plan = analyzedWriteOf(deep(tooDeepForSmallStack), dir.resolve("elsewhere").toString)
     assert(onSmallStack(SparkPlanAdapter.translate(plan)).exists(_.isInstanceOf[StackOverflowError]), "the small stack really is too small")
     val thrown = onSmallStack(ContractEnforcementRule.verifyOrThrow(contract(declared), plan, com.invaract.verification.VerificationOptions()))
     thrown match {
@@ -101,17 +109,17 @@ class DeepPlansSpec extends ConnectorSpecBase {
 
   test("... and a write to the declared location passes") {
     val declared = dir.resolve("declared_ok").toString
-    val plan = analyzedWriteOf(deep(150), declared)
+    val plan = analyzedWriteOf(deep(tooDeepForSmallStack), declared)
     assert(onSmallStack(ContractEnforcementRule.verifyOrThrow(contract(declared), plan, com.invaract.verification.VerificationOptions())).isEmpty)
   }
 
   test("the check of a plan that writes nothing never fails the query, however deep") {
-    val plan = deep(150).queryExecution.analyzed
+    val plan = deep(tooDeepForSmallStack).queryExecution.analyzed
     assert(onSmallStack(ContractEnforcementRule.verifyOrThrow(contract(dir.resolve("x").toString), plan, com.invaract.verification.VerificationOptions())).isEmpty)
   }
 
   test("log-only dry-run never throws on a plan too deep to infer from") {
-    val plan = analyzedWriteOf(deep(150), dir.resolve("dry").toString)
+    val plan = analyzedWriteOf(deep(tooDeepForSmallStack), dir.resolve("dry").toString)
     var inferred = 0
     assert(onSmallStack(ContractEnforcementRule.inferOrIgnore(plan, _ => inferred += 1)).isEmpty)
   }

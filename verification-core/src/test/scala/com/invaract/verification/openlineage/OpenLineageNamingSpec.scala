@@ -26,6 +26,25 @@ class OpenLineageNamingSpec extends AnyFunSuite {
     assert(named("C:\\data\\out") == DatasetId("file", "C:/data/out"))
   }
 
+  test("Windows paths, as a job writes them and as a file: URI carries them, are the drive path with forward slashes") {
+    assert(named("file:/C:/Users/x/orders") == DatasetId("file", "C:/Users/x/orders"), "Spark's form of a Windows path")
+    assert(named("file:///C:/Users/x/orders") == DatasetId("file", "C:/Users/x/orders"))
+    assert(named("C:/data/./out/../final") == DatasetId("file", "C:/data/final"))
+    assert(named("C:\\data\\..\\..\\up") == DatasetId("file", "C:/up"), "no further up than the drive")
+    assert(OpenLineageNaming.dataset("out\\report", None, "C:\\work\\job\\") == DatasetId("file", "C:/work/job/out/report"))
+    assert(named("/C:x") == DatasetId("file", "/C:x"), "a drive is a letter, a colon and a separator")
+    assert(named("/data/C:/x") == DatasetId("file", "/data/C:/x"), "only a leading drive is one")
+  }
+
+  test("normal form: empty segments, a trailing slash and .. past the root are gone; the root stays") {
+    assert(named("//double//slash/") == DatasetId("file", "/double/slash"))
+    assert(named("/../x") == DatasetId("file", "/x"))
+    assert(named("/") == DatasetId("file", "/"))
+    assert(named("file:///data/x/../y") == DatasetId("file", "/data/y"))
+    assert(named("file://host/data/./y") == DatasetId("file", "/data/y"))
+    assert(OpenLineageNaming.dataset("x", None, "/") == DatasetId("file", "/x"))
+  }
+
   test("the default working directory is the process's own") {
     assert(OpenLineageNaming.dataset("rel") == DatasetId("file", java.nio.file.Paths.get(System.getProperty("user.dir"), "rel").normalize.toString.replace('\\', '/')))
   }

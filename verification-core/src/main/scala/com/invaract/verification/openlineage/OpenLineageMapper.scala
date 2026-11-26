@@ -59,22 +59,25 @@ private[openlineage] final class OpenLineageMapper(
 
   private def mapLive(event: NotificationEvent): List[Obj] = event match {
     case e: ContractValidationEvent =>
+      // the datasets before the run, here and below: should naming one fail, no run is left begun without its START
+      val (inputs, outputs) = e.lineage.fold((List.empty[Obj], List.empty[Obj]))(l => (l.inputs.map(input), List(checkedOutput(l, e))))
       val run = runOf(e.job, e.runId, e.contract)
       val failed = e.status != "PASSED"
       run.checksPassed += (if (failed) 0 else 1)
       run.checksFailed += (if (failed) 1 else 0)
       run.violations += e.violations.size
-      val (inputs, outputs) = e.lineage.fold((List.empty[Obj], List.empty[Obj]))(l => (l.inputs.map(input), List(checkedOutput(l, e))))
       val runFacets = if (failed) errorMessage(e).toList else Nil
       progress(run, inputs, outputs, runFacets)
     case e: WriteEvent =>
+      val output = writtenOutput(e)
       val run = runOf(e.job, e.runId, e.contract.getOrElse("job"))
       run.writes += 1
-      progress(run, Nil, List(writtenOutput(e)), Nil)
+      progress(run, Nil, List(output), Nil)
     case e: ContractInferenceEvent =>
+      val outputs = e.writeLocation.toList.map(inferredOutput(_, e))
       val run = runOf(Some(e.job), e.job.runId, "job")
       run.dryRun = true
-      progress(run, Nil, e.writeLocation.toList.map(inferredOutput(_, e)), Nil)
+      progress(run, Nil, outputs, Nil)
     case e: JobSummaryEvent =>
       runs.get(keyOf(e.job, e.runId)).toList.flatMap { run =>
         run.checksFailed = run.checksFailed max e.checksFailed
