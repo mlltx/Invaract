@@ -108,6 +108,59 @@ case class ColumnLineage(
   def aggregated: Boolean = aggregations.nonEmpty
 }
 
+/** How an input column shapes an output without being (part of) its value - the OpenLineage column lineage facet's
+  * `INDIRECT` transformation subtypes, which a lineage consumer uses to see, say, that a report's rows depend on a
+  * customer's country (a filter) though no output column holds it.
+  */
+sealed trait IndirectKind
+object IndirectKind {
+
+  /** A filter's condition: which rows are kept. */
+  case object Filter extends IndirectKind
+
+  /** A join's condition: which rows of each side meet. */
+  case object Join extends IndirectKind
+
+  /** An aggregate's grouping: which rows are collapsed together. */
+  case object GroupBy extends IndirectKind
+
+  /** A sort's order: the order of the rows (and, under a limit, which are kept). */
+  case object Sort extends IndirectKind
+
+  /** A window's partitioning and ordering: which rows one output column's value is computed over. */
+  case object Window extends IndirectKind
+
+  /** A condition (`CASE WHEN`, `IF`): which of several values one output column takes. */
+  case object Conditional extends IndirectKind
+
+  val all: List[IndirectKind] = List(Filter, Join, GroupBy, Sort, Window, Conditional)
+}
+
+/** One input column shaping the output the way `kind` says: the whole output (`output` empty - a filter, a join, a
+  * grouping, a sort), or one output column (`output` that column - a condition, a window). */
+case class IndirectLineage(source: ColumnRef, kind: IndirectKind, output: Option[String] = None)
+
+/** One output column's lineage in full: `lineage` exactly as `Lineage.trace` gives it, and beside it
+  *
+  * @param values the sources whose value reaches the column (OpenLineage's `DIRECT` edges): `lineage.sources` without
+  *   a column that only decides which value is taken (a `CASE WHEN`'s test), which `indirect` names instead.
+  * @param indirect the sources that decide which value the column takes (a condition) or which rows it is computed
+  *   over (a window's partitioning and ordering).
+  * @param masked the sources of `values` that reach the column only through a masking function (a hash such as
+  *   `sha2` or `md5`, or `mask`): the column carries no readable copy of them.
+  */
+case class ColumnDependencies(
+  lineage: ColumnLineage,
+  values: Set[ColumnRef],
+  indirect: Set[IndirectLineage],
+  masked: Set[ColumnRef]
+)
+
+/** What `Lineage.traceDetailed` finds in a plan: each output column's dependencies, and the sources that shape the
+  * whole output (filters, joins, groupings, sorts), each resolved through the plan to the read columns it comes from.
+  */
+case class DetailedLineage(columns: List[ColumnDependencies], indirect: List[IndirectLineage])
+
 /** Traces column-level lineage through a transformation plan: for each
   * column a `Write` ultimately produces, which `Read` columns it derives
   * from.
@@ -137,19 +190,60 @@ case class ColumnLineage(
   */
 object Lineage {
 
-  def trace(plan: Plan): List[ColumnLineage] =
-    (plan match {
-      case Write(_, input, _, _, _) => new Run().outputsOfT(input)
-      case other                    => new Run().outputsOfT(other)
+  /** The functions whose result reveals nothing readable of their input (OpenLineage's `masking`). */
+  val MaskingFunctions: Set[String] = Set("sha", "sha1", "sha2", "md5", "crc32", "hash", "xxhash64", "mask")
+
+  /** The aggregates whose result reveals nothing of the values aggregated, only how many there are. */
+  val MaskingAggregates: Set[String] = Set("count", "approx_count_distinct")
+
+  /** No read's columns are known: a read is taken to have whatever column a name asks of it. */
+  val NoReadColumns: Read => Option[Set[String]] = _ => None
+
+  def trace(plan: Plan): List[ColumnLineage] = trace(plan, NoReadColumns)
+
+  /** `trace`, told the columns each read has (`readColumns`; `None` for a read whose columns are not known). A name a
+    * read does not have is then not taken from it: across a join, a column of one side is no longer also attributed to
+    * a read on the other side that only happens to be unqualified too. Names are matched as an engine matches them by
+    * default, ignoring case.
+    */
+  def trace(plan: Plan, readColumns: Read => Option[Set[String]]): List[ColumnLineage] =
+    traceDetailed(plan, readColumns).columns.map(_.lineage)
+
+  /** Each output column's full dependencies, and the plan's own indirect lineage: every filter's, join's, grouping's
+    * and sort's columns, resolved to the read columns they come from (a filter on a computed column is a filter on
+    * what it was computed from). A source is listed once per kind, in plan order.
+    */
+  def traceDetailed(plan: Plan, readColumns: Read => Option[Set[String]] = NoReadColumns): DetailedLineage = {
+    val run = new Run(readColumns)
+    val columns = (plan match {
+      case Write(_, input, _, _, _) => run.dependenciesOfT(input)
+      case other                    => run.dependenciesOfT(other)
     }).result
+    DetailedLineage(columns, run.planIndirect(plan))
+  }
 
   /** An expression's fully resolved provenance: which Read columns it
     * depends on, how it was derived (following passthrough references
     * through however many plan stages, not just the immediate syntax —
     * see `DerivationKind`'s own doc), and which aggregate function(s), if
-    * any, it aggregates them through.
+    * any, it aggregates them through. `sources` are the columns whose value reaches it, `indirect` those that only
+    * decide which value it takes or what rows it is computed over, `masked` the sources reaching it only through a
+    * masking function.
     */
-  private case class Provenance(sources: Set[ColumnRef], derivation: DerivationKind, aggregations: Set[AggregationDetail])
+  private case class Provenance(
+    sources: Set[ColumnRef],
+    derivation: DerivationKind,
+    aggregations: Set[AggregationDetail],
+    indirect: Set[(ColumnRef, IndirectKind)] = Set.empty,
+    masked: Set[ColumnRef] = Set.empty
+  ) {
+    /** Every column it depends on, how ever: what `trace` reports as a column's sources. A window's partitioning is not
+      * among them, as it never was. */
+    def all: Set[ColumnRef] = sources ++ indirect.collect { case (r, IndirectKind.Conditional) => r }
+    def everything: Set[ColumnRef] = sources ++ indirect.map(_._1)
+  }
+
+  private val NoSource = Provenance(Set.empty, DerivationKind.Direct, Set.empty)
 
   /** Runs `f` over every element of `xs`, left to right, trampolined - see
     * `com.invaract.fingerprint.Canonicalizer`'s identical helper for why
@@ -169,24 +263,69 @@ object Lineage {
     * (see `Plan`'s doc), or a column several expressions refer to (`v = v + v`, repeated), is resolved once - walked
     * afresh each time, `k` such steps in a row would cost `2^k`.
     */
-  private final class Run {
-    private val outputs = new IdentityMemo[Plan, List[ColumnLineage]]
+  private final class Run(readColumns: Read => Option[Set[String]]) {
+    private val outputs = new IdentityMemo[Plan, List[(String, Provenance)]]
     private val scopes = new IdentityMemo[Plan, scala.collection.mutable.HashMap[ColumnRef, Option[Provenance]]]
+    private val knownColumns = new IdentityMemo[Plan, Option[Set[String]]]
 
-    def outputsOfT(plan: Plan): TailRec[List[ColumnLineage]] = outputs.getOrElseUpdateT(plan)(outputsOfUncachedT(plan))
+    def dependenciesOfT(plan: Plan): TailRec[List[ColumnDependencies]] =
+      outputsOfT(plan).map(_.map { case (name, p) =>
+        val output = ColumnRef(name)
+        ColumnDependencies(
+          ColumnLineage(output, p.all, p.derivation, p.aggregations),
+          p.sources,
+          p.indirect.map { case (r, k) => IndirectLineage(r, k, Some(name)) },
+          p.masked intersect p.sources
+        )
+      })
 
-    private def outputsOfUncachedT(plan: Plan): TailRec[List[ColumnLineage]] = plan match {
+    /** The indirect lineage of the plan's own nodes, every node once (a shared subtree is walked once). */
+    def planIndirect(plan: Plan): List[IndirectLineage] = {
+      val seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Plan, java.lang.Boolean]())
+      val found = scala.collection.mutable.LinkedHashSet.empty[IndirectLineage]
+      def resolve(exprs: List[Expr], scope: Plan, kind: IndirectKind): Unit =
+        exprs.foreach(e => resolveExprT(e, scope).result.everything.toList.sortBy(_.toString).foreach(r => found += IndirectLineage(r, kind)))
+      var pending: List[Plan] = List(plan)
+      while (pending.nonEmpty) {
+        val node = pending.head
+        pending = pending.tail
+        if (seen.add(node)) {
+          node match {
+            case Filter(input, condition)     => resolve(List(condition), input, IndirectKind.Filter)
+            case j @ Join(_, _, _, condition) => resolve(condition.toList, j, IndirectKind.Join)
+            case Aggregate(input, groupBy, _) => resolve(groupBy, input, IndirectKind.GroupBy)
+            case Sort(input, order)           => resolve(order.map(_.expr), input, IndirectKind.Sort)
+            case _                            => ()
+          }
+          pending = node.children ++ pending
+        }
+      }
+      found.toList
+    }
+
+    private def outputsOfT(plan: Plan): TailRec[List[(String, Provenance)]] = outputs.getOrElseUpdateT(plan)(outputsOfUncachedT(plan))
+
+    private def outputsOfUncachedT(plan: Plan): TailRec[List[(String, Provenance)]] = plan match {
       case Project(input, columns) =>
-        traverseT(columns) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
+        traverseT(columns) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(name -> _) }
 
       case Aggregate(input, _, aggregates) =>
-        traverseT(aggregates) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
+        traverseT(aggregates) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(name -> _) }
 
-      case Window(input, windowExprs, _, _) =>
+      case w @ Window(input, windowExprs, _, _) =>
         for {
           base <- tailcall(outputsOfT(input))
-          windowOnes <- traverseT(windowExprs) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
+          windowOnes <- traverseT(windowExprs) { case NamedExpr(name, _) => tailcall(windowColumnT(name, w)).map(name -> _) }
         } yield base ++ windowOnes
+
+      case g @ Generate(input, _, generated, _) =>
+        for {
+          base <- tailcall(outputsOfT(input))
+          own <- traverseT(generated)(name => tailcall(resolveInScopeT(ColumnRef(name), g)).map(p => name -> p.getOrElse(NoSource)))
+        } yield base ++ own
+
+      case e @ Expand(_, _, names) =>
+        traverseT(names.distinct)(name => tailcall(resolveInScopeT(ColumnRef(name), e)).map(p => name -> p.getOrElse(NoSource)))
 
       case Filter(input, _)   => tailcall(outputsOfT(input))
       case Sort(input, _)     => tailcall(outputsOfT(input))
@@ -212,8 +351,17 @@ object Lineage {
       case UnknownPlan(_, _, _) => done(Nil)
     }
 
-    private def named(name: String, p: Provenance): ColumnLineage =
-      ColumnLineage(ColumnRef(name), p.sources, p.derivation, p.aggregations)
+    /** A window column: its expression's provenance, with the window's partitioning and ordering columns as the
+      * `Window` indirect lineage of it. */
+    private def windowColumnT(name: String, w: Window): TailRec[Provenance] =
+      w.windowExprs.find(_.name == name) match {
+        case Some(nc) =>
+          for {
+            value <- tailcall(resolveExprT(nc.expr, w.input))
+            spec <- traverseT(w.partitionBy ++ w.orderBy.map(_.expr))(resolveExprT(_, w.input))
+          } yield value.copy(indirect = value.indirect ++ spec.flatMap(_.everything).map(_ -> IndirectKind.Window))
+        case None => done(NoSource)
+      }
 
     private def resolveExprT(expr: Expr, input: Plan): TailRec[Provenance] = expr match {
       case ColumnReference(ref) =>
@@ -223,7 +371,7 @@ object Lineage {
         // column, unchanged" is the honest, syntax-level answer — the same
         // one a resolvable pure passthrough chain would eventually bottom
         // out at via Read's own base case below.
-        tailcall(resolveInScopeT(ref, input)).map(_.getOrElse(Provenance(Set.empty, DerivationKind.Direct, Set.empty)))
+        tailcall(resolveInScopeT(ref, input)).map(_.getOrElse(NoSource))
       case Literal(_, _) =>
         done(Provenance(Set.empty, DerivationKind.Constant, Set.empty))
       case Alias(_, inner) =>
@@ -242,20 +390,25 @@ object Lineage {
       case BooleanExpr(_, operands) =>
         traverseT(operands)(resolveExprT(_, input)).map(combineOperation)
       case Conditional(branches, elseValue) =>
+        // The values are the column's sources; what the conditions test only decides which value it takes - its
+        // Conditional indirect lineage. (`trace` still counts both as sources, as it always has.)
         for {
-          branchProvenance <- traverseT(branches) { case (cond, value) =>
-            for {
-              c <- tailcall(resolveExprT(cond, input))
-              v <- tailcall(resolveExprT(value, input))
-            } yield List(c, v)
-          }
-          elseProvenance <- elseValue match {
-            case Some(e) => tailcall(resolveExprT(e, input)).map(p => List(p))
-            case None    => done(Nil: List[Provenance])
-          }
-        } yield combineOperation(branchProvenance.flatten ++ elseProvenance)
-      case Function(_, args) =>
-        traverseT(args)(resolveExprT(_, input)).map(combineOperation)
+          conditions <- traverseT(branches.map(_._1))(resolveExprT(_, input))
+          values <- traverseT(branches.map(_._2) ++ elseValue.toList)(resolveExprT(_, input))
+        } yield {
+          val combined = combineOperation(conditions ++ values)
+          val tested = conditions.flatMap(_.everything).map(_ -> (IndirectKind.Conditional: IndirectKind)).toSet
+          combined.copy(
+            sources = values.flatMap(_.sources).toSet,
+            indirect = values.flatMap(_.indirect).toSet ++ tested,
+            masked = values.flatMap(_.masked).toSet -- values.flatMap(v => v.sources -- v.masked)
+          )
+        }
+      case Function(name, args) =>
+        traverseT(args)(resolveExprT(_, input)).map { ps =>
+          val combined = combineOperation(ps)
+          if (MaskingFunctions(name.toLowerCase)) combined.copy(masked = combined.sources) else combined
+        }
       case UDF(_, args, _) =>
         // Opaque unconditionally, regardless of what its arguments resolve
         // to - a UDF's body is opaque to this IR by design (see UDF's own
@@ -269,7 +422,10 @@ object Lineage {
         // itself expected to already be aggregated (nested aggregates
         // aren't valid SQL), and this call is the one aggregation that
         // matters at this level.
-        tailcall(resolveExprT(arg, input)).map(p => combineOperation(List(p)).copy(aggregations = Set(AggregationDetail(function, distinct))))
+        tailcall(resolveExprT(arg, input)).map { p =>
+          val combined = combineOperation(List(p)).copy(aggregations = Set(AggregationDetail(function, distinct)))
+          if (MaskingAggregates(function.toLowerCase)) combined.copy(masked = combined.sources) else combined
+        }
       case UnknownExpression(_, _, children) =>
         // Opaque unconditionally, regardless of whether any children
         // resolved real, understood sources - an unrepresentable construct
@@ -297,17 +453,21 @@ object Lineage {
       * `Direct`, despite depending on exactly one already-Direct column).
       * Contrast `combineUnion` below, used where multiple *candidate*
       * resolutions of the *same* reference are being combined, not multiple
-      * *operands* of one real operation.
+      * *operands* of one real operation. A source is masked when it is masked in an operand and reaches the result
+      * unmasked through none.
       */
     private def combineOperation(provenances: List[Provenance]): Provenance = {
       val sources = provenances.flatMap(_.sources).toSet
       val aggregations = provenances.flatMap(_.aggregations).toSet
       val derivation =
         if (provenances.exists(_.derivation == DerivationKind.Opaque)) DerivationKind.Opaque
-        else if (sources.isEmpty) DerivationKind.Constant
+        else if (provenances.forall(_.all.isEmpty)) DerivationKind.Constant
         else DerivationKind.Computed
-      Provenance(sources, derivation, aggregations)
+      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances))
     }
+
+    private def maskedOf(provenances: List[Provenance]): Set[ColumnRef] =
+      provenances.flatMap(_.masked).toSet -- provenances.flatMap(p => p.sources -- p.masked)
 
     /** Combines multiple *candidate* resolutions of one ambiguous reference
       * — `Union`'s branches, or `Join`'s two sides when both plausibly
@@ -328,9 +488,9 @@ object Lineage {
       val derivation =
         if (provenances.exists(_.derivation == DerivationKind.Opaque)) DerivationKind.Opaque
         else if (provenances.forall(_.derivation == DerivationKind.Direct)) DerivationKind.Direct
-        else if (sources.isEmpty) DerivationKind.Constant
+        else if (provenances.forall(_.all.isEmpty)) DerivationKind.Constant
         else DerivationKind.Computed
-      Provenance(sources, derivation, aggregations)
+      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances))
     }
 
     /** Resolves a bare column reference against a plan: does `ref` name a
@@ -347,11 +507,15 @@ object Lineage {
       }
     }
 
+    private def columnsOf(read: Read): Option[Set[String]] =
+      knownColumns.getOrElseUpdate(read, readColumns(read).map(_.map(_.toLowerCase)))
+
     private def resolveInScopeUncachedT(ref: ColumnRef, plan: Plan): TailRec[Option[Provenance]] = plan match {
-      case Read(dataset, alias, _) =>
+      case read @ Read(dataset, alias, _) =>
         val scope = alias.getOrElse(dataset.location)
+        val has = columnsOf(read).forall(_.contains(ref.name.toLowerCase))
         done(
-          if (ref.qualifier.forall(_ == scope))
+          if (ref.qualifier.forall(_ == scope) && has)
             Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty))
           else
             None
@@ -369,10 +533,23 @@ object Lineage {
           case None     => done(None)
         }
 
-      case Window(input, windowExprs, _, _) =>
-        windowExprs.find(_.name == ref.name) match {
-          case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
-          case None     => tailcall(resolveInScopeT(ref, input))
+      case w @ Window(input, windowExprs, _, _) =>
+        if (windowExprs.exists(_.name == ref.name)) tailcall(windowColumnT(ref.name, w)).map(Some(_))
+        else tailcall(resolveInScopeT(ref, input))
+
+      // A generated column comes from the generator's arguments (every generated column from all of them: which
+      // argument fills which output is the generator's own business); any other passes through from the input.
+      case Generate(input, generator, generated, _) =>
+        if (generated.contains(ref.name)) tailcall(resolveExprT(generator, input)).map(p => Some(combineOperation(List(p))))
+        else tailcall(resolveInScopeT(ref, input))
+
+      // Each row of an expansion takes its value of column i from one projection's i-th expression: the candidates are
+      // all of them, as a union's branches are. A name declared twice (an engine keeps a grouping key's original
+      // column beside the expanded one) is its first declaration's.
+      case Expand(input, projections, names) =>
+        names.indexOf(ref.name) match {
+          case -1 => done(None)
+          case i  => traverseT(projections.flatMap(_.lift(i)))(resolveExprT(_, input)).map(ps => Some(combineUnion(ps)))
         }
 
       case Filter(input, _)   => tailcall(resolveInScopeT(ref, input))
@@ -384,7 +561,7 @@ object Lineage {
         // genuine equivalent, not a coverage gap: `combineUnion` on an empty
         // list produces `Provenance(Set.empty, Direct, Set.empty)` — the
         // same value `resolveExpr`'s ColumnReference case's own
-        // `getOrElse(Provenance(Set.empty, Direct, Set.empty))` fallback
+        // `getOrElse(NoSource)` fallback
         // produces for `None`, and the same value that acts as an identity
         // element in `Join`'s Some/Some combination below (an empty-sources,
         // Direct provenance changes nothing when unioned with a real one —

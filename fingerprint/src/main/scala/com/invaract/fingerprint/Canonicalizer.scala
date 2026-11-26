@@ -359,6 +359,18 @@ object Canonicalizer {
           "Window",
           inputNode :: CTag("PartitionBy", sorted(partitionNodes)) :: CTag("OrderBy", orderNodes) :: windowNodes
         )
+      case Generate(input, generator, outputs, outer) =>
+        // The generated columns' names are part of the output, in order, as a Project's are.
+        for {
+          inputNode <- tailcall(planT(input))
+          generatorNode <- tailcall(exprT(generator))
+        } yield CTag("Generate", List(inputNode, generatorNode, CTag("Outputs", outputs.map(stringLeaf)), stringLeaf(outer.toString)))
+      case Expand(input, projections, outputs) =>
+        // Projection order is not meaning (each makes its own rows), but a projection's expression order is (column i).
+        for {
+          inputNode <- tailcall(planT(input))
+          projectionNodes <- traverseT(projections)(p => traverseT(p)(exprT(_)).map(nodes => CTag("Projection", nodes)))
+        } yield CTag("Expand", List(inputNode, CTag("Projections", sorted(projectionNodes)), CTag("Outputs", outputs.map(stringLeaf))))
       case UnknownPlan(_description, sourceType, children) =>
         // Same description/sourceType split as UnknownExpression above.
         traverseT(children)(planT(_)).map(nodes => CTag("UnknownPlan", stringLeaf(sourceType) :: nodes))
@@ -603,7 +615,13 @@ object Canonicalizer {
           case (None, None)        => None
         }
       case Write(_, input, _, _, _) => tailcall(resolveRefDeepT(ref, input))
-      case UnknownPlan(_, _, _)     => done(None)
+      // A generated column is its generator, resolved; any other passes through.
+      case Generate(input, generator, outputs, _) =>
+        if (outputs.contains(ref.name)) tailcall(resolveExprDeepT(generator, input)).map(Some(_))
+        else tailcall(resolveRefDeepT(ref, input))
+      // An expanded column has one expression per projection, not one: no single expression to reconstruct.
+      case Expand(_, _, _)      => done(None)
+      case UnknownPlan(_, _, _) => done(None)
     }
   }
 
@@ -642,7 +660,13 @@ object Canonicalizer {
           r <- tailcall(outputsOfT(right))
         } yield l ++ r
       case Write(_, input, _, _, _) => tailcall(outputsOfT(input))
+      case Generate(input, generator, outputs, _) =>
+        for {
+          base <- tailcall(outputsOfT(input))
+          resolved <- tailcall(resolve.resolveExprDeepT(generator, input))
+        } yield base ++ outputs.map(_ -> resolved)
       case Read(_, _, _)            => done(Nil)
+      case Expand(_, _, _)          => done(Nil)
       case UnknownPlan(_, _, _)     => done(Nil)
     }
     // Later entries win on a duplicate name, matching Map's own

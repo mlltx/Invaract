@@ -117,6 +117,9 @@ object PlanPrinter {
       val o = if (orderBy.nonEmpty) s"ORDER BY ${orderBy.map(so => renderExpr(so.expr)).mkString(", ")}" else ""
       val spec = List(p, o).filter(_.nonEmpty).mkString(" ")
       s"Window($spec)"
+    case Generate(_, generator, outputs, outer) =>
+      s"Generate(${if (outer) "OUTER " else ""}${renderExpr(generator)} AS ${outputs.mkString(", ")})"
+    case Expand(_, projections, outputs) => s"Expand(${projections.size} projections AS ${outputs.mkString(", ")})"
     case UnknownPlan(description, _, _) => s"UnknownPlan($description)"
   }
 }

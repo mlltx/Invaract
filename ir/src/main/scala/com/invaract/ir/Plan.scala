@@ -192,6 +192,25 @@ case class Window(
   def children: List[Plan] = List(input)
 }
 
+/** Turns each input row into zero or more output rows by a generator — `explode`, `posexplode`, `inline`,
+  * `json_tuple`, `stack` and the like. The output is the input's columns followed by the generator's own (`outputs`,
+  * all computed from `generator`'s arguments); with `outer`, an input row the generator yields nothing for is kept,
+  * its generated columns null. The row count is not preserved, so nothing proven of the input's rows (uniqueness,
+  * a row count) carries over.
+  */
+case class Generate(input: Plan, generator: Expr, outputs: List[String], outer: Boolean = false) extends Plan {
+  def children: List[Plan] = List(input)
+}
+
+/** Turns each input row into one output row per projection — how an engine computes `ROLLUP`, `CUBE` and
+  * `GROUPING SETS` before the aggregate over them. Output column `i` (named `outputs(i)`) is, in each output row, the
+  * `i`-th expression of the projection that produced that row: a grouping key's own column in one, a null in
+  * another, a grouping id literal. Every projection has `outputs.size` expressions.
+  */
+case class Expand(input: Plan, projections: List[List[Expr]], outputs: List[String]) extends Plan {
+  def children: List[Plan] = List(input)
+}
+
 /** A plan node a front-end translator could not represent in this IR's
   * vocabulary — an opaque placeholder, not a failure. Any real-world
   * front-end (this one included: see the `spark-adapter` module) will

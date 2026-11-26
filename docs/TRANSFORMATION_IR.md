@@ -148,6 +148,8 @@ is not flagged. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 5.
 | `Sort(input, order)` | Orders rows; column set unchanged. |
 | `Limit(input, limit, offset)` | Restricts the number of rows; column set unchanged. `offset` is `0` when the source plan has none. |
 | `Window(input, windowExprs, partitionBy, orderBy)` | Adds columns computed over a window of related rows, without collapsing row count. Input columns pass through unchanged. |
+| `Generate(input, generator, outputs, outer)` | Turns each input row into zero or more rows by a generator (`explode`, `posexplode`, `inline`, ...): the input's columns, then the generated ones (`outputs`), computed from `generator`. Row count not preserved. |
+| `Expand(input, projections, outputs)` | One output row per projection for each input row, column `i` from each projection's `i`-th expression: how `ROLLUP`/`CUBE`/`GROUPING SETS` are computed beneath their aggregate. |
 | `UnknownPlan(description, sourceType, children)` | A plan node a front-end translator couldn't represent — always paired with a diagnostic, never silently dropped. |
 
 Every `Plan` exposes `children: List[Plan]`, the one generic traversal
@@ -416,7 +418,26 @@ there's nothing further to resolve into.
   real resolver, an unqualified name present on both sides of a `Join` is
   attributed to both, rather than raising an error or requiring
   disambiguation. This favors "don't silently miss a source" over
-  "reject invalid SQL."
+  "reject invalid SQL." `Lineage.trace(plan, readColumns)` narrows it: told
+  the columns each `Read` really has (an adapter knows its reads' schemas),
+  a read is never the source of a name it lacks. Two reads that both have
+  the name (a `USING` join's key) still both are.
+
+### Detailed lineage (`Lineage.traceDetailed`)
+
+`trace` gives each output column every column it depends on. A lineage
+consumer (OpenLineage's column lineage facet) needs to know *how*:
+`traceDetailed` returns, per output column, a `ColumnDependencies` with its
+`values` (the columns whose value reaches it), its per-column `indirect`
+lineage (`IndirectKind.Conditional`: what a `CASE WHEN` tests;
+`IndirectKind.Window`: a window's partitioning and ordering) and the
+sources it holds only `masked` (through a hash, `mask` or a count). Beside
+them, the plan's own indirect lineage: every `Filter`'s, `Join`'s,
+`Aggregate` grouping's and `Sort`'s columns, resolved through the plan to
+the read columns they come from, so a filter on a computed column is a
+filter on what it was computed from. `trace` is `traceDetailed`'s
+`lineage` per column, unchanged by any of this: its `sources` still count a
+`CASE WHEN`'s tests and still leave a window's partitioning out.
 - **`SELECT *` isn't supported.** `Project.columns` and `Aggregate.aggregates`
   are always complete, explicit output lists. A front end translating a
   real engine's plan (future Phase 1b work) is expected to expand any
