@@ -101,11 +101,8 @@ object OpenLineageNaming {
 
   /** What follows `file:`: `///abs`, `//host/abs`, `/abs` or a relative path. */
   private def fileName(rest: String, workingDirectory: => String): String =
-    if (rest.startsWith("///")) absolute(rest.substring(2), workingDirectory)
-    else if (rest.startsWith("//")) {
-      val slash = rest.indexOf('/', 2)
-      if (slash < 0) "/" else absolute(rest.substring(slash), workingDirectory)
-    } else absolute(rest, workingDirectory)
+    if (rest.startsWith("//")) absolute("/" + rest.drop(2).dropWhile(_ != '/'), workingDirectory) // the host is not the path
+    else absolute(rest, workingDirectory)
 
   /** `path` made absolute and normal (no `.`, `..` or empty segments), with forward slashes on every platform: the name
     * every other integration publishes for the same file. Plain string work, not `java.nio.file.Paths`, which names
@@ -113,10 +110,8 @@ object OpenLineageNaming {
     * Windows drive is kept as `C:/`. */
   private def absolute(path: String, workingDirectory: => String): String = {
     val slashed = path.replace('\\', '/')
-    val full =
-      if (slashed.startsWith("/") || isDrive(slashed)) slashed
-      else workingDirectory.replace('\\', '/').stripSuffix("/") + "/" + slashed
-    val unrooted = if (full.startsWith("/") && isDrive(full.substring(1))) full.substring(1) else full
+    val full = if (slashed.startsWith("/") || isDrive(slashed)) slashed else workingDirectory.replace('\\', '/') + "/" + slashed
+    val unrooted = full.dropWhile(_ == '/')
     val (root, rest) = if (isDrive(unrooted)) (unrooted.substring(0, 3), unrooted.substring(3)) else ("/", unrooted)
     val segments = rest.split('/').foldLeft(List.empty[String]) {
       case (kept, "" | ".") => kept
