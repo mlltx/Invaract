@@ -53,6 +53,26 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
   }
 
+  test("a check built in code joins the OpenLineage sink its settings ask for, beside its own; endRun ends the run") {
+    val capture = new Capture
+    val dir = java.nio.file.Files.createTempDirectory("beam-openlineage")
+    val events = dir.resolve("lineage.jsonl")
+    val config = dir.resolve("openlineage.properties")
+    java.nio.file.Files.write(config, List("transport=file", s"path=$events").mkString("\n").getBytes("UTF-8"))
+    val check = InvaractBeam.enforce(ExampleJob.contract("out/lines"), sink = Some(capture),
+      config = ConfigSource.fromMap(Map(InvaractConf.OpenLineageConfig -> config.toString)),
+      job = com.invaract.verification.notification.JobInfo(runId = Some("beam-in-code"), engine = Some(InvaractBeam.Engine)))
+    val p = pipeline
+    stringsToText(p)
+    intercept[ContractViolationException](check.verify(p))
+    check.endRun()
+    val deadline = System.nanoTime() + 30L * 1000000000L
+    def types = if (java.nio.file.Files.exists(events)) scala.io.Source.fromFile(events.toFile).getLines().toList.map(l => "\"eventType\":\"(\\w+)\"".r.findFirstMatchIn(l).get.group(1)) else Nil
+    while (!types.contains("FAIL") && System.nanoTime() < deadline) Thread.sleep(50)
+    assert(types == List("START", "RUNNING", "FAIL"), types)
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"), "its own sink too")
+  }
+
   test("a write with no columns passes against an output that declares none: its content is not governed (D18)") {
     val capture = new Capture
     val noColumns = com.invaract.contract.ContractParser.parse(
