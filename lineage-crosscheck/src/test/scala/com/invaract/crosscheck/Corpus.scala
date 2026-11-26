@@ -295,7 +295,9 @@ object Corpus {
           .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start(out.at("out"))
         q.awaitTermination()
       },
-      notes = Map(OLS -> theirs("openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract checks a stream once, when it starts, and publishes its lineage then; Spline records the same lineage."))),
+      notes = Map(
+        OLS -> theirs("openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract checks a stream once, when it starts, and publishes its lineage then."),
+        Spline -> theirs("Spline's agent records no lineage for a Structured Streaming query. Invaract checks a stream once, when it starts, and publishes its lineage then."))),
 
     // --- Hive ---------------------------------------------------------------------------------------------------------
     Job("hive-insert", "Hive tables", "INSERT INTO a Hive SerDe (text) table from a query",

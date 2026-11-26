@@ -77,7 +77,7 @@ things: openlineage-spark reads Spark's *optimized* plan, so it also reports col
 | Delta Lake | MERGE INTO a Delta table from another input (`delta-merge`) | [differs](#delta-merge): Invaract gap | [differs](#delta-merge): Invaract gap |
 | Apache Iceberg | an Iceberg table created from a query (writeTo) (`iceberg-write`) | [differs](#iceberg-write): Invaract gap | [differs](#iceberg-write): Invaract gap |
 | Apache Iceberg | an append to an existing Iceberg table (`iceberg-append`) | ✓ agrees | ✓ agrees |
-| Structured Streaming | a file stream into a file sink, run once (availableNow) (`streaming`) | [differs](#streaming): the other tool's limit | [differs](#streaming): unexplained |
+| Structured Streaming | a file stream into a file sink, run once (availableNow) (`streaming`) | [differs](#streaming): the other tool's limit | [differs](#streaming): the other tool's limit |
 | Hive tables | INSERT INTO a Hive SerDe (text) table from a query (`hive-insert`) | ✓ agrees | ✓ agrees |
 | JDBC | a table read over JDBC (`jdbc-input`) | ✓ agrees | [differs](#jdbc-input): the other tool's limit |
 
@@ -397,7 +397,7 @@ output: only spline: file:<out>/ice/db/orders_copy
 
 A file stream into a file sink, run once (availableNow).
 
-**Against openlineage-spark** (the other tool's limit): openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract checks a stream once, when it starts, and publishes its lineage then; Spline records the same lineage.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract checks a stream once, when it starts, and publishes its lineage then.
 
 ```text
 direct: only invaract: id <- file:<in>/orders.id
@@ -406,7 +406,7 @@ input: only invaract: file:<in>/orders
 output: only invaract: file:<out>/out
 ```
 
-**Against spline** (unexplained): 
+**Against spline** (the other tool's limit): Spline's agent records no lineage for a Structured Streaming query. Invaract checks a stream once, when it starts, and publishes its lineage then.
 
 ```text
 dependency: only invaract: id <- file:<in>/orders.id

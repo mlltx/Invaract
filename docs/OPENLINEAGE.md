@@ -337,7 +337,7 @@ on every job of the cross-check corpus the two name every dataset alike, except 
 ## 11. Cross-checking Spark lineage
 
 Unit tests can only hold lineage to what their author expected. `lineage-crosscheck/` holds it to two independent tools
-instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 52 jobs: projections, conditions, filters, sorts,
+instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 53 jobs: projections, conditions, filters, sorts,
 joins of every kind, aggregates, windows, rollups, pivots, unions, nested data, SQL with views, CTEs and subqueries,
 UDFs, the Dataset API, caching and checkpoints, partitioned and appending writes, catalog tables, Delta Lake, Iceberg and
 JDBC) runs once in a session with all three capturing it:
