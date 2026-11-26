@@ -54,9 +54,20 @@ specification requires each run to have one `START` and one terminal event (`COM
 needed for correctness: OpenLineage backends merge the inputs and outputs of every event of a run. For fewer requests,
 `emission=endOfRun` sends only `START` and the terminal event, the terminal one carrying every dataset seen.
 
-The run ends when the adapter says so (a `JobSummaryEvent`, published by every adapter at the end of a job) or, failing
-that, when the process ends (a JVM shutdown hook, bounded by `shutdownTimeoutMs`). A run the hook closes after a refused
-write is `FAIL`; otherwise `COMPLETE`. A process killed outright (`SIGKILL`, `os._exit`) runs no hook: its run has no
+The run ends when the adapter says so - `NotificationSink.endRun(job)`, a neutral signal every wrapping sink passes on and
+every other sink ignores (a `JobSummaryEvent` or `DryRunSummaryEvent` ends it too) - or, failing that, when the process
+ends (a JVM shutdown hook, bounded by `shutdownTimeoutMs`). A run that saw a refused write ends `FAIL`; otherwise
+`COMPLETE`. Where each adapter ends it:
+
+| Adapter | Ends the run |
+|---|---|
+| Spark | at application end: `DeclaredOutputs`, already the end-of-application hook for `check.outputsWritten`, calls `endRun` after any `MISSING_OUTPUT` it reports (and for a job discarded unjudged) |
+| Beam Java | `InvaractRunner.run`, in a `finally`: the pipeline was refused, or checked and handed to its runner (for a blocking runner, finished) |
+| Beam Python | `PortableCheck.run`, in a `finally`: the checker's verdict is the end of Invaract's part of the run |
+| Python I/O | the run's end (`finish`/`published`, or the checker's `close` at end of input), after the `JobSummaryEvent` |
+
+The kit holds every adapter to it (section 7): a run with no terminal event within 30 seconds of the job returning is a
+divergence. A process killed outright (`SIGKILL`, `os._exit`) runs no hook: its run has no
 terminal event, which OpenLineage backends show as still running - the honest picture of a run nobody saw end.
 
 **Run identity.** OpenLineage requires a UUID. The run's id is a name-based UUID (version 5) of the engine and Invaract's
@@ -110,7 +121,7 @@ Standard facets (OpenLineage 2-0-2, the versions pinned in `verification-core/sr
 | `processing_engine` | run | the engine and its version, and Invaract's version as the adapter |
 | `parent` | run | section 2.1 |
 | `errorMessage` | run | a refused write's explanation (`VerificationPipeline.explain`) |
-| `jobType` | job | `BATCH` (or `STREAMING`), integration `INVARACT`, the engine's job type |
+| `jobType` | job | `BATCH`, integration `INVARACT`, job type `JOB` |
 
 Invaract's own facets, each with a JSON Schema published by the docs site
 (`docs-site/public/schemas/openlineage/1-0-0/`):
@@ -124,8 +135,8 @@ Invaract's own facets, each with a JSON Schema published by the docs site
 ### 2.4 Scope settings
 
 What is published is configurable, for cost and for privacy: `facets.disabled` (a comma-separated list of facet names,
-for instance `columnLineage,schema`), `schema.maxFields` and `columnLineage.maxFields` (larger schemas are truncated, and
-the truncation recorded on the `invaract_run` facet), `failuresOnly=true` (only runs with a refused write publish at
+for instance `columnLineage,schema`), `schema.maxFields` and `columnLineage.maxFields` (larger schemas and lineage are cut to
+that many fields), `failuresOnly=true` (only runs with a refused write publish at
 all - for a team that wants lineage tools to show problems only), `emission=perCheck|endOfRun`.
 
 ## 3. Settings
@@ -188,9 +199,21 @@ adapter ─ VerificationPipeline.verifyWrite ──► ContractValidationEvent (
   settings and combines it with the `notifyConfig` sink, if any, so every adapter that already uses `AttachSetup` publishes
   OpenLineage with no change of its own.
 - `OpenLineageMapper`: pure functions from Invaract's events to OpenLineage events, with the per-run state (started,
-  refused, totals) kept in a bounded map.
+  totals, held events) kept in a bounded map. Only the worker thread touches it.
 - `OpenLineageNaming`: section 2.2.
-- `OpenLineageJson`: the event JSON, written by hand (no JSON library at runtime, like `NotificationJson`).
+- `JsonText` (`verification-core`'s notification package): an RFC 8259 writer, written by hand (no JSON library at
+  runtime); `NotificationJson` now escapes through it too, which fixed control characters and non-finite numbers in
+  Invaract's own events.
+- Column lineage follows the adapter's declaration: an event carries the plan for `columnLineage` only when the adapter
+  declares `lineage.columnLevel` supported or partial (`VerificationPipeline.tracesColumns`), so an adapter whose plans
+  are opaque never claims column lineage it does not trace.
+- A write refused before it is checked in full (Python I/O judges a write before it is staged) is refused through
+  `VerificationPipeline.rejectWrite`, whose event carries the write's lineage as `verifyWrite`'s does.
+- An adapter installed in code with a sink of its own (Spark's `forContract`, Beam's `InvaractBeam.enforce`) still gets
+  OpenLineage from configuration alone: `AttachSetup.withOpenLineage` joins the OpenLineage sink the settings ask for,
+  unless the sink already carries it.
+- Dry run publishes each inferred write as an output; `ContractInferenceEvent` carries no plan, so a dry run's events
+  have no inputs and no column lineage.
 - `Transport`: `HttpTransport` (`java.net.http`, optional gzip), `FileTransport` (appends one line per event, under a
   lock, so concurrent processes interleave whole lines), `ConsoleTransport` (SLF4J).
 
@@ -224,21 +247,65 @@ A capability every adapter declares, `reporting.openLineage` ("publishes OpenLin
 alone"), and scenarios that attach a real job through configuration (`ConformanceAdapter.attached`) with
 `openLineageUrl` set to an endpoint the kit serves, then hold what arrives to:
 
-- the OpenLineage JSON Schema, every event;
+- every event's required fields (`eventType`, `eventTime`, `producer`, `schemaURL`, a UUID run id, the job) - the events
+  themselves are built by the core, whose tests hold every one to the official OpenLineage JSON Schema;
 - one `START` and one terminal event per run, in that order, all with the run's id;
-- the output dataset named per section 2.2, with the `schema` facet's fields equal to the written schema;
+- the namespace `openLineageNamespace` sets;
+- the inputs and the output named for the locations the job read and wrote (section 2.2), the output's `schema` facet
+  equal to the columns written;
 - the contract's verdict on `dataQualityAssertions` and `invaract_contract`: `PASSED` for an allowed write; for a
   refused one, `FAILED`, the violation, and a `FAIL` terminal event with `errorMessage`;
 - `columnLineage` exactly when the adapter declares `lineage.columnLevel` supported or partial, and its edges naming real
   input columns;
 - a job that is refused still publishes; an unreachable endpoint does not fail the job.
 
-`BrokenAdapterSpec` gains the broken adapters these scenarios exist to catch (one that drops OpenLineage, one that never
-closes its run).
+Three scenarios (`openlineage-run`, `openlineage-refused`, `openlineage-unreachable`), attached through
+`Attachment.OpenLineage`; `OpenLineageConformance` judges them. `BrokenAdapterSpec` gains the broken adapters they exist to
+catch: one that never sets the endpoint on its engine, one that loses the namespace, and one that never ends its run.
 
 ## 8. Test plan and results
 
-Recorded as the work lands.
+**Core (`verification-core`, `com.invaract.verification.openlineage`, about 100 tests).** `JsonTextSpec` (property tests:
+any string, control characters and lone surrogates included, renders as JSON a strict parser reads back unchanged);
+`OpenLineageNamingSpec`; `OpenLineageSettingsSpec` (every key, every refusal); `OpenLineageMapperSpec` (every event and
+facet, validated against the official OpenLineage 2-0-2 JSON Schema and each facet against its own versioned schema, the
+spec vendored at release 1.55.0; Invaract's facets against the schemas the docs site publishes); `OpenLineageSchemaSpec`
+(the validator itself catches what it should); `OpenLineageDeliverySpec` (ordering, retries and backoff, the circuit
+breaker, dead letter, shedding, a full queue, bounded close, interrupts, many threads); `OpenLineageTransportSpec` (a
+real HTTP server: statuses, no redirects, gzip, headers, timeouts, credentials never in a message; concurrent file
+writers interleave whole lines); `OpenLineageAttachSpec` (through `AttachSetup` as every adapter attaches it; a real JVM
+whose shutdown hook ends its run).
+
+**Kit.** `OpenLineageConformanceTest` breaks each rule of the judge one at a time; `BrokenAdapterSpec` holds the three
+scenarios to the mistakes above. The reference adapter conforms.
+
+**Adapters, through the kit's scenarios on real jobs.** Spark (`SparkConformanceSpec`), Beam Java
+(`BeamConformanceSpec`), Beam Python (`BeamPythonConformanceSpec`, a real Python pipeline and the checker), Python I/O
+(`PythonIoConformanceSpec`, and `PythonIoPackageConformanceSpec` with real Python jobs and the package): all three
+OpenLineage scenarios conform, and are on each adapter's baseline. Plus `SparkOpenLineageSpec` (a real application
+attached by `spark.sql.extensions`, ended by `spark.stop()`; one installed in code with `forContract`) and a Beam test of a
+check built in code.
+
+**Mutation testing** (Stryker4s, scoped to the new files): `verification-core`'s OpenLineage files and `JsonText`/
+`WriteLineage` scored 83% (of covered code 85%) before the targeted tests were added for the real survivors (run
+eviction, the held-event cap, statistics, dataset-level lineage, credentials holding `@`, a daemon worker, interrupted
+callers), which also found and fixed an empty user part (`hdfs://@nn`) left in a namespace. What survives is in the
+rate-limited WARN summary's arithmetic and log text, and two equivalent mutants (a boundary the map's own invariant
+never reaches; a shortcut whose fallback computes the same answer).
+
+**Performance** (`OpenLineagePerformanceSpec`, `SparkOpenLineageSpec`; a laptop-class container):
+
+| Measure | Result |
+|---|---|
+| A check of a 200-column job (two inputs joined, filtered), OpenLineage off vs on | 41-112 us vs 68-169 us across runs; the difference is within run-to-run noise (-50 to +57 us) |
+| Publishing one event, on the job's thread | about 1 us (an `offer`), whatever the endpoint does |
+| 1,000 events against an endpoint answering in 1 s | 0-14 ms on the job's thread |
+| 50,000 events against a stalled endpoint, `queue.capacity=1000` | 1,001 kept, 48,999 dropped and counted; 0.1-1.4 us each |
+| The worker, 200-column events with column lineage | 450-760 events/s; about 100 KB each uncompressed |
+| A Spark job of 20 writes, OpenLineage off vs on (endpoint answering in 20 ms) | 2,960 ms vs 2,939 ms |
+
+The worst case for memory is a wide job writing many times while the endpoint hangs: each queued event holds what
+describes its write, which is why `queue.capacity` defaults to 1,000, not 10,000.
 
 ## 9. Alongside openlineage-spark
 
@@ -249,9 +316,10 @@ and the datasets are the same nodes, since both follow the naming conventions.
 
 ## 10. Progress
 
-- [ ] Design (this document)
-- [ ] Core: model, naming, mapping, JSON, transports, delivery, settings
-- [ ] Kit: capability, scenarios, broken adapters, declarations and baselines
-- [ ] Adapters: Spark, Beam Java, Beam Python, Python I/O
-- [ ] Hardening and performance, measured
-- [ ] User documentation, gates, PR
+- [x] Design (this document)
+- [x] Core: model, naming, mapping, JSON, transports, delivery, settings
+- [x] Kit: capability, scenarios, broken adapters, declarations and baselines
+- [x] Adapters: Spark, Beam Java, Beam Python, Python I/O
+- [x] Hardening and performance, measured
+- [x] User documentation (`docs-site`: "Publish Lineage to OpenLineage", the configuration reference, the capability pages)
+- [ ] Gates on CI: coverage (blocked locally by Maven Central rate-limiting the scoverage reporter), the native checker build

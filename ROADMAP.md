@@ -4249,7 +4249,12 @@ Enable AI-ready verified metadata and platform integrations.
       inference, summaries) is JSON held to a published, versioned JSON Schema
       (`schemas/notification/v1/event.schema.json`, served by the docs site), which the engine's
       tests and the docs build validate every event against; `VerificationResult` in code
-- [ ] OpenLineage integration
+- [x] OpenLineage integration: every adapter publishes OpenLineage run events through its own configuration alone
+      (`openLineageUrl`, `openLineageConfig`, `openLineageNamespace`): one run per job, its datasets named by the
+      OpenLineage conventions with their schemas, column lineage where the adapter traces it, and the contract's verdict
+      on each write (`invaract_contract`, `dataQualityAssertions`), a refused write ending the run `FAIL`. Delivery is off
+      the job's thread, bounded, retried and circuit-broken; the conformance kit holds every adapter to it
+      (`reporting.openLineage`). See docs/OPENLINEAGE.md
 - [ ] AI agent interfaces
 - [ ] Platform connectors (catalogues, lineage systems)
 
