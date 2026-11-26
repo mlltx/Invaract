@@ -322,6 +322,24 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(!facetNames(none.get("facets")).contains("schema"), "no fields at all is no schema facet")
   }
 
+  test("an event for a run that has ended is dropped, not taken for a new run under the same id; other runs go on") {
+    val m = mapper()
+    val late = WriteEvent(None, "/out/x", None, None, Nil, 1L, Map.empty, job = Some(job))
+    assert(types(published(m, check())) == List("START", "RUNNING"))
+    assert(types(m.endRun(Some(job)).map(e => json.readTree(JsonText.render(e)))) == List("COMPLETE"))
+    assert(m.map(late).isEmpty && m.map(check()).isEmpty && m.openRuns == 0, "the ended run stays ended")
+    assert(m.map(ContractInferenceEvent(InferenceStatus.Inferred, None, Some("/out/x"), None, None, Nil, Nil, None, job, 1L, Map.empty)).isEmpty)
+    assert(types(published(m, late.copy(job = Some(job.copy(runId = Some("another")))))) == List("START", "RUNNING"))
+  }
+
+  test("the ended runs remembered are bounded, the oldest forgotten first") {
+    val m = new OpenLineageMapper(settings, () => Instant.EPOCH, "/w", maxOpenRuns = 1)
+    def runOf(id: String) = WriteEvent(None, "/out/x", None, None, Nil, 1L, Map.empty, job = Some(job.copy(runId = Some(id))))
+    (1 to 5).foreach { i => m.map(runOf(s"r$i")); m.endRun(Some(job.copy(runId = Some(s"r$i")))) }
+    assert(m.map(runOf("r1")).nonEmpty, "beyond four times maxOpenRuns, the oldest ended run is forgotten")
+    assert(m.map(runOf("r5")).isEmpty, "a recent one is not")
+  }
+
   test("runs are kept apart, and at most maxOpenRuns stay open, the oldest giving way") {
     val m = new OpenLineageMapper(settings, () => Instant.EPOCH, "/w", maxOpenRuns = 2)
     published(m, check(jobInfo = Some(job.copy(runId = Some("r1")))), check(jobInfo = Some(job.copy(runId = Some("r2")))))

@@ -31,8 +31,24 @@ private[openlineage] final class OpenLineageMapper(
 
   private val runs = mutable.LinkedHashMap.empty[String, RunState]
 
+  /** Runs that have ended, most recent last (bounded): an event that arrives for one after its terminal event - Spark reports
+    * a completed write from a listener thread, which can trail the run's end - is dropped, not taken for a new run under the
+    * same id, which OpenLineage does not allow. */
+  private val ended = mutable.LinkedHashSet.empty[String]
+
   /** What `event` is published as: nothing, or one or more OpenLineage events, in order. */
-  def map(event: NotificationEvent): List[Obj] = event match {
+  def map(event: NotificationEvent): List[Obj] =
+    if (runKey(event).exists(ended.contains)) Nil else mapLive(event)
+
+  /** The run an event belongs to, for the events that open or extend one. */
+  private def runKey(event: NotificationEvent): Option[String] = event match {
+    case e: ContractValidationEvent => Some(keyOf(e.job, e.runId))
+    case e: WriteEvent              => Some(keyOf(e.job, e.runId))
+    case e: ContractInferenceEvent  => Some(keyOf(Some(e.job), e.job.runId))
+    case _                          => None
+  }
+
+  private def mapLive(event: NotificationEvent): List[Obj] = event match {
     case e: ContractValidationEvent =>
       val run = runOf(e.job, e.runId, e.contract)
       val failed = e.status != "PASSED"
@@ -104,7 +120,11 @@ private[openlineage] final class OpenLineageMapper(
   }
 
   private def end(run: RunState): List[Obj] = {
-    runs.find(_._2 eq run).foreach { case (key, _) => runs.remove(key) }
+    runs.find(_._2 eq run).foreach { case (key, _) =>
+      runs.remove(key)
+      ended += key
+      if (ended.size > maxOpenRuns * 4) ended -= ended.head
+    }
     val failed = run.checksFailed > 0
     val terminal = event(if (failed) "FAIL" else "COMPLETE", run, run.inputs.values.toList, run.outputs.values.toList, run.endFacets.toList, terminal = true)
     if (settings.failuresOnly && !failed) Nil else run.held.toList ++ List(terminal)
