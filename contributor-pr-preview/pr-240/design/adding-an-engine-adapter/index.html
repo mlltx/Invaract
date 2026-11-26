@@ -259,8 +259,13 @@ engine. The one text an adapter writes is for what it cannot check: <code dir="a
 can do, naming the engine’s own settings and docs.</li>
 <li><strong>Read configuration</strong> through <code dir="auto">ConfigSource</code>, <code dir="auto">VerificationSetup</code> and <code dir="auto">AttachSetup</code>, spelling the neutral keys
 the engine’s way (see “Spelling the configuration keys” below). <code dir="auto">AttachSetup.select</code> decides dry-run or
-enforcement, resolves the contract (a path or a <code dir="auto">registry://</code> reference) and builds the sink; the adapter
-installs the result with its engine’s hook.</li>
+enforcement, resolves the contract (a path or a <code dir="auto">registry://</code> reference) and builds the sink - with OpenLineage
+joined when <code dir="auto">openLineageUrl</code> or <code dir="auto">openLineageConfig</code> is set, at no cost to the adapter (docs/OPENLINEAGE.md); the
+adapter installs the result with its engine’s hook. A code path that takes a sink of its own joins OpenLineage with
+<code dir="auto">AttachSetup.withOpenLineage</code>.</li>
+<li><strong>End the run</strong> when the engine says the job is over: call <code dir="auto">NotificationSink.endRun(job)</code> on the sink (Spark does it
+at application end, Beam once the pipeline is checked and handed on). The kit’s <code dir="auto">openlineage-*</code> scenarios
+(<code dir="auto">reporting.openLineage</code>) fail an adapter whose run never ends; until the adapter does, declare it unsupported.</li>
 <li><strong>Declare</strong> what it does (step 3) and <strong>fail closed</strong> on what it cannot translate.</li>
 </ol>
 <p><code dir="auto">adapter-testkit</code>’s <code dir="auto">ReferenceAdapter</code> is the shortest complete example (about forty lines, no engine).
