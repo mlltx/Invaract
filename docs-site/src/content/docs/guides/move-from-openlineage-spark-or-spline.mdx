@@ -1,0 +1,97 @@
+---
+title: Move from openlineage-spark or Spline
+description: Run Invaract beside openlineage-spark or Spline, compare what each publishes, then move to Invaract's lineage and contracts without losing a lineage node.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+If your Spark jobs already publish lineage with [openlineage-spark](https://openlineage.io/docs/integrations/spark/) or
+[Spline](https://absaoss.github.io/spline/), you can move to Invaract without a gap in your lineage graph. Invaract publishes
+OpenLineage too, names datasets the same way openlineage-spark does, and in dry-run mode it only observes, the same as
+those tools. You can run it next to the tool you have now, compare the two, and switch when you are ready.
+
+## What stays the same, and what changes
+
+| | openlineage-spark | Spline | Invaract |
+|---|---|---|---|
+| What it publishes | OpenLineage run events | Spline execution plans (or OpenLineage, through its OpenLineage dispatcher) | OpenLineage run events |
+| A run is | one Spark SQL query | one write | one Spark application |
+| Dataset names | the [OpenLineage naming conventions](https://openlineage.io/docs/spec/naming) | URIs | the same conventions, measured to match openlineage-spark |
+| Column lineage | from the optimized plan | from the analyzed plan | from the analyzed plan, with OpenLineage's `DIRECT`/`INDIRECT` types and masking |
+| Orchestrator parent | `spark.openlineage.parent*` settings | none | the same `spark.openlineage.parent*` settings, read as they are |
+| Contracts | none | none | each write checked against its contract, the verdict on the dataset (`invaract_contract`) |
+
+Because the datasets are named the same way, a lineage backend such as Marquez or DataHub joins Invaract's runs to the
+nodes openlineage-spark already created. The one exception is a table the write itself creates in a catalog (`CREATE TABLE
+AS SELECT`, `writeTo(...).create()`): Invaract names it by its catalog identifier, because its location does not exist
+until the write has run. [Spark Column Lineage Coverage](/reference/spark-column-lineage/) shows, construct by construct,
+where the three tools agree and why they differ where they do.
+
+## Move over
+
+<Steps>
+
+1. **Add Invaract in dry-run mode, beside the tool you have.** Dry-run mode checks nothing and never stops a job. It infers
+   a draft contract for each write, and publishes the same lineage that enforcement would. Install the
+   Invaract jar ([Install Invaract on a Spark job](/getting-started/installation/)) and add:
+
+   ```bash
+   spark-submit \
+     --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
+     --conf spark.invaract.dryRun=true \
+     --conf spark.invaract.openLineageUrl=http://marquez:5000 \
+     --conf spark.invaract.openLineageNamespace=invaract \
+     ...
+   ```
+
+   A separate namespace keeps Invaract's jobs apart from openlineage-spark's while you compare. The datasets are shared
+   either way.
+
+2. **Compare the two in your lineage backend.** For a job you know, check that its input and output datasets are the
+   same nodes, and that the column lineage is what you expect. The coverage page lists the constructs where Invaract
+   reports more, such as subqueries, CTEs, rollup keys and `localCheckpoint`, and the ones where it reports less.
+
+3. **Use the drafts as contracts.** Each dry-run write's draft contract is in its `ContractInferenceEvent`, and the
+   job's merged draft is in its summary. See [Dry-run mode](/guides/dry-run-mode/). Review a draft,
+   commit it, and point `spark.invaract.contract` at it.
+
+4. **Turn enforcement on.** Replace `spark.invaract.dryRun=true` with `spark.invaract.contract=<the contract>`. Lineage is
+   published as before. Each write is now checked first, and a write that breaks its contract is refused and
+   published with the reason.
+
+5. **Keep both, or remove the old tool.** Running both costs a second listener on each job. To keep one lineage
+   graph, drop `spark.invaract.openLineageNamespace` so Invaract publishes under your existing namespace. Then remove
+   `spark.extraListeners=io.openlineage.spark.agent.OpenLineageSparkListener` (or Spline's
+   `spark.sql.queryExecutionListeners`) when you no longer need per-query runs.
+
+</Steps>
+
+## Moving openlineage-spark's settings
+
+Invaract's OpenLineage settings live in a `.properties` file named by `spark.invaract.openLineageConfig`
+([the configuration file](/guides/openlineage/#the-configuration-file)), with the URL and namespace also available as
+settings of their own:
+
+| openlineage-spark | Invaract |
+|---|---|
+| `spark.openlineage.transport.type=http` and `spark.openlineage.transport.url` | `spark.invaract.openLineageUrl`, or `url` in the file |
+| `spark.openlineage.transport.endpoint` | `endpoint` |
+| `spark.openlineage.transport.auth.apiKey` | `apiKeyEnv`: the name of an environment variable holding the key, so the key never sits in the job's settings |
+| `spark.openlineage.transport.compression=gzip` | `compression=gzip` |
+| `spark.openlineage.transport.type=file` and `.location` | `transport=file` and `path` |
+| `spark.openlineage.transport.type=console` | `transport=console` |
+| `spark.openlineage.namespace` | `spark.invaract.openLineageNamespace`, or `namespace` |
+| `spark.openlineage.appName` | `jobName` |
+| `spark.openlineage.parentJobNamespace`, `parentJobName`, `parentRunId` and the `rootParent*` settings | read as they are: nothing to change |
+| `spark.openlineage.facets.disabled` | `facets.disabled`, with Invaract's facet names |
+
+Invaract has no Kafka or Kinesis transport of its own. To send to Kafka, use the
+[Kafka notification sink](/guides/notification-sinks/) for Invaract's events, or an OpenLineage HTTP endpoint that
+forwards to Kafka.
+
+## From Spline
+
+Spline's agent publishes Spline's own model to a Spline server. Invaract publishes OpenLineage, which Spline's UI does not
+read. To keep using Spline's UI, keep Spline's agent alongside Invaract. To move to an OpenLineage backend, follow the
+steps above, with Spline in place of openlineage-spark. On the coverage page, Invaract follows subqueries, CTEs and
+`localCheckpoint()` that Spline's agent does not.

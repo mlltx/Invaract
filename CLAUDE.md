@@ -87,6 +87,12 @@ don't present it as something external consumers would bind to.
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
+- **Lineage cross-check**: `lineage-crosscheck` (not published, built by its own CI job) runs a corpus of real Spark jobs
+  with Invaract, `openlineage-spark` and Spline's agent all capturing each, and holds Invaract's column lineage to them:
+  every difference is fixed or explained in its `Corpus.scala` (as an Invaract gap, the other tool's limit, or a
+  convention), the exact differences are checked in (`crosscheck-baseline.txt`), and docs-site's "Spark Column Lineage
+  Coverage" page is generated from the run. A change to how Spark plans are translated or traced shows up there:
+  explain it, then `CROSSCHECK_UPDATE=true sbt test` (docs/OPENLINEAGE.md, section 11)
 - **Optional extension**: `notification-kafka` (a `NotificationSink`
   publishing to Kafka — see "Notification sinks" in
   docs/SPARK_ADAPTER.md; not part of the engine's own dependency
@@ -670,6 +676,12 @@ would be.
 │   ├── tsconfig.json
 │   ├── next.config.js
 │   └── .eslintrc.json
+│
+├── lineage-crosscheck/           # Invaract's Spark lineage vs openlineage-spark and Spline, on real jobs (test-only)
+│   └── src/test/scala/com/invaract/crosscheck/
+│       ├── Corpus.scala                       # the jobs, and why each differs where it does
+│       ├── Harness.scala, Captured.scala      # run a job under all three; read each tool's output
+│       └── Comparison.scala, Report.scala     # the differences, the baseline, the docs-site page
 │
 ├── modules.json                  # The one list of the repository's sbt modules (checked by check_modules.py)
 ├── adapter-scaffold/             # Templates dev/new-adapter turns into a new engine adapter module

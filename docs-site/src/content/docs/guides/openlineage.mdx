@@ -128,7 +128,7 @@ ends `FAIL` with an `errorMessage` facet giving the reason.
 | Facet | On | Holds |
 |---|---|---|
 | `schema` | each dataset | its columns and types, nested columns included |
-| `columnLineage` | the output | where each output column comes from, and how (`DIRECT`: identity, transformation, aggregation; `INDIRECT`: filter, join, grouping). Only on engines that trace columns: Spark. See [What each engine checks](/reference/what-each-engine-checks/) |
+| `columnLineage` | the output | where each output column comes from, and how. `DIRECT`: identity, transformation, aggregation, and `masking` when a column reaches the output only through a hash, `mask` or a count. `INDIRECT`: what decides an output column's value (a `CASE WHEN`'s tests, a window's partitioning and ordering), or the output's rows (filters, joins, groupings, sorts). Only on engines that trace columns: Spark. See [Spark Column Lineage Coverage](/reference/spark-column-lineage/) for how complete it is |
 | `storage` | each dataset | its format (`parquet`, `delta`, `iceberg`, ...) |
 | `symlinks`, `catalog` | each dataset | the catalog table it is registered as |
 | `lifecycleStateChange` | the output | `OVERWRITE` or `CREATE`, from the write's save mode |
@@ -155,6 +155,7 @@ publishes is the same node as one another integration publishes:
 | `gs://bucket/orders` | `gs://bucket` | `orders` |
 | `hdfs://nn:8020/warehouse/orders` | `hdfs://nn:8020` | `/warehouse/orders` |
 | `jdbc:postgresql://db:5432/sales/public/orders` | `postgres://db:5432` | `sales.public.orders` |
+| an opaque JDBC URL: `jdbc:h2:mem:bank`, table `ACCOUNTS` | `h2:mem:bank` | `ACCOUNTS` |
 
 A relative path is made absolute against the job's working directory. User names and passwords in a location are never
 published.
@@ -202,7 +203,7 @@ jobName=orders_daily
 | `path` | | the file the `file` transport appends to |
 | `namespace` | `default` | the namespace the job is published under; `openLineageNamespace` overrides it |
 | `jobName` | | the job's name; default: `jobId`, else the engine's name for the application |
-| `parent.runId`, `parent.job.namespace`, `parent.job.name` | | the orchestrator run this run belongs to (all three, or none). Default: the `OPENLINEAGE_PARENT_ID` environment variable, in the `namespace/name/runId` form Airflow's `lineage_parent_id` macro renders |
+| `parent.runId`, `parent.job.namespace`, `parent.job.name` | | the orchestrator run this run belongs to (all three, or none). Default: the `OPENLINEAGE_PARENT_ID` environment variable, in the `namespace/name/runId` form Airflow's `lineage_parent_id` macro renders, with `OPENLINEAGE_ROOT_PARENT_ID` as the root run above it. On Spark, the `spark.openlineage.parentJobNamespace`/`parentJobName`/`parentRunId` and `rootParentJobNamespace`/`rootParentJobName`/`rootParentRunId` settings Airflow's OpenLineage provider injects are read first, so a job Airflow launches is its task's child with nothing to configure |
 | `facets.disabled` | | comma-separated facets to leave out, by the names in [the facet table](#what-each-facet-holds) |
 | `schema.maxFields` | `1000` | at most this many columns in a `schema` facet |
 | `columnLineage.maxFields` | `1000` | at most this many output columns in a `columnLineage` facet |
@@ -256,12 +257,20 @@ Run the job with `openLineageConfig` naming that file, then look at `/tmp/lineag
 Invaract publishes OpenLineage events to http://marquez:5000/api/v1/lineage (namespace 'orders-platform')
 ```
 
+## How complete the column lineage is
+
+Invaract's Spark column lineage is held up against `openlineage-spark` and [Spline](https://absaoss.github.io/spline/) on a
+corpus of real Spark jobs, every release. [Spark Column Lineage Coverage](/reference/spark-column-lineage/) lists each
+construct (projections, conditions, joins, aggregates, windows, rollups, nested data, SQL subqueries and CTEs, UDFs,
+catalog tables, Delta Lake, Iceberg, JDBC), whether the three agree, why not where they differ, and Invaract's known gaps.
+
 ## Alongside openlineage-spark
 
 The `openlineage-spark` integration publishes one run per Spark SQL query, with the plan's lineage as Spark sees it.
 Invaract publishes one run per application, with what it checked. Both can be on: they are different jobs in the graph, and
-the datasets are the same nodes. Set `openLineageNamespace` or `jobName` to keep them apart, or the same parent run to group
-them under one orchestrator run.
+the datasets are the same nodes, measured on every job of the coverage corpus. The one exception is a table a write creates
+in a catalog (`CREATE TABLE AS SELECT`), which Invaract names by its catalog identifier. Set `openLineageNamespace` or
+`jobName` to keep them apart, or the same parent run to group them under one orchestrator run.
 
 ## What's next
 
