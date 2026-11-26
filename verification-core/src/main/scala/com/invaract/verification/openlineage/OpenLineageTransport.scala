@@ -45,7 +45,7 @@ private[openlineage] object Transport {
 private[openlineage] final class HttpTransport(settings: TransportSettings.Http) extends Transport {
   private val target = URI.create(s"${settings.url}/${settings.endpoint}")
   private val timeout = Duration.ofMillis(settings.timeoutMs)
-  private val client = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).build()
+  private def client = HttpTransport.client
   private val headers: Seq[(String, String)] =
     Seq("Content-Type" -> "application/json") ++
       (if (settings.gzip) Seq("Content-Encoding" -> "gzip") else Nil) ++
@@ -75,6 +75,13 @@ private[openlineage] final class HttpTransport(settings: TransportSettings.Http)
 }
 
 private[openlineage] object HttpTransport {
+
+  /** One client for every HTTP transport in the process: a client keeps threads of its own, and a process that builds sinks
+    * for several settings (a test suite, a driver building many sessions) should not keep a set per sink. Redirects are never
+    * followed (an event is not re-sent somewhere a response names); each request carries its own `timeoutMs`, which bounds
+    * connecting too. */
+  lazy val client: HttpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
+
   def gzip(bytes: Array[Byte]): Array[Byte] = {
     val out = new ByteArrayOutputStream(bytes.length / 4 + 64)
     val zip = new GZIPOutputStream(out)
