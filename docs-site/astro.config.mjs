@@ -85,6 +85,7 @@ export default defineConfig({
 								{ label: 'Use a Contract Registry', slug: 'guides/using-a-contract-registry' },
 								{ label: 'Enforce an Organizational Policy', slug: 'guides/enforcing-organizational-policy' },
 								{ label: 'Configure a Notification Sink', slug: 'guides/notification-sinks' },
+								{ label: 'Publish Lineage to OpenLineage', slug: 'guides/openlineage' },
 								{ label: 'Fingerprint a Transformation', slug: 'guides/fingerprinting-transformations' },
 							],
 						},
