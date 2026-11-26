@@ -39,6 +39,7 @@ private[sparkadapter] final class DeclaredOutputs(
   /** Each write recorded: where it landed, and every name it answers to (`LocationMatching.namesOf`). */
   private val written = new ConcurrentLinkedQueue[(String, List[String])]()
   private var outcome: Option[Option[ContractViolationException]] = None
+  private var ended = false
 
   /** A write the enforcement rule checked, wherever it landed. */
   def record(location: String): Unit = written.add(location -> List(location))
@@ -57,7 +58,17 @@ private[sparkadapter] final class DeclaredOutputs(
     * is due) and later calls return the same answer without publishing again. */
   def finish(): Option[ContractViolationException] = synchronized {
     if (outcome.isEmpty) outcome = Some(check())
+    end()
     outcome.get
+  }
+
+  /** Tells the sink the run is over (`NotificationSink.endRun`), once: a sink keeping state per run (OpenLineage) publishes
+    * its end. After `finish`, so a MISSING_OUTPUT it reports is part of the run; on its own for a job that already failed. */
+  def end(): Unit = synchronized {
+    if (!ended) {
+      ended = true
+      sink.foreach(_.endRun(job))
+    }
   }
 
   private def check(): Option[ContractViolationException] = {
@@ -136,8 +147,8 @@ private[sparkadapter] object DeclaredOutputs {
   private[sparkadapter] def exitHookAttached(sc: SparkContext): Boolean =
     byJob.asScala.exists { case ((context, _), attached) => (context eq sc) && attached.hook.isDefined }
 
-  /** Forgets every contract `sc` enforces without judging it (a job that already failed). */
-  def discardAll(sc: SparkContext): Unit = detach(sc)
+  /** Forgets every contract `sc` enforces without judging it (a job that already failed), ending its run. */
+  def discardAll(sc: SparkContext): Unit = detach(sc).foreach(a => a.outputs.end())
 
   private def detach(sc: SparkContext): List[Attached] = {
     val keys = byJob.keySet.asScala.filter(_._1 eq sc).toList

@@ -5,7 +5,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.verification.{VerificationOptions, ViolationType}
-import com.invaract.verification.notification.{ContractValidationEvent, NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, NotificationEvent, NotificationSink}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.scalatest.funsuite.AnyFunSuite
@@ -23,7 +23,9 @@ class DeclaredOutputsSpec extends AnyFunSuite {
 
   private final class Capture extends NotificationSink {
     val events = ListBuffer.empty[NotificationEvent]
+    val ended = ListBuffer.empty[Option[JobInfo]]
     override def publish(event: NotificationEvent): Unit = synchronized(events += event)
+    override def endRun(job: Option[JobInfo]): Unit = synchronized(ended += job)
     def validations: List[ContractValidationEvent] = synchronized(events.toList.collect { case v: ContractValidationEvent => v })
   }
 
@@ -160,6 +162,30 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     val missing = outputs.finish()
     assert(missing.exists(_.result.violations.map(_.location) == List(Some("gold/audit"))), "only the write without its table cannot match a table name")
     assert(missing.get.getMessage.contains("the job's writes: file:/warehouse/gold.db/report, file:/warehouse/gold.db/audit)"))
+  }
+
+  test("the job's end tells the sink its run is over, once, after a MISSING_OUTPUT it reports; a discarded job's too") {
+    val out = Files.createTempDirectory("declared-outputs-end")
+    val sink = new Capture
+    val job = Some(JobInfo(runId = Some("app-end"), engine = Some("spark")))
+    val outputs = new DeclaredOutputs(contract(out), Some(sink), Some("app-end"), job)
+    outputs.record(s"$out/report")
+    assert(sink.ended.isEmpty, "not before the job ends")
+    outputs.finish()
+    outputs.finish()
+    DeclaredOutputs.report(outputs)
+    assert(sink.ended.toList == List(job), "once")
+    assert(sink.events.last.isInstanceOf[ContractValidationEvent], "the MISSING_OUTPUT is published before the end")
+    val discarded = new Capture
+    val spark = session(contract(out), discarded)
+    try {
+      spark.range(1).write.parquet(s"$out/report")
+      DeclaredOutputs.discardAll(spark.sparkContext)
+      assert(discarded.ended.size == 1 && discarded.ended.head.flatMap(_.engine).contains("spark"))
+      assert(discarded.validations.forall(_.status == "PASSED"), "discarded unjudged")
+    } finally spark.stop()
+    assert(discarded.ended.size == 1, "the application's own end does not end it again: it was forgotten")
+    new DeclaredOutputs(contract(out), None, None, None).finish() // no sink: nothing to tell
   }
 
   test("an exit hook waits on the job only under failOnMissingOutput=true") {
