@@ -71,6 +71,46 @@ class SparkOpenLineageSpec extends AnyFunSuite {
     assert(engine.get("name").asText() == "spark" && engine.get("version").asText() == org.apache.spark.SPARK_VERSION)
   }
 
+  test("a real job's wall time with OpenLineage on stays within noise of it off, against an endpoint answering in 20 ms") {
+    import com.sun.net.httpserver.{HttpExchange, HttpServer}
+    val received = new java.util.concurrent.atomic.AtomicInteger()
+    val server = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    server.createContext("/", (e: HttpExchange) => { e.getRequestBody.readAllBytes(); Thread.sleep(20); received.incrementAndGet(); e.sendResponseHeaders(200, -1); e.close() })
+    server.start()
+    try {
+      val dir = Files.createTempDirectory("spark-openlineage-timing")
+      val input = dir.resolve("orders").toString
+      val contract = dir.resolve("contract.yaml")
+      val outputs = (0 until 20).map(i => s"""  - { name: report$i, location: ${dir.resolve(s"report$i")}, format: parquet }""").mkString("\n")
+      Files.write(contract, (s"""id: timing
+          |version: "1.0.0"
+          |inputs:
+          |  - { name: orders, location: $input, format: parquet }
+          |outputs:
+          |""".stripMargin + outputs + "\n").getBytes(StandardCharsets.UTF_8))
+      val setup = SparkSession.builder().master("local[1]").appName("setup").config("spark.ui.enabled", "false").getOrCreate()
+      try setup.range(1000).write.parquet(input) finally setup.stop()
+      def job(lineage: Boolean): Long = {
+        val builder = SparkSession.builder().master("local[2]").appName("timing").config("spark.ui.enabled", "false")
+          .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
+          .config("spark.invaract.contract", contract.toString)
+        if (lineage) builder.config("spark.invaract.openLineageUrl", s"http://127.0.0.1:${server.getAddress.getPort}")
+        val spark = builder.getOrCreate()
+        try {
+          val started = System.nanoTime()
+          (0 until 20).foreach(i => spark.read.parquet(input).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(dir.resolve(s"report$i").toString))
+          (System.nanoTime() - started) / 1000000
+        } finally spark.stop()
+      }
+      job(lineage = false); job(lineage = true) // warm up
+      val rounds = (1 to 3).map(_ => (job(lineage = false), job(lineage = true)))
+      val (off, on) = (rounds.map(_._1).min, rounds.map(_._2).min)
+      info(s"20 writes: $off ms off, $on ms on (${on - off} ms); ${received.get()} events delivered")
+      assert(on - off < math.max(2000L, off / 2), "OpenLineage adds no more than noise to a real job")
+      assert(received.get() > 0)
+    } finally server.stop(0)
+  }
+
   test("a refused write: the verdict FAILED, and the run ends FAIL with the reason when the application stops") {
     val (events, _) = run(_ => "/somewhere/else", (spark, dir) =>
       intercept[ContractViolationException](doubled(spark, dir, dir.resolve("report").toString)))
