@@ -73,6 +73,10 @@ terminal event, which OpenLineage backends show as still running - the honest pi
 **Run identity.** OpenLineage requires a UUID. The run's id is a name-based UUID (version 5) of the engine and Invaract's
 own run id (`JobInfo.runId`: Spark's application id, Beam's job id, the Python run's id), so every event of a run, from
 every process that publishes for it, carries the same id, and the same run published twice is the same run.
+Once a run has ended, a completed write reported for it afterwards (Spark reports one from a listener thread, which can
+trail the end) is dropped rather than reopening the run, which OpenLineage's one-terminal-event rule forbids. A new check
+under the same Invaract run id - a process whose engine gives its runs no id of their own runs one after another under the
+same key - is a new run: its id is the UUID of the key and its generation (`<runId>#1`, `#2`, ...), still deterministic.
 
 **Job identity.** `namespace` (setting `openLineageNamespace`, else the configuration file's `namespace`, else the
 `OPENLINEAGE_NAMESPACE` environment variable, else `default`, OpenLineage's own default) and `name`: the job's stable id
