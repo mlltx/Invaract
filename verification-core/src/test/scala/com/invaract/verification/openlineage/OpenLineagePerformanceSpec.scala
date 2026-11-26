@@ -17,8 +17,9 @@ import java.nio.file.Files
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
-/** What turning OpenLineage on costs a job, measured (docs/OPENLINEAGE.md, "Performance"). The bounds are loose - several times
-  * what is measured on a laptop - so the suite holds the design (nothing slow on the job's thread, nothing unbounded), not one
+/** What turning OpenLineage on costs a job, measured (docs/OPENLINEAGE.md, "Performance"). The bounds are loose - many times
+  * what is measured on an idle machine, since the suite also runs under mutation testing's instrumented code, four runners at
+  * once - so the suite holds the design (nothing slow on the job's thread, nothing unbounded), not one
   * machine's speed; the measured figures are printed for the design document. */
 class OpenLineagePerformanceSpec extends AnyFunSuite {
 
@@ -78,7 +79,7 @@ class OpenLineagePerformanceSpec extends AnyFunSuite {
       val on = rounds.map(_._2).min
       val overheadMicros = (on - off) / 1000
       info(f"wide check ($width columns): ${off / 1000}%.1f us off, ${on / 1000}%.1f us on: +$overheadMicros%.1f us per write on the job's thread")
-      assert(overheadMicros < 2000, "turning OpenLineage on costs a check under 2 ms on the job's thread")
+      assert(overheadMicros < 5000, "turning OpenLineage on costs a check a few milliseconds at most on the job's thread, even on a loaded machine")
       assert(delivered.get() < writes * rounds.size, "the endpoint is far slower than the job: delivery happens behind it, not in it")
       sink.close(1000)
     } finally s.stop(0)
@@ -116,7 +117,7 @@ class OpenLineagePerformanceSpec extends AnyFunSuite {
     info(f"$flood submits against a stalled endpoint: $micros%.2f us each; $accepted accepted, ${delivery.stats.droppedQueueFull} dropped")
     assert(accepted <= settings.queueCapacity + 1, "at most the queue, plus the one the worker holds")
     assert(delivery.stats.droppedQueueFull == flood - accepted)
-    assert(micros < 100, "a full queue costs the job an offer, never a wait")
+    assert(micros < 500, "a full queue costs the job an offer, never a wait")
     stalled.countDown()
     delivery.close(5000)
   }
@@ -135,7 +136,7 @@ class OpenLineagePerformanceSpec extends AnyFunSuite {
     val perSecond = events / ((System.nanoTime() - started) / 1e9)
     val bytes = Files.size(out) / (events + 1)
     info(f"worker: $perSecond%.0f wide events/s ($width columns, column lineage on), about $bytes bytes each")
-    assert(perSecond > 100)
+    assert(perSecond > 10, "the worker is not pathologically slow (it is several hundred a second on an idle machine)")
     assert(sink.stats.exists(s => s.delivered == events + 1 && s.droppedQueueFull == 0))
     sink.close(1000)
   }

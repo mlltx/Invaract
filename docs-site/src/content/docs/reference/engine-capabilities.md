@@ -129,10 +129,10 @@ The suite has 75 scenarios. For each adapter, the scenarios it is held to confor
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 61 | 75 |
-| `beam-python` | 61 | 75 |
-| `pythonio` | 59 | 75 |
-| `spark` | 72 | 75 |
+| `beam` | 64 | 75 |
+| `beam-python` | 64 | 75 |
+| `pythonio` | 62 | 75 |
+| `spark` | 75 | 75 |
 
 ## Notes
 
