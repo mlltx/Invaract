@@ -24,7 +24,24 @@ private[sparkadapter] object SparkConfigSource {
       PinnedSettings.get(key).orElse(session.conf.getOption(key)).map(RemoteFiles.localizeSetting(name, key, _, session))
     }
     override def describe(name: String): String = Prefix + name
+    override def environment(name: String): Option[String] =
+      SparkConfigSource.OrchestratorRuns.get(name).flatMap { case (namespace, job, run) =>
+        List(namespace, job, run).map(k => session.conf.getOption(k).map(_.trim).filter(_.nonEmpty)) match {
+          case List(Some(n), Some(j), Some(r)) => Some(s"$n/$j/$r")
+          case _                               => None
+        }
+      }.orElse(super.environment(name))
   }
+
+  /** The OpenLineage parent and root runs as an orchestrator hands them to a Spark job (the keys Airflow's OpenLineage
+    * provider injects, and openlineage-spark reads), by the environment variable each stands for: `<namespace>/<job>/<run>`
+    * when all three are set. */
+  val OrchestratorRuns: Map[String, (String, String, String)] = Map(
+    "OPENLINEAGE_PARENT_ID" ->
+      (("spark.openlineage.parentJobNamespace", "spark.openlineage.parentJobName", "spark.openlineage.parentRunId")),
+    "OPENLINEAGE_ROOT_PARENT_ID" ->
+      (("spark.openlineage.rootParentJobNamespace", "spark.openlineage.rootParentJobName", "spark.openlineage.rootParentRunId"))
+  )
 }
 
 /** The `spark.invaract.*` keys Invaract reads, so that one it does not read - almost always a typo, such as

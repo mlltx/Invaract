@@ -160,6 +160,21 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.ContractValidationEvent$"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.JobSummaryEvent$"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.WriteEvent$"),
+  // Deliberate break, dry-run lineage: ContractInferenceEvent gained a trailing `lineage: Option[WriteLineage]` (what a
+  // dry run's write read and wrote, so an OpenLineage sink publishes for a dry run the lineage enforcement would,
+  // docs/OPENLINEAGE.md section 2.1) - the same change ContractValidationEvent's `lineage` made, to the same methods.
+  // Nothing has been released and no consumers exist outside this repository.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractInferenceEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractInferenceEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractInferenceEvent.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.ContractInferenceEvent.unapply"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.ContractInferenceEvent$"),
+  // Deliberate, additive: ConfigSource gained `environment(name)` (default: the process environment), so an engine can
+  // answer an environment variable its own way - Spark answers OPENLINEAGE_PARENT_ID from the spark.openlineage.parent*
+  // settings an orchestrator injects. A concrete default method on a trait; MiMa reports any new trait method, since a
+  // class compiled against the old trait without Scala's mixin forwarders would lack it. Every ConfigSource is in this
+  // repository and recompiled with it.
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.verification.ConfigSource.environment"),
   // Deliberate break, runtime data quality (capability check.runtimeDataQuality): VerificationOptions gained a trailing
   // `runtimeDataQuality` flag and CheckedWrite a trailing `dataChecks` (what the adapter found in the written data). A new
   // case class field changes `apply`/`copy`/the constructor and `unapply`'s tuple. Nothing has been released and no

@@ -159,6 +159,25 @@ class OpenLineageSettingsSpec extends AnyFunSuite {
     assert(fromEnv("  ").parent.isEmpty)
   }
 
+  test("the root run: OPENLINEAGE_ROOT_PARENT_ID beside a parent; ignored with no parent; held to the same form") {
+    val parentId = "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0e"
+    val rootId = "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0f"
+    def from(env: (String, String)*) = OpenLineageSettings.parse(Map("url" -> "http://h"), None, None, "t", env.toMap.get)
+    val s = from("OPENLINEAGE_PARENT_ID" -> s"airflow/dag.task/$parentId", "OPENLINEAGE_ROOT_PARENT_ID" -> s"airflow/dag/$rootId")
+    assert(s.parent.contains(ParentRun("airflow", "dag.task", parentId, Some(ParentRun("airflow", "dag", rootId)))))
+    assert(from("OPENLINEAGE_ROOT_PARENT_ID" -> s"airflow/dag/$rootId").parent.isEmpty)
+    assert(from("OPENLINEAGE_PARENT_ID" -> s"airflow/dag.task/$parentId").parent.flatMap(_.root).isEmpty)
+    assert(intercept[IllegalArgumentException](from("OPENLINEAGE_PARENT_ID" -> s"a/b/$parentId", "OPENLINEAGE_ROOT_PARENT_ID" -> "bad"))
+      .getMessage.contains("OPENLINEAGE_ROOT_PARENT_ID must be <namespace>/<name>/<runId>"))
+    val keys = parse("url" -> "http://h", "parent.runId" -> parentId, "parent.job.namespace" -> "a", "parent.job.name" -> "b")
+    assert(keys.parent.flatMap(_.root).isEmpty)
+  }
+
+  test("a ConfigSource's environment is the process's unless the engine answers it") {
+    assert(com.invaract.verification.ConfigSource.empty.environment("PATH") == Option(System.getenv("PATH")))
+    assert(com.invaract.verification.ConfigSource.empty.environment("INVARACT_NO_SUCH_VARIABLE_HERE").isEmpty)
+  }
+
   test("the namespace: openLineageNamespace, else the file's, else OPENLINEAGE_NAMESPACE, else default") {
     val path = file("url=http://h")
     assert(from(Map(InvaractConf.OpenLineageConfig -> path), Map("OPENLINEAGE_NAMESPACE" -> "env-ns")).get.namespace == "env-ns")

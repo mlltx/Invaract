@@ -158,4 +158,69 @@ class SparkOpenLineageSpec extends AnyFunSuite {
     val message = events.flatMap(e => Option(e.path("run").path("facets").get("errorMessage"))).head.get("message").asText()
     assert(message.contains("OUTPUT_LOCATION_MISMATCH"), message)
   }
+
+  /** A job attached by configuration alone, with `extra` settings, writing `doubled` of its input; its events. */
+  private def runWith(extra: Map[String, String], contract: Option[String => String]): List[JsonNode] = {
+    val dir = Files.createTempDirectory("spark-openlineage-attach")
+    val input = dir.resolve("orders").toString
+    val output = dir.resolve("report").toString
+    val events = dir.resolve("lineage.jsonl")
+    val config = dir.resolve("openlineage.properties")
+    Files.write(config, s"transport=file\npath=${slashes(events)}\n".getBytes(StandardCharsets.UTF_8))
+    val setup = SparkSession.builder().master("local[1]").appName("setup").config("spark.ui.enabled", "false").getOrCreate()
+    try setup.range(3).write.parquet(input) finally setup.stop()
+    val builder = SparkSession.builder().master("local[1]").appName("attach").config("spark.ui.enabled", "false")
+      .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
+      .config("spark.invaract.openLineageConfig", config.toString)
+    contract match {
+      case Some(yaml) =>
+        val file = dir.resolve("contract.yaml")
+        Files.write(file, yaml(output).getBytes(StandardCharsets.UTF_8))
+        builder.config("spark.invaract.contract", file.toString)
+      case None => builder.config("spark.invaract.dryRun", "true")
+    }
+    val spark = extra.foldLeft(builder) { case (b, (k, v)) => b.config(k, v) }.getOrCreate()
+    try doubled(spark, dir, output) finally spark.stop()
+    val deadline = System.nanoTime() + 30L * 1000000000L
+    def read() = if (Files.exists(events)) Files.readAllLines(events).asScala.toList.map(json.readTree) else Nil
+    while (!read().exists(e => Set("COMPLETE", "FAIL")(e.get("eventType").asText())) && System.nanoTime() < deadline) Thread.sleep(50)
+    read()
+  }
+
+  private val outputOnly: String => String = output =>
+    s"""id: attach
+       |version: "1.0.0"
+       |outputs:
+       |  - { name: report, location: $output, format: parquet }
+       |""".stripMargin
+
+  test("the parent and root runs an orchestrator injects (spark.openlineage.parent*, rootParent*) make the run their child") {
+    val parent = "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0e"
+    val root = "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0f"
+    val events = runWith(Map(
+      "spark.openlineage.parentJobNamespace" -> "airflow", "spark.openlineage.parentJobName" -> "dag.task", "spark.openlineage.parentRunId" -> parent,
+      "spark.openlineage.rootParentJobNamespace" -> "airflow", "spark.openlineage.rootParentJobName" -> "dag", "spark.openlineage.rootParentRunId" -> root
+    ), Some(outputOnly))
+    assert(events.nonEmpty)
+    for (e <- events) {
+      val facet = e.path("run").path("facets").path("parent")
+      assert(facet.path("run").get("runId").asText() == parent && facet.path("job").get("name").asText() == "dag.task", e.get("eventType").asText())
+      assert(facet.path("root").path("run").get("runId").asText() == root && facet.path("root").path("job").get("name").asText() == "dag")
+    }
+    val partial = runWith(Map("spark.openlineage.parentJobNamespace" -> "airflow", "spark.openlineage.parentRunId" -> parent), Some(outputOnly))
+    assert(partial.forall(e => !e.path("run").path("facets").has("parent")), "a parent missing its job name is no parent")
+  }
+
+  test("a dry run publishes the lineage enforcement would: the write's input, its output's schema and column lineage") {
+    val events = runWith(Map.empty, None)
+    val types = events.map(_.get("eventType").asText())
+    assert(types.head == "START" && types.last == "COMPLETE", types)
+    val written = events.find(_.get("outputs").elements().asScala.exists(_.path("facets").has("columnLineage"))).getOrElse(fail(s"no column lineage in $events"))
+    val output = written.get("outputs").get(0)
+    assert(output.path("facets").path("invaract_contract").get("status").asText().startsWith("DRY_RUN_"))
+    assert(output.path("facets").path("schema").get("fields").elements().asScala.map(_.get("name").asText()).toList == List("id", "doubled"))
+    val source = output.path("facets").path("columnLineage").path("fields").path("doubled").get("inputFields").get(0)
+    assert(source.get("field").asText() == "id" && source.get("name").asText().endsWith("/orders"))
+    assert(written.get("inputs").elements().asScala.exists(_.get("name").asText().endsWith("/orders")))
+  }
 }

@@ -91,7 +91,7 @@ object AttachSetup {
     * setting for one it cannot use. One per distinct set of settings in a process, so a job building several sessions
     * (Spark) publishes one run, from one worker. */
   def openLineageSink(config: ConfigSource): Option[NotificationSink] =
-    OpenLineageSettings.from(config).map { settings =>
+    OpenLineageSettings.from(config, config.environment).map { settings =>
       openLineageSinks.computeIfAbsent(settings, s => new SafeNotificationSink(new OpenLineageSink(s)))
     }
 

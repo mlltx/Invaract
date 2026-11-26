@@ -118,6 +118,90 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(!facetNames(output.get("facets")).contains("columnLineage"), "no column lineage is published rather than an empty one")
   }
 
+  private def schemaOf(names: String*) = Some(LogicalSchema(names.toList.map(n => LogicalField(n, StringType))))
+
+  test("a read whose columns the adapter reported gives a column only a name it has; one without a schema, any") {
+    val ambiguous = Write(DatasetRef("out/x"), Project(Join(Read(DatasetRef("in/a")), Read(DatasetRef("in/b")), JoinType.Inner), List(NamedExpr("v", ColumnReference(ColumnRef("v"))))))
+    def sources(inputs: List[LineageDataset]) = WriteLineage(LineageDataset("out/x"), inputs, plan = Some(ambiguous)).columnLineage.map(_.source)
+    assert(sources(List(LineageDataset("in/a", schema = schemaOf("k")), LineageDataset("in/b", schema = schemaOf("v")))) == List(LineageSource("in/b", "v")))
+    assert(sources(List(LineageDataset("in/a", schema = schemaOf("k")), LineageDataset("in/b"))) == List(LineageSource("in/b", "v")), "b's columns unknown: it may have v")
+    assert(sources(List(LineageDataset("in/a"), LineageDataset("in/b"))) == List(LineageSource("in/a", "v"), LineageSource("in/b", "v")))
+  }
+
+  test("only the columns the write has get lineage, when its columns are known (a MERGE's source has others), ignoring case") {
+    val plan = Write(DatasetRef("out/x"), Project(Read(DatasetRef("in/a")), List(
+      NamedExpr("id", ColumnReference(ColumnRef("id", Some("in/a")))), NamedExpr("extra", ColumnReference(ColumnRef("extra", Some("in/a")))))))
+    def fields(written: Option[LogicalSchema]) = WriteLineage(LineageDataset("out/x", schema = written), Nil, plan = Some(plan)).columnLineage.flatMap(_.field).distinct
+    assert(fields(schemaOf("ID")) == List("id"))
+    assert(fields(None) == List("id", "extra"), "columns unknown: every column the plan names")
+    assert(fields(schemaOf("id", "extra")) == List("id", "extra"))
+  }
+
+  test("a MERGE, UPDATE or DELETE lists the table it changes among its inputs; any other write does not; never twice") {
+    val merge = Some(com.invaract.verification.MutationClassification.Unverifiable(com.invaract.verification.MutationKind.Merge))
+    def inputsOf(plan: Plan, rowMutation: Option[com.invaract.verification.MutationClassification]) =
+      VerificationPipeline.lineageOf(contract, CheckedWrite(plan, List(orders -> inputSchema), goodOutput, caseSensitive = false, rowMutation, Set.empty)).get.inputs
+    assert(inputsOf(goodPlan, merge).map(_.location) == List(orders, "out/report"))
+    assert(inputsOf(goodPlan, merge).last.schema.contains(goodOutput), "the table as it is written")
+    assert(inputsOf(goodPlan, None).map(_.location) == List(orders))
+    val selfRead = Write(DatasetRef("out/report"), Project(Read(DatasetRef("out/report")), List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("out/report")))))))
+    assert(inputsOf(selfRead, merge).map(_.location) == List("out/report"))
+  }
+
+  private val a = Read(DatasetRef("in/a"))
+  private def av(name: String) = ColumnReference(ColumnRef(name, Some("in/a")))
+  private def edgesOf(plan: Plan) = WriteLineage(LineageDataset("out/x"), Nil, plan = Some(Write(DatasetRef("out/x"), plan))).columnLineage
+
+  test("a CASE WHEN's value is DIRECT, its test INDIRECT CONDITIONAL on that field; a window's spec INDIRECT WINDOW on its") {
+    val cw = Conditional(List(Comparison(">", av("amount"), Literal(1, "int")) -> av("status")), None)
+    val edges = edgesOf(Project(a, List(NamedExpr("size", cw))))
+    assert(edges == List(
+      ColumnLineageEdge(Some("size"), LineageSource("in/a", "status"), LineageTransformation("DIRECT", "TRANSFORMATION")),
+      ColumnLineageEdge(Some("size"), LineageSource("in/a", "amount"), LineageTransformation("INDIRECT", "CONDITIONAL"))
+    ))
+    val w = Window(a, List(NamedExpr("rank", Function("row_number", Nil))), List(av("region")), List(SortOrder(av("amount"))))
+    assert(edgesOf(Project(w, List(NamedExpr("rank", ColumnReference(ColumnRef("rank")))))) == List(
+      ColumnLineageEdge(Some("rank"), LineageSource("in/a", "amount"), LineageTransformation("INDIRECT", "WINDOW")),
+      ColumnLineageEdge(Some("rank"), LineageSource("in/a", "region"), LineageTransformation("INDIRECT", "WINDOW"))
+    ))
+  }
+
+  test("a sort is INDIRECT SORT on the whole output; a filter on a computed column is on what it was computed from") {
+    val doubled = Project(a, List(NamedExpr("x", Arithmetic("*", List(av("amount"), Literal(2, "int")))), NamedExpr("id", av("id"))))
+    val edges = edgesOf(Project(Sort(Filter(doubled, Comparison(">", ColumnReference(ColumnRef("x")), Literal(1, "int"))), List(SortOrder(av("id")))), List(NamedExpr("id", ColumnReference(ColumnRef("id"))))))
+    assert(edges.filter(_.field.isEmpty) == List(
+      ColumnLineageEdge(None, LineageSource("in/a", "id"), LineageTransformation("INDIRECT", "SORT")),
+      ColumnLineageEdge(None, LineageSource("in/a", "amount"), LineageTransformation("INDIRECT", "FILTER"))
+    ))
+  }
+
+  test("a hash of a column is masking; the same column also passed in the clear is not") {
+    val hashed = Function("sha2", List(av("email"), Literal(256, "int")))
+    assert(edgesOf(Project(a, List(NamedExpr("h", hashed)))).map(_.transformation) == List(LineageTransformation("DIRECT", "TRANSFORMATION", masking = true)))
+    assert(edgesOf(Project(a, List(NamedExpr("h", Function("concat", List(hashed, av("email"))))))).map(_.transformation.masking) == List(false))
+    // the read's reported columns are id and amount (the fixture's input schema)
+    val output = published(mapper(), check(plan = Write(DatasetRef("out/report"), Project(Read(DatasetRef(orders)), List(
+      NamedExpr("h", Function("md5", List(ColumnReference(ColumnRef("amount", Some(orders)))))),
+      NamedExpr("e", ColumnReference(ColumnRef("amount", Some(orders))))
+    )), Some("parquet"), Some("overwrite")), outputSchema = Cols(("h", StringType, true), ("e", IntegerType, true))))(1).get("outputs").get(0)
+    val fields = output.path("facets").path("columnLineage").get("fields")
+    assert(fields.get("h").get("inputFields").get(0).get("transformations").get(0).get("masking").asBoolean)
+    assert(!fields.get("e").get("inputFields").get(0).get("transformations").get(0).get("masking").asBoolean)
+  }
+
+  test("one input field per source column, carrying every way it reaches the field, in dataset then field order") {
+    val cw = Conditional(List(Comparison("=", ColumnReference(ColumnRef("amount", Some(orders))), Literal(1, "int")) -> ColumnReference(ColumnRef("amount", Some(orders)))),
+      Some(ColumnReference(ColumnRef("id", Some(orders)))))
+    val output = published(mapper(), check(plan = Write(DatasetRef("out/report"), Project(Read(DatasetRef(orders)), List(NamedExpr("s", cw))), Some("parquet"), Some("overwrite")),
+      outputSchema = Cols(("s", IntegerType, true))))(1).get("outputs").get(0)
+    val inputs = output.path("facets").path("columnLineage").get("fields").get("s").get("inputFields")
+    assert(inputs.size == 2)
+    assert(inputs.get(0).get("field").asText() == "amount" && inputs.get(1).get("field").asText() == "id")
+    val amount = inputs.get(0).get("transformations").elements().asScala.map(t => s"${t.get("type").asText()}/${t.get("subtype").asText()}").toList
+    assert(amount == List("DIRECT/TRANSFORMATION", "INDIRECT/CONDITIONAL"))
+    assert(inputs.get(1).get("transformations").size == 1)
+  }
+
   test("a UDF's output is a TRANSFORMATION said to be opaque") {
     val udf = Write(DatasetRef("out/x"), Project(Read(DatasetRef("in/a")), List(NamedExpr("h", UDF(Some("hash"), List(ColumnReference(ColumnRef("v", Some("in/a")))))))))
     assert(WriteLineage(LineageDataset("out/x"), Nil, plan = Some(udf)).columnLineage.map(_.transformation) ==
@@ -219,6 +303,11 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert((engine.get("name").asText(), engine.get("version").asText(), engine.get("openlineageAdapterVersion").asText()) == (("spark", "3.5.9", OpenLineageMapper.InvaractVersion)))
     val p = facets.get("parent")
     assert(p.path("run").get("runId").asText() == parent.runId && p.path("job").get("namespace").asText() == "airflow" && p.path("job").get("name").asText() == "dag.task")
+    assert(!p.has("root"), "no root run known: none published")
+    val withRoot = parent.copy(root = Some(ParentRun("airflow", "dag", "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0f")))
+    val rootFacet = published(mapper(settings.copy(parent = Some(withRoot))), check())(0).path("run").path("facets").path("parent").get("root")
+    assert(rootFacet.path("run").get("runId").asText() == "01890b4c-bb6b-7a8c-8f5b-2a6c35dd2a0f")
+    assert(rootFacet.path("job").get("namespace").asText() == "airflow" && rootFacet.path("job").get("name").asText() == "dag")
     val run = facets.get("invaract_run")
     assert(run.get("mode").asText() == "enforce" && run.get("invaractRunId").asText() == "app-1" && run.get("jobId").asText() == "orders_daily")
     assert(run.get("attributes").get("team").asText() == "orders")
@@ -269,6 +358,22 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     val ended = m.map(JobSummaryEvent(0, 0, 1, 1, 0, 1L, Map.empty, job = Some(job)))
     assert(ended.size == OpenLineageMapper.MaxHeldEvents + 1)
     assert(types(ended.map(e => json.readTree(JsonText.render(e)))).last == "FAIL")
+  }
+
+  test("dry run with the write's lineage: its inputs, its output's schema and column lineage, the draft's status as the verdict") {
+    val lineage = com.invaract.verification.DryRunReporting.lineage(contract, goodPlan, List(orders -> inputSchema), goodOutput)
+    assert(lineage.isDefined)
+    val inferred = ContractInferenceEvent(InferenceStatus.Inferred, None, Some("out/report"), Some("id: x"), None, Nil, Nil, None, job, 1L, Map.empty, lineage)
+    val running = published(mapper(), inferred)(1)
+    val input = running.get("inputs").get(0)
+    assert((input.get("name").asText(), facetNames(input.get("facets"))) == (("/work/in/orders", Set("schema"))))
+    val output = running.get("outputs").get(0)
+    assert(output.get("name").asText() == "/work/out/report")
+    assert(facetNames(output.get("facets")) == Set("schema", "storage", "columnLineage", "lifecycleStateChange", "invaract_contract"))
+    assert(output.path("facets").path("invaract_contract").get("status").asText() == "DRY_RUN_INFERRED")
+    assert(output.path("facets").path("columnLineage").get("fields").has("total"))
+    assert(facetNames(output.get("outputFacets")).isEmpty, "a draft is no verdict: no assertions")
+    assert(com.invaract.verification.DryRunReporting.lineage(contract, UnknownPlan("not a write"), Nil, goodOutput).isEmpty)
   }
 
   test("dry run: each inferred write is an output marked with the inference, and the dry-run summary ends the run") {

@@ -74,10 +74,15 @@ private[openlineage] final class OpenLineageMapper(
       run.writes += 1
       progress(run, Nil, List(output), Nil)
     case e: ContractInferenceEvent =>
-      val outputs = e.writeLocation.toList.map(inferredOutput(_, e))
+      // a dry run's write publishes the lineage enforcement would: its inputs, and its output's schema and column
+      // lineage, with the draft's status in place of a verdict
+      val (inputs, outputs) = e.lineage match {
+        case Some(l) => (l.inputs.map(input), List(outputOf(l, inferredFacet(e).toList, Nil)))
+        case None    => (Nil, e.writeLocation.toList.map(inferredOutput(_, e)))
+      }
       val run = runOf(Some(e.job), e.job.runId, "job")
       run.dryRun = true
-      progress(run, Nil, outputs, Nil)
+      progress(run, inputs, outputs, Nil)
     case e: JobSummaryEvent =>
       runs.get(keyOf(e.job, e.runId)).toList.flatMap { run =>
         run.checksFailed = run.checksFailed max e.checksFailed
@@ -154,7 +159,8 @@ private[openlineage] final class OpenLineageMapper(
         "openlineageAdapterVersion" -> InvaractVersion),
       settings.parent.flatMap(p => facet("parent", standard("ParentRunFacet", "1-2-0"),
         "run" -> obj("runId" -> p.runId),
-        "job" -> obj("namespace" -> p.namespace, "name" -> p.name))),
+        "job" -> obj("namespace" -> p.namespace, "name" -> p.name),
+        "root" -> p.root.map(r => obj("run" -> obj("runId" -> r.runId), "job" -> obj("namespace" -> r.namespace, "name" -> r.name))))),
       facet("invaract_run", invaract("InvaractRunFacet"), invaractRun(run, terminal): _*)
     ).flatten ++ extraRunFacets.filter { case (name, _) => settings.enabled(name) }
     val jobFacets = List(
@@ -187,13 +193,16 @@ private[openlineage] final class OpenLineageMapper(
     obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(datasetFacets(d, id)))
   }
 
-  private def checkedOutput(l: WriteLineage, e: ContractValidationEvent): Obj = {
+  private def checkedOutput(l: WriteLineage, e: ContractValidationEvent): Obj =
+    outputOf(l, contractFacet(e, l.output).toList, assertions(e, l.output).toList)
+
+  /** A write's output dataset: its own facets and column lineage, then `facets` and `outputFacets` of the event. */
+  private def outputOf(l: WriteLineage, facets: List[(String, Any)], outputFacets: List[(String, Any)]): Obj = {
     val d = l.output
     val id = OpenLineageNaming.dataset(d.location, d.catalog, workingDirectory)
     val lineage = if (settings.enabled("columnLineage")) columnLineage(l) else None
-    val facets = datasetFacets(d, id) ++ lineage.toList ++ lifecycle(l.saveMode).toList ++ contractFacet(e, d).toList
-    val outputFacets = assertions(e, d).toList
-    obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(facets), "outputFacets" -> Obj(outputFacets))
+    val all = datasetFacets(d, id) ++ lineage.toList ++ lifecycle(l.saveMode).toList ++ facets
+    obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(all), "outputFacets" -> Obj(outputFacets))
   }
 
   private def writtenOutput(e: WriteEvent): Obj = {
@@ -211,10 +220,11 @@ private[openlineage] final class OpenLineageMapper(
 
   private def inferredOutput(location: String, e: ContractInferenceEvent): Obj = {
     val id = OpenLineageNaming.dataset(location, None, workingDirectory)
-    val inferred = facet("invaract_contract", invaract("InvaractContractDatasetFacet"),
-      "status" -> s"DRY_RUN_${e.status}", "dryRun" -> true)
-    obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(inferred.toList))
+    obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(inferredFacet(e).toList))
   }
+
+  private def inferredFacet(e: ContractInferenceEvent): Option[(String, Any)] =
+    facet("invaract_contract", invaract("InvaractContractDatasetFacet"), "status" -> s"DRY_RUN_${e.status}", "dryRun" -> true)
 
   private def datasetFacets(d: LineageDataset, id: DatasetId): List[(String, Any)] =
     List(
@@ -239,18 +249,21 @@ private[openlineage] final class OpenLineageMapper(
     val edges = l.columnLineage
     if (edges.isEmpty) None
     else {
-      def inputField(edge: ColumnLineageEdge): Obj = {
-        val source = l.inputs.find(_.location == edge.source.location)
-        val id = OpenLineageNaming.dataset(edge.source.location, source.flatMap(_.catalog), workingDirectory)
-        val t = edge.transformation
-        obj("namespace" -> id.namespace, "name" -> id.name, "field" -> edge.source.field,
-          "transformations" -> List(obj("type" -> t.kind, "subtype" -> t.subtype, "description" -> t.description)))
-      }
+      // one input field per source, with every way it reaches the field: a column can be a CASE WHEN's value and its
+      // test at once (DIRECT and INDIRECT/CONDITIONAL)
+      def inputFields(es: List[ColumnLineageEdge]): List[Obj] =
+        es.groupBy(_.source).toList.sortBy { case (s, _) => (s.location, s.field) }.map { case (source, bySource) =>
+          val known = l.inputs.find(_.location == source.location)
+          val id = OpenLineageNaming.dataset(source.location, known.flatMap(_.catalog), workingDirectory)
+          obj("namespace" -> id.namespace, "name" -> id.name, "field" -> source.field,
+            "transformations" -> bySource.map(_.transformation).distinct.map(t =>
+              obj("type" -> t.kind, "subtype" -> t.subtype, "description" -> t.description, "masking" -> t.masking)))
+        }
       val perField = edges.filter(_.field.isDefined).groupBy(_.field.get).toList.sortBy(_._1).take(settings.columnLineageMaxFields)
       val dataset = edges.filter(_.field.isEmpty)
       facet("columnLineage", standard("ColumnLineageDatasetFacet", "1-2-0"),
-        "fields" -> Obj(perField.map { case (field, es) => field -> obj("inputFields" -> es.map(inputField)) }),
-        "dataset" -> (if (dataset.isEmpty) None else Some(dataset.map(inputField))))
+        "fields" -> Obj(perField.map { case (field, es) => field -> obj("inputFields" -> inputFields(es)) }),
+        "dataset" -> (if (dataset.isEmpty) None else Some(inputFields(dataset))))
     }
   }
 

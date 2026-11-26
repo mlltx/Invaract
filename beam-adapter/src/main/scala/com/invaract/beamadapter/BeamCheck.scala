@@ -129,10 +129,10 @@ final class BeamCheck private[beamadapter] (
         val (status, reason) =
           if (degradations.isEmpty) (InferenceStatus.Inferred, None) else (InferenceStatus.InferredDegraded, Some(degradations.mkString("; ")))
         // the draft checked against the write it describes, as enforcement would check it
-        val selfCheck = DryRunSelfCheck.of(
-          draft, BeamCheck.asDeclared(draft, w), w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType)
-        )
-        report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck))
+        val declared = BeamCheck.asDeclared(draft, w)
+        val selfCheck = DryRunSelfCheck.of(draft, declared, w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType))
+        report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck),
+          DryRunReporting.lineage(draft, declared, w.inputSchemas, schema))
         status -> Some(draft)
       } catch {
         case NonFatal(e) =>
@@ -154,8 +154,9 @@ final class BeamCheck private[beamadapter] (
       reason: Option[String],
       location: Option[String],
       yaml: Option[String],
-      selfCheck: Option[(String, List[Violation], List[String])] = None
-  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck, contractMetadata)
+      selfCheck: Option[(String, List[Violation], List[String])] = None,
+      lineage: => Option[com.invaract.verification.notification.WriteLineage] = None
+  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck, contractMetadata, lineage)
 }
 
 private[beamadapter] object BeamCheck {

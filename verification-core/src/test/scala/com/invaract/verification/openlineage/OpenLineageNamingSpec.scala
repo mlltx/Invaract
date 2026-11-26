@@ -84,6 +84,23 @@ class OpenLineageNamingSpec extends AnyFunSuite {
 
   test("JDBC URLs are named by the database URL they wrap") {
     assert(named("jdbc:postgresql://h:5432/db/s/t") == DatasetId("postgres://h:5432", "db.s.t"))
+    assert(named("jdbc:jdbc:postgresql://h:5432/db/t") == DatasetId("postgres://h:5432", "db.t"), "an adapter's prefix and the URL's")
+  }
+
+  test("an opaque JDBC URL is the namespace and the table the name, as openlineage-spark names them") {
+    assert(named("jdbc:jdbc:h2:/data/bank;DB_CLOSE_DELAY=-1/ACCOUNTS") == DatasetId("h2:/data/bank;DB_CLOSE_DELAY=-1", "ACCOUNTS"))
+    assert(named("jdbc:h2:mem:test/T") == DatasetId("h2:mem:test", "T"))
+    assert(named("jdbc:sqlite:/var/db.sqlite/events") == DatasetId("sqlite:/var/db.sqlite", "events"))
+    assert(named("jdbc:POSTGRESQL:x/t") == DatasetId("postgres:x", "t"), "the scheme as the conventions spell it")
+    assert(named("jdbc:derby:memdb") == DatasetId("derby", "memdb"), "no table part: the URL is the name")
+  }
+
+  test("an opaque JDBC URL's credentials never reach its namespace: user/password@ or a user, password or pwd property") {
+    assert(named("jdbc:oracle:thin:scott/tiger@db:1521:orcl/EMP") == DatasetId("oracle:thin:db:1521:orcl", "EMP"))
+    assert(named("jdbc:oracle:thin:@db:1521:orcl/EMP") == DatasetId("oracle:thin:db:1521:orcl", "EMP"))
+    assert(named("jdbc:h2:mem:t;USER=sa;PASSWORD=secret;MODE=MySQL/T") == DatasetId("h2:mem:t;MODE=MySQL", "T"))
+    assert(named("jdbc:h2:mem:t;user = sa ;Pwd=x;username=u/T") == DatasetId("h2:mem:t", "T"))
+    assert(!named("jdbc:h2:mem:t;PASSWORD=secret/T").toString.contains("secret"))
   }
 
   test("an opaque scheme (bigquery:...) is that scheme's namespace, its colons dots") {

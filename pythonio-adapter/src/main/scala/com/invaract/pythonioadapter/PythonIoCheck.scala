@@ -439,7 +439,8 @@ private[pythonioadapter] final class Run {
         )
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads, schema, run.options, caseSensitive = true, Set.empty)
         DryRunReporting.inference(
-          run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck), run.contractMetadata
+          run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck), run.contractMetadata,
+          DryRunReporting.lineage(draft, plan, reads, schema)
         )
         InferenceStatus.Inferred -> Some(draft)
       } catch {

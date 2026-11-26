@@ -23,6 +23,13 @@ trait ConfigSource {
     * person which setting to fix. Defaults to the neutral name.
     */
   def describe(name: String): String = name
+
+  /** The environment variable `name` as the job sees it - the process environment, unless the engine carries the same
+    * value its own way. Spark answers `OPENLINEAGE_PARENT_ID` and `OPENLINEAGE_ROOT_PARENT_ID` from the
+    * `spark.openlineage.parent*` and `spark.openlineage.rootParent*` settings an orchestrator (Airflow's OpenLineage
+    * provider) injects into the jobs it launches, so an Invaract run is its task's child with nothing configured.
+    */
+  def environment(name: String): Option[String] = Option(System.getenv(name))
 }
 
 object ConfigSource {

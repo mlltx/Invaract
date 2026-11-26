@@ -40,13 +40,43 @@ object OpenLineageNaming {
       case WindowsDrive() => DatasetId("file", absolute(trimmed, workingDirectory))
       case Scheme(rawScheme, rest) =>
         val scheme = rawScheme.toLowerCase
-        if (scheme == "jdbc") dataset(rest, None, workingDirectory)
+        if (scheme == "jdbc") jdbc(rest, workingDirectory)
         else if (scheme == "file") DatasetId("file", fileName(rest, workingDirectory))
         else if (rest.startsWith("//")) hierarchical(canonicalScheme(scheme), rest.substring(2))
         else DatasetId(canonicalScheme(scheme), withoutCredentials(rest.replace(':', '.')))
       case path => DatasetId("file", absolute(path, workingDirectory))
     }
   }
+
+  /** A JDBC table, `jdbc:<url>/<table>` (an adapter may write the `jdbc:` twice: its own prefix and the URL's). A URL
+    * with an authority (`postgresql://host:5432/db`) is named as any `scheme://authority/path` is; an opaque one (`h2:`
+    * a file or `mem:` name, `oracle:thin:@host:1521:sid`, `sqlite:` a file) as openlineage-spark names it: namespace the
+    * URL, name the table. */
+  private def jdbc(afterPrefix: String, workingDirectory: => String): DatasetId = {
+    val url = afterPrefix.stripPrefix("jdbc:")
+    url match {
+      case Scheme(rawScheme, rest) if !rest.startsWith("//") =>
+        val scheme = canonicalScheme(rawScheme.toLowerCase)
+        rest.lastIndexOf('/') match {
+          case -1  => DatasetId(scheme, withoutCredentials(rest))
+          case cut => DatasetId(s"$scheme:${opaqueWithoutCredentials(rest.substring(0, cut))}", rest.substring(cut + 1))
+        }
+      case _ => dataset(url, None, workingDirectory)
+    }
+  }
+
+  /** An opaque JDBC URL with no credentials in it: neither `user/password@` (Oracle's thin driver) nor a `user=` or
+    * `password=` property. */
+  private def opaqueWithoutCredentials(url: String): String = {
+    val at = url.lastIndexOf('@')
+    val hostOnly = if (at < 0) url else url.substring(0, url.indexOf(':') + 1) + url.substring(at + 1)
+    hostOnly.split(';').toList match {
+      case head :: properties => (head :: properties.filterNot(p => CredentialProperty.pattern.matcher(p).matches)).mkString(";")
+      case Nil                => hostOnly
+    }
+  }
+
+  private val CredentialProperty = "(?i)\\s*(user|username|password|pwd)\\s*=.*".r
 
   private def isBare(location: String): Boolean = !location.contains('/') && !location.contains('\\')
 

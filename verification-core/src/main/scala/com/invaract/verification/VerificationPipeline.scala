@@ -534,7 +534,9 @@ object VerificationPipeline {
           w.catalog.map(CatalogInfo.from),
           declared(contract.outputs, w.dataset.location)
         )
-        Some(WriteLineage(output, inputs, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(w) else None))
+        // a MERGE, UPDATE or DELETE reads the table it changes: its rows are the output's too
+        val target = if (checked.rowMutation.isDefined && !inputs.exists(_.location == output.location)) List(output) else Nil
+        Some(WriteLineage(output, inputs ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(w) else None))
       case _ => None
     }
 

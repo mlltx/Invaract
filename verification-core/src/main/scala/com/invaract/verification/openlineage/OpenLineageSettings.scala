@@ -35,8 +35,9 @@ object TransportSettings {
   case object Console extends TransportSettings
 }
 
-/** A run of an orchestrator this job's run belongs to (OpenLineage's `parent` run facet). */
-final case class ParentRun(namespace: String, name: String, runId: String)
+/** A run of an orchestrator this job's run belongs to (OpenLineage's `parent` run facet), and the run at the top of
+  * that orchestrator's tree (`root`: a DAG run, where the parent is one of its tasks), when it is known. */
+final case class ParentRun(namespace: String, name: String, runId: String, root: Option[ParentRun] = None)
 
 /** Whether each check is published as it happens or only the run's start and end. */
 sealed trait Emission
@@ -174,6 +175,9 @@ object OpenLineageSettings {
       case List(None, None, None)                => environment("OPENLINEAGE_PARENT_ID").map(_.trim).filter(_.nonEmpty).map(parentId(_, fail))
       case _                                     => fail(s"the parent run needs all of ${parentKeys.mkString(", ")}")
     }
+    // the root run, as an orchestrator passes it beside the parent (a root with no parent says nothing about this run)
+    val root = environment("OPENLINEAGE_ROOT_PARENT_ID").map(_.trim).filter(_.nonEmpty).map(id => parentId(id, fail, "OPENLINEAGE_ROOT_PARENT_ID"))
+    val parentAndRoot = parent.map(p => p.copy(root = root))
 
     val emission = text("emission").map(_.toLowerCase) match {
       case None | Some("percheck") => Emission.PerCheck
@@ -185,7 +189,7 @@ object OpenLineageSettings {
       transport = transport,
       namespace = namespace.orElse(text("namespace")).orElse(environment("OPENLINEAGE_NAMESPACE").map(_.trim).filter(_.nonEmpty)).getOrElse("default"),
       jobName = text("jobName"),
-      parent = parent,
+      parent = parentAndRoot,
       queueCapacity = int("queue.capacity", 1000, 1),
       retryMaxAttempts = int("retry.maxAttempts", 3, 1),
       retryInitialBackoffMs = long("retry.initialBackoffMs", 200L, 0L),
@@ -203,13 +207,14 @@ object OpenLineageSettings {
     )
   }
 
-  /** `OPENLINEAGE_PARENT_ID`: `<namespace>/<name>/<runId>` (Airflow's form). A job name may itself hold `/`. */
-  private def parentId(value: String, fail: String => Nothing): ParentRun = {
+  /** `OPENLINEAGE_PARENT_ID` (or `_ROOT_PARENT_ID`): `<namespace>/<name>/<runId>` (Airflow's form). A job name may itself
+    * hold `/`. */
+  private def parentId(value: String, fail: String => Nothing, variable: String = "OPENLINEAGE_PARENT_ID"): ParentRun = {
     val first = value.indexOf('/')
     val last = value.lastIndexOf('/')
     if (first <= 0 || last <= first + 1 || last == value.length - 1)
-      fail(s"OPENLINEAGE_PARENT_ID must be <namespace>/<name>/<runId>, not '$value'")
-    ParentRun(value.substring(0, first), value.substring(first + 1, last), uuid("OPENLINEAGE_PARENT_ID's run id", value.substring(last + 1), fail))
+      fail(s"$variable must be <namespace>/<name>/<runId>, not '$value'")
+    ParentRun(value.substring(0, first), value.substring(first + 1, last), uuid(s"$variable's run id", value.substring(last + 1), fail))
   }
 
   private def uuid(what: String, value: String, fail: String => Nothing): String =
