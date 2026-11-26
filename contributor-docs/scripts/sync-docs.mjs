@@ -61,6 +61,13 @@ const PAGES = [
     order: 4,
   },
   {
+    src: 'docs/OPENLINEAGE.md',
+    slug: 'design/openlineage',
+    section: 'Design Docs',
+    label: 'OpenLineage',
+    order: 4,
+  },
+  {
     src: 'docs/SPARK_ADAPTER_HARDENING_PLAN.md',
     slug: 'design/spark-adapter-hardening-plan',
     section: 'Design Docs',

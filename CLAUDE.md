@@ -70,7 +70,9 @@ don't present it as something external consumers would bind to.
   checkers, rule/data-quality/role verifiers, the result model, notification
   sinks, location resolution; no Spark dependency, so a second engine's
   adapter depends on this, not on `spark-adapter` — see
-  docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
+  docs/MULTI_ENGINE_ADAPTERS.md; it also publishes OpenLineage run events, through the neutral
+  `openLineageUrl`/`openLineageConfig`/`openLineageNamespace` settings, off the job's thread — see
+  docs/OPENLINEAGE.md), `adapter-testkit` (the engine-neutral conformance
   scenarios every adapter's tests run — test-scope infrastructure, not part of any
   runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
   submitted through a wrapper runner named by `--runner`, the second adapter after
@@ -424,6 +426,12 @@ conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md,
 list of the repository's sbt modules; `.github/scripts/check_modules.py` (CI's "Workflow script tests" job) fails
 when any file that lists modules - the CI loops, the release steps, `dev/build`, the warm-up list, the dependency
 graph, the mutation jobs - disagrees with it, naming the file and line. A new module is added there first.
+
+**Every adapter ends its runs.** When an adapter knows a job's run is over (Spark: the application ends; Beam: the
+pipeline is refused or handed to its runner; Python: the run finishes) it calls `NotificationSink.endRun(job)` on its
+sink, so a sink that keeps state per run (OpenLineage, docs/OPENLINEAGE.md) publishes the run's end then, not when the
+process exits. A sink that wraps another passes it on. The kit's `openlineage-*` scenarios fail an adapter whose run never
+ends (`reporting.openLineage`).
 
 **Every adapter is checked against its own declaration** by the conformance kit
 (`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
