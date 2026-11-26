@@ -331,6 +331,24 @@ agree
 [iceberg-append vs spline]
 agree
 
+[streaming vs openlineage-spark]
+  direct: only invaract: id <- file:<in>/orders.id
+  direct: only invaract: tripled <- file:<in>/orders.amount
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out
+
+[streaming vs spline]
+  dependency: only invaract: id <- file:<in>/orders.id
+  dependency: only invaract: tripled <- file:<in>/orders.amount
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out
+
+[hive-insert vs openlineage-spark]
+agree
+
+[hive-insert vs spline]
+agree
+
 [jdbc-input vs openlineage-spark]
 agree
 
