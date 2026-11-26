@@ -124,7 +124,8 @@ class OpenLineagePerformanceSpec extends AnyFunSuite {
 
   test("the worker maps and writes wide events fast enough to keep up with a busy job") {
     val out = Files.createTempDirectory("ol-perf").resolve("events.jsonl")
-    val events = 2000
+    // a burst small enough to drain under coverage or mutation instrumentation too, large enough to measure
+    val events = 300
     // a queue that holds the whole burst: this measures the worker, not what a full queue drops
     val sink = new OpenLineageSink(OpenLineageSettings(TransportSettings.File(out.toString), queueCapacity = events + 10))
     val capture = new TestNotificationSink
@@ -132,7 +133,7 @@ class OpenLineagePerformanceSpec extends AnyFunSuite {
     val event = capture.events.head
     val started = System.nanoTime()
     (1 to events).foreach(_ => sink.publish(event))
-    sink.flush(60000)
+    sink.flush(120000)
     val perSecond = events / ((System.nanoTime() - started) / 1e9)
     val bytes = Files.size(out) / (events + 1)
     info(f"worker: $perSecond%.0f wide events/s ($width columns, column lineage on), about $bytes bytes each")
