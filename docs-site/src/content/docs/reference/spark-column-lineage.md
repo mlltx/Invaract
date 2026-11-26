@@ -19,8 +19,8 @@ job's write, the comparison covers:
 
 Spline does not classify edges, so against Spline every column an output column depends on is compared, by value or not.
 
-Invaract agrees with openlineage-spark on 32 of 51 jobs, and with Spline on
-38 of 51. Each difference is listed below with its reason. Most come from one of two
+Invaract agrees with openlineage-spark on 33 of 51 jobs, and with Spline on
+37 of 51. Each difference is listed below with its reason. Most come from one of two
 things: openlineage-spark reads Spark's *optimized* plan, so it also reports columns the optimizer added (such as a
 `isnotnull` filter on a join key); or another tool misses part of the plan Invaract follows. The rest are
 [Invaract's known gaps](#known-gaps).
@@ -31,63 +31,60 @@ things: openlineage-spark reads Spark's *optimized* plan, so it also reports col
 | Projection | a column renamed (`rename`) | ✓ agrees | ✓ agrees |
 | Projection | a column computed from two others (`arithmetic`) | ✓ agrees | ✓ agrees |
 | Projection | withColumn replacing an existing column (`with-column-replace`) | ✓ agrees | ✓ agrees |
-| Projection | coalesce, concat and a cast over several columns (`functions`) | [differs](#functions): a difference of convention | ✓ agrees |
+| Projection | coalesce, concat and a cast over several columns (`functions`) | [differs](#functions): a convention | ✓ agrees |
 | Projection | a constant column and the current time beside an input column (`literal`) | ✓ agrees | ✓ agrees |
 | Conditional | CASE WHEN: the value from one column, chosen by another (`case-when`) | ✓ agrees | ✓ agrees |
 | Projection | a hash of a column (sha2), which OpenLineage marks as masking (`masking`) | ✓ agrees | ✓ agrees |
 | Filter | rows kept by a condition on a column not written (`filter`) | ✓ agrees | ✓ agrees |
 | Sort | top rows by a column (`sort-limit`) | ✓ agrees | ✓ agrees |
-| Deduplication | distinct rows (`distinct`) | ✓ agrees | [differs](#distinct): the other tool's |
-| Deduplication | dropDuplicates on a subset of columns (`drop-duplicates`) | ✓ agrees | [differs](#drop-duplicates): the other tool's |
-| Join | an inner join, columns from both sides (`inner-join`) | [differs](#inner-join): the other tool's | ✓ agrees |
-| Join | a left join on two conditions (`left-join`) | [differs](#left-join): the other tool's | ✓ agrees |
-| Join | a table joined with itself under two aliases (`self-join`) | [differs](#self-join): the other tool's | ✓ agrees |
+| Deduplication | distinct rows (`distinct`) | ✓ agrees | [differs](#distinct): the other tool's limit |
+| Deduplication | dropDuplicates on a subset of columns (`drop-duplicates`) | ✓ agrees | [differs](#drop-duplicates): the other tool's limit |
+| Join | an inner join, columns from both sides (`inner-join`) | [differs](#inner-join): the other tool's limit | ✓ agrees |
+| Join | a left join on two conditions (`left-join`) | [differs](#left-join): the other tool's limit | ✓ agrees |
+| Join | a table joined with itself under two aliases (`self-join`) | [differs](#self-join): the other tool's limit | ✓ agrees |
 | Aggregation | sum, count and max by a key (`group-by`) | ✓ agrees | ✓ agrees |
 | Aggregation | count(*) over the whole input (`global-aggregate`) | ✓ agrees | ✓ agrees |
-| Aggregation | a join, a filter and an aggregate of an expression (`join-aggregate`) | [differs](#join-aggregate): the other tool's | ✓ agrees |
+| Aggregation | a join, a filter and an aggregate of an expression (`join-aggregate`) | [differs](#join-aggregate): the other tool's limit | ✓ agrees |
 | Window | row_number over a partition, ordered (`window`) | ✓ agrees | ✓ agrees |
 | Window | a running sum over a window (`window-aggregate`) | ✓ agrees | ✓ agrees |
 | Aggregation | a pivot of one column's values into columns (`pivot`) | ✓ agrees | ✓ agrees |
-| Aggregation | rollup over two keys (`rollup`) | [differs](#rollup): the other tool's | [differs](#rollup): the other tool's |
+| Aggregation | rollup over two keys (`rollup`) | [differs](#rollup): the other tool's limit | [differs](#rollup): the other tool's limit |
 | Set operation | a union of two inputs' columns (`union`) | ✓ agrees | ✓ agrees |
 | Nested data | a field of a struct column (`nested-field`) | ✓ agrees | ✓ agrees |
 | Nested data | a struct built from two columns (`struct-build`) | ✓ agrees | ✓ agrees |
-| Nested data | explode of an array column (`explode`) | [differs](#explode): the other tool's | ✓ agrees |
+| Nested data | explode of an array column (`explode`) | [differs](#explode): the other tool's limit | ✓ agrees |
 | SQL | SQL over a temporary view (`sql-view`) | ✓ agrees | ✓ agrees |
-| SQL | a CTE referenced twice (`sql-cte`) | [differs](#sql-cte): the other tool's | [differs](#sql-cte): the other tool's |
-| SQL | a filter by IN (subquery) over another input (`in-subquery`) | [differs](#in-subquery): the other tool's | [differs](#in-subquery): the other tool's |
-| SQL | a filter by EXISTS (correlated subquery) (`exists-subquery`) | [differs](#exists-subquery): the other tool's | [differs](#exists-subquery): the other tool's |
-| SQL | a scalar subquery in the select list (`scalar-subquery`) | [differs](#scalar-subquery): the other tool's | [differs](#scalar-subquery): the other tool's |
+| SQL | a CTE referenced twice (`sql-cte`) | [differs](#sql-cte): the other tool's limit | [differs](#sql-cte): the other tool's limit |
+| SQL | a filter by IN (subquery) over another input (`in-subquery`) | [differs](#in-subquery): the other tool's limit | [differs](#in-subquery): the other tool's limit |
+| SQL | a filter by EXISTS (correlated subquery) (`exists-subquery`) | [differs](#exists-subquery): the other tool's limit | [differs](#exists-subquery): the other tool's limit |
+| SQL | a scalar subquery in the select list (`scalar-subquery`) | [differs](#scalar-subquery): the other tool's limit | [differs](#scalar-subquery): the other tool's limit |
 | UDF | a Scala UDF over two columns (`scala-udf`) | ✓ agrees | ✓ agrees |
 | Dataset API | a typed map over a Dataset of case classes (`typed-map`) | ✓ agrees | ✓ agrees |
-| Dataset API | a DataFrame built from an RDD of another input's rows (`rdd`) | [differs](#rdd): Invaract gap | ✓ agrees |
+| Dataset API | a DataFrame built from an RDD of another input's rows (`rdd`) | ✓ agrees | [differs](#rdd): unexplained |
 | Caching | a cached DataFrame, then a projection of it (`cache`) | ✓ agrees | ✓ agrees |
-| Caching | a projection of a locally checkpointed DataFrame (`local-checkpoint`) | [differs](#local-checkpoint): the other tool's | [differs](#local-checkpoint): the other tool's |
+| Caching | a projection of a locally checkpointed DataFrame (`local-checkpoint`) | [differs](#local-checkpoint): the other tool's limit | [differs](#local-checkpoint): the other tool's limit |
 | Physical | repartition and coalesce between read and write (`repartition`) | ✓ agrees | ✓ agrees |
 | Formats | a CSV input with a header (`csv-input`) | ✓ agrees | ✓ agrees |
 | Formats | Parquet and JSON inputs joined (`multiple-inputs`) | [differs](#multiple-inputs): Invaract gap | [differs](#multiple-inputs): Invaract gap |
-| Deduplication | SELECT DISTINCT (`sql-distinct`) | ✓ agrees | [differs](#sql-distinct): the other tool's |
-| Writes | a write partitioned by a column (`partitioned`) | [differs](#partitioned): the other tool's | ✓ agrees |
+| Deduplication | SELECT DISTINCT (`sql-distinct`) | ✓ agrees | [differs](#sql-distinct): the other tool's limit |
+| Writes | a write partitioned by a column (`partitioned`) | [differs](#partitioned): the other tool's limit | ✓ agrees |
 | Writes | an append to an existing directory (`append`) | ✓ agrees | ✓ agrees |
 | Catalog tables | saveAsTable: a new catalog table from a query (`save-as-table`) | ✓ agrees | ✓ agrees |
-| Catalog tables | insertInto an existing table, by position (`insert-into`) | [differs](#insert-into): a difference of convention | ✓ agrees |
-| Catalog tables | SQL INSERT INTO ... SELECT with a join (`sql-insert-select`) | [differs](#sql-insert-select): the other tool's | ✓ agrees |
+| Catalog tables | insertInto an existing table, by position (`insert-into`) | [differs](#insert-into): a convention | ✓ agrees |
+| Catalog tables | SQL INSERT INTO ... SELECT with a join (`sql-insert-select`) | [differs](#sql-insert-select): the other tool's limit | ✓ agrees |
 | Catalog tables | SQL CREATE TABLE AS SELECT (`ctas`) | ✓ agrees | ✓ agrees |
 | Delta Lake | a Delta table written from a query (`delta-write`) | ✓ agrees | ✓ agrees |
 | Delta Lake | MERGE INTO a Delta table from another input (`delta-merge`) | [differs](#delta-merge): Invaract gap | [differs](#delta-merge): Invaract gap |
 | Apache Iceberg | an Iceberg table created from a query (writeTo) (`iceberg-write`) | [differs](#iceberg-write): Invaract gap | [differs](#iceberg-write): Invaract gap |
 | Apache Iceberg | an append to an existing Iceberg table (`iceberg-append`) | ✓ agrees | ✓ agrees |
-| JDBC | a table read over JDBC (`jdbc-input`) | ✓ agrees | [differs](#jdbc-input): the other tool's |
+| JDBC | a table read over JDBC (`jdbc-input`) | ✓ agrees | [differs](#jdbc-input): the other tool's limit |
 
 ## Known gaps
 
-- **a DataFrame built from an RDD of another input's rows** (`rdd`): A DataFrame made from an RDD hides what the RDD was computed from. openlineage-spark finds the files the RDD read and reports them as inputs (without columns); Invaract reports no input.
+- **A DataFrame built from an RDD of another input's rows** (`rdd`): A DataFrame made from an RDD hides what the RDD was computed from. openlineage-spark finds the files the RDD read and reports them as inputs (without columns); Invaract reports no input.
 - **Parquet and JSON inputs joined** (`multiple-inputs`): A USING join's key column is, in Spark's plan, the left side's key; Invaract, which resolves a column by its name, attributes it to both sides' keys (their values are equal for every row an inner join keeps). openlineage-spark also reports the join keys as FILTER, from the isnotnull filter the optimizer adds.
-- **Parquet and JSON inputs joined** (`multiple-inputs`): A USING join's key column is attributed to both sides' keys, where Spark's plan takes the left side's.
 - **MERGE INTO a Delta table from another input** (`delta-merge`): A MERGE also reads the table it merges into: openlineage-spark lists the table as an input and its key as a source. Invaract lists only the MERGE's source, and traces the MERGE's columns by name from it, not through the MERGE's clauses.
-- **MERGE INTO a Delta table from another input** (`delta-merge`): A MERGE also reads the table it merges into: Spline lists the table as an input and its columns as sources. Invaract lists only the MERGE's source.
-- **an Iceberg table created from a query (writeTo)** (`iceberg-write`): A table the write itself creates in a catalog (CREATE TABLE AS SELECT, writeTo(...).create()) is named by its catalog identifier: its location does not exist until the write has run. openlineage-spark names it by its location, read after the write. A write to an existing table is named by its location (iceberg-append).
-- **an Iceberg table created from a query (writeTo)** (`iceberg-write`): A table the write itself creates in a catalog is named by its catalog identifier; Spline names it by its location, read after the write.
+- **An Iceberg table created from a query (writeTo)** (`iceberg-write`): A table the write itself creates in a catalog (CREATE TABLE AS SELECT, writeTo(...).create()) is named by its catalog identifier: its location does not exist until the write has run. openlineage-spark names it by its location, read after the write. A write to an existing table is named by its location (iceberg-append).
 
 ## Differences, job by job
 
@@ -95,7 +92,7 @@ things: openlineage-spark reads Spark's *optimized* plan, so it also reports col
 
 Coalesce, concat and a cast over several columns.
 
-**Against openlineage-spark** (a difference of convention): openlineage-spark counts coalesce's argument as a condition of the value (INDIRECT/CONDITIONAL) as well as its value; Invaract counts it as the value only: coalesce returns it whenever it is not null.
+**Against openlineage-spark** (a convention): openlineage-spark counts coalesce's argument as a condition of the value (INDIRECT/CONDITIONAL) as well as its value; Invaract counts it as the value only: coalesce returns it whenever it is not null.
 
 ```text
 indirect: only openlineage-spark: s <~ file:<in>/orders.status
@@ -105,7 +102,7 @@ indirect: only openlineage-spark: s <~ file:<in>/orders.status
 
 Distinct rows.
 
-**Against spline** (the other tool's): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
+**Against spline** (the other tool's limit): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
 
 ```text
 indirect: only invaract: * <~ file:<in>/orders.status
@@ -115,7 +112,7 @@ indirect: only invaract: * <~ file:<in>/orders.status
 
 DropDuplicates on a subset of columns.
 
-**Against spline** (the other tool's): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
+**Against spline** (the other tool's limit): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
 
 ```text
 indirect: only invaract: * <~ file:<in>/orders.customer_id
@@ -125,7 +122,7 @@ indirect: only invaract: * <~ file:<in>/orders.customer_id
 
 An inner join, columns from both sides.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
@@ -136,7 +133,7 @@ indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, ope
 
 A left join on two conditions.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.country: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
@@ -147,7 +144,7 @@ indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, 
 
 A table joined with itself under two aliases.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
@@ -157,7 +154,7 @@ indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, ope
 
 A join, a filter and an aggregate of an expression.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
@@ -168,7 +165,7 @@ indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, ope
 
 Rollup over two keys.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark does not trace a rollup's grouping keys through the Expand Spark computes it with, so it reports no source for them and no grouping. Invaract traces each key to its column.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark does not trace a rollup's grouping keys through the Expand Spark computes it with, so it reports no source for them and no grouping. Invaract traces each key to its column.
 
 ```text
 direct: only invaract: customer_id <- file:<in>/orders.customer_id
@@ -177,7 +174,7 @@ indirect: only invaract: * <~ file:<in>/orders.customer_id
 indirect: only invaract: * <~ file:<in>/orders.status
 ```
 
-**Against spline** (the other tool's): Spline does not trace a rollup's grouping keys through Spark's Expand either. Invaract traces each key to its column.
+**Against spline** (the other tool's limit): Spline does not trace a rollup's grouping keys through Spark's Expand either. Invaract traces each key to its column.
 
 ```text
 dependency: only invaract: customer_id <- file:<in>/orders.customer_id
@@ -190,7 +187,7 @@ indirect: only invaract: * <~ file:<in>/orders.status
 
 Explode of an array column.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads the optimized plan, where Spark adds a size(tags) > 0 filter before an explode; it reports the array column as FILTER too. Invaract reads the plan the job wrote.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads the optimized plan, where Spark adds a size(tags) > 0 filter before an explode; it reports the array column as FILTER too. Invaract reads the plan the job wrote.
 
 ```text
 indirect: only openlineage-spark: * <~ file:<in>/events.tags
@@ -200,13 +197,13 @@ indirect: only openlineage-spark: * <~ file:<in>/events.tags
 
 A CTE referenced twice.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/orders.id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 ```
 
-**Against spline** (the other tool's): Spline traces no column through a CTE referenced twice. Invaract inlines the CTE, as Spark's optimizer does, and traces through it.
+**Against spline** (the other tool's limit): Spline traces no column through a CTE referenced twice. Invaract inlines the CTE, as Spark's optimizer does, and traces through it.
 
 ```text
 dependency: only invaract: customer_id <- file:<in>/orders.customer_id
@@ -218,14 +215,14 @@ indirect: only invaract: * <~ file:<in>/orders.id
 
 A filter by IN (subquery) over another input.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads the optimized plan, where Spark has rewritten the IN subquery into a semi join, so it calls these columns JOIN. Invaract reads the plan the job wrote: a filter.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads the optimized plan, where Spark has rewritten the IN subquery into a semi join, so it calls these columns JOIN. Invaract reads the plan the job wrote: a filter.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/JOIN
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/JOIN
 ```
 
-**Against spline** (the other tool's): Spline does not follow a subquery inside a filter: it misses the subquery's input and the columns it filters on.
+**Against spline** (the other tool's limit): Spline does not follow a subquery inside a filter: it misses the subquery's input and the columns it filters on.
 
 ```text
 indirect: only invaract: * <~ file:<in>/customers.country
@@ -237,14 +234,14 @@ input: only invaract: file:<in>/customers
 
 A filter by EXISTS (correlated subquery).
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads the optimized plan, where Spark has rewritten the EXISTS subquery into a semi join, so it calls these columns JOIN. Invaract reads the plan the job wrote: a filter.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads the optimized plan, where Spark has rewritten the EXISTS subquery into a semi join, so it calls these columns JOIN. Invaract reads the plan the job wrote: a filter.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/JOIN
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/JOIN
 ```
 
-**Against spline** (the other tool's): Spline does not follow a subquery inside a filter: it misses the subquery's input and the column it correlates on.
+**Against spline** (the other tool's limit): Spline does not follow a subquery inside a filter: it misses the subquery's input and the column it correlates on.
 
 ```text
 indirect: only invaract: * <~ file:<in>/customers.customer_id
@@ -255,14 +252,14 @@ input: only invaract: file:<in>/customers
 
 A scalar subquery in the select list.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark does not follow a scalar subquery in the select list: it misses the input the subquery reads and the column its value comes from.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark does not follow a scalar subquery in the select list: it misses the input the subquery reads and the column its value comes from.
 
 ```text
 direct: only invaract: top_customer <- file:<in>/customers.customer_id
 input: only invaract: file:<in>/customers
 ```
 
-**Against spline** (the other tool's): Spline does not follow a scalar subquery in the select list either.
+**Against spline** (the other tool's limit): Spline does not follow a scalar subquery in the select list either.
 
 ```text
 dependency: only invaract: top_customer <- file:<in>/customers.customer_id
@@ -273,17 +270,17 @@ input: only invaract: file:<in>/customers
 
 A DataFrame built from an RDD of another input's rows.
 
-**Against openlineage-spark** (Invaract gap): A DataFrame made from an RDD hides what the RDD was computed from. openlineage-spark finds the files the RDD read and reports them as inputs (without columns); Invaract reports no input.
+**Against spline** (unexplained): 
 
 ```text
-input: only openlineage-spark: file:<in>/orders
+input: only invaract: file:<in>/orders
 ```
 
 ### local-checkpoint
 
 A projection of a locally checkpointed DataFrame.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark does not see past a localCheckpoint(). Invaract resolves the checkpoint to the plan it was made from and traces through it.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark does not see past a localCheckpoint(). Invaract resolves the checkpoint to the plan it was made from and traces through it.
 
 ```text
 direct: only invaract: amount <- file:<in>/orders.amount
@@ -291,7 +288,7 @@ direct: only invaract: id <- file:<in>/orders.id
 input: only invaract: file:<in>/orders
 ```
 
-**Against spline** (the other tool's): Spline does not see past a localCheckpoint() either.
+**Against spline** (the other tool's limit): Spline does not see past a localCheckpoint() either.
 
 ```text
 dependency: only invaract: amount <- file:<in>/orders.amount
@@ -321,7 +318,7 @@ dependency: only invaract: id <- file:<in>/events.id
 
 SELECT DISTINCT.
 
-**Against spline** (the other tool's): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
+**Against spline** (the other tool's limit): Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them.
 
 ```text
 indirect: only invaract: * <~ file:<in>/orders.customer_id
@@ -332,7 +329,7 @@ indirect: only invaract: * <~ file:<in>/orders.status
 
 A write partitioned by a column.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reports the partition column of a partitioned write as transformed and as shaping the rows; the column is written unchanged, which Invaract reports as IDENTITY.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reports the partition column of a partitioned write as transformed and as shaping the rows; the column is written unchanged, which Invaract reports as IDENTITY.
 
 ```text
 direct subtype: status <- file:<in>/orders.status: invaract DIRECT/IDENTITY, openlineage-spark DIRECT/TRANSFORMATION
@@ -343,7 +340,7 @@ indirect: only openlineage-spark: * <~ file:<in>/orders.status
 
 InsertInto an existing table, by position.
 
-**Against openlineage-spark** (a difference of convention): Spark's analyzer casts each column to the table's column type, here to the type it already has; Invaract reports the cast in the plan as a TRANSFORMATION, openlineage-spark as IDENTITY.
+**Against openlineage-spark** (a convention): Spark's analyzer casts each column to the table's column type, here to the type it already has; Invaract reports the cast in the plan as a TRANSFORMATION, openlineage-spark as IDENTITY.
 
 ```text
 direct subtype: customer <- file:<in>/orders.customer_id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
@@ -353,7 +350,7 @@ direct subtype: customer <- file:<in>/orders.customer_id: invaract DIRECT/TRANSF
 
 SQL INSERT INTO ... SELECT with a join.
 
-**Against openlineage-spark** (the other tool's): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
@@ -368,7 +365,6 @@ MERGE INTO a Delta table from another input.
 
 ```text
 direct: only openlineage-spark: id <- file:<out>/out.id
-input: only openlineage-spark: file:<out>/out
 ```
 
 **Against spline** (Invaract gap): A MERGE also reads the table it merges into: Spline lists the table as an input and its columns as sources. Invaract lists only the MERGE's source.
@@ -376,7 +372,6 @@ input: only openlineage-spark: file:<out>/out
 ```text
 dependency: only spline: amount <- file:<out>/out.amount
 dependency: only spline: id <- file:<out>/out.id
-input: only spline: file:<out>/out
 ```
 
 ### iceberg-write
@@ -401,7 +396,7 @@ output: only spline: file:<out>/ice/db/orders_copy
 
 A table read over JDBC.
 
-**Against spline** (the other tool's): Spline cannot parse an H2 file URL and names the table jdbc://:null.
+**Against spline** (the other tool's limit): Spline cannot parse an H2 file URL and names the table jdbc://:null.
 
 ```text
 dependency: only invaract: balance <- h2:<in>/bank;DB_CLOSE_DELAY=-1:ACCOUNTS.BALANCE

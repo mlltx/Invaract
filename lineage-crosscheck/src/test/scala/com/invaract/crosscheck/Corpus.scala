@@ -204,7 +204,7 @@ object Corpus {
       import s.implicits._
       f.orders(s).as[OrderRow].map(o => Doubled(o.id, o.amount * 2)).toDF()
     }),
-    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows", OLS -> gap("A DataFrame made from an RDD hides what the RDD was computed from. openlineage-spark finds the files the RDD read and reports them as inputs (without columns); Invaract reports no input."))((s, f) => {
+    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows")((s, f) => {
       val rows = f.orders(s).rdd
       s.createDataFrame(rows, f.orders(s).schema).select("id")
     }),
@@ -272,7 +272,7 @@ object Corpus {
           "WHEN MATCHED THEN UPDATE SET t.amount = o.amount WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (o.id, o.amount)")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(OLS -> gap("A MERGE also reads the table it merges into: openlineage-spark lists the table as an input and its key as a source. Invaract lists only the MERGE's source, and traces the MERGE's columns by name from it, not through the MERGE's clauses."), Spline -> gap("A MERGE also reads the table it merges into: Spline lists the table as an input and its columns as sources. Invaract lists only the MERGE's source."))),
+      notes = Map(OLS -> gap("A MERGE also reads the table it merges into. Invaract lists the table as an input, but traces the MERGE's columns by name from its source, not through its clauses: openlineage-spark also has the table's own key as a source of the key it keeps."), Spline -> gap("A MERGE also reads the table it merges into. Invaract lists the table as an input, but traces its columns by name from the MERGE's source: Spline also has the table's own columns as sources of the columns a MERGE keeps."))),
     Job("iceberg-write", "Apache Iceberg", "an Iceberg table created from a query (writeTo)",
       (s, f, out) => f.orders(s).select(col("id"), col("amount")).writeTo("ice.db.orders_copy").using("iceberg").createOrReplace(),
       contractLocation = _ => "ice.db.orders_copy",

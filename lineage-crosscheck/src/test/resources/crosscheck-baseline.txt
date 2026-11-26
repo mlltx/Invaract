@@ -218,10 +218,10 @@ agree
 agree
 
 [rdd vs openlineage-spark]
-  input: only openlineage-spark: file:<in>/orders
+agree
 
 [rdd vs spline]
-agree
+  input: only invaract: file:<in>/orders
 
 [cache vs openlineage-spark]
 agree
@@ -312,12 +312,10 @@ agree
 
 [delta-merge vs openlineage-spark]
   direct: only openlineage-spark: id <- file:<out>/out.id
-  input: only openlineage-spark: file:<out>/out
 
 [delta-merge vs spline]
   dependency: only spline: amount <- file:<out>/out.amount
   dependency: only spline: id <- file:<out>/out.id
-  input: only spline: file:<out>/out
 
 [iceberg-write vs openlineage-spark]
   output: only invaract: iceberg://ice:db.orders_copy
