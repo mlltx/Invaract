@@ -283,7 +283,10 @@
         "runtimeDataQuality": { "type": "string", "description": "`true`: the OpenReply gives each output's data checks, and each WrittenRequest reports what they found." },
         "jobId": { "type": "string", "description": "The job's stable identity across runs: every event's `job.jobId`." },
         "jobAttributes": { "type": "string", "description": "Facts about this run every event carries (`job.attributes`): comma-separated `key=value` pairs. Malformed pairs are answered not-checked." },
-        "contractMetadata": { "type": "string", "description": "Facts about the contract a dry run drafts, put in every draft's `extensions` and every dry-run event's `metadata`: comma-separated `key=value` pairs. Malformed pairs are answered not-checked." }
+        "contractMetadata": { "type": "string", "description": "Facts about the contract a dry run drafts, put in every draft's `extensions` and every dry-run event's `metadata`: comma-separated `key=value` pairs. Malformed pairs are answered not-checked." },
+        "openLineageUrl": { "type": "string", "description": "An OpenLineage endpoint the run is published to (`<url>/api/v1/lineage`). A URL the checker cannot use is answered not-checked." },
+        "openLineageConfig": { "type": "string", "description": "A `.properties` file configuring OpenLineage publishing. A file that is not there, or a key it does not know, is answered not-checked." },
+        "openLineageNamespace": { "type": "string", "description": "The OpenLineage namespace the run is published under." }
       }
     },
     "Job": {
