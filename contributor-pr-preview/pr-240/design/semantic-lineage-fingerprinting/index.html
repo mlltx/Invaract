@@ -1950,7 +1950,14 @@ UPDATE/DELETE whose target has no <code dir="auto">catalogTable</code></strong> 
 catalog-registered, Delta table — <code dir="auto">MERGE INTO delta.</code>path<code dir="auto"> or `UPDATE delta.`path` SET ...`) **used `target.toString`, the same raw- `LogicalPlan.toString` instability as `deleteFromTable`'s fallback.** Unlike that fallback, this one's reachability needed no speculation: `catalogTable` being `None` for a path-based Delta DML target was confirmed directly, and so was the instability itself — two separate, otherwise-identical path-based Delta tables (necessarily allocated different `exprId`s, Spark's `exprId` counter being session-global and monotonic) produced two different raw `target.toString` values (e.g. a `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for one, `Relation [id#1762L,v#1763L] parquet` for the other) while `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its own `EliminateSubqueryAliases` rule) rendered both identically as `Relation [none#0L,none#1L] parquet`. Fixed by switching to `target.canonicalized.toString`, mirroring `deleteFromTable`'s own fix. Regression-tested by extending `ContractEnforcementRuleSpec`'s existing "path-based DML op with no catalog table" test (previously only checked that a diagnostic was reported, not location stability) to run the identical `UPDATE delta.`path</code> against two separate, equivalently-
 shaped path tables and assert the resulting locations are equal —
 confirmed to fail against the pre-fix code by temporarily reverting the
-one-line change and rerunning.</li>
+one-line change and rerunning.
+Later superseded for the case that prompted it: a path-based Delta table’s
+target is a relation over the table’s own directory, whose file index
+reports that directory as its root path, so the DML is now located at the
+path itself (no diagnostic), each table at its own. The canonicalized
+text stays only for a target with neither a catalog location nor a file
+index; the lineage cross-check (docs/OPENLINEAGE.md, section 11) found
+that a correct path-based <code dir="auto">MERGE</code> was being refused.</li>
 <li><strong><code dir="auto">WriteCommandSupport.insertIntoHiveDir</code>’s fallback for <code dir="auto">INSERT ... DIRECTORY</code> with no resolved storage location used <code dir="auto">plan.toString</code>, the
 same instability class.</strong> Its own reachability is, like
 <code dir="auto">deleteFromTable</code>’s original fallback, unconfirmed against a real
