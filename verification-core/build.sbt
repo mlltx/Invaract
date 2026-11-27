@@ -189,6 +189,9 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CheckedWrite.this"),
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.CheckedWrite.unapply"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.CheckedWrite$"),
+  // Deliberate break, MERGE lineage: CheckedWrite also gained a trailing `lineagePlan` (the plan column lineage is
+  // traced through when it is not the checked one: a MERGE's clauses, docs/OPENLINEAGE.md section 11), covered by the
+  // same filters above.
   // Deliberate break, partitioned outputs (capability check.partitioning): CheckedWrite gained a trailing `partitioning`
   // (covered by its filters above) and ContractInference's InferredWrite one too, so a dry run's draft records the keys.
   // InferredWrite is private[invaract]; nothing outside this repository builds one.

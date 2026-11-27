@@ -118,8 +118,8 @@ private[invaract] object DryRunReporting {
   /** What a dry run's write read and wrote, for its `ContractInferenceEvent`: the lineage enforcement under `draft` would
     * publish for it. `None` for a plan that is not a write. */
   def lineage(draft: Contract, plan: Plan, inputs: List[(String, LogicalSchema)], output: LogicalSchema,
-              rowMutation: Option[MutationClassification] = None): Option[WriteLineage] =
-    VerificationPipeline.lineageOf(draft, CheckedWrite(plan, inputs, output, caseSensitive = true, rowMutation, Set.empty))
+              rowMutation: Option[MutationClassification] = None, lineagePlan: Option[Plan] = None): Option[WriteLineage] =
+    VerificationPipeline.lineageOf(draft, CheckedWrite(plan, inputs, output, caseSensitive = true, rowMutation, Set.empty, lineagePlan = lineagePlan))
 
   /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred; `metadata` as for `inference`. */
   def summary(

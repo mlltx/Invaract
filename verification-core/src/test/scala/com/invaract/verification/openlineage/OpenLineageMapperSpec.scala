@@ -148,6 +148,23 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(inputsOf(selfRead, merge).map(_.location) == List("out/report"))
   }
 
+  test("column lineage follows the write's lineage plan when it has one (a MERGE's clauses); its inputs stay the checked plan's") {
+    val merge = Some(com.invaract.verification.MutationClassification.Unverifiable(com.invaract.verification.MutationKind.Merge))
+    val clauses = Write(DatasetRef("out/report"), Project(Join(Read(DatasetRef("out/report")), Read(DatasetRef(orders)), JoinType.FullOuter),
+      List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("out/report")))))))
+    def lineage(lineagePlan: Option[Plan]) = VerificationPipeline.lineageOf(contract,
+      CheckedWrite(goodPlan, List(orders -> inputSchema), goodOutput, caseSensitive = false, merge, Set.empty, lineagePlan = lineagePlan)).get
+    assert(lineage(Some(clauses)).columnLineage.map(_.source) == List(LineageSource("out/report", "id")))
+    assert(lineage(Some(clauses)).inputs.map(_.location) == List(orders, "out/report"), "the inputs: the checked plan's, and the table changed")
+    assert(lineage(None).columnLineage.map(_.source.location).distinct == List(orders), "no lineage plan: the checked plan's")
+    assert(lineage(Some(Project(Read(DatasetRef("x")), Nil))).columnLineage.map(_.source.location).distinct == List(orders),
+      "a lineage plan that is not a write is not used")
+    val created = CatalogIdentity(Some("iceberg"), Some("ice"), Some("/wh/db/report"), List("db"), Some("report"))
+    assert(lineage(Some(goodPlan.copy(catalog = Some(created)))).output.catalog.flatMap(_.location).contains("/wh/db/report"),
+      "the output's catalog is the lineage plan's: where a table the write creates is stored")
+    assert(lineage(None).output.catalog.isEmpty)
+  }
+
   private val a = Read(DatasetRef("in/a"))
   private def av(name: String) = ColumnReference(ColumnRef(name, Some("in/a")))
   private def edgesOf(plan: Plan) = WriteLineage(LineageDataset("out/x"), Nil, plan = Some(Write(DatasetRef("out/x"), plan))).columnLineage
@@ -173,6 +190,21 @@ class OpenLineageMapperSpec extends AnyFunSuite {
       ColumnLineageEdge(None, LineageSource("in/a", "id"), LineageTransformation("INDIRECT", "SORT")),
       ColumnLineageEdge(None, LineageSource("in/a", "amount"), LineageTransformation("INDIRECT", "FILTER"))
     ))
+  }
+
+  test("each source is typed as it reaches the column: a union copying one and computing another, or one both ways") {
+    val b = Read(DatasetRef("in/b"))
+    def bv(name: String) = ColumnReference(ColumnRef(name, Some("in/b")))
+    def typesOf(branches: Plan*) = edgesOf(Project(Union(branches.toList), List(NamedExpr("v", ColumnReference(ColumnRef("v"))))))
+      .map(e => s"${e.source.location}.${e.source.field} ${e.transformation.subtype}").toSet
+    val copied = Project(a, List(NamedExpr("v", av("x"))))
+    assert(typesOf(copied, Project(b, List(NamedExpr("v", Arithmetic("+", List(bv("y"), Literal(1, "int"))))))) ==
+      Set("in/a.x IDENTITY", "in/b.y TRANSFORMATION"))
+    assert(typesOf(copied, Project(a, List(NamedExpr("v", Arithmetic("*", List(av("x"), Literal(2, "int"))))))) ==
+      Set("in/a.x IDENTITY", "in/a.x TRANSFORMATION"), "copied by one branch, computed by the other: both")
+    assert(typesOf(copied, Project(b, List(NamedExpr("v", AggregateCall("sum", bv("y"), distinct = false))))) ==
+      Set("in/a.x IDENTITY", "in/b.y AGGREGATION"), "an aggregated branch: AGGREGATION for its source")
+    assert(typesOf(copied, Project(b, List(NamedExpr("v", bv("y"))))) == Set("in/a.x IDENTITY", "in/b.y IDENTITY"))
   }
 
   test("a hash of a column is masking; the same column also passed in the clear is not") {
@@ -275,8 +307,11 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert((link.get("namespace").asText(), link.get("name").asText(), link.get("type").asText()) == (("s3://wh", "db.t", "TABLE")))
     val c = output.path("facets").get("catalog")
     assert((c.get("framework").asText(), c.get("name").asText(), c.get("warehouseUri").asText()) == (("iceberg", "prod", "s3://wh/db/t")))
-    val bare = published(mapper(), check(plan = goodPlan.copy(dataset = DatasetRef("db.t"), catalog = Some(catalog))))(1).get("outputs").get(0)
+    val bare = published(mapper(), check(plan = goodPlan.copy(dataset = DatasetRef("db.t"), catalog = Some(catalog.copy(location = None)))))(1).get("outputs").get(0)
     assert(bare.get("name").asText() == "db.t" && !facetNames(bare.get("facets")).contains("symlinks"), "a dataset named by its table needs no symlink to itself")
+    val stored = published(mapper(), check(plan = goodPlan.copy(dataset = DatasetRef("db.t"), catalog = Some(catalog))))(1).get("outputs").get(0)
+    assert((stored.get("namespace").asText(), stored.get("name").asText()) == (("s3://wh", "db/t")), "a table whose catalog says where it is stored: named by that")
+    assert(stored.path("facets").path("symlinks").get("identifiers").get(0).get("name").asText() == "db.t", "its table, as a symlink")
   }
 
   test("run and job identity: a deterministic UUID per engine and run, the job's name from jobName, jobId, name or contract") {

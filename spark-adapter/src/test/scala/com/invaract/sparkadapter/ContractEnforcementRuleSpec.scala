@@ -2547,6 +2547,70 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(merge.location == info.location && merge.diagnostic.isEmpty)
   }
 
+  // The session catalog's half of IcebergConnectorSpec's created-table test: a table a Delta write creates in it is
+  // stored at the catalog's default table path, which lineage names it by; the write's own location stays its name.
+  test("a table a write creates in the session catalog: where it will be stored, as Delta then stores it") {
+    import com.invaract.verification.openlineage.OpenLineageNaming
+    def created(create: => Unit) = {
+      capturedPlans.clear()
+      create
+      capturedPlans.toList.flatMap(p => WriteCommandSupport.combined.lift(p).toList).find(_.createdAt.isDefined).getOrElse(fail("no created table seen"))
+    }
+    def storedAt(table: String) = spark.sql(s"DESCRIBE DETAIL $table").select("location").head().getString(0)
+    val viaSql = created(spark.sql("CREATE TABLE created_by_ctas_tbl USING delta AS SELECT 1L AS id"))
+    assert(viaSql.createdAt.map(OpenLineageNaming.dataset).contains(OpenLineageNaming.dataset(storedAt("created_by_ctas_tbl"))),
+      s"${viaSql.createdAt} vs ${storedAt("created_by_ctas_tbl")}")
+    assert(!viaSql.location.contains("/"), s"the write's own location stays the table's name: ${viaSql.location}")
+    val viaSave = created(spark.range(2).write.format("delta").saveAsTable("created_by_save_tbl"))
+    assert(viaSave.createdAt.map(OpenLineageNaming.dataset).contains(OpenLineageNaming.dataset(storedAt("created_by_save_tbl"))))
+  }
+
+  // A MERGE's checked plan is its source (what the contract's inputs are checked against); its lineage is traced through
+  // its clauses (WriteCommandSupport.mergeClauses), which the lineage cross-check found missing: a column an UPDATE
+  // leaves keeps the target's own value, an INSERT's comes from what it inserts.
+  test("a Delta MERGE's column lineage follows its clauses; the plan it is checked against stays its source") {
+    val tablePath = scratchDir.resolve("merge_lineage_target").toString.replace('\\', '/')
+    val sourcePath = scratchDir.resolve("merge_lineage_source").toString.replace('\\', '/')
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.range(3).withColumn("doubled", col("id")).write.mode("overwrite").parquet(sourcePath)
+    spark.read.parquet(sourcePath).createOrReplaceTempView("merge_lineage_source")
+    def traced(clauses: String) = {
+      capturedPlans.clear()
+      spark.sql(s"MERGE INTO delta.`$tablePath` t USING merge_lineage_source s ON t.id = s.id $clauses").collect()
+      val plan = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "MergeIntoCommand" => p }.getOrElse(fail("no MERGE observed"))
+      val info = WriteCommandSupport.combined.lift(plan).getOrElse(fail("MERGE not recognized"))
+      val checked = SparkPlanAdapter.translate(plan).plan
+      val lineage = ContractEnforcementRule.lineagePlanOf(info, checked, Nil).getOrElse(fail("no lineage plan"))
+      val detailed = com.invaract.ir.Lineage.traceDetailed(lineage)
+      def side(r: com.invaract.ir.ColumnRef) = s"${if (r.qualifier.exists(_.contains("merge_lineage_source")) || r.qualifier.contains("s")) "s" else "t"}.${r.name}"
+      val values = detailed.columns.map(c => c.lineage.output.name -> c.values.map(side)).toMap
+      val conditions = detailed.columns.flatMap(_.indirect.map(i => s"${i.kind}:${side(i.source)}")).toSet
+      val joined = detailed.indirect.map(i => s"${i.kind}:${side(i.source)}").toSet
+      val derivations = detailed.columns.map(c => c.lineage.output.name -> c.lineage.derivation).toMap
+      (values, conditions, joined, checked, derivations)
+    }
+    val (values, conditions, joined, checked, derivations) = traced(
+      "WHEN MATCHED AND s.id = 0 THEN DELETE " +
+        "WHEN MATCHED AND s.doubled > 0 THEN UPDATE SET t.doubled = s.doubled " +
+        "WHEN NOT MATCHED THEN INSERT (id, doubled) VALUES (s.id, s.doubled + 1) " +
+        "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.doubled = 0")
+    assert(values("id") == Set("t.id", "s.id"), "an UPDATE leaves id: the row's own; an INSERT's from the source")
+    assert(values("doubled") == Set("s.doubled"), "assigned from the source; a constant adds none; a DELETE gives none")
+    assert(derivations("id") == com.invaract.ir.DerivationKind.Direct, "copied as it is by every clause: IDENTITY, not a computation")
+    assert(derivations("doubled") == com.invaract.ir.DerivationKind.Computed, "an INSERT computes it")
+    assert(conditions.isEmpty, "a clause's condition decides which rows it writes, not a column's value")
+    assert(joined == Set("Join:t.id", "Join:s.id", "Filter:s.doubled"), "the MERGE's condition joins the two; a clause's keeps rows; a DELETE's writes none")
+    def reads(p: com.invaract.ir.Plan): List[String] = p match {
+      case r: com.invaract.ir.Read => List(r.dataset.location)
+      case other                   => other.children.flatMap(reads)
+    }
+    assert(reads(checked).nonEmpty && reads(checked).forall(_.contains("merge_lineage_source")), s"checked as before, its source alone: ${reads(checked)}")
+    val (inserted, _, _, _, _) = traced("WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)")
+    assert(inserted("id") == Set("s.id") && inserted("doubled").isEmpty, "a column an INSERT does not name is null")
+    val (deleted, _, _, _, _) = traced("WHEN MATCHED THEN DELETE")
+    assert(deleted.values.forall(_.isEmpty), "a MERGE that only deletes writes no value")
+  }
+
   // --- Feature surface: WriteCommandInfo.partitionColumns across Delta's
   // own write shapes - `.save()` (SaveIntoDataSourceCommand, sourced from
   // DataSourceUtils.PARTITIONING_COLUMNS_KEY), `.saveAsTable()` on a new

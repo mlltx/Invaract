@@ -116,6 +116,15 @@ class OpenLineageNamingSpec extends AnyFunSuite {
     assert(named("/abs/t", Some(catalog)) == DatasetId("file", "/abs/t"), "a path stays a path")
   }
 
+  test("a bare name whose catalog says where the table is stored is named by that location, as openlineage-spark does") {
+    val created = CatalogInfo(Some("iceberg"), Some("ice"), Some("/wh/ice/db/t"), List("db"), Some("t"))
+    assert(named("ice.db.t", Some(created)) == DatasetId("file", "/wh/ice/db/t"))
+    assert(named("ice.db.t", Some(created.copy(location = Some("s3a://bucket/wh/db/t")))) == DatasetId("s3://bucket", "wh/db/t"))
+    assert(named("ice.db.t", Some(created.copy(location = Some("elsewhere")))) == DatasetId("file", "db.t"),
+      "a location that is itself a bare name is no location: the catalog's table")
+    assert(named("ice.db.t", Some(created.copy(location = None))) == DatasetId("iceberg://ice", "db.t"), "no location: the catalog's table")
+  }
+
   test("table: a catalog's table, under its location's namespace or technology://catalog") {
     assert(OpenLineageNaming.table(CatalogInfo(Some("iceberg"), Some("prod"), Some("s3://wh/db"), List("db"), Some("t"))) == Some(DatasetId("s3://wh", "db.t")))
     assert(OpenLineageNaming.table(CatalogInfo(Some("iceberg"), Some("prod"), None, List("a", "b"), Some("t"))) == Some(DatasetId("iceberg://prod", "a.b.t")))

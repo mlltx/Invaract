@@ -32,11 +32,15 @@ object OpenLineageNaming {
   /** The dataset at `location`, resolving a relative path against `workingDirectory`. */
   def dataset(location: String): DatasetId = dataset(location, None, System.getProperty("user.dir"))
 
-  /** The same, for a dataset that resolved to `catalog`: a bare name (no scheme, no `/`) is that catalog's table. */
+  /** The same, for a dataset that resolved to `catalog`: a bare name (no scheme, no `/`) is that catalog's table, named
+    * by where it is stored when the catalog says (as openlineage-spark names a table), else by the catalog. */
   def dataset(location: String, catalog: Option[CatalogInfo], workingDirectory: => String): DatasetId = {
     val trimmed = location.trim
     trimmed match {
-      case bare if isBare(bare) && catalog.flatMap(table).isDefined => catalog.flatMap(table).get
+      // a catalog table: by where it is stored when that is known, as openlineage-spark names it (a table created by
+      // the write itself has only its name as its location), else as the catalog's table
+      case bare if isBare(bare) && catalog.flatMap(table).isDefined =>
+        catalog.flatMap(_.location).filterNot(isBare).map(dataset(_, None, workingDirectory)).getOrElse(catalog.flatMap(table).get)
       case WindowsDrive() => DatasetId("file", absolute(trimmed, workingDirectory))
       case Scheme(rawScheme, rest) =>
         val scheme = rawScheme.toLowerCase

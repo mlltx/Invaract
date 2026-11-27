@@ -810,9 +810,21 @@ object ContractEnforcementRule {
       // the format each read was made in (check.inputFormat)
       inputFormats = collectInputFormats(plan, writeInfo.map(_.query), declaredInputs),
       // the partition columns and overwrite mode, where Spark states them (check.partitioning)
-      partitioning = writeInfo.flatMap(_.partitioning)
+      partitioning = writeInfo.flatMap(_.partitioning),
+      // what column lineage is traced through when the checked plan is not what the write computes (a MERGE's clauses)
+      lineagePlan = writeInfo.flatMap(lineagePlanOf(_, translated.plan, declaredInputs))
     )
   }
+
+  /** The write `translated` is, as lineage sees it: `info.lineageQuery` in place of its own query, and the table it
+    * creates stored where `info.createdAt` says. `None` when it has neither, or `translated` is not a write. */
+  private[sparkadapter] def lineagePlanOf(info: WriteCommandInfo, translated: com.invaract.ir.Plan, declaredInputs: Seq[String]): Option[com.invaract.ir.Plan] =
+    Some(translated).collect { case w: com.invaract.ir.Write if info.lineageQuery.isDefined || info.createdAt.isDefined => w }.map { write =>
+      write.copy(
+        input = info.lineageQuery.fold(write.input)(SparkPlanAdapter.translate(_, declaredInputs).plan),
+        catalog = write.catalog.map(c => c.copy(location = c.location.orElse(info.createdAt)))
+      )
+    }
 
   /** The dry-run counterpart to `verifyOrThrow`: only the plain-write shape
     * (backed by a real `WriteCommandInfo` from `WriteCommandSupport.combined`

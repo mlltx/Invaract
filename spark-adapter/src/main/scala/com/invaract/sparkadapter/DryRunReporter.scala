@@ -180,7 +180,8 @@ private[sparkadapter] final class DryRunReporter(
   /** What the write read and wrote, as enforcement under the draft would publish it (an OpenLineage sink publishes it). */
   private def lineageOf(inferred: InferenceOutcome.Inferred): Option[WriteLineage] =
     Try(DryRunReporting.lineage(inferred.contract, inferred.translated.plan, inferred.inputSchemas,
-      SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema), RowMutationSupport.classify(inferred.plan))).toOption.flatten
+      SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema), RowMutationSupport.classify(inferred.plan),
+      ContractEnforcementRule.lineagePlanOf(inferred.writeInfo, inferred.translated.plan, Nil))).toOption.flatten
 
   private def fingerprintOf(inferred: InferenceOutcome.Inferred): Option[TransformationFingerprint] =
     Try {

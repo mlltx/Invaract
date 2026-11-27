@@ -46,6 +46,9 @@ import org.slf4j.LoggerFactory
   *   `csv`, `delta`, ...: `com.invaract.contract.Formats`), for an adapter
   *   that knows them; checked against the inputs' declared formats
   *   (`check.inputFormat`). A location not in the map is not checked.
+  * @param lineagePlan the plan column lineage is traced through, when it is not `plan`: the same write, spelled as what
+  *   it computes rather than as what is checked. Spark's is a Delta MERGE's, its clauses over the target joined to the
+  *   source, where `plan` is the source the contract's inputs are checked against. Never verified, only traced.
   */
 final case class CheckedWrite(
     plan: ir.Plan,
@@ -58,7 +61,8 @@ final case class CheckedWrite(
     dataChecks: List[DataCheckResult] = Nil,
     partitioning: Option[WritePartitioning] = None,
     formatOptions: Map[String, Map[String, String]] = Map.empty,
-    inputFormats: Map[String, String] = Map.empty
+    inputFormats: Map[String, String] = Map.empty,
+    lineagePlan: Option[ir.Plan] = None
 )
 
 /** How a write lays out its data: the columns it partitions by, in order (empty when it does not partition), and what an
@@ -527,16 +531,18 @@ object VerificationPipeline {
             declared(contract.inputs, location)
           )
         }
+        val traced = checked.lineagePlan.collect { case l: ir.Write => l }.getOrElse(w)
+        // the catalog as lineage sees it: a table the write creates, where it will be stored
         val output = LineageDataset(
           w.dataset.location,
           w.format,
           Some(checked.outputSchema),
-          w.catalog.map(CatalogInfo.from),
+          traced.catalog.map(CatalogInfo.from),
           declared(contract.outputs, w.dataset.location)
         )
         // a MERGE, UPDATE or DELETE reads the table it changes: its rows are the output's too
         val target = if (checked.rowMutation.isDefined && !inputs.exists(_.location == output.location)) List(output) else Nil
-        Some(WriteLineage(output, inputs ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(w) else None))
+        Some(WriteLineage(output, inputs ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(traced) else None))
       case _ => None
     }
 
