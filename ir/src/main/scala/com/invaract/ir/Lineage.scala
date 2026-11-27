@@ -523,7 +523,8 @@ object Lineage {
     /** Whether `plan`, which resolves `ref`, does so only by name: its column `ref.name` is a projection passing another
       * qualifier's column through. Anything else is `false`: a computed column, a join, an operator that makes its own
       * columns, or a read (which resolves a qualified reference only under its own scope). Walks down one chain of
-      * inputs, in a loop: no deeper a stack for a deep plan. */
+      * inputs, in a loop: no deeper a stack for a deep plan. A Stryker mutant turning `exists` into `forall` is an
+      * equivalent: an unqualified reference then gives both sides the same answer, and the join keeps both either way. */
     private def namesAnother(ref: ColumnRef, plan: Plan): Boolean = ref.qualifier.exists { qualifier =>
       var current: Plan = plan
       var answer: Option[Boolean] = None
