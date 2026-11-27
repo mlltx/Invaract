@@ -128,7 +128,7 @@ ends `FAIL` with an `errorMessage` facet giving the reason.
 | Facet | On | Holds |
 |---|---|---|
 | `schema` | each dataset | its columns and types, nested columns included |
-| `columnLineage` | the output | where each output column comes from, and how. `DIRECT`: identity, transformation, aggregation, and `masking` when a column reaches the output only through a hash, `mask` or a count. `INDIRECT`: what decides an output column's value (a `CASE WHEN`'s tests, a window's partitioning and ordering), or the output's rows (filters, joins, groupings, sorts). Only on engines that trace columns: Spark. See [Spark Column Lineage Coverage](/reference/spark-column-lineage/) for how complete it is |
+| `columnLineage` | the output | where each output column comes from, and how. `DIRECT`: identity, transformation, aggregation, and `masking` when a column reaches the output only through a hash, `mask` or a count. Each source is typed as it reaches the column: one copied by a MERGE's `UPDATE` and computed by its `INSERT` is both `IDENTITY` and `TRANSFORMATION`. `INDIRECT`: what decides an output column's value (a `CASE WHEN`'s tests, a window's partitioning and ordering), or the output's rows (filters, joins, groupings, sorts). Only on engines that trace columns: Spark. See [Spark Column Lineage Coverage](/reference/spark-column-lineage/) for how complete it is |
 | `storage` | each dataset | its format (`parquet`, `delta`, `iceberg`, ...) |
 | `symlinks`, `catalog` | each dataset | the catalog table it is registered as |
 | `lifecycleStateChange` | the output | `OVERWRITE` or `CREATE`, from the write's save mode |
@@ -260,16 +260,21 @@ Invaract publishes OpenLineage events to http://marquez:5000/api/v1/lineage (nam
 ## How complete the column lineage is
 
 Invaract's Spark column lineage is held up against `openlineage-spark` and [Spline](https://absaoss.github.io/spline/) on a
-corpus of real Spark jobs, every release. [Spark Column Lineage Coverage](/reference/spark-column-lineage/) lists each
-construct (projections, conditions, joins, aggregates, windows, rollups, nested data, SQL subqueries and CTEs, UDFs,
-catalog tables, Delta Lake, Iceberg, JDBC), whether the three agree, why not where they differ, and Invaract's known gaps.
+corpus of real Spark jobs, on every build of Invaract. [Spark Column Lineage Coverage](/reference/spark-column-lineage/)
+lists each construct (projections, conditions, joins, aggregates, windows, rollups, nested data, SQL subqueries and CTEs,
+UDFs, catalog tables, Delta Lake `MERGE`, Iceberg, Hive, JDBC, RDDs, streaming), whether the three agree, and why not where
+they differ. For each job it shows the code and the lineage Invaract publishes for it, so you can check it, and the steps
+to run the comparison yourself. It also lists what Invaract captures that the other tools miss, and its known limits.
 
 ## Alongside openlineage-spark
 
 The `openlineage-spark` integration publishes one run per Spark SQL query, with the plan's lineage as Spark sees it.
 Invaract publishes one run per application, with what it checked. Both can be on: they are different jobs in the graph, and
-the datasets are the same nodes, measured on every job of the coverage corpus. The one exception is a table a write creates
-in a catalog (`CREATE TABLE AS SELECT`), which Invaract names by its catalog identifier. Set `openLineageNamespace` or
+the datasets are the same nodes, measured on every job of the coverage corpus. A table a write creates (`CREATE TABLE AS
+SELECT`, `writeTo(...).create()`) is named by where it will be stored, as `openlineage-spark` names it, when Spark's
+configuration says where that is: a `LOCATION`, the session catalog, or an Iceberg Hadoop or JDBC catalog. In a catalog
+that chooses the location itself when it creates the table, such as an Iceberg Hive, REST or Glue catalog, Invaract names
+the table by its catalog identifier. Set `openLineageNamespace` or
 `jobName` to keep them apart, or the same parent run to group them under one orchestrator run.
 
 ## What's next

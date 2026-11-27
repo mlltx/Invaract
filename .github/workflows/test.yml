@@ -1286,7 +1286,6 @@ jobs:
       # pythonio-adapter's native build, re-run by a change to it or to what it is built from
       pythonio: ${{ steps.detect.outputs.pythonio }}
       # the lineage cross-check: Spark's engine modules, or the cross-check itself
-      crosscheck: ${{ steps.detect.outputs.crosscheck }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1301,7 +1300,6 @@ jobs:
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "beam=true" >> "$GITHUB_OUTPUT"
             echo "pythonio=true" >> "$GITHUB_OUTPUT"
-            echo "crosscheck=true" >> "$GITHUB_OUTPUT"
             echo "Not a pull request: version matrices always run."
             exit 0
           fi
@@ -1328,13 +1326,6 @@ jobs:
             echo "pythonio=true" >> "$GITHUB_OUTPUT"
           else
             echo "pythonio=false" >> "$GITHUB_OUTPUT"
-          fi
-          # the lineage cross-check: what Spark's lineage is built from, docs-site's page it generates, or itself
-          CROSSCHECK_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- contract ir fingerprint verification-core adapter-testkit spark-adapter lineage-crosscheck docs-site/src/content/docs/reference/spark-column-lineage.md .github/workflows/test.yml .github/actions)
-          if [ -n "$CROSSCHECK_CHANGED" ]; then
-            echo "crosscheck=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "crosscheck=false" >> "$GITHUB_OUTPUT"
           fi
 
   spark-version-matrix:
@@ -2158,13 +2149,13 @@ jobs:
   lineage-crosscheck:
     name: Lineage cross-check (Invaract vs openlineage-spark and Spline)
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.crosscheck == 'true'
     # Runs the corpus of real Spark jobs in lineage-crosscheck/ with Invaract, openlineage-spark and Spline's agent all
-    # capturing each, and fails when Invaract's lineage differs from either in a way the checked-in baseline
-    # (lineage-crosscheck/src/test/resources/crosscheck-baseline.txt) does not record, when a difference has no
-    # explanation, or when docs-site's generated "Spark Column Lineage Coverage" page is out of date. See
-    # docs/OPENLINEAGE.md, "Cross-checking Spark lineage". One Linux leg: it measures lineage, not platforms.
+    # capturing each, and fails when Invaract's lineage of any job, or how it differs from either reference, is not
+    # what the checked-in baseline (lineage-crosscheck/src/test/resources/crosscheck-baseline.txt) records, when a
+    # difference has no explanation, or when docs-site's generated "Spark Column Lineage Coverage" page is out of date.
+    # On every pull request and push, whatever it changes: lineage verified there must never change unseen, and a run
+    # takes a few minutes. See docs/OPENLINEAGE.md, "Cross-checking Spark lineage". One Linux leg: it measures
+    # lineage, not platforms.
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

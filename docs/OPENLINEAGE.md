@@ -337,10 +337,10 @@ on every job of the cross-check corpus the two name every dataset alike, except 
 ## 11. Cross-checking Spark lineage
 
 Unit tests can only hold lineage to what their author expected. `lineage-crosscheck/` holds it to two independent tools
-instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 53 jobs: projections, conditions, filters, sorts,
+instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 55 jobs: projections, conditions, filters, sorts,
 joins of every kind, aggregates, windows, rollups, pivots, unions, nested data, SQL with views, CTEs and subqueries,
-UDFs, the Dataset API, caching and checkpoints, partitioned and appending writes, catalog tables, Delta Lake, Iceberg and
-JDBC) runs once in a session with all three capturing it:
+UDFs, the Dataset API, caching and checkpoints, partitioned and appending writes, catalog tables, Delta Lake MERGE,
+Iceberg, Hive, JDBC, RDDs and streaming) runs once in a session with all three capturing it:
 
 | Tool | What it is held to |
 |---|---|
@@ -352,10 +352,12 @@ Each tool's report of the write is reduced to one model (`Captured`: inputs, out
 indirect edges per field or for the whole output) and compared (`Comparison`). Every difference is either fixed or
 explained in `Corpus.scala`, as `Gap` (Invaract's), `Reference` (the other tool misses or adds something) or `Choice` (a
 convention); the spec fails on a difference with no explanation and on an explanation for a job that now agrees. The
-exact differences are checked in (`crosscheck-baseline.txt`), so any change in Invaract's lineage - or a reference's, on an
-upgrade - is seen, and docs-site's "Spark Column Lineage Coverage" page is generated from the run (`Report`), with
-Invaract's known gaps listed. `CROSSCHECK_UPDATE=true sbt test` rewrites both. CI runs it (`lineage-crosscheck`) whenever
-what Spark's lineage is built from changes.
+baseline (`crosscheck-baseline.txt`) records Invaract's complete lineage of every job as well as each difference, so any
+change in Invaract's lineage - even of a job every tool agrees on - or in a reference's, on an upgrade, is seen.
+docs-site's "Spark Column Lineage Coverage" page is generated from the run (`Report`): each job's code, read from
+`Corpus.scala` so it is the code that ran, what Invaract publishes for it, each difference with its reason, what
+Invaract captures that the other tools miss, and Invaract's known gaps and limits. `CROSSCHECK_UPDATE=true sbt test`
+rewrites the baseline and the page. CI runs it (`lineage-crosscheck`) on every pull request and push.
 
 What the first runs found, and what was done:
 
@@ -371,12 +373,16 @@ What the first runs found, and what was done:
 | A MERGE's lineage named columns of its source the table does not have, and not the table it reads | edges only for columns the write has; the target listed among the inputs |
 | An opaque JDBC URL (H2, SQLite, Oracle thin) named apart from openlineage-spark | named as it names them, credentials stripped |
 | A DataFrame made from an RDD had no inputs | the directories the RDD's file scans read are its inputs (no columns) |
+| A `USING` join's key attributed to both sides: a projection matched a qualified column by name alone | a join rules out a side that only passes another read's column of that name through (`ir.Lineage`); the key is the side Spark takes it from |
+| A MERGE traced by column name from its source, not through its clauses | traced through them (`WriteCommandSupport.mergeClauses`, a lineage-only plan: `CheckedWrite.lineagePlan`, so enforcement still checks the plan it checked): each clause's rows, an UPDATE keeping the row's own value of a column it leaves, an INSERT its values, a clause's condition a `FILTER`, the `ON` condition a `JOIN` |
+| A source reached two ways got one type: a MERGE's UPDATE copying a column its INSERT computes made both `TRANSFORMATION` | each source typed as it reaches the column (`ColumnDependencies.copied`/`transformed`): `IDENTITY`, the computation's type, or both |
+| A table created by its own write (`CREATE TABLE AS SELECT`, `writeTo(...).create()`) named by its catalog identifier | named where it will be stored when Spark's configuration says (`WriteCommandSupport.createdTableLocation`: a `LOCATION`, the session catalog, an Iceberg Hadoop or JDBC catalog), its identifier a symlink; lineage and notifications only, never the catalog identity a contract is checked against |
 
 What stays a difference is on the generated page, each with its reason. Most are openlineage-spark reading Spark's
 *optimized* plan (an inferred `isnotnull` filter on every join key; `IN`/`EXISTS` rewritten into semi joins), or a
-reference missing what Invaract follows (subqueries, CTEs, `localCheckpoint`, rollup keys). Invaract's own gaps: a `USING`
-join's key attributed to both sides; a MERGE traced by column name, not through its clauses; a table created by its own
-write named by catalog identifier.
+reference missing what Invaract follows (subqueries, CTEs, `localCheckpoint`, rollup keys, a MERGE's clauses). No corpus
+job shows a gap of Invaract's; the page lists the limits no job measures (a catalog that chooses a new table's location
+itself, streaming micro-batches, UDF internals, lineage through an RDD, operators Invaract does not translate).
 
 ## 12. Production-readiness review
 
@@ -392,10 +398,10 @@ today, can it hurt a job, and can it be operated. Each finding, and what was don
 | 4 | Correctness | Dataset names with backslashes on Windows, and a Windows run publishing only its terminal event | **Fixed** (string normalisation that cannot throw) |
 | 5 | Correctness | A completed-write report arriving after a run's end reopened the run under the same id | **Fixed** (run generations, section 2.1) |
 | 6 | Completeness | `explode`, rollups, deduplication, sorts, windows, conditions, `IN` subqueries, masking, RDD-backed inputs were missing | **Fixed** (section 11) |
-| 7 | Completeness | Remaining gaps | **Documented**, generated from the cross-check: a `USING` join's key attributed to both sides; a MERGE traced by name, not through its clauses; a table a write creates in a catalog named by its identifier |
+| 7 | Completeness | The cross-check's remaining gaps: a `USING` join's key attributed to both sides; a MERGE traced by name, not through its clauses; a table a write creates named by its catalog identifier | **Fixed** (section 11). The limits no corpus job measures are **documented** on the generated page |
 | 8 | Migration | Dry-run mode (the observe-only mode a team starts in) published no inputs, schemas or column lineage | **Fixed**: a dry run publishes the lineage enforcement would, on every adapter |
 | 9 | Migration | A job launched by Airflow carries its parent and root runs in `spark.openlineage.parent*`/`rootParent*`; Invaract ignored them | **Fixed**: read as they are (`ConfigSource.environment`); the root run is published too (`ParentRunFacet` 1-2-0) |
-| 10 | Migration | Dataset identity with openlineage-spark was assumed | **Measured**: identical on every corpus job but the CTAS case (row 7); opaque JDBC URLs now named as openlineage-spark names them |
+| 10 | Migration | Dataset identity with openlineage-spark was assumed | **Measured**: identical on every corpus job, a created table included; opaque JDBC URLs named as openlineage-spark names them |
 | 11 | Migration | No path from openlineage-spark or Spline | **Added**: the docs-site guide "Move from openlineage-spark or Spline", with a settings mapping |
 | 12 | Safety | Publishing must never slow or fail a job | **Held**: off the job's thread, bounded queue, retries, circuit breaker, size shedding, bounded shutdown (sections 5, 6); measured (section 8) |
 | 13 | Safety | Secrets | **Held**: the API key is read from an environment variable named in the settings, never the settings themselves; headers the client or transport set are refused; credentials are stripped from every dataset name, opaque JDBC URLs (`user/password@`, `user=`/`password=` properties) included |

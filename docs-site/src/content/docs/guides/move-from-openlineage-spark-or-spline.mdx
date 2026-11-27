@@ -22,10 +22,12 @@ those tools. You can run it next to the tool you have now, compare the two, and 
 | Contracts | none | none | each write checked against its contract, the verdict on the dataset (`invaract_contract`) |
 
 Because the datasets are named the same way, a lineage backend such as Marquez or DataHub joins Invaract's runs to the
-nodes openlineage-spark already created. The one exception is a table the write itself creates in a catalog (`CREATE TABLE
-AS SELECT`, `writeTo(...).create()`): Invaract names it by its catalog identifier, because its location does not exist
-until the write has run. [Spark Column Lineage Coverage](/reference/spark-column-lineage/) shows, construct by construct,
-where the three tools agree and why they differ where they do.
+nodes openlineage-spark already created, including a table a write creates (`CREATE TABLE AS SELECT`,
+`writeTo(...).create()`), when Spark's configuration says where it will be stored. The exception is a table created in a
+catalog that chooses its location only when it creates it (an Iceberg Hive, REST or Glue catalog): Invaract names that
+table by its catalog identifier. [Spark Column Lineage Coverage](/reference/spark-column-lineage/) shows, construct by
+construct, where the three tools agree and why they differ where they do. For each job it shows the code and Invaract's
+lineage, so you can check that a construct you rely on is covered before you move.
 
 ## Move over
 
@@ -49,7 +51,8 @@ where the three tools agree and why they differ where they do.
 
 2. **Compare the two in your lineage backend.** For a job you know, check that its input and output datasets are the
    same nodes, and that the column lineage is what you expect. The coverage page lists the constructs where Invaract
-   reports more, such as subqueries, CTEs, rollup keys and `localCheckpoint`, and the ones where it reports less.
+   reports more, such as subqueries, CTEs, rollup keys, `localCheckpoint` and a `MERGE`'s clauses, and the ones where
+   it reports less.
 
 3. **Use the drafts as contracts.** Each dry-run write's draft contract is in its `ContractInferenceEvent`, and the
    job's merged draft is in its summary. See [Dry-run mode](/guides/dry-run-mode/). Review a draft,
@@ -93,5 +96,5 @@ forwards to Kafka.
 
 Spline's agent publishes Spline's own model to a Spline server. Invaract publishes OpenLineage, which Spline's UI does not
 read. To keep using Spline's UI, keep Spline's agent alongside Invaract. To move to an OpenLineage backend, follow the
-steps above, with Spline in place of openlineage-spark. On the coverage page, Invaract follows subqueries, CTEs and
-`localCheckpoint()` that Spline's agent does not.
+steps above, with Spline in place of openlineage-spark. On the coverage page, Invaract follows subqueries, CTEs, rollup
+keys, deduplication, the files behind an RDD, `localCheckpoint()` and streaming queries, which Spline's agent does not.

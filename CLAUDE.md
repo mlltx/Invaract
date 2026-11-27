@@ -87,11 +87,12 @@ don't present it as something external consumers would bind to.
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
-- **Lineage cross-check**: `lineage-crosscheck` (not published, built by its own CI job) runs a corpus of real Spark jobs
-  with Invaract, `openlineage-spark` and Spline's agent all capturing each, and holds Invaract's column lineage to them:
-  every difference is fixed or explained in its `Corpus.scala` (as an Invaract gap, the other tool's limit, or a
-  convention), the exact differences are checked in (`crosscheck-baseline.txt`), and docs-site's "Spark Column Lineage
-  Coverage" page is generated from the run. A change to how Spark plans are translated or traced shows up there:
+- **Lineage cross-check**: `lineage-crosscheck` (not published, built by its own CI job on every pull request and push)
+  runs a corpus of real Spark jobs with Invaract, `openlineage-spark` and Spline's agent all capturing each, and holds
+  Invaract's column lineage to them: every difference is fixed or explained in its `Corpus.scala` (as an Invaract gap,
+  the other tool's limit, or a convention), Invaract's complete lineage of every job and the exact differences are
+  checked in (`crosscheck-baseline.txt`), and docs-site's "Spark Column Lineage Coverage" page (each job's code, its
+  lineage, and why the tools differ) is generated from the run. A change to how Spark plans are translated or traced shows up there:
   explain it, then `CROSSCHECK_UPDATE=true sbt test` (docs/OPENLINEAGE.md, section 11)
 - **Optional extension**: `notification-kafka` (a `NotificationSink`
   publishing to Kafka — see "Notification sinks" in

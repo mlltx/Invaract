@@ -222,8 +222,10 @@ object Corpus {
     // --- formats ------------------------------------------------------------------------------------------------------
     job("csv-input", "Formats", "a CSV input with a header")((s, f) =>
       s.read.option("header", "true").option("inferSchema", "true").csv(f.salesCsv).select(col("region"), (col("amount") * 2).as("double"))),
-    job("multiple-inputs", "Formats", "Parquet and JSON inputs joined", OLS -> gap("A USING join's key column is, in Spark's plan, the left side's key; Invaract, which resolves a column by its name, attributes it to both sides' keys (their values are equal for every row an inner join keeps). openlineage-spark also reports the join keys as FILTER, from the isnotnull filter the optimizer adds."), Spline -> gap("A USING join's key column is attributed to both sides' keys, where Spark's plan takes the left side's."))((s, f) =>
+    job("multiple-inputs", "Formats", "Parquet and JSON inputs joined (USING: the key is the left side's)", OLS -> theirs("openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there."))((s, f) =>
       f.orders(s).join(f.events(s).select(col("id"), col("payload.b").as("b")), "id").select("id", "amount", "b")),
+    job("using-right-join", "Join", "a right join USING a key: the key is the right side's", OLS -> theirs("openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on the key of the side a right join filters; it reports that column as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there."))((s, f) =>
+      f.customers(s).join(f.orders(s).select("customer_id", "amount"), Seq("customer_id"), "right").select("customer_id", "name", "amount")),
     job("sql-distinct", "Deduplication", "SELECT DISTINCT", Spline -> theirs("Spline records no grouping for a deduplication. Invaract, like openlineage-spark, reports the columns it deduplicates on as GROUP_BY: Spark itself turns a deduplication into an aggregate grouped by them."))((s, f) => {
       f.orders(s).createOrReplaceTempView("orders")
       s.sql("SELECT DISTINCT customer_id, status FROM orders")
@@ -272,12 +274,27 @@ object Corpus {
           "WHEN MATCHED THEN UPDATE SET t.amount = o.amount WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (o.id, o.amount)")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(OLS -> gap("A MERGE also reads the table it merges into. Invaract lists the table as an input, but traces the MERGE's columns by name from its source, not through its clauses: openlineage-spark also has the table's own key as a source of the key it keeps."), Spline -> gap("A MERGE also reads the table it merges into. Invaract lists the table as an input, but traces its columns by name from the MERGE's source: Spline also has the table's own columns as sources of the columns a MERGE keeps."))),
+      notes = Map(
+        OLS -> choice("A MERGE's ON condition decides which rows each of its clauses writes: Invaract reports its columns as INDIRECT/JOIN, as for any join. openlineage-spark reports no indirect lineage for a MERGE."),
+        Spline -> choice("Spline also counts the rows a MERGE leaves as they are (no clause touches them), so the table's own amount is a source of amount; Invaract, like openlineage-spark, counts the rows the MERGE's clauses write. Spline records no indirect lineage, so not the ON condition either."))),
+    Job("delta-merge-clauses", "Delta Lake", "MERGE with conditional, DELETE, partial INSERT and NOT MATCHED BY SOURCE clauses",
+      (s, f, out) => {
+        f.orders(s).limit(0).select("id", "amount", "status").write.format("delta").save(out.at("out"))
+        f.orders(s).createOrReplaceTempView("orders")
+        s.sql(s"MERGE INTO delta.`${out.at("out")}` t USING orders o ON t.id = o.id " +
+          "WHEN MATCHED AND o.status = 'cancelled' THEN DELETE " +
+          "WHEN MATCHED AND o.amount > t.amount THEN UPDATE SET t.amount = o.amount " +
+          "WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (o.id, o.amount * 100) " +
+          "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.status = 'gone'")
+      },
+      extensions = delta, conf = deltaConf,
+      notes = Map(
+        OLS -> theirs("openlineage-spark does not follow a MERGE's clauses: it reports the amount the INSERT computes (amount * 100) as a copy, misses the table's own amount that the NOT MATCHED BY SOURCE clause keeps, and reports no indirect lineage - neither the ON condition nor the clause conditions that decide which rows are written."),
+        Spline -> theirs("Spline records no indirect lineage for a MERGE: neither its ON condition nor the clause conditions that decide which rows are written."))),
     Job("iceberg-write", "Apache Iceberg", "an Iceberg table created from a query (writeTo)",
       (s, f, out) => f.orders(s).select(col("id"), col("amount")).writeTo("ice.db.orders_copy").using("iceberg").createOrReplace(),
       contractLocation = _ => "ice.db.orders_copy",
-      extensions = iceberg, conf = icebergConf,
-      notes = Map(OLS -> gap("A table the write itself creates in a catalog (CREATE TABLE AS SELECT, writeTo(...).create()) is named by its catalog identifier: its location does not exist until the write has run. openlineage-spark names it by its location, read after the write. A write to an existing table is named by its location (iceberg-append)."), Spline -> gap("A table the write itself creates in a catalog is named by its catalog identifier; Spline names it by its location, read after the write."))),
+      extensions = iceberg, conf = icebergConf),
 
     Job("iceberg-append", "Apache Iceberg", "an append to an existing Iceberg table",
       (s, f, out) => {
