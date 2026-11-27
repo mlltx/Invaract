@@ -21,8 +21,9 @@ object Report {
       |  creates by where it will be stored when Spark's configuration says (a `LOCATION`, the session catalog, an Iceberg
       |  Hadoop or JDBC catalog). In a catalog that chooses the location when it creates the table (an Iceberg Hive, REST
       |  or Glue catalog, for example), Invaract names the table by its catalog identifier.
-      |- **Streaming queries.** Invaract checks a streaming query once, when it starts, and publishes that lineage. It
-      |  publishes nothing for each micro-batch.
+      |- **Streaming queries.** Invaract checks a streaming query written to a sink once, when it starts, and publishes
+      |  that lineage, not one per micro-batch. A `foreachBatch` function's writes are checked and published batch by
+      |  batch (the `foreach-batch` job).
       |- **User-defined functions.** A column a UDF computes has the UDF's input columns as its sources, typed
       |  `TRANSFORMATION` and described as opaque: what the function does with them is not known.
       |- **RDDs.** A DataFrame made from an RDD has the files the RDD read as its inputs, with no column lineage through

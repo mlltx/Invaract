@@ -15,7 +15,7 @@ object Comparison {
       case Reference.Spline           => observed.spline
     }
     val name = reference.name
-    def stable(s: String) = s.replace(out, "<out>").replace(in, "<in>")
+    def stable(s: String) = Stable(s, out, in)
     def sides[A](what: String, a: Set[A], b: Set[A]): List[String] =
       (a -- b).toList.map(x => s"$what: only invaract: ${stable(x.toString)}") ++
         (b -- a).toList.map(x => s"$what: only $name: ${stable(x.toString)}")
@@ -43,12 +43,20 @@ object Comparison {
   }
 }
 
+/** A line as the baseline and the page show it: the job's own directory written `<out>`, the shared inputs' `<in>`, and
+  * the random part of a Parquet file's name (`part-00000-<uuid>-c000`), which every fixture run writes afresh. */
+object Stable {
+  private val partFile = "part-(\\d+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-c(\\d+)"
+  def apply(s: String, out: String, in: String): String =
+    s.replace(out, "<out>").replace(in, "<in>").replaceAll(partFile, "part-$1-<uuid>-c$2")
+}
+
 /** What one tool reported about a write, one line per dataset and edge, in the same stable form as the differences:
   * the baseline pins Invaract's (so lineage that was right cannot change unseen, even where every tool agrees) and the
   * coverage page shows it beside the job's code, for a reader to check. */
 object Description {
   def of(captured: Captured, out: String, in: String): List[String] = {
-    def stable(s: String) = s.replace(out, "<out>").replace(in, "<in>")
+    def stable(s: String) = Stable(s, out, in)
     def kinds(subtypes: Set[String]) = if (subtypes.isEmpty) "" else subtypes.toList.sorted.mkString("  [", ", ", "]")
     captured.inputs.toList.map(d => s"input:  ${stable(d.toString)}").sorted ++
       captured.output.toList.map(d => s"output: ${stable(d.toString)}") ++

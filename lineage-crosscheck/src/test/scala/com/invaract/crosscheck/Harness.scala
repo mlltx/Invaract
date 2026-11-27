@@ -50,9 +50,11 @@ object Harness {
     val deadline = System.nanoTime() + 30L * 1000000000L
     def ended = Files.exists(invaract) && Files.readAllLines(invaract).asScala.exists(l => l.contains("\"COMPLETE\"") || l.contains("\"FAIL\""))
     while (!ended && System.nanoTime() < deadline) Thread.sleep(50)
-    // every job writes one dataset: each tool's outputs are that write, however it names it (a difference in naming is
-    // then a difference the comparison reports, not a write the harness fails to find)
-    def isOutput(d: Ds) = true
+    // every job writes one dataset, never one of the shared inputs: each tool's outputs are that write, however it
+    // names it (a difference in naming is then a difference the comparison reports, not a write the harness fails to
+    // find). openlineage-spark also reports a CREATE TABLE over existing files as an output of that location.
+    val inputs = slashes(fixture.root.resolve("inputs"))
+    def isOutput(d: Ds) = !Option(d.name).exists(_.startsWith(inputs))
     Observed(
       Captured.fromOpenLineage(invaract, isOutput),
       Captured.fromOpenLineage(dir.resolve("openlineage-spark.jsonl"), isOutput),
