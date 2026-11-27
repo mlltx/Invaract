@@ -540,9 +540,12 @@ object VerificationPipeline {
           traced.catalog.map(CatalogInfo.from),
           declared(contract.outputs, w.dataset.location)
         )
-        // a MERGE, UPDATE or DELETE reads the table it changes: its rows are the output's too
-        val target = if (checked.rowMutation.isDefined && !inputs.exists(_.location == output.location)) List(output) else Nil
-        Some(WriteLineage(output, inputs ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(traced) else None))
+        // a MERGE, UPDATE or DELETE reads the table it changes: its rows are the output's too, and read back it is the
+        // same table, wherever lineage sees the output stored
+        val mutated = checked.rowMutation.isDefined
+        val read = inputs.map(i => if (mutated && i.location == output.location) i.copy(catalog = output.catalog.orElse(i.catalog)) else i)
+        val target = if (mutated && !inputs.exists(_.location == output.location)) List(output) else Nil
+        Some(WriteLineage(output, read ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(traced) else None))
       case _ => None
     }
 

@@ -83,6 +83,45 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(translated.diagnostics.isEmpty, "a resolved catalog table read should need no fallback diagnostic")
   }
 
+  test("an Iceberg MERGE, UPDATE and DELETE are traced through the plans Spark rewrites them to, and stored where the table is") {
+    val tableName = "local.db.row_level_lineage_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, amount BIGINT, status STRING) USING iceberg")
+    spark.range(3).select(col("id"), (col("id") * 10).as("amount"), lit("paid").as("status")).writeTo(tableName).append()
+    val sourcePath = scratchDir.resolve("row_level_source").toString.replace('\\', '/')
+    spark.range(5).select(col("id"), (col("id") * 100).as("amount")).write.mode("overwrite").parquet(sourcePath)
+    spark.read.parquet(sourcePath).createOrReplaceTempView("row_level_source")
+    def analyzed(sql: String) = {
+      val parsed = spark.sessionState.sqlParser.parsePlan(sql)
+      spark.sessionState.analyzer.executeAndCheck(parsed, new org.apache.spark.sql.catalyst.QueryPlanningTracker)
+    }
+    def traced(sql: String) = {
+      val plan = analyzed(sql)
+      val info = WriteCommandSupport.combined.lift(plan).getOrElse(fail(s"not a write: ${plan.getClass.getSimpleName}"))
+      val lineage = com.invaract.ir.Lineage.traceDetailed(SparkPlanAdapter.translate(plan).plan)
+      def side(r: com.invaract.ir.ColumnRef) = s"${if (r.qualifier.exists(_.contains("row_level_source"))) "s" else "t"}.${r.name}"
+      (info, lineage.columns.map(c => c.lineage.output.name -> c).toMap, side _, lineage.indirect)
+    }
+    val location = spark.sql(s"DESCRIBE TABLE EXTENDED $tableName").collect().collectFirst { case r if r.getString(0) == "Location" => r.getString(1) }.get
+
+    val (merged, mergedColumns, side, mergedRows) = traced(s"MERGE INTO $tableName t USING row_level_source s ON t.id = s.id " +
+      "WHEN MATCHED AND s.amount > 100 THEN UPDATE SET t.amount = t.amount + s.amount WHEN MATCHED THEN DELETE " +
+      "WHEN NOT MATCHED THEN INSERT (id, amount, status) VALUES (s.id, s.amount, 'new')")
+    assert(mergedColumns("amount").values.map(side) == Set("t.amount", "s.amount"), "an UPDATE adds the source to the table's; an INSERT copies the source's")
+    assert(mergedColumns("id").values.map(side) == Set("t.id", "s.id"))
+    assert(mergedRows.map(i => s"${i.kind}:${side(i.source)}").toSet.contains("Filter:s.amount"), "a clause's condition decides which rows it writes")
+    assert(merged.createdAt.exists(at => at.stripPrefix("file:").stripSuffix("/") == location.stripPrefix("file:").stripSuffix("/")),
+      s"the table's storage, for lineage: ${merged.createdAt} vs $location")
+
+    val (_, updatedColumns, _, _) = traced(s"UPDATE $tableName SET amount = amount * 2 WHERE status = 'paid'")
+    assert(updatedColumns("id").lineage.derivation == com.invaract.ir.DerivationKind.Direct && updatedColumns("id").indirect.isEmpty,
+      "a column the UPDATE leaves is copied, not computed under its condition")
+    assert(updatedColumns("amount").indirect.map(_.source.name) == Set("status"), "an assigned column depends on the condition")
+
+    val (deleted, _, _, deletedRows) = traced(s"DELETE FROM $tableName WHERE status = 'open'")
+    assert(deletedRows.map(_.source.name).toSet.contains("status"))
+    assert(deleted.createdAt == merged.createdAt)
+  }
+
   test("an Iceberg table is read as iceberg (check.inputFormat), by the table's provider, as a write to it is named") {
     val tableName = "local.db.read_format_tbl"
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")

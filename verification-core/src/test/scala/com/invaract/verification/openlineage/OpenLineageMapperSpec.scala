@@ -165,6 +165,21 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(lineage(None).output.catalog.isEmpty)
   }
 
+  test("the table a MERGE, UPDATE or DELETE changes, read back, is where lineage sees the output stored; any other read keeps its own") {
+    val mutation = Some(com.invaract.verification.MutationClassification.Unverifiable(com.invaract.verification.MutationKind.Update))
+    val stored = CatalogIdentity(Some("iceberg"), Some("ice"), Some("/wh/db/report"), List("db"), Some("report"))
+    val byName = CatalogIdentity(Some("iceberg"), Some("ice"), None, List("db"), Some("report"))
+    val selfRead = Write(DatasetRef("out/report"), Project(Join(Read(DatasetRef("out/report"), None, Some(byName)), Read(DatasetRef(orders)), JoinType.Inner),
+      List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("out/report")))))), catalog = Some(byName))
+    def inputs(rowMutation: Option[com.invaract.verification.MutationClassification], lineagePlan: Option[Plan]) =
+      VerificationPipeline.lineageOf(contract, CheckedWrite(selfRead, List(orders -> inputSchema), goodOutput, caseSensitive = false, rowMutation, Set.empty,
+        lineagePlan = lineagePlan)).get.inputs.map(i => i.location -> i.catalog.flatMap(_.location)).toMap
+    val withStorage = Some(selfRead.copy(catalog = Some(stored)))
+    assert(inputs(mutation, withStorage) == Map("out/report" -> Some("/wh/db/report"), orders -> None), "the table read back; another read untouched")
+    assert(inputs(None, withStorage)("out/report").isEmpty, "a write that changes no rows: a read of its target is a read like any other")
+    assert(inputs(mutation, None)("out/report").isEmpty, "no storage known: the read keeps its own catalog")
+  }
+
   private val a = Read(DatasetRef("in/a"))
   private def av(name: String) = ColumnReference(ColumnRef(name, Some("in/a")))
   private def edgesOf(plan: Plan) = WriteLineage(LineageDataset("out/x"), Nil, plan = Some(Write(DatasetRef("out/x"), plan))).columnLineage

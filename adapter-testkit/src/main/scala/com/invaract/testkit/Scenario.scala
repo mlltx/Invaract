@@ -126,7 +126,7 @@ final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
   *
   * With `opaqueStep` set the work so far (the read, the join, the filter) passes through one step the adapter's
   * translation has no representation for, before the projection and the write: an engine operation that keeps
-  * the columns as they are (Spark: a row sample). What the contract says about the job must come out the same as
+  * the columns as they are (Spark: a plan node of its conformance adapter's own, `OpaqueStep`). What the contract says about the job must come out the same as
   * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
   * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
   *

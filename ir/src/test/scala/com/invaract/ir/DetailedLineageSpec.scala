@@ -90,12 +90,110 @@ class DetailedLineageSpec extends AnyFunSuite {
     assert(column(joined, "v").copied == Set(src("amount")) && column(joined, "v").transformed == Set(src("customer_id", "customers")), "both sides of a join keep theirs")
   }
 
-  test("a read's known columns are matched ignoring case; a name it lacks makes the reference resolve to nothing") {
+  test("a read's known columns are matched ignoring case, and named as the read has them; a name it lacks makes the reference resolve to nothing") {
     val plan = Project(orders, List(NamedExpr("a", bare("AMOUNT")), NamedExpr("z", bare("zzz"))))
     val upper: Read => Option[Set[String]] = _ => Some(Set("Amount"))
-    assert(column(plan, "a", upper).values == Set(src("AMOUNT")))
+    assert(column(plan, "a", upper).values == Set(src("Amount")), "the read's column, not the reference's spelling of it")
     assert(column(plan, "z", upper).values.isEmpty)
     assert(column(plan, "z", upper).lineage.derivation == DerivationKind.Direct, "an unresolvable reference keeps its fallback")
+  }
+
+  // --- names: an engine matches them ignoring case ---------------------------------------------------------------------
+
+  private val amount: Read => Option[Set[String]] = { case r if r eq orders => Some(Set("amount", "id")); case _ => None }
+
+  test("a column referred to in another case is the column of that name, at every node that declares columns") {
+    val projected = Project(orders, List(NamedExpr("amount", bare("amount")), NamedExpr("id", bare("id"))))
+    assert(column(Project(projected, List(NamedExpr("x", bare("AMOUNT")))), "x", amount).values == Set(src("amount")), "a projection")
+    val agg = Aggregate(orders, List(bare("id")), List(NamedExpr("total", AggregateCall("SUM", bare("amount")))))
+    assert(column(Project(agg, List(NamedExpr("x", bare("TOTAL")))), "x", amount).values == Set(src("amount")), "an aggregate")
+    val win = Window(projected, List(NamedExpr("rank", Function("rank", Nil))), List(bare("id")), Nil)
+    assert(column(Project(win, List(NamedExpr("x", bare("RANK")))), "x", amount).indirect.map(_.source) == Set(src("id")), "a window column")
+    assert(column(Project(win, List(NamedExpr("x", bare("AMOUNT")))), "x", amount).values == Set(src("amount")), "through a window")
+    val gen = Generate(projected, Function("explode", List(bare("amount"))), List("item"))
+    assert(column(Project(gen, List(NamedExpr("x", bare("ITEM")))), "x", amount).values == Set(src("amount")), "a generated column")
+    assert(column(Project(gen, List(NamedExpr("x", bare("ID")))), "x", amount).values == Set(src("id")), "through a generator")
+    val exp = Expand(orders, List(List(bare("amount"), bare("id")), List(bare("amount"), Literal(null, "null"))), List("amount", "key"))
+    assert(column(Project(exp, List(NamedExpr("x", bare("KEY")))), "x", amount).values == Set(src("id")), "an expansion's second column")
+  }
+
+  test("an exact name wins over one equal ignoring case; two equal ignoring case and none exact match neither") {
+    val both = Project(orders, List(NamedExpr("Amount", bare("id")), NamedExpr("amount", bare("amount"))))
+    assert(column(Project(both, List(NamedExpr("x", bare("amount")))), "x").values == Set(src("amount")))
+    assert(column(Project(both, List(NamedExpr("x", bare("Amount")))), "x").values == Set(src("id")))
+    assert(column(Project(both, List(NamedExpr("x", bare("AMOUNT")))), "x").values.isEmpty, "ambiguous: neither")
+    val twice = Project(orders, List(NamedExpr("Amount", bare("amount")), NamedExpr("Amount", bare("id"))))
+    assert(column(Project(twice, List(NamedExpr("x", bare("AMOUNT")))), "x").values == Set(src("amount")), "one name, declared twice: its first")
+  }
+
+  test("a read whose columns are not known names a source as the reference does") {
+    assert(column(Project(orders, List(NamedExpr("x", bare("AMOUNT")))), "x").values == Set(src("AMOUNT")))
+  }
+
+  // --- unions match columns by position --------------------------------------------------------------------------------
+
+  private val swapped = Union(List(
+    Project(orders, List(NamedExpr("id", bare("id")), NamedExpr("amount", bare("amount")))),
+    Project(customers, List(NamedExpr("name", col("name", "customers")), NamedExpr("customer_id", col("customer_id", "customers"))))
+  ))
+
+  test("a union's column is each input's column at its position, whatever that input names it") {
+    assert(column(Project(swapped, List(NamedExpr("x", bare("id")))), "x").values == Set(src("id"), src("name", "customers")))
+    assert(column(Project(swapped, List(NamedExpr("x", bare("AMOUNT")))), "x").values == Set(src("amount"), src("customer_id", "customers")))
+    assert(column(swapped, "amount").values == Set(src("amount"), src("customer_id", "customers")), "a union written as it is")
+    assert(column(Project(swapped, List(NamedExpr("x", bare("name")))), "x").values == Set(src("name", "customers")),
+      "a name the first input does not declare (it may declare only some of its columns) is asked of each by name")
+  }
+
+  test("an input that declares no columns is asked for the name; a union whose first input declares none is asked by name") {
+    val withRead = Union(List(Project(orders, List(NamedExpr("id", bare("id")))), customers))
+    assert(column(Project(withRead, List(NamedExpr("x", bare("id")))), "x").values == Set(src("id"), src("id", "customers")))
+    val readFirst = Union(List(customers, Project(orders, List(NamedExpr("id", bare("id"))))))
+    assert(column(Project(readFirst, List(NamedExpr("x", bare("id")))), "x").values == Set(src("id", "customers"), src("id")))
+    assert(column(Project(readFirst, List(NamedExpr("x", bare("zzz")))), "x", ordersColumns).values.isEmpty, "a name no input has")
+  }
+
+  test("a union of reads alone (one read of several paths) gives a name from every read, whatever its qualifier") {
+    val paths = Union(List(orders, customers))
+    assert(column(Project(paths, List(NamedExpr("x", col("customer_id")))), "x").values == Set(src("customer_id"), src("customer_id", "customers")))
+    assert(column(Project(paths, List(NamedExpr("x", col("email")))), "x", ordersColumns).values == Set(src("email")), "a read without the column gives none")
+    assert(column(Project(Union(Nil), List(NamedExpr("x", bare("id")))), "x").values.isEmpty)
+  }
+
+  // --- a field of a struct the plan builds ----------------------------------------------------------------------------
+
+  private val built = Project(orders, List(NamedExpr("_1", StructConstruct(List("id" -> bare("id"), "amount" -> Arithmetic("*", List(bare("amount"), Literal(2, "int"))))))))
+
+  test("a field of a struct the plan builds is that field's value, copied; not every column of the struct") {
+    val id = column(Project(built, List(NamedExpr("id", StructField(bare("_1"), "id")))), "id")
+    assert(id.values == Set(src("id")) && id.lineage.derivation == DerivationKind.Direct)
+    val doubled = column(Project(built, List(NamedExpr("a", StructField(bare("_1"), "AMOUNT")))), "a")
+    assert(doubled.values == Set(src("amount")) && doubled.lineage.derivation == DerivationKind.Computed, "a field computed in the struct, named in another case")
+    assert(one(StructField(StructConstruct(List("id" -> bare("id"))), "id")).values == Set(src("id")), "built in place")
+    assert(one(StructField(Alias("s", StructConstruct(List("id" -> bare("id")))), "id")).lineage.derivation == DerivationKind.Direct, "through an alias")
+  }
+
+  test("a built struct is found through the operators that pass columns through, and one side of a join") {
+    val through = Limit(Sort(Filter(built, Comparison(">", bare("id"), Literal(1, "int"))), List(SortOrder(bare("id")))), 5)
+    assert(column(Project(through, List(NamedExpr("id", StructField(bare("_1"), "id")))), "id").values == Set(src("id")))
+    val renamed = Project(built, List(NamedExpr("s", bare("_1"))))
+    assert(column(Project(renamed, List(NamedExpr("id", StructField(bare("s"), "id")))), "id").lineage.derivation == DerivationKind.Direct, "a reference to it")
+    val left = Join(built, customers, JoinType.Inner)
+    assert(column(Project(left, List(NamedExpr("id", StructField(bare("_1"), "id")))), "id").values == Set(src("id")), "the left side")
+    val right = Join(customers, built, JoinType.Inner)
+    assert(column(Project(right, List(NamedExpr("id", StructField(bare("_1"), "id")))), "id").values == Set(src("id")), "the right side")
+  }
+
+  test("a struct the plan does not build here, or a field it lacks, is the whole struct's, computed") {
+    val both = Join(built, built.copy(input = customers), JoinType.Inner)
+    assert(column(Project(both, List(NamedExpr("x", StructField(bare("_1"), "id")))), "x").lineage.derivation == DerivationKind.Computed, "declared by both sides")
+    val read = column(Project(orders, List(NamedExpr("x", StructField(bare("payload"), "a")))), "x")
+    assert(read.values == Set(src("payload")) && read.lineage.derivation == DerivationKind.Computed, "a struct read from an input")
+    val missing = column(Project(built, List(NamedExpr("x", StructField(bare("_1"), "zzz")))), "x")
+    assert(missing.values == Set(src("id"), src("amount")) && missing.lineage.derivation == DerivationKind.Computed, "a field it lacks")
+    assert(one(StructField(Function("named_struct_of", List(bare("id"))), "id")).lineage.derivation == DerivationKind.Computed, "a function's result")
+    val agg = Aggregate(built, Nil, List(NamedExpr("_1", bare("_1"))))
+    assert(column(Project(agg, List(NamedExpr("x", StructField(bare("_1"), "id")))), "x").lineage.derivation == DerivationKind.Computed, "an operator that makes its own columns")
   }
 
   test("a qualifier naming another read still rules a read out, whatever its columns") {

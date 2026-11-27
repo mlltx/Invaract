@@ -16,6 +16,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   CaseWhen,
   Cast,
   CreateNamedStruct,
+  EqualNullSafe,
   Expression,
   GetStructField,
   If,
@@ -44,20 +45,31 @@ import org.apache.spark.sql.catalyst.plans.{
 }
 import org.apache.spark.sql.catalyst.plans.logical.{
   Aggregate,
+  CollectMetrics,
   Deduplicate,
   Distinct,
+  Except,
   Expand,
   Filter,
   Generate,
   GlobalLimit,
+  Intersect,
   Join,
+  JoinHint,
+  LateralJoin,
   LocalLimit,
   LogicalPlan,
+  MergeRows,
+  Offset,
   Project,
+  RebalancePartitions,
   Repartition,
   RepartitionByExpression,
+  ResolvedHint,
+  Sample,
   Sort,
   SubqueryAlias,
+  TypedFilter,
   Union,
   View,
   Window,
@@ -368,15 +380,22 @@ private[sparkadapter] object SparkPlanAdapter {
     * any; `locationOf` for any other relation. Never empty.
     */
   def locationsOf(lr: LogicalRelation, declaredInputs: Seq[String]): List[String] = lr.relation match {
-    case h: HadoopFsRelation if h.location.rootPaths.nonEmpty => ReadLocations.of(h.location.rootPaths.map(_.toString), declaredInputs)
-    case _                                                    => List(locationOf(lr))
+    case h: HadoopFsRelation if rootsOf(lr, h).nonEmpty => ReadLocations.of(rootsOf(lr, h), declaredInputs)
+    case _                                              => List(locationOf(lr))
   }
 
   def locationOf(lr: LogicalRelation): String = lr.relation match {
-    case h: HadoopFsRelation => h.location.rootPaths.headOption.map(_.toString).getOrElse(lr.relation.toString)
+    case h: HadoopFsRelation => rootsOf(lr, h).headOption.getOrElse(lr.relation.toString)
     case other                =>
       jdbcLocationOf(other).getOrElse(lr.catalogTable.map(_.identifier.toString).getOrElse(lr.relation.toString))
   }
+
+  /** The paths a file read reads. A micro-batch of a file stream (`foreachBatch`'s DataFrame, or the batch a sink
+    * writes) reads the files that arrived since the last one, which Spark gives as the read's paths; the stream itself
+    * reads its directory, which Spark keeps as the read's `basePath`. That directory is the dataset: naming each batch
+    * by its files would make every batch read new datasets. */
+  private def rootsOf(lr: LogicalRelation, h: HadoopFsRelation): Seq[String] =
+    h.options.get("basePath").filter(_ => lr.isStreaming).map(Seq(_)).getOrElse(h.location.rootPaths.map(_.toString))
 
   /** The physical location a `HiveTableRelation` (a real Hive-format
     * catalog table read - a text/sequence-file/custom-SerDe table, or any
@@ -831,8 +850,10 @@ private[sparkadapter] object SparkPlanAdapter {
           a.aggregateExpressions.map(translateNamed).toList
         )
 
+      // Each input with its columns made explicit: a union matches its inputs' columns by position, so lineage needs
+      // every input's column list, a read's included (an `ir.Read` declares none).
       case u: Union =>
-        ir.Union(u.children.map(translatePlan).toList)
+        ir.Union(u.children.map(c => withOutputProjection(c, translatePlan(c))).toList)
 
       case s: Sort =>
         ir.Sort(translatePlan(s.child), s.order.map(translateSortOrder).toList)
@@ -1006,8 +1027,63 @@ private[sparkadapter] object SparkPlanAdapter {
         ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", SparkPlanAdapter.RddRelationSourceType,
           SparkPlanAdapter.scannedDirectories(lrdd.rdd).map(location => ir.Read(ir.DatasetRef(location))))
 
+      // Operators that decide which rows there are, or how they are partitioned or reported, but change no column:
+      // a join strategy hint, REBALANCE, observe(), a sample. Opaque before, so nothing was traced through them.
+      case h: ResolvedHint        => translatePlan(h.child)
+      case r: RebalancePartitions => translatePlan(r.child)
+      case m: CollectMetrics      => translatePlan(m.child)
+      case s: Sample              => translatePlan(s.child)
+      case o: Offset              => ir.Limit(translatePlan(o.child), Int.MaxValue, limitValueOf("Offset", o.offsetExpr))
+
+      // A typed filter keeps the rows a Scala function accepts, given each row as an object: an opaque function of every
+      // column it deserializes.
+      case t: TypedFilter =>
+        val columns = t.deserializer.references.toSeq.sortBy(_.exprId.id).map(translateExpr).toList
+        ir.Filter(translatePlan(t.child), ir.UDF(None, columns, Some("TypedFilter")))
+
+      // INTERSECT and EXCEPT keep the rows of the left input that the right does (or does not) have: a semi (anti) join
+      // on every column, null equal to null - what Spark's optimizer rewrites them to. Without ALL, each row once: the
+      // join's rows deduplicated.
+      case i: Intersect => translatePlan(once(Join(i.left, i.right, LeftSemi, Some(sameRows(i.left, i.right)), JoinHint.NONE), i.isAll))
+      case e: Except    => translatePlan(once(Join(e.left, e.right, LeftAnti, Some(sameRows(e.left, e.right)), JoinHint.NONE), e.isAll))
+
+      // A LATERAL subquery, joined with each row of its left input: a join of the two, on the join's condition and the
+      // columns of the left input the subquery correlates on.
+      case l: LateralJoin =>
+        val correlated = l.right.outerAttrs.map(translateExpr).toList
+        val conditions = l.condition.map(translateExpr).toList ++ (if (correlated.isEmpty) Nil else List(ir.Function("outer", correlated)))
+        val condition = conditions match {
+          case Nil         => None
+          case one :: Nil  => Some(one)
+          case many        => Some(ir.BooleanExpr("AND", many))
+        }
+        ir.Join(translatePlan(l.left), translatePlan(l.right.plan), translateJoinType(l.joinType), condition)
+
+      // The rows a MERGE into a table with row-level operations (Iceberg's, Spark's own rewrite) writes: each kept row
+      // takes its columns from one instruction's output - an UPDATE's assignments, an INSERT's values, a row kept as it
+      // is - the candidates for a column being every instruction's, as an expansion's are. The instructions' conditions
+      // decide which rows are written; a DISCARD (a DELETE) writes none.
+      case m: MergeRows =>
+        val instructions = m.matchedInstructions ++ m.notMatchedInstructions ++ m.notMatchedBySourceInstructions
+        val written = instructions.collect { case k: MergeRows.Keep => (k.condition, Seq(k.output)); case s: MergeRows.Split => (s.condition, Seq(s.output, s.otherOutput)) }
+        val kept = written.map(_._1).filterNot(_ == CatalystLiteral.TrueLiteral).map(translateExpr).toList
+        val input = translatePlan(m.child)
+        ir.Expand(
+          if (kept.isEmpty) input else ir.Filter(input, kept.reduce((a, b) => ir.BooleanExpr("OR", List(a, b)))),
+          written.flatMap(_._2).map(_.map(translateExpr).toList).toList,
+          m.output.map(_.name).toList
+        )
+
       case other => opaque(other)
     }
+
+    /** `plan`'s rows, each once unless `all`. */
+    private def once(plan: LogicalPlan, all: Boolean): LogicalPlan = if (all) plan else Distinct(plan)
+
+    /** `left`'s and `right`'s rows are the same: each column of one equal to the other's at its position, null equal to
+      * null. */
+    private def sameRows(left: LogicalPlan, right: LogicalPlan): Expression =
+      left.output.zip(right.output).map { case (l, r) => EqualNullSafe(l, r): Expression }.reduceOption(And).getOrElse(CatalystLiteral.TrueLiteral)
 
     /** The rows of `child` with duplicates of `keys` dropped: grouped by the keys, each other column its group's first
       * value. */
@@ -1102,6 +1178,10 @@ private[sparkadapter] object SparkPlanAdapter {
       case l: CatalystLiteral =>
         ir.Literal(convertLiteralValue(l.value), typeNameOf(l.dataType))
 
+      // A cast to the type its value already has (Spark puts one above a view's query, and before an insert into a table
+      // of that type) changes nothing: the value is the column's, copied.
+      case c: Cast if c.child.resolved && c.child.dataType == c.dataType =>
+        translateExpr(c.child)
       case c: Cast =>
         ir.Cast(translateExpr(c.child), typeNameOf(c.dataType))
 
@@ -1136,8 +1216,11 @@ private[sparkadapter] object SparkPlanAdapter {
       case we: WindowExpression =>
         translateExpr(we.windowFunction)
 
+      // An aggregate's FILTER clause decides which rows' values it aggregates, as a CASE WHEN would.
       case ae: AggregateExpression =>
-        ir.AggregateCall(ae.aggregateFunction.prettyName.toUpperCase, aggregateArg(ae.aggregateFunction), ae.isDistinct)
+        val arg = aggregateArg(ae.aggregateFunction)
+        ir.AggregateCall(ae.aggregateFunction.prettyName.toUpperCase,
+          ae.filter.fold(arg)(f => ir.Conditional(List((translateExpr(f), arg)), None)), ae.isDistinct)
 
       // Boolean combinators. Matched before BinaryComparison/BinaryArithmetic
       // below since Not/And/Or aren't either of those, but are still
@@ -1169,6 +1252,9 @@ private[sparkadapter] object SparkPlanAdapter {
       // doc: If is a single-branch Conditional with an elseValue).
       case cw: CaseWhen =>
         ir.Conditional(cw.branches.map { case (c, v) => (translateExpr(c), translateExpr(v)) }.toList, cw.elseValue.map(translateExpr))
+      // IF(cond, x, x) is x whatever cond is: Spark writes the columns an UPDATE leaves as such.
+      case iff: If if iff.trueValue.semanticEquals(iff.falseValue) =>
+        translateExpr(iff.trueValue)
       case iff: If =>
         ir.Conditional(List((translateExpr(iff.predicate), translateExpr(iff.trueValue))), Some(translateExpr(iff.falseValue)))
 
@@ -1181,10 +1267,14 @@ private[sparkadapter] object SparkPlanAdapter {
       // A scalar subquery's value is its one output column, which `translateSubquery` renamed into the subquery's scope;
       // the subquery itself is joined below the node using it, so lineage follows the value into it. Outside a plan
       // being translated (no number assigned) it stays the generic function it was.
+      // A correlated subquery's value depends on the outer row's columns it correlates on: they decide which value it
+      // takes, as a condition does.
       case s: ScalarSubquery if subqueryNumbers.contains(s.exprId.id) && s.plan.output.nonEmpty =>
         val n = subqueryNumbers(s.exprId.id)
         val out = s.plan.output.head
-        ir.ColumnReference(ir.ColumnRef(subqueryColumn(n, out.name), Some(subqueryScope(n)), Some(out.exprId.id)))
+        val value = ir.ColumnReference(ir.ColumnRef(subqueryColumn(n, out.name), Some(subqueryScope(n)), Some(out.exprId.id)))
+        if (s.outerAttrs.isEmpty) value
+        else ir.Conditional(List((ir.Function("outer", s.outerAttrs.map(translateExpr).toList), value)), None)
 
       // The subquery of an `IN (subquery)`: its value is the subquery's columns (renamed into its scope, as a scalar
       // subquery's is), so the condition depends on them - which values of `customers.customer_id` an

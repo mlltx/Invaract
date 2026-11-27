@@ -45,7 +45,10 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       // changes nothing for the scenarios that write parquet/csv/json by path.
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-      .withExtensions(_.injectCheckRule(_ => (plan: LogicalPlan) => active.foreach(_(plan))))
+      .withExtensions { e =>
+        e.injectCheckRule(_ => (plan: LogicalPlan) => active.foreach(_(plan)))
+        e.injectPlannerStrategy(_ => OpaqueStepStrategy)
+      }
       .getOrCreate()
     session.sparkContext.setLogLevel("ERROR")
     // For the scenarios that run a job through a checkpoint (Spark's lineage-erasing point).
@@ -150,10 +153,11 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       val checkpointed = filtered.checkpoint()
       checkpointed.select(selectColumns(job, List(checkpointed)): _*)
     } else {
-      // Spark's representative of a step the adapter has no translation for: a row sample, a Catalyst node
-      // `SparkPlanAdapter` has no case for (it becomes an `ir.UnknownPlan` over the translated plan beneath it) that
-      // keeps every column, so the projection still refers to the inputs' own attributes.
-      val opaque = if (job.opaqueStep) filtered.sample(0.5) else filtered
+      // A step the adapter has no translation for (it becomes an `ir.UnknownPlan` over the translated plan beneath it):
+      // `OpaqueStep`, which keeps every column, so the projection still refers to the inputs' own attributes.
+      val opaque =
+        if (job.opaqueStep) new org.apache.spark.sql.Dataset[Row](spark, OpaqueStep(filtered.queryExecution.logical), filtered.encoder)
+        else filtered
       // branches that rejoin: the same data down both sides of a union, merged again each time
       val stepped = (1 to job.rejoins).foldLeft(opaque)((below, _) => below.union(below))
       job.groupBy.fold(stepped.select(selectColumns(job, frames): _*)) { keys =>
@@ -309,5 +313,20 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
 
   override def close(): Unit = {
     if (spark != null) spark.stop()
+  }
+}
+
+/** A step `SparkPlanAdapter` has no translation for, by construction: a plan node of this test's own, passing its
+  * input's rows and columns through. Spark's own operators keep gaining translations (a row sample was this step
+  * until it got one); this one never will. `OpaqueStepStrategy` runs it as its input. */
+private[sparkadapter] final case class OpaqueStep(child: LogicalPlan) extends org.apache.spark.sql.catalyst.plans.logical.UnaryNode {
+  override def output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute] = child.output
+  override protected def withNewChildInternal(newChild: LogicalPlan): OpaqueStep = copy(child = newChild)
+}
+
+private[sparkadapter] object OpaqueStepStrategy extends org.apache.spark.sql.execution.SparkStrategy {
+  override def apply(plan: LogicalPlan): Seq[org.apache.spark.sql.execution.SparkPlan] = plan match {
+    case OpaqueStep(child) => planLater(child) :: Nil
+    case _                 => Nil
   }
 }

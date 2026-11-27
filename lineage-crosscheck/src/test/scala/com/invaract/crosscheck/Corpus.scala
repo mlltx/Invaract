@@ -261,8 +261,7 @@ object Corpus {
         s.sql("CREATE TABLE totals (customer BIGINT, total BIGINT) USING parquet")
         f.orders(s).groupBy("customer_id").agg(sum("amount")).write.insertInto("totals")
       },
-      contractLocation = tableLocation("totals"),
-      notes = Map(OLS -> gap("Spark's analyzer casts each column to the table's column type, here to the type it already has. Invaract counts that cast as a TRANSFORMATION, so a column copied unchanged is not IDENTITY."))),
+      contractLocation = tableLocation("totals")),
     Job("sql-insert-select", "Catalog tables", "SQL INSERT INTO ... SELECT with a join",
       (s, f, out) => {
         f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
@@ -354,7 +353,7 @@ object Corpus {
       f.orders(s).select(col("amount").as("id"), col("id").as("amount"))),
     job("rename-chain", "Names", "withColumnRenamed three times, through a temporary name, to swap two columns")((s, f) =>
       f.orders(s).withColumnRenamed("amount", "x").withColumnRenamed("id", "amount").withColumnRenamed("x", "id").select("id", "amount")),
-    job("case-insensitive", "Names", "columns referred to in another case than the input's", OLS -> gap("With spark.sql.caseSensitive off (Spark's default), a column can be referred to in any case. Invaract names each source column as the job wrote it (AMOUNT, Id), not as the input's schema has it (amount, id), so the edge names a column the dataset does not have."), Spline -> gap("With spark.sql.caseSensitive off (Spark's default), a column can be referred to in any case. Invaract names each source column as the job wrote it (AMOUNT, Id), not as the input's schema has it (amount, id), so the edge names a column the dataset does not have."))((s, f) =>
+    job("case-insensitive", "Names", "columns referred to in another case than the input's", Spline -> theirs("Spline names the written column as the input names it (amount); the job writes it as AMOUNT."))((s, f) =>
       f.orders(s).select(col("AMOUNT"), (col("Id") + 1).as("next_id"))),
     Job("case-sensitive", "Names", "two output columns differing only in case (spark.sql.caseSensitive=true)",
       (s, f, out) => f.orders(s).select(col("amount"), (col("id") * 2).as("Amount")).write.mode("overwrite").parquet(out.at("out")),
@@ -371,9 +370,9 @@ object Corpus {
       f.events(s).select(col("id"), col("tags")(0).as("first_tag"), element_at(col("tags"), -1).as("last_tag"))),
 
     // --- joins, harder cases -------------------------------------------------------------------------------------------
-    job("broadcast-hint", "Join", "a join with a broadcast hint (broadcast())", OLS -> gap("Invaract does not translate the plan node a broadcast hint adds (ResolvedHint): nothing on the hinted side is traced, so name has no source and the hinted side's join key is missing. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)"), Spline -> gap("Invaract does not translate the plan node a broadcast hint adds (ResolvedHint): nothing on the hinted side is traced, so name has no source and the hinted side's join key is missing. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)"))((s, f) =>
+    job("broadcast-hint", "Join", "a join with a broadcast hint (broadcast())", OLS -> optimizerJoinFilter)((s, f) =>
       f.orders(s).join(broadcast(f.customers(s)), "customer_id").select("id", "name")),
-    job("sql-hints", "Join", "SQL hints: BROADCAST on a join, REBALANCE on the result", OLS -> gap("Invaract translates neither node the hints add (ResolvedHint for BROADCAST, RebalancePartitions for REBALANCE): no written column is traced. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)"), Spline -> gap("Invaract translates neither node the hints add (ResolvedHint for BROADCAST, RebalancePartitions for REBALANCE): no written column is traced. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)"))((s, f) => {
+    job("sql-hints", "Join", "SQL hints: BROADCAST on a join, REBALANCE on the result", OLS -> optimizerJoinFilter)((s, f) => {
       f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
       s.sql("SELECT /*+ BROADCAST(c), REBALANCE */ o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.customer_id")
     }),
@@ -392,11 +391,11 @@ object Corpus {
       val o = f.orders(s); val paid = o.filter(col("status") === "paid")
       o.as("x").join(paid.as("y"), col("x.customer_id") === col("y.customer_id")).select(col("x.id"), col("y.amount").as("paid_amount"))
     }),
-    job("lateral-join", "Join", "a LATERAL subquery correlated with the outer row", OLS -> gap("Invaract does not translate a LATERAL join (LateralJoin): id and name have no source, and the outer column the subquery correlates on (orders.customer_id) is missing."), Spline -> gap("Invaract does not translate a LATERAL join (LateralJoin): id and name have no source. Spline traces the outer side (id) but not the subquery: its input and the columns it filters on."))((s, f) => {
+    job("lateral-join", "Join", "a LATERAL subquery correlated with the outer row", OLS -> theirs("openlineage-spark reads Spark's rewrite of the correlated subquery as a join and an aggregate grouped by the correlated column, so it also reports orders.customer_id as GROUP_BY and as a copied value, and customers.customer_id as JOIN and GROUP_BY."), Spline -> theirs("Spline does not follow a LATERAL subquery: it misses its input, the column its value comes from and the columns it filters and correlates on."))((s, f) => {
       f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
       s.sql("SELECT o.id, t.name FROM orders o, LATERAL (SELECT max(c.name) AS name FROM customers c WHERE c.customer_id = o.customer_id) t")
     }),
-    job("join-with", "Join", "a typed joinWith, then fields of the two structs it makes", OLS -> gap("joinWith wraps each side's row in a struct (_1, _2). Invaract traces a field taken from such a struct to every column of the struct, as TRANSFORMATION, not to the field's own column. (openlineage-spark also reports the join keys as FILTER: the optimizer's isnotnull filter.)"))((s, f) => {
+    job("join-with", "Join", "a typed joinWith, then fields of the two structs it makes", OLS -> optimizerJoinFilter, Spline -> theirs("Spline traces a field taken from joinWith's struct (_1.id) to every column of the struct. Invaract traces it to the field's own column, as openlineage-spark does."))((s, f) => {
       val o = f.orders(s); val c = f.customers(s)
       o.joinWith(c, o("customer_id") === c("customer_id")).select(col("_1.id").as("id"), col("_2.name").as("name"))
     }),
@@ -406,7 +405,7 @@ object Corpus {
       f.orders(s).createOrReplaceTempView("orders")
       s.sql("SELECT customer_id, sum(amount) AS total FROM orders GROUP BY customer_id HAVING count(*) > 1 AND max(status) = 'paid'")
     }),
-    job("aggregate-filter", "Aggregation", "an aggregate with a FILTER clause", Spline -> gap("An aggregate's FILTER clause decides which rows it sums, so paid depends on status. Invaract does not report that, nor does openlineage-spark; Spline does."))((s, f) => {
+    job("aggregate-filter", "Aggregation", "an aggregate with a FILTER clause", OLS -> theirs("An aggregate's FILTER clause decides which rows it sums, so status decides paid's value: Invaract reports it as CONDITIONAL lineage of paid, as Spline reports it. openlineage-spark does not report it."))((s, f) => {
       f.orders(s).createOrReplaceTempView("orders")
       s.sql("SELECT customer_id, sum(amount) FILTER (WHERE status = 'paid') AS paid FROM orders GROUP BY customer_id")
     }),
@@ -434,7 +433,7 @@ object Corpus {
     }),
 
     // --- typed Dataset operations -----------------------------------------------------------------------------------------
-    job("typed-filter", "Dataset API", "a typed filter (a Scala function), then a column", OLS -> gap("Invaract does not translate a typed filter (TypedFilter, a Scala function over each row): no column is traced through it."), Spline -> gap("Invaract does not translate a typed filter (TypedFilter, a Scala function over each row): no column is traced through it."))((s, f) => {
+    job("typed-filter", "Dataset API", "a typed filter (a Scala function), then a column", OLS -> theirs("A typed filter's Scala function is given every column of the row, so each may decide which rows are kept: Invaract reports them as FILTER. openlineage-spark reports none."), Spline -> theirs("Spline does not report the columns a typed filter's function is given either."))((s, f) => {
       import s.implicits._
       f.orders(s).as[OrderRow].filter(o => o.amount > 60).select("id")
     }),
@@ -448,19 +447,19 @@ object Corpus {
     }),
 
     // --- set operations, harder cases ---------------------------------------------------------------------------------------
-    job("union-positional", "Set operation", "a union matching columns by position, not name", OLS -> gap("A union matches columns by position. Invaract matches them by name, so where the second side's columns are in another order it traces each output column to the wrong one: id should come from both id and customer_id, and customer_id from both customer_id and id."), Spline -> gap("A union matches columns by position. Invaract matches them by name, so where the second side's columns are in another order it traces each output column to the wrong one: id should come from both id and customer_id, and customer_id from both customer_id and id."))((s, f) =>
+    job("union-positional", "Set operation", "a union matching columns by position, not name")((s, f) =>
       f.orders(s).select("id", "customer_id").union(f.orders(s).select("customer_id", "id"))),
     job("union-by-name", "Set operation", "unionByName with the columns in another order")((s, f) =>
       f.orders(s).select("id", "amount").unionByName(f.orders(s).select(col("amount"), col("customer_id").as("id")))),
     job("union-missing", "Set operation", "unionByName allowing missing columns")((s, f) =>
       f.orders(s).select("id", "amount").unionByName(f.customers(s).select(col("customer_id").as("id")), allowMissingColumns = true)),
-    job("intersect", "Set operation", "intersect of two inputs' keys", OLS -> gap("Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept."), Spline -> gap("Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept."))((s, f) =>
+    job("intersect", "Set operation", "intersect of two inputs' keys", Spline -> theirs("Spline does not report which columns decide the rows an INTERSECT keeps."))((s, f) =>
       f.orders(s).select("customer_id").intersect(f.customers(s).select("customer_id"))),
-    job("except-all", "Set operation", "exceptAll of two inputs' keys", OLS -> gap("Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept. (openlineage-spark, reading Spark's rewrite of EXCEPT ALL as a union, also reports the subtracted side's column as a source of the value.)"), Spline -> gap("Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept."))((s, f) =>
+    job("except-all", "Set operation", "exceptAll of two inputs' keys", OLS -> theirs("openlineage-spark reads Spark's rewrite of EXCEPT ALL (a union with the subtracted rows, counted by an aggregate), so it reports the subtracted side's column as a source of the value and the key as GROUP_BY. Invaract reports the left side's column as the value and both keys as deciding the rows."), Spline -> theirs("Spline does not report which columns decide the rows an EXCEPT keeps."))((s, f) =>
       f.orders(s).select("customer_id").exceptAll(f.customers(s).select("customer_id"))),
 
     // --- views and subqueries -----------------------------------------------------------------------------------------------
-    job("nested-views", "SQL", "a temporary view over a temporary view", OLS -> gap("Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY."))((s, f) => {
+    job("nested-views", "SQL", "a temporary view over a temporary view")((s, f) => {
       f.orders(s).createOrReplaceTempView("orders")
       s.sql("CREATE OR REPLACE TEMP VIEW paid AS SELECT id, amount FROM orders WHERE status = 'paid'")
       s.sql("SELECT id, amount * 2 AS doubled FROM paid")
@@ -469,16 +468,16 @@ object Corpus {
       s.sql(s"CREATE TABLE orders_t USING parquet LOCATION '${f.orders}'")
       s.table("orders_t").select("id", "amount")
     }),
-    job("permanent-view", "SQL", "a permanent SQL view over a catalog table", OLS -> gap("Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY."))((s, f) => {
+    job("permanent-view", "SQL", "a permanent SQL view over a catalog table")((s, f) => {
       s.sql(s"CREATE TABLE orders_t USING parquet LOCATION '${f.orders}'")
       s.sql("CREATE VIEW big AS SELECT id, amount FROM orders_t WHERE amount > 60")
       s.table("big").select(col("id"), (col("amount") + 1).as("next"))
     }),
-    job("correlated-scalar", "SQL", "a correlated scalar subquery in the select list", OLS -> gap("The subquery's value depends on the outer row's customer_id, which it correlates on; Invaract does not report that column. (openlineage-spark, reading the subquery rewritten as a join and an aggregate, also types customers.customer_id JOIN and GROUP_BY.)"), Spline -> gap("Spline reports the outer column the subquery correlates on (orders.customer_id), which Invaract misses; Spline misses the subquery's own input, customers, and the column its value comes from."))((s, f) => {
+    job("correlated-scalar", "SQL", "a correlated scalar subquery in the select list", OLS -> choice("The correlated column decides which value the subquery gives each row: Invaract reports it as CONDITIONAL lineage of name. openlineage-spark, reading the subquery rewritten as a join and an aggregate, reports it for the whole output, and types customers.customer_id JOIN and GROUP_BY."), Spline -> theirs("Spline does not follow the subquery into its input: it misses customers, the column name's value comes from and the column it filters on."))((s, f) => {
       f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
       s.sql("SELECT id, (SELECT max(c.name) FROM customers c WHERE c.customer_id = o.customer_id) AS name FROM orders o")
     }),
-    job("cache-table", "Caching", "CACHE TABLE ... AS SELECT, then a query of it")((s, f) => {
+    job("cache-table", "Caching", "CACHE TABLE ... AS SELECT, then a query of it", OLS -> theirs("Spark puts a cast to each column's own type above a cached query. openlineage-spark reports it as a TRANSFORMATION; it changes nothing, and Invaract reports the columns as IDENTITY."))((s, f) => {
       f.orders(s).createOrReplaceTempView("orders")
       s.sql("CACHE TABLE paid AS SELECT id, amount FROM orders WHERE status = 'paid'")
       s.sql("SELECT id, amount FROM paid")
@@ -489,7 +488,7 @@ object Corpus {
       s.read.parquet(f.ordersByStatus).select(col("id"), col("status"))),
     job("file-metadata", "Inputs", "the file each row came from (input_file_name, _metadata)")((s, f) =>
       f.orders(s).select(col("id"), input_file_name().as("file"), col("_metadata.file_name").as("name"))),
-    job("multiple-paths", "Inputs", "one read of two directories", OLS -> gap("One read of two directories: Invaract traces the columns to the first directory only; the second is an input with no column lineage."), Spline -> theirs("Spline reports only the first directory of a read of several."))((s, f) => s.read.parquet(f.orders, f.ordersArchive).select("id", "amount")),
+    job("multiple-paths", "Inputs", "one read of two directories", Spline -> theirs("Spline reports only the first directory of a read of several."))((s, f) => s.read.parquet(f.orders, f.ordersArchive).select("id", "amount")),
     job("glob-path", "Inputs", "a read through a glob pattern")((s, f) => s.read.parquet(f.orders + "/*.parquet").select("id", "amount")),
     job("local-data", "Inputs", "a join with data defined in the job (a local relation)", OLS -> optimizerJoinFilter)((s, f) => {
       import s.implicits._
@@ -511,10 +510,10 @@ object Corpus {
         f.orders(s).checkpoint().select(col("id"), col("amount")).write.mode("overwrite").parquet(out.at("out"))
       },
       notes = Map(OLS -> theirs("openlineage-spark does not see past a checkpoint(). Invaract resolves the checkpoint to the plan it was made from and traces through it."), Spline -> theirs("Spline does not see past a checkpoint() either."))),
-    job("observe", "Physical", "observe(): metrics collected as the rows pass", OLS -> gap("Invaract does not translate observe() (CollectMetrics), so no column is traced through it."), Spline -> gap("Invaract does not translate observe() (CollectMetrics), so no column is traced through it."))((s, f) =>
+    job("observe", "Physical", "observe(): metrics collected as the rows pass")((s, f) =>
       f.orders(s).observe("metrics", count(lit(1)).as("rows")).select("id", "amount")),
-    job("sample", "Physical", "a random sample", OLS -> gap("Invaract does not translate sample() (Sample), so no column is traced through it."), Spline -> gap("Invaract does not translate sample() (Sample), so no column is traced through it."))((s, f) => f.orders(s).sample(0.5, 42L).select("id")),
-    job("offset", "Sort", "rows after the first, by order (offset)", OLS -> gap("Invaract does not translate offset() (Offset), so no column is traced through it; it reports only the sort below it."), Spline -> gap("Invaract does not translate offset() (Offset), so no column is traced through it; it reports only the sort below it."))((s, f) => f.orders(s).orderBy("id").offset(1).select("id")),
+    job("sample", "Physical", "a random sample")((s, f) => f.orders(s).sample(0.5, 42L).select("id")),
+    job("offset", "Sort", "rows after the first, by order (offset)")((s, f) => f.orders(s).orderBy("id").offset(1).select("id")),
 
     // --- writes, harder cases -----------------------------------------------------------------------------------------------------
     Job("insert-column-list", "Catalog tables", "INSERT INTO a table with a column list in another order",
@@ -552,14 +551,14 @@ object Corpus {
         s.sql(s"UPDATE delta.`${out.at("out")}` SET amount = amount * 2 WHERE status = 'paid'")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(OLS -> gap("An UPDATE writes the table's rows back to it. Invaract reports the table as the write's input, which openlineage-spark does not, but it traces each column as a copy: it misses the SET expression (amount * 2, a TRANSFORMATION) and the WHERE condition (status, which decides the value of amount)."))),
+      notes = Map(OLS -> theirs("openlineage-spark reports no input and no column lineage for a Delta UPDATE. Invaract reports the table's rows as its input, the SET expression (amount * 2) and the WHERE condition that decides amount's value."), Spline -> theirs("Spline does not report the WHERE condition (status) that decides which rows' amount the UPDATE changes."))),
     Job("delta-delete", "Delta Lake", "DELETE from a Delta table",
       (s, f, out) => {
         s.sql(s"CREATE TABLE delta.`${out.at("out")}` (id BIGINT, amount BIGINT, status STRING) USING delta")
         s.sql(s"DELETE FROM delta.`${out.at("out")}` WHERE status = 'open'")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(OLS -> gap("Invaract reports the table as the input of the rows a DELETE keeps, which openlineage-spark does not, but it misses the WHERE condition (status, FILTER) that decides which rows are kept. For an Iceberg DELETE it reports it."))),
+      notes = Map(OLS -> theirs("openlineage-spark reports no input and no column lineage for a Delta DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them."), Spline -> theirs("Spline does not report the WHERE condition (status) that decides which rows a DELETE keeps."))),
     Job("delta-replace-where", "Delta Lake", "a Delta overwrite of the rows a predicate selects (replaceWhere)",
       (s, f, out) => {
         s.sql(s"CREATE TABLE delta.`${out.at("out")}` (id BIGINT, amount BIGINT, status STRING) USING delta")
@@ -577,7 +576,7 @@ object Corpus {
       },
       contractLocation = _ => "db/acct",
       extensions = iceberg, conf = icebergConf,
-      notes = Map(OLS -> gap("Invaract does not translate the MergeRows node Spark plans an Iceberg MERGE with, so no column of the table is traced: only the ON condition's columns are reported. It also names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location)."), Spline -> theirs("Spline's agent records nothing for an Iceberg MERGE."))),
+      notes = Map(OLS -> theirs("openlineage-spark also counts the ON condition's columns as copied values (DIRECT/IDENTITY), and Iceberg's _file metadata column as shaping the rows. Invaract counts the ON condition's columns as JOIN."), Spline -> theirs("Spline's agent records nothing for an Iceberg MERGE."))),
     Job("iceberg-update", "Apache Iceberg", "UPDATE of an Iceberg table",
       (s, f, out) => {
         s.sql("CREATE TABLE ice.db.upd (id BIGINT, amount BIGINT, status STRING) USING iceberg")
@@ -585,7 +584,7 @@ object Corpus {
       },
       contractLocation = _ => "db/upd",
       extensions = iceberg, conf = icebergConf,
-      notes = Map(OLS -> gap("Invaract names a table an UPDATE changes by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location). It also reports the columns the UPDATE leaves unchanged as computed and conditional on status: Spark's plan writes them as if(status = 'paid', id, id). openlineage-spark reports Iceberg's _file metadata column as shaping the rows."), Spline -> theirs("Spline's agent records nothing for an Iceberg UPDATE."))),
+      notes = Map(OLS -> choice("Where its condition does not hold, an UPDATE copies amount: openlineage-spark reports it as both IDENTITY and TRANSFORMATION, Invaract as TRANSFORMATION, as it types a CASE WHEN's value. openlineage-spark also reports Iceberg's _file metadata column as shaping the rows."), Spline -> theirs("Spline's agent records nothing for an Iceberg UPDATE."))),
     Job("iceberg-delete", "Apache Iceberg", "DELETE from an Iceberg table",
       (s, f, out) => {
         s.sql("CREATE TABLE ice.db.del (id BIGINT, amount BIGINT, status STRING) USING iceberg")
@@ -593,7 +592,7 @@ object Corpus {
       },
       contractLocation = _ => "db/del",
       extensions = iceberg, conf = icebergConf,
-      notes = Map(OLS -> gap("openlineage-spark reports no input and no column lineage for an Iceberg DELETE; Invaract reports the rows it keeps and the condition that decides them, but names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location)."), Spline -> theirs("Spline's agent records nothing for an Iceberg DELETE."))),
+      notes = Map(OLS -> theirs("openlineage-spark reports no input and no column lineage for an Iceberg DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them."), Spline -> theirs("Spline's agent records nothing for an Iceberg DELETE."))),
     Job("iceberg-overwrite-partitions", "Apache Iceberg", "overwritePartitions of an Iceberg table",
       (s, f, out) => {
         s.sql("CREATE TABLE ice.db.by_status (id BIGINT, amount BIGINT, status STRING) USING iceberg PARTITIONED BY (status)")
@@ -616,7 +615,7 @@ object Corpus {
           .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start()
         q.awaitTermination()
       },
-      notes = Map(OLS -> gap("Invaract checks each micro-batch a foreachBatch function writes and publishes its lineage, but names the batch's input by the files that batch read, so each batch reads new datasets; openlineage-spark names the stream's source directory."), Spline -> theirs("Spline records each micro-batch's write with no input and no column lineage.")))
+      notes = Map(OLS -> theirs("openlineage-spark reports a foreachBatch micro-batch's input but no column lineage for it. Invaract checks each micro-batch and publishes its lineage."), Spline -> theirs("Spline records each micro-batch's write with no input and no column lineage.")))
 
   )
 }

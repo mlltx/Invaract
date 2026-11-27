@@ -144,7 +144,7 @@ is not flagged. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 5.
 | `Filter(input, condition)` | Restricts rows; column set unchanged. |
 | `Join(left, right, joinType, condition)` | Combines two datasets row-wise. Both sides' columns appear in the output. |
 | `Aggregate(input, groupBy, aggregates)` | Groups by `groupBy`, collapses each group via `aggregates`. `aggregates` is the complete output schema — `groupBy` contributes no output columns of its own (see below). |
-| `Union(inputs)` | Concatenates rows from multiple same-shaped plans. Output names follow the first branch. |
+| `Union(inputs)` | Concatenates rows from multiple same-shaped plans, matching columns by position. Output names follow the first branch. |
 | `Sort(input, order)` | Orders rows; column set unchanged. |
 | `Limit(input, limit, offset)` | Restricts the number of rows; column set unchanged. `offset` is `0` when the source plan has none. |
 | `Window(input, windowExprs, partitionBy, orderBy)` | Adds columns computed over a window of related rows, without collapsing row count. Input columns pass through unchanged. |
@@ -345,19 +345,35 @@ with no symbol table:
 1. If the immediate input plan is a `Project`/`Aggregate`/`Window` that
    *declares* a matching output name, resolve against that declaration
    (recursing into the expression, which may itself reference further
-   columns).
+   columns). A name matches exactly, or else the one declared name equal to
+   it ignoring case, as an engine resolves names by default (`AMOUNT` is a
+   column named `amount`); two names equal ignoring case and neither exact
+   match neither.
 2. If the immediate input is a pass-through node (`Filter`, `Sort`),
    resolve against its input instead.
 3. If the immediate input is a `Read`, the reference is a base case: it
-   resolves to itself, qualified by that Read's dataset (or alias).
-4. If the immediate input is a `Union`, try every branch and union the
-   results — any branch could be the one producing a given row.
+   resolves to itself, qualified by that Read's dataset (or alias). When the
+   read's columns are known (`traceDetailed(plan, readColumns)`), it is named
+   as the read has it, whatever case the reference spells it in.
+4. If the immediate input is a `Union`, the column at the reference's
+   position in the first branch is each branch's column at that position (a
+   union matches columns by position, not name), and the results are
+   unioned — any branch could be the one producing a given row. A branch that
+   declares no columns (a `Read`) is asked for the name; a union of reads
+   alone (one read of several paths) gives the name from every read.
 5. If the immediate input is a `Join`, try both branches. A qualified
    reference is ruled out on the side whose scope doesn't match. An
    unqualified reference that matches on only one side resolves normally;
    one that matches on **both** sides is genuinely ambiguous, and is
    resolved conservatively by unioning both sides' sources rather than
    guessing or throwing.
+
+**A field of a struct the plan builds.** A `StructField` over a
+`StructConstruct` - directly, through an `Alias`, or through a reference to a
+column a projection below builds (`joinWith`'s `_1.id`) - resolves to that
+field's own expression, so it is the field's column, copied, not every column
+the struct was built from. A struct read from an input, a function's result or
+a name both sides of a join declare stays the whole struct's, computed.
 
 **Aggregation detail.** Every `AggregateCall` an output column's expression
 traces through contributes an `AggregationDetail(function, distinct)` to

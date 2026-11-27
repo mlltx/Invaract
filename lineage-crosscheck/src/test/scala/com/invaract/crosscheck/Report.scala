@@ -31,7 +31,8 @@ object Report {
       |- **Operators Invaract does not translate.** An operator Invaract does not translate is a boundary: a column
       |  computed through it has no sources.
       |- **A MERGE's DELETE clauses, and the rows it leaves.** The rows a DELETE clause removes are not written, so its
-      |  condition is not reported. Rows no clause touches are not counted, as openlineage-spark counts them.
+      |  condition is not reported. In a Delta MERGE, rows no clause touches are not counted, as openlineage-spark counts
+      |  them; an Iceberg MERGE writes them back, and they are.
       |""".stripMargin
 
   def baseline(results: List[Outcome]): String = {

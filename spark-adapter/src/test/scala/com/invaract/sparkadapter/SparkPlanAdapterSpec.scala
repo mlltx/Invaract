@@ -263,9 +263,8 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("falls back to UnknownPlan with a diagnostic for a plan node with no translation, instead of throwing") {
     val df = readSample()
-    val sampled = df.sample(0.5, 1L)
-
-    val result = SparkPlanAdapter.translate(sampled.queryExecution.analyzed)
+    // a plan node of the conformance adapter's own, which no translation case knows
+    val result = SparkPlanAdapter.translate(OpaqueStep(df.queryExecution.analyzed))
 
     assert(result.diagnostics.nonEmpty)
     val unknownNode = {

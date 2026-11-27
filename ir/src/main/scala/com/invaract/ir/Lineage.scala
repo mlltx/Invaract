@@ -272,10 +272,23 @@ object Lineage {
     * (see `Plan`'s doc), or a column several expressions refer to (`v = v + v`, repeated), is resolved once - walked
     * afresh each time, `k` such steps in a row would cost `2^k`.
     */
+  /** Which of `names` a reference to `name` means: the same name, else the one name equal to it ignoring case. An engine
+    * resolves names ignoring case by default, so a job that refers to `AMOUNT` means a column named `amount`; with
+    * names that differ only in case (a case-sensitive engine), the exact name is the only match. */
+  private def matching(name: String, names: List[String]): Option[String] =
+    if (names.contains(name)) Some(name)
+    else names.filter(_.equalsIgnoreCase(name)).distinct match {
+      case only :: Nil => Some(only)
+      case _           => None
+    }
+
+  private def named(name: String, columns: List[NamedExpr]): Option[NamedExpr] =
+    matching(name, columns.map(_.name)).flatMap(n => columns.find(_.name == n))
+
   private final class Run(readColumns: Read => Option[Set[String]]) {
     private val outputs = new IdentityMemo[Plan, List[(String, Provenance)]]
     private val scopes = new IdentityMemo[Plan, scala.collection.mutable.HashMap[ColumnRef, Option[Provenance]]]
-    private val knownColumns = new IdentityMemo[Plan, Option[Set[String]]]
+    private val knownColumns = new IdentityMemo[Plan, Option[List[String]]]
 
     def dependenciesOfT(plan: Plan): TailRec[List[ColumnDependencies]] =
       outputsOfT(plan).map(_.map { case (name, p) =>
@@ -341,10 +354,13 @@ object Lineage {
       case Filter(input, _)   => tailcall(outputsOfT(input))
       case Sort(input, _)     => tailcall(outputsOfT(input))
       case Limit(input, _, _) => tailcall(outputsOfT(input))
-      case Union(inputs) =>
+      case u @ Union(inputs) =>
         inputs.headOption match {
-          case Some(p) => tailcall(outputsOfT(p))
-          case None    => done(Nil)
+          case Some(p) =>
+            tailcall(outputsOfT(p)).flatMap { first =>
+              traverseT(first.zipWithIndex) { case ((name, _), i) => tailcall(unionColumnT(u, i, ColumnRef(name))).map(name -> _) }
+            }
+          case None => done(Nil)
         }
       case Join(left, right, _, _) =>
         for {
@@ -361,6 +377,26 @@ object Lineage {
       // there is nothing to trace past it.
       case UnknownPlan(_, _, _) => done(Nil)
     }
+
+    /** Column `i` of a union: each input's column `i`, or, from an input that declares no columns, its column named as
+      * `ref` names it. */
+    private def unionColumnT(u: Union, i: Int, ref: ColumnRef): TailRec[Provenance] =
+      traverseT(u.inputs) { input =>
+        tailcall(outputsOfT(input)).flatMap { columns =>
+          columns.lift(i) match {
+            case Some((_, provenance)) => done(Some(provenance))
+            case None                  => tailcall(resolveInScopeT(ref.copy(qualifier = None), input))
+          }
+        }
+      }.map(found => combineUnion(found.flatten))
+
+    /** A union whose columns cannot be told by position: each input asked for the name. `combineUnion` of nothing is
+      * `NoSource`, so an empty `found` could give that as well as `None`: every caller treats the two alike. */
+    private def unionByNameT(ref: ColumnRef, inputs: List[Plan]): TailRec[Option[Provenance]] =
+      traverseT(inputs)(resolveInScopeT(ref, _)).map { results =>
+        val found = results.flatten
+        if (found.isEmpty) None else Some(combineUnion(found))
+      }
 
     /** A window column: its expression's provenance, with the window's partitioning and ordering columns as the
       * `Window` indirect lineage of it. */
@@ -444,6 +480,11 @@ object Lineage {
         // is opaque by definition, the same "opaque anywhere wins" rule a
         // nested UDF gets.
         traverseT(children)(resolveExprT(_, input)).map(ps => combineOperation(ps).copy(derivation = DerivationKind.Opaque))
+      // A field of a struct the plan itself builds (`joinWith`'s `_1.id`, a `struct(...)` read back) is that field's own
+      // value, copied: not every column the struct was built from.
+      case StructField(struct, field) if builtField(struct, field, input).isDefined =>
+        val (value, scope) = builtField(struct, field, input).get
+        tailcall(resolveExprT(value, scope))
       case StructField(struct, _) =>
         // A field projection is a real operation on the struct's own
         // provenance (never Direct, even when the struct itself is), the
@@ -506,6 +547,48 @@ object Lineage {
         provenances.flatMap(_.copied).toSet, provenances.flatMap(_.changed).toSet)
     }
 
+    /** The expression a struct is built from for its field `field`, and the plan it is resolved against: through an
+      * alias, and through a reference to a column a projection below builds (following references and the operators
+      * that pass columns through). `None` for anything else - a struct read from an input, a function's result - and
+      * for a name both sides of a join declare. Walks in a loop: no deeper a stack for a deep plan. */
+    private def builtField(struct: Expr, field: String, input: Plan): Option[(Expr, Plan)] = {
+      var expr = struct
+      var scope = input
+      var answer: Option[Option[(Expr, Plan)]] = None
+      while (answer.isEmpty) expr match {
+        case StructConstruct(fields) =>
+          answer = Some(matching(field, fields.map(_._1)).flatMap(name => fields.find(_._1 == name)).map(f => (f._2, scope)))
+        case Alias(_, inner) => expr = inner
+        case ColumnReference(ref) =>
+          definitionOf(ref, scope) match {
+            case Some((definition, below)) => expr = definition; scope = below
+            case None                      => answer = Some(None)
+          }
+        case _ => answer = Some(None)
+      }
+      answer.get
+    }
+
+    /** The expression a projection in `plan` declares `ref`'s column with, and that projection's input. */
+    private def definitionOf(ref: ColumnRef, plan: Plan): Option[(Expr, Plan)] = {
+      var current = plan
+      var answer: Option[Option[(Expr, Plan)]] = None
+      while (answer.isEmpty) current match {
+        case Project(input, columns) => answer = Some(named(ref.name, columns).map(nc => (nc.expr, input)))
+        case Filter(input, _)        => current = input
+        case Sort(input, _)          => current = input
+        case Limit(input, _, _)      => current = input
+        case Join(left, right, _, _) =>
+          answer = Some((definitionOf(ref, left), definitionOf(ref, right)) match {
+            case (Some(found), None) => Some(found)
+            case (None, Some(found)) => Some(found)
+            case _                   => None
+          })
+        case _ => answer = Some(None)
+      }
+      answer.get
+    }
+
     /** Resolves a bare column reference against a plan: does `ref` name a
       * column this plan (re)declares, or does it pass through to whatever
       * produced this plan's input? Returns `None` when `ref`'s qualifier
@@ -542,47 +625,53 @@ object Lineage {
       answer.get
     }
 
-    private def columnsOf(read: Read): Option[Set[String]] =
-      knownColumns.getOrElseUpdate(read, readColumns(read).map(_.map(_.toLowerCase)))
+    private def columnsOf(read: Read): Option[List[String]] =
+      knownColumns.getOrElseUpdate(read, readColumns(read).map(_.toList.sorted))
 
     private def resolveInScopeUncachedT(ref: ColumnRef, plan: Plan): TailRec[Option[Provenance]] = plan match {
       case read @ Read(dataset, alias, _) =>
         val scope = alias.getOrElse(dataset.location)
-        val has = columnsOf(read).forall(_.contains(ref.name.toLowerCase))
+        val columns = columnsOf(read)
+        val has = columns.forall(_.exists(_.equalsIgnoreCase(ref.name)))
+        // the column as the read has it: a reference that differs from it only in case (`AMOUNT` for `amount`) names
+        // that column, not one the dataset does not have
+        val source = ColumnRef(columns.flatMap(matching(ref.name, _)).getOrElse(ref.name), Some(scope))
         done(
           if (ref.qualifier.forall(_ == scope) && has)
-            Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty, copied = Set(ColumnRef(ref.name, Some(scope)))))
+            Some(Provenance(Set(source), DerivationKind.Direct, Set.empty, copied = Set(source)))
           else
             None
         )
 
       case Project(input, columns) =>
-        columns.find(_.name == ref.name) match {
+        named(ref.name, columns) match {
           case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
           case None     => done(None)
         }
 
       case Aggregate(input, _, aggregates) =>
-        aggregates.find(_.name == ref.name) match {
+        named(ref.name, aggregates) match {
           case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
           case None     => done(None)
         }
 
       case w @ Window(input, windowExprs, _, _) =>
-        if (windowExprs.exists(_.name == ref.name)) tailcall(windowColumnT(ref.name, w)).map(Some(_))
-        else tailcall(resolveInScopeT(ref, input))
+        named(ref.name, windowExprs) match {
+          case Some(nc) => tailcall(windowColumnT(nc.name, w)).map(Some(_))
+          case None     => tailcall(resolveInScopeT(ref, input))
+        }
 
       // A generated column comes from the generator's arguments (every generated column from all of them: which
       // argument fills which output is the generator's own business); any other passes through from the input.
       case Generate(input, generator, generated, _) =>
-        if (generated.contains(ref.name)) tailcall(resolveExprT(generator, input)).map(p => Some(combineOperation(List(p))))
+        if (matching(ref.name, generated).isDefined) tailcall(resolveExprT(generator, input)).map(p => Some(combineOperation(List(p))))
         else tailcall(resolveInScopeT(ref, input))
 
       // Each row of an expansion takes its value of column i from one projection's i-th expression: the candidates are
       // all of them, as a union's branches are. A name declared twice (an engine keeps a grouping key's original
       // column beside the expanded one) is its first declaration's.
       case Expand(input, projections, names) =>
-        names.indexOf(ref.name) match {
+        matching(ref.name, names).fold(-1)(names.indexOf(_)) match {
           case -1 => done(None)
           case i  => traverseT(projections.flatMap(_.lift(i)))(resolveExprT(_, input)).map(ps => Some(combineUnion(ps)))
         }
@@ -591,25 +680,19 @@ object Lineage {
       case Sort(input, _)     => tailcall(resolveInScopeT(ref, input))
       case Limit(input, _, _) => tailcall(resolveInScopeT(ref, input))
 
-      case Union(inputs) =>
-        // A Stryker mutant flipping `found.isEmpty` to `false` here is a
-        // genuine equivalent, not a coverage gap: `combineUnion` on an empty
-        // list produces `Provenance(Set.empty, Direct, Set.empty)` — the
-        // same value `resolveExpr`'s ColumnReference case's own
-        // `getOrElse(NoSource)` fallback
-        // produces for `None`, and the same value that acts as an identity
-        // element in `Join`'s Some/Some combination below (an empty-sources,
-        // Direct provenance changes nothing when unioned with a real one —
-        // confirmed algebraically: opaque-wins and sources-empty/Computed
-        // checks are unaffected by an empty-sources contributor, and the
-        // all-Direct check only stays true if the other side is also
-        // Direct, matching what using that other side alone would give).
-        // Every caller sees the identical result either way.
-        traverseT(inputs)(resolveInScopeT(ref, _)).map { results =>
-          val found = results.flatten
-          if (found.isEmpty) None
-          else Some(combineUnion(found))
+      // A union matches its inputs' columns by position: its column i is each input's column i. An input that declares
+      // no columns of its own (a read) is asked for the name instead, as is every input when the first declares none. A
+      // union of reads alone is one read of several paths: each gives the name, whatever the reference's qualifier.
+      case u @ Union(inputs) if !inputs.forall(_.isInstanceOf[Read]) =>
+        tailcall(outputsOfT(inputs.head)).flatMap { first =>
+          matching(ref.name, first.map(_._1)) match {
+            case Some(name) => tailcall(unionColumnT(u, first.indexWhere(_._1 == name), ref)).map(Some(_))
+            case None       => tailcall(unionByNameT(ref, inputs))
+          }
         }
+
+      case Union(inputs) =>
+        tailcall(unionByNameT(ref.copy(qualifier = None), inputs))
 
       // A name both sides have is the side whose column it is. A projection matches a name whatever its qualifier, so a
       // qualified reference (a USING join's key, `orders.id`) also resolves on a side that projects another read's column

@@ -2611,6 +2611,33 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(deleted.values.forall(_.isEmpty), "a MERGE that only deletes writes no value")
   }
 
+  test("a Delta UPDATE's lineage is its assignments where its condition holds; a DELETE's the rows its condition keeps") {
+    val tablePath = scratchDir.resolve("dml_lineage_target").toString.replace('\\', '/')
+    spark.range(3).withColumn("amount", col("id") * 10).withColumn("status", lit("paid")).write.format("delta").mode("overwrite").save(tablePath)
+    def traced(sql: String) = {
+      capturedPlans.clear()
+      spark.sql(sql).collect()
+      val plan = capturedPlans.collectFirst { case p if Set("UpdateCommand", "DeleteCommand")(p.getClass.getSimpleName) => p }.getOrElse(fail("no DML observed"))
+      val info = WriteCommandSupport.combined.lift(plan).getOrElse(fail("DML not recognized"))
+      val lineage = ContractEnforcementRule.lineagePlanOf(info, SparkPlanAdapter.translate(plan).plan, Nil).getOrElse(fail("no lineage plan"))
+      val detailed = com.invaract.ir.Lineage.traceDetailed(lineage)
+      val columns = detailed.columns.map(c => c.lineage.output.name -> c).toMap
+      (columns, detailed.indirect.map(i => s"${i.kind}:${i.source.name}").toSet)
+    }
+    val (updated, updatedRows) = traced(s"UPDATE delta.`$tablePath` SET amount = amount * 2 WHERE status = 'paid'")
+    assert(updated("amount").values.map(_.name) == Set("amount") && updated("amount").transformed.map(_.name) == Set("amount"), "computed")
+    assert(updated("amount").indirect.map(i => s"${i.kind}:${i.source.name}") == Set("Conditional:status"), "the condition decides which")
+    assert(updated("id").lineage.derivation == com.invaract.ir.DerivationKind.Direct && updated("id").indirect.isEmpty, "a column it leaves is copied")
+    assert(updatedRows.isEmpty, "an UPDATE keeps every row")
+    val (everywhere, _) = traced(s"UPDATE delta.`$tablePath` SET amount = 0")
+    assert(everywhere("amount").values.isEmpty && everywhere("amount").indirect.isEmpty, "no condition: the new value everywhere")
+    val (kept, keptRows) = traced(s"DELETE FROM delta.`$tablePath` WHERE status = 'open'")
+    assert(kept("amount").lineage.derivation == com.invaract.ir.DerivationKind.Direct && kept("amount").values.map(_.name) == Set("amount"))
+    assert(keptRows == Set("Filter:status"), "the condition decides which rows are kept")
+    val (none, noneRows) = traced(s"DELETE FROM delta.`$tablePath`")
+    assert(noneRows.isEmpty && none("id").values.map(_.name) == Set("id"), "an unconditional DELETE keeps no row; its plan names the table's columns")
+  }
+
   // --- Feature surface: WriteCommandInfo.partitionColumns across Delta's
   // own write shapes - `.save()` (SaveIntoDataSourceCommand, sourced from
   // DataSourceUtils.PARTITIONING_COLUMNS_KEY), `.saveAsTable()` on a new

@@ -514,7 +514,7 @@ class LineageSpec extends AnyFunSuite {
     assert(flaggedTotal.sources == Set(ColumnRef("amount", Some("raw.orders"))))
   }
 
-  test("trace resolves a Union using the first branch's output names") {
+  test("trace resolves a Union's column to the column at its position in every branch") {
     val current = Read(DatasetRef("raw.orders"))
     val archived = Read(DatasetRef("raw.orders_archive"))
     val currentProjected =
@@ -524,7 +524,7 @@ class LineageSpec extends AnyFunSuite {
     val plan = Write(DatasetRef("gold.all_orders"), Union(List(currentProjected, archivedProjected)))
 
     val lineage = Lineage.trace(plan)
-    assert(lineage == List(ColumnLineage(ColumnRef("id"), Set(ColumnRef("id", Some("raw.orders"))), DerivationKind.Direct)))
+    assert(lineage == List(ColumnLineage(ColumnRef("id"), Set(ColumnRef("id", Some("raw.orders")), ColumnRef("id", Some("raw.orders_archive"))), DerivationKind.Direct)))
   }
 
   test("trace returns no columns for a bare Read with no Project above it") {

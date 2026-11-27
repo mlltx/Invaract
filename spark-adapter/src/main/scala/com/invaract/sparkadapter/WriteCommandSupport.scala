@@ -120,9 +120,10 @@ private[sparkadapter] case class WriteCommandInfo(
   // are checked against), this its clauses over the target joined to the source (`mergeClauses`). Column lineage is
   // traced through it; it is never verified.
   lineageQuery: Option[LogicalPlan] = None,
-  // Where a table this write creates will be stored, when Spark's configuration says (`createdTableLocation`): the
-  // write's location is the table's catalog name (it has no storage yet), this the location openlineage-spark names it
-  // by. Lineage and notifications only - never checked, never the catalog identity a contract's `catalog` is held to.
+  // Where the table is stored when the write's location is its catalog name: a table this write creates, when Spark's
+  // configuration says (`createdTableLocation`; it has no storage yet), or one a row-level operation rewrites
+  // (`storedTableLocation`) - the location openlineage-spark names it by. Lineage and notifications only - never
+  // checked, never the catalog identity a contract's `catalog` is held to.
   createdAt: Option[String] = None
 )
 
@@ -695,6 +696,18 @@ private[sparkadapter] object WriteCommandSupport {
     case _ => None
   }
 
+  /** Where a table a row-level operation (MERGE, UPDATE, DELETE) rewrites is stored. The write's location is the table's
+    * catalog name; Spark hands the operation a wrapper of the table (`RowLevelOperationTable`) that reports none of its
+    * properties, but the table it wraps (`table`) does. Lineage and notifications only, as `createdAt` always is. */
+  private[sparkadapter] def storedTableLocation(table: NamedRelation): Option[String] = table match {
+    case v2: DataSourceV2Relation =>
+      val wrapped = scala.util.Try(v2.table.getClass.getMethod("table").invoke(v2.table)).toOption.collect {
+        case t: org.apache.spark.sql.connector.catalog.Table => t
+      }
+      Option(wrapped.getOrElse(v2.table).properties.get("location"))
+    case _ => None
+  }
+
   private def defaultTableLocation(catalog: org.apache.spark.sql.connector.catalog.CatalogPlugin, identifier: org.apache.spark.sql.connector.catalog.Identifier): Option[String] =
     scala.util.Try {
       val session = org.apache.spark.sql.SparkSession.active
@@ -1123,10 +1136,29 @@ private[sparkadapter] object WriteCommandSupport {
             // same catalogTable this case already extracted for location.
             catalogIdentity = catalogTable.map(CatalogIdentitySupport.fromCatalogTable),
             partitionColumns = deltaMetadataPartitionColumnsOf(plan),
-            lineageQuery = if (isMerge) mergeClauses(plan, target, query) else None
+            lineageQuery = if (isMerge) mergeClauses(plan, target, query) else updatedOrKept(plan, target)
           )
         }.toOption
     }
+
+  /** A Delta UPDATE or DELETE as what it writes: the table's rows. An UPDATE gives each column it assigns its new value
+    * where its condition holds and the row's own elsewhere (`IF(cond, value, column)`; a column it leaves is the row's
+    * own, copied); a DELETE keeps the rows its condition does not remove (an unconditional one, none). Read through
+    * Delta's `updateExpressions` (one per target column, in order) and `condition`; `None` when they are not there. */
+  private[sparkadapter] def updatedOrKept(dml: LogicalPlan, target: LogicalPlan): Option[LogicalPlan] =
+    scala.util.Try {
+      import org.apache.spark.sql.catalyst.expressions.{Alias, EqualNullSafe, Expression, If, Literal, Not}
+      import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project}
+      def call[A](method: String): A = dml.getClass.getMethod(method).invoke(dml).asInstanceOf[A]
+      val condition = call[Option[Expression]]("condition")
+      if (dml.getClass.getSimpleName == "UpdateCommand") {
+        val assigned = call[Seq[Expression]]("updateExpressions")
+        Project(target.output.zip(assigned).map { case (column, value) =>
+          Alias(condition.fold(value)(c => If(c, value, column)), column.name)()
+        }, target)
+      } else
+        Project(target.output, Filter(condition.fold[Expression](Literal.FalseLiteral)(c => Not(EqualNullSafe(c, Literal.TrueLiteral))), target))
+    }.toOption
 
   /** A Delta MERGE as what it writes: the rows of each of its clauses, together. Each clause's rows are the target joined
     * to the source on the MERGE's condition, kept by the clause's own condition, each target column the value the
@@ -1285,7 +1317,7 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic,
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
-        createdAt = stagedTableLocation(cmd.table),
+        createdAt = stagedTableLocation(cmd.table).orElse(storedTableLocation(cmd.table)),
         // Unlike Delta above, this needs no class-name/reflection lookup
         // at all: RowLevelOperation.Command (DELETE/UPDATE/MERGE) is a
         // real, public, stable enum on Spark's own connector.write API -

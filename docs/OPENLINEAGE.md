@@ -391,26 +391,27 @@ itself, a stream's micro-batches, UDF internals, lineage through an RDD).
 A second review, of the corpus itself, by Spark construct, added 69 jobs for the plan shapes most likely to lose lineage:
 names (case, dots, swapped names), plan nodes that rarely appear in tests (hints, typed operations, `observe`, `sample`,
 `offset`, lateral joins), set operations matched by position, reads of several paths or one file, row-level writes on
-both table formats, and streaming through `foreachBatch`. Against 124 jobs Invaract agrees with openlineage-spark on 66
-and with Spline on 86. It found these gaps of Invaract's, each a `Gap` note in `Corpus.scala` and listed on the page:
+both table formats, and streaming through `foreachBatch`. It found these gaps of Invaract's, each now fixed, its job
+the test that holds it (Invaract agrees with openlineage-spark on 74 of the 124 jobs and with Spline on 90; no job shows
+a gap of Invaract's):
 
-| Found | Kind |
-|---|---|
-| A union traced by column name, where Spark matches columns by position: a union whose second side has its columns in another order traces each output column to the wrong source | wrong lineage |
-| A source column named as the job wrote it (`AMOUNT`), not as the input's schema has it (`amount`), when Spark resolves names ignoring case (its default) | wrong lineage |
-| Plan nodes not translated, so nothing is traced through them: a hint (`ResolvedHint`, `RebalancePartitions`), a typed filter (`TypedFilter`), `observe` (`CollectMetrics`), `sample`, `offset`, a `LATERAL` join, `INTERSECT`/`EXCEPT`, and the `MergeRows` node of an Iceberg MERGE | missing lineage |
-| A read of several paths traces its columns to the first only | missing lineage |
-| A correlated scalar subquery: the outer column it correlates on is not reported | missing lineage |
-| An aggregate's `FILTER (WHERE ...)` clause: the columns it filters on are not reported (openlineage-spark misses them too; Spline has them) | missing lineage |
-| A Delta UPDATE traced as a copy of the table (its `SET` expressions and `WHERE` condition missing); a Delta DELETE missing its `WHERE` condition | lower quality |
-| A field of a struct built in the plan (`joinWith`'s `_1.id`) traced to every column of the struct | lower quality |
-| A cast to a column's own type (above a view's query, before an `insertInto`) typed `TRANSFORMATION`, not `IDENTITY`; an Iceberg UPDATE's unchanged columns typed as computed and conditional | lower quality |
-| A table an Iceberg MERGE, UPDATE or DELETE changes named by its catalog identifier, where an append names it by its location; a `foreachBatch` micro-batch's input named by the files it read, not the stream's source | dataset naming |
+| Found | Kind | Done |
+|---|---|---|
+| A union traced by column name, where Spark matches columns by position: a union whose second side has its columns in another order traced each output column to the wrong source | wrong lineage | a union's column is each input's column at its position (`ir.Lineage`); every input's columns made explicit (`SparkPlanAdapter`) |
+| A source column named as the job wrote it (`AMOUNT`), not as the input's schema has it (`amount`), when Spark resolves names ignoring case (its default) | wrong lineage | a read names the column as it has it; a projection, aggregate, window, generator or expansion matches a name exactly, else the one equal ignoring case |
+| Plan nodes not translated, so nothing was traced through them: a hint (`ResolvedHint`, `RebalancePartitions`), a typed filter (`TypedFilter`), `observe` (`CollectMetrics`), `sample`, `offset`, a `LATERAL` join, `INTERSECT`/`EXCEPT`, and the `MergeRows` node of an Iceberg MERGE | missing lineage | each translated (docs/SPARK_ADAPTER.md, "Translation coverage") |
+| A read of several paths traced its columns to the first only | missing lineage | a union of reads alone gives each column from every read |
+| A correlated scalar subquery: the outer column it correlates on was not reported | missing lineage | the column decides which value the subquery gives: `CONDITIONAL` |
+| An aggregate's `FILTER (WHERE ...)` clause: the columns it filters on were not reported (openlineage-spark misses them too; Spline has them) | missing lineage | the clause is a condition of the aggregate's argument: `CONDITIONAL` |
+| A Delta UPDATE traced as a copy of the table (its `SET` expressions and `WHERE` condition missing); a Delta DELETE missing its `WHERE` condition | lower quality | a lineage-only plan for each, as for a MERGE (`WriteCommandSupport.updatedOrKept`) |
+| A field of a struct built in the plan (`joinWith`'s `_1.id`) traced to every column of the struct | lower quality | the field's own column, copied (`ir.Lineage`) |
+| A cast to a column's own type (above a view's query, before an `insertInto`) typed `TRANSFORMATION`, not `IDENTITY`; an Iceberg UPDATE's unchanged columns typed as computed and conditional | lower quality | a cast to the type its value has, and `IF(c, x, x)`, are their value |
+| A table an Iceberg MERGE, UPDATE or DELETE changes named by its catalog identifier, where an append names it by its location; a `foreachBatch` micro-batch's input named by the files it read, not the stream's source | dataset naming | the table's storage for lineage (`WriteCommandSupport.storedTableLocation`), read back included; a micro-batch reads its stream's directory |
 
 It also showed where Invaract reports more than both references (a reliable `checkpoint()`, a cube's keys, an unpivot,
-an Iceberg DELETE's kept rows and condition, a `foreachBatch` micro-batch's lineage) and where it is more precise (with
-`spark.sql.caseSensitive` on, a column differing only in case; `HAVING` and a grouping expression typed as indirect
-lineage).
+a Delta or Iceberg UPDATE's and DELETE's rows and conditions, a typed filter's columns, a `foreachBatch` micro-batch's
+lineage) and where it is more precise (with `spark.sql.caseSensitive` on, a column differing only in case; `HAVING`, a
+grouping expression and an aggregate's `FILTER` typed as indirect lineage).
 
 ## 12. Production-readiness review
 
@@ -429,7 +430,7 @@ today, can it hurt a job, and can it be operated. Each finding, and what was don
 | 7 | Completeness | The cross-check's remaining gaps: a `USING` join's key attributed to both sides; a MERGE traced by name, not through its clauses; a table a write creates named by its catalog identifier | **Fixed** (section 11). The limits no corpus job measures are **documented** on the generated page |
 | 8 | Migration | Dry-run mode (the observe-only mode a team starts in) published no inputs, schemas or column lineage | **Fixed**: a dry run publishes the lineage enforcement would, on every adapter |
 | 9 | Migration | A job launched by Airflow carries its parent and root runs in `spark.openlineage.parent*`/`rootParent*`; Invaract ignored them | **Fixed**: read as they are (`ConfigSource.environment`); the root run is published too (`ParentRunFacet` 1-2-0) |
-| 10 | Migration | Dataset identity with openlineage-spark was assumed | **Measured**: identical on the corpus's jobs, a created table included, and opaque JDBC URLs named as openlineage-spark names them; except a table an Iceberg MERGE/UPDATE/DELETE changes and a `foreachBatch` micro-batch's input (**open**, section 11) |
+| 10 | Migration | Dataset identity with openlineage-spark was assumed | **Measured**: identical on every corpus job, a created table, a table an Iceberg MERGE/UPDATE/DELETE changes and a `foreachBatch` micro-batch's input included; opaque JDBC URLs named as openlineage-spark names them |
 | 11 | Migration | No path from openlineage-spark or Spline | **Added**: the docs-site guide "Move from openlineage-spark or Spline", with a settings mapping |
 | 12 | Safety | Publishing must never slow or fail a job | **Held**: off the job's thread, bounded queue, retries, circuit breaker, size shedding, bounded shutdown (sections 5, 6); measured (section 8) |
 | 13 | Safety | Secrets | **Held**: the API key is read from an environment variable named in the settings, never the settings themselves; headers the client or transport set are refused; credentials are stripped from every dataset name, opaque JDBC URLs (`user/password@`, `user=`/`password=` properties) included |
@@ -438,7 +439,7 @@ today, can it hurt a job, and can it be operated. Each finding, and what was don
 | 16 | Operability | A streaming query is checked once, when it starts, so its run carries one write's lineage, not one per micro-batch | **Documented** (as for enforcement, docs/SPARK_ADAPTER.md); the cross-check's `streaming` job shows what is published |
 | 17 | Evolution | Invaract's own facets need a versioning rule | **Set**: the schemas are published under a versioned path (`schemas/openlineage/1-0-0/`). A new optional field is a new minor version under a new path (`1-1-0/`); a removed or changed field a new major version; a published version is never edited, so every event's `_schemaURL` keeps validating |
 | 18 | Transports | No Kafka or Kinesis transport, which openlineage-java has | **Follow-up**: HTTP, file and console only; the migration guide says how to reach Kafka meanwhile |
-| 19 | Completeness | A review of the corpus by Spark construct (69 more jobs) found gaps no earlier job measured: a union matched by name, not position; source columns named in the job's case; plan nodes not translated (hints, typed filter, `observe`, `sample`, `offset`, `LATERAL`, `INTERSECT`/`EXCEPT`, Iceberg's `MergeRows`); a read of several paths; Delta UPDATE/DELETE conditions; Iceberg row-level targets named by identifier | **Open**: each measured by a corpus job, listed on the generated page and in section 11 |
+| 19 | Completeness | A review of the corpus by Spark construct (69 more jobs) found gaps no earlier job measured: a union matched by name, not position; source columns named in the job's case; plan nodes not translated (hints, typed filter, `observe`, `sample`, `offset`, `LATERAL`, `INTERSECT`/`EXCEPT`, Iceberg's `MergeRows`); a read of several paths; Delta UPDATE/DELETE conditions; Iceberg row-level targets named by identifier | **Fixed** (section 11), each held by its corpus job |
 
 Gates every change to this feature now passes: the OpenLineage 2-0-2 schema on every event, the conformance kit's three
 scenarios on every adapter, mutation testing (at or above 70% on every file changed, section 8), MiMa, coverage, the

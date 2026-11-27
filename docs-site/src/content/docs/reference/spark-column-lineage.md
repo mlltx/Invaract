@@ -19,8 +19,8 @@ openlineage-spark 1.55.0, Spline agent 2.4.0, Spark 3.5.9. For each job's write,
 
 Spline does not classify edges, so against Spline every column an output column depends on is compared, by value or not.
 
-Invaract agrees with openlineage-spark on 66 of 124 jobs, and with Spline on
-86 of 124. A job agrees only when every dataset and every edge, with its type, is the same;
+Invaract agrees with openlineage-spark on 74 of 124 jobs, and with Spline on
+90 of 124. A job agrees only when every dataset and every edge, with its type, is the same;
 each difference is listed below with its reason. Most come from one of two things: openlineage-spark reads Spark's
 *optimized* plan, so it also reports columns the optimizer added (such as an `isnotnull` filter on a join key); or
 another tool misses part of the plan Invaract follows ([what Invaract captures that the others
@@ -103,7 +103,7 @@ lineage, `field <~ dataset.column` indirect (`*`: on every row of the output), e
 | Writes | a write partitioned by a column (`partitioned`) | [differs](#partitioned): the other tool's limit | ✓ agrees |
 | Writes | an append to an existing directory (`append`) | ✓ agrees | ✓ agrees |
 | Catalog tables | saveAsTable: a new catalog table from a query (`save-as-table`) | ✓ agrees | ✓ agrees |
-| Catalog tables | insertInto an existing table, by position (`insert-into`) | [differs](#insert-into): Invaract gap | ✓ agrees |
+| Catalog tables | insertInto an existing table, by position (`insert-into`) | ✓ agrees | ✓ agrees |
 | Catalog tables | SQL INSERT INTO ... SELECT with a join (`sql-insert-select`) | [differs](#sql-insert-select): the other tool's limit | ✓ agrees |
 | Catalog tables | SQL CREATE TABLE AS SELECT (`ctas`) | ✓ agrees | ✓ agrees |
 | Delta Lake | a Delta table written from a query (`delta-write`) | ✓ agrees | ✓ agrees |
@@ -116,25 +116,25 @@ lineage, `field <~ dataset.column` indirect (`*`: on every row of the output), e
 | JDBC | a table read over JDBC (`jdbc-input`) | ✓ agrees | [differs](#jdbc-input): the other tool's limit |
 | Names | two columns swapping names (`swap-names`) | ✓ agrees | ✓ agrees |
 | Names | withColumnRenamed three times, through a temporary name, to swap two columns (`rename-chain`) | ✓ agrees | ✓ agrees |
-| Names | columns referred to in another case than the input's (`case-insensitive`) | [differs](#case-insensitive): Invaract gap | [differs](#case-insensitive): Invaract gap |
+| Names | columns referred to in another case than the input's (`case-insensitive`) | ✓ agrees | [differs](#case-insensitive): the other tool's limit |
 | Names | two output columns differing only in case (spark.sql.caseSensitive=true) (`case-sensitive`) | [differs](#case-sensitive): the other tool's limit | ✓ agrees |
 | Names | a column whose name contains a dot (`dotted-name`) | ✓ agrees | ✓ agrees |
 | Nested data | every field of a struct, as columns (payload.*) (`struct-star`) | ✓ agrees | ✓ agrees |
 | Nested data | a struct field replaced in place (withField) (`with-field`) | [differs](#with-field): a convention | [differs](#with-field): the other tool's limit |
 | Nested data | higher-order functions over an array (transform, filter) (`higher-order`) | ✓ agrees | ✓ agrees |
 | Nested data | array elements by index (tags(0), element_at) (`array-access`) | ✓ agrees | ✓ agrees |
-| Join | a join with a broadcast hint (broadcast()) (`broadcast-hint`) | [differs](#broadcast-hint): Invaract gap | [differs](#broadcast-hint): Invaract gap |
-| Join | SQL hints: BROADCAST on a join, REBALANCE on the result (`sql-hints`) | [differs](#sql-hints): Invaract gap | [differs](#sql-hints): Invaract gap |
+| Join | a join with a broadcast hint (broadcast()) (`broadcast-hint`) | [differs](#broadcast-hint): the other tool's limit | ✓ agrees |
+| Join | SQL hints: BROADCAST on a join, REBALANCE on the result (`sql-hints`) | [differs](#sql-hints): the other tool's limit | ✓ agrees |
 | Join | a left semi join: rows of one input that have a match in another (`semi-join`) | [differs](#semi-join): the other tool's limit | ✓ agrees |
 | Join | a left anti join: rows of one input with no match in another (`anti-join`) | [differs](#anti-join): the other tool's limit | ✓ agrees |
 | Join | a full outer join USING a key: the key is either side's (`full-outer-using`) | [differs](#full-outer-using): a convention | ✓ agrees |
 | Join | a join on an inequality (`non-equi-join`) | [differs](#non-equi-join): the other tool's limit | ✓ agrees |
 | Join | a cross join (`cross-join`) | ✓ agrees | ✓ agrees |
 | Join | one DataFrame joined with a filter of itself (Spark renames one side's columns) (`self-join-same-frame`) | [differs](#self-join-same-frame): the other tool's limit | ✓ agrees |
-| Join | a LATERAL subquery correlated with the outer row (`lateral-join`) | [differs](#lateral-join): Invaract gap | [differs](#lateral-join): Invaract gap |
-| Join | a typed joinWith, then fields of the two structs it makes (`join-with`) | [differs](#join-with): Invaract gap | ✓ agrees |
+| Join | a LATERAL subquery correlated with the outer row (`lateral-join`) | [differs](#lateral-join): the other tool's limit | [differs](#lateral-join): the other tool's limit |
+| Join | a typed joinWith, then fields of the two structs it makes (`join-with`) | [differs](#join-with): the other tool's limit | [differs](#join-with): the other tool's limit |
 | Aggregation | HAVING on aggregates that are not written (`having`) | [differs](#having): the other tool's limit | ✓ agrees |
-| Aggregation | an aggregate with a FILTER clause (`aggregate-filter`) | ✓ agrees | [differs](#aggregate-filter): Invaract gap |
+| Aggregation | an aggregate with a FILTER clause (`aggregate-filter`) | [differs](#aggregate-filter): the other tool's limit | ✓ agrees |
 | Aggregation | count distinct and collect_list (`distinct-collect`) | ✓ agrees | ✓ agrees |
 | Aggregation | grouping by a computed key (`group-by-expression`) | [differs](#group-by-expression): the other tool's limit | ✓ agrees |
 | Aggregation | cube with grouping_id() (`cube-grouping-id`) | [differs](#cube-grouping-id): the other tool's limit | [differs](#cube-grouping-id): the other tool's limit |
@@ -144,45 +144,45 @@ lineage, `field <~ dataset.column` indirect (`*`: on every row of the output), e
 | Aggregation | SQL stack(): two columns into rows (`sql-stack`) | ✓ agrees | ✓ agrees |
 | Nested data | posexplode_outer of an array (`posexplode-outer`) | ✓ agrees | ✓ agrees |
 | Nested data | SQL LATERAL VIEW explode (`lateral-view`) | [differs](#lateral-view): the other tool's limit | ✓ agrees |
-| Dataset API | a typed filter (a Scala function), then a column (`typed-filter`) | [differs](#typed-filter): Invaract gap | [differs](#typed-filter): Invaract gap |
+| Dataset API | a typed filter (a Scala function), then a column (`typed-filter`) | [differs](#typed-filter): the other tool's limit | [differs](#typed-filter): the other tool's limit |
 | Dataset API | groupByKey and mapGroups (`group-by-key`) | ✓ agrees | ✓ agrees |
 | Dataset API | a typed flatMap (`flat-map`) | ✓ agrees | ✓ agrees |
-| Set operation | a union matching columns by position, not name (`union-positional`) | [differs](#union-positional): Invaract gap | [differs](#union-positional): Invaract gap |
+| Set operation | a union matching columns by position, not name (`union-positional`) | ✓ agrees | ✓ agrees |
 | Set operation | unionByName with the columns in another order (`union-by-name`) | ✓ agrees | ✓ agrees |
 | Set operation | unionByName allowing missing columns (`union-missing`) | ✓ agrees | ✓ agrees |
-| Set operation | intersect of two inputs' keys (`intersect`) | [differs](#intersect): Invaract gap | [differs](#intersect): Invaract gap |
-| Set operation | exceptAll of two inputs' keys (`except-all`) | [differs](#except-all): Invaract gap | [differs](#except-all): Invaract gap |
-| SQL | a temporary view over a temporary view (`nested-views`) | [differs](#nested-views): Invaract gap | ✓ agrees |
+| Set operation | intersect of two inputs' keys (`intersect`) | ✓ agrees | [differs](#intersect): the other tool's limit |
+| Set operation | exceptAll of two inputs' keys (`except-all`) | [differs](#except-all): the other tool's limit | [differs](#except-all): the other tool's limit |
+| SQL | a temporary view over a temporary view (`nested-views`) | ✓ agrees | ✓ agrees |
 | Catalog tables | a catalog table (over existing files) read by name (`catalog-table-read`) | ✓ agrees | ✓ agrees |
-| SQL | a permanent SQL view over a catalog table (`permanent-view`) | [differs](#permanent-view): Invaract gap | ✓ agrees |
-| SQL | a correlated scalar subquery in the select list (`correlated-scalar`) | [differs](#correlated-scalar): Invaract gap | [differs](#correlated-scalar): Invaract gap |
-| Caching | CACHE TABLE ... AS SELECT, then a query of it (`cache-table`) | ✓ agrees | ✓ agrees |
+| SQL | a permanent SQL view over a catalog table (`permanent-view`) | ✓ agrees | ✓ agrees |
+| SQL | a correlated scalar subquery in the select list (`correlated-scalar`) | [differs](#correlated-scalar): a convention | [differs](#correlated-scalar): the other tool's limit |
+| Caching | CACHE TABLE ... AS SELECT, then a query of it (`cache-table`) | [differs](#cache-table): the other tool's limit | ✓ agrees |
 | Inputs | a partitioned input: a column that comes from the directory names (`partition-column-input`) | ✓ agrees | ✓ agrees |
 | Inputs | the file each row came from (input_file_name, _metadata) (`file-metadata`) | ✓ agrees | ✓ agrees |
-| Inputs | one read of two directories (`multiple-paths`) | [differs](#multiple-paths): Invaract gap | [differs](#multiple-paths): the other tool's limit |
+| Inputs | one read of two directories (`multiple-paths`) | ✓ agrees | [differs](#multiple-paths): the other tool's limit |
 | Inputs | a read through a glob pattern (`glob-path`) | ✓ agrees | ✓ agrees |
 | Inputs | a join with data defined in the job (a local relation) (`local-data`) | [differs](#local-data): the other tool's limit | ✓ agrees |
 | Delta Lake | a Delta table read as of an earlier version (`delta-time-travel`) | ✓ agrees | ✓ agrees |
 | Inputs | a read of one file, not a directory (`single-file`) | ✓ agrees | ✓ agrees |
 | Caching | a projection of a (reliably) checkpointed DataFrame (`checkpoint`) | [differs](#checkpoint): the other tool's limit | [differs](#checkpoint): the other tool's limit |
-| Physical | observe(): metrics collected as the rows pass (`observe`) | [differs](#observe): Invaract gap | [differs](#observe): Invaract gap |
-| Physical | a random sample (`sample`) | [differs](#sample): Invaract gap | [differs](#sample): Invaract gap |
-| Sort | rows after the first, by order (offset) (`offset`) | [differs](#offset): Invaract gap | [differs](#offset): Invaract gap |
+| Physical | observe(): metrics collected as the rows pass (`observe`) | ✓ agrees | ✓ agrees |
+| Physical | a random sample (`sample`) | ✓ agrees | ✓ agrees |
+| Sort | rows after the first, by order (offset) (`offset`) | ✓ agrees | ✓ agrees |
 | Catalog tables | INSERT INTO a table with a column list in another order (`insert-column-list`) | ✓ agrees | ✓ agrees |
 | Catalog tables | INSERT OVERWRITE of one static partition (`insert-static-partition`) | ✓ agrees | ✓ agrees |
 | Writes | SQL INSERT OVERWRITE DIRECTORY (`insert-directory`) | ✓ agrees | ✓ agrees |
 | Catalog tables | saveAsTable bucketed and sorted (`bucketed-table`) | [differs](#bucketed-table): a convention | ✓ agrees |
 | Formats | a JSON output (`json-output`) | ✓ agrees | ✓ agrees |
 | JDBC | a table written over JDBC (`jdbc-output`) | ✓ agrees | [differs](#jdbc-output): the other tool's limit |
-| Delta Lake | UPDATE of a Delta table (`delta-update`) | [differs](#delta-update): Invaract gap | ✓ agrees |
-| Delta Lake | DELETE from a Delta table (`delta-delete`) | [differs](#delta-delete): Invaract gap | ✓ agrees |
+| Delta Lake | UPDATE of a Delta table (`delta-update`) | [differs](#delta-update): the other tool's limit | [differs](#delta-update): the other tool's limit |
+| Delta Lake | DELETE from a Delta table (`delta-delete`) | [differs](#delta-delete): the other tool's limit | [differs](#delta-delete): the other tool's limit |
 | Delta Lake | a Delta overwrite of the rows a predicate selects (replaceWhere) (`delta-replace-where`) | [differs](#delta-replace-where): a convention | [differs](#delta-replace-where): a convention |
-| Apache Iceberg | MERGE INTO an Iceberg table (`iceberg-merge`) | [differs](#iceberg-merge): Invaract gap | [differs](#iceberg-merge): the other tool's limit |
-| Apache Iceberg | UPDATE of an Iceberg table (`iceberg-update`) | [differs](#iceberg-update): Invaract gap | [differs](#iceberg-update): the other tool's limit |
-| Apache Iceberg | DELETE from an Iceberg table (`iceberg-delete`) | [differs](#iceberg-delete): Invaract gap | [differs](#iceberg-delete): the other tool's limit |
+| Apache Iceberg | MERGE INTO an Iceberg table (`iceberg-merge`) | [differs](#iceberg-merge): the other tool's limit | [differs](#iceberg-merge): the other tool's limit |
+| Apache Iceberg | UPDATE of an Iceberg table (`iceberg-update`) | [differs](#iceberg-update): a convention | [differs](#iceberg-update): the other tool's limit |
+| Apache Iceberg | DELETE from an Iceberg table (`iceberg-delete`) | [differs](#iceberg-delete): the other tool's limit | [differs](#iceberg-delete): the other tool's limit |
 | Apache Iceberg | overwritePartitions of an Iceberg table (`iceberg-overwrite-partitions`) | ✓ agrees | ✓ agrees |
 | Apache Iceberg | CREATE OR REPLACE TABLE ... AS SELECT (`iceberg-rtas`) | ✓ agrees | ✓ agrees |
-| Structured Streaming | a stream whose micro-batches are written by foreachBatch (`foreach-batch`) | [differs](#foreach-batch): Invaract gap | [differs](#foreach-batch): the other tool's limit |
+| Structured Streaming | a stream whose micro-batches are written by foreachBatch (`foreach-batch`) | [differs](#foreach-batch): the other tool's limit | [differs](#foreach-batch): the other tool's limit |
 
 ## What Invaract captures that the others miss
 
@@ -563,6 +563,27 @@ dependency: id <- h2:<in>/bank;DB_CLOSE_DELAY=-1:ACCOUNTS.ID
 input: h2:<in>/bank;DB_CLOSE_DELAY=-1:ACCOUNTS
 ```
 
+### Columns referred to in another case than the input's (`case-insensitive`)
+
+```scala
+f.orders(s).select(col("AMOUNT"), (col("Id") + 1).as("next_id"))
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/orders
+output: file:<out>/out
+AMOUNT <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+next_id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+```
+
+Spline leaves out: Spline names the written column as the input names it (amount); the job writes it as AMOUNT.
+
+```text
+dependency: AMOUNT <- file:<in>/orders.amount
+```
+
 ### Two output columns differing only in case (spark.sql.caseSensitive=true) (`case-sensitive`)
 
 ```scala
@@ -608,6 +629,58 @@ dependency: payload <- file:<in>/events.id
 dependency: payload <- file:<in>/events.payload
 input: file:<in>/events
 output: file:<out>/out
+```
+
+### A LATERAL subquery correlated with the outer row (`lateral-join`)
+
+```scala
+f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
+s.sql("SELECT o.id, t.name FROM orders o, LATERAL (SELECT max(c.name) AS name FROM customers c WHERE c.customer_id = o.customer_id) t")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/customers
+input:  file:<in>/orders
+output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
+* <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
+```
+
+Spline leaves out: Spline does not follow a LATERAL subquery: it misses its input, the column its value comes from and the columns it filters and correlates on.
+
+```text
+dependency: name <- file:<in>/customers.name
+indirect: * <~ file:<in>/customers.customer_id
+indirect: * <~ file:<in>/orders.customer_id
+input: file:<in>/customers
+```
+
+### An aggregate with a FILTER clause (`aggregate-filter`)
+
+```scala
+f.orders(s).createOrReplaceTempView("orders")
+s.sql("SELECT customer_id, sum(amount) FILTER (WHERE status = 'paid') AS paid FROM orders GROUP BY customer_id")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/orders
+output: file:<out>/out
+customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+paid <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
+* <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
+paid <~ file:<in>/orders.status  [INDIRECT/CONDITIONAL]
+```
+
+openlineage-spark leaves out: An aggregate's FILTER clause decides which rows it sums, so status decides paid's value: Invaract reports it as CONDITIONAL lineage of paid, as Spline reports it. openlineage-spark does not report it.
+
+```text
+indirect: paid <~ file:<in>/orders.status
 ```
 
 ### Cube with grouping_id() (`cube-grouping-id`)
@@ -676,6 +749,118 @@ dependency: value <- file:<in>/orders.amount
 dependency: value <- file:<in>/orders.customer_id
 ```
 
+### A typed filter (a Scala function), then a column (`typed-filter`)
+
+```scala
+import s.implicits._
+f.orders(s).as[OrderRow].filter(o => o.amount > 60).select("id")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/orders
+output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+* <~ file:<in>/orders.amount  [INDIRECT/FILTER]
+* <~ file:<in>/orders.customer_id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.status  [INDIRECT/FILTER]
+```
+
+openlineage-spark leaves out: A typed filter's Scala function is given every column of the row, so each may decide which rows are kept: Invaract reports them as FILTER. openlineage-spark reports none.
+
+```text
+indirect: * <~ file:<in>/orders.amount
+indirect: * <~ file:<in>/orders.customer_id
+indirect: * <~ file:<in>/orders.id
+indirect: * <~ file:<in>/orders.status
+```
+
+Spline leaves out: Spline does not report the columns a typed filter's function is given either.
+
+```text
+indirect: * <~ file:<in>/orders.amount
+indirect: * <~ file:<in>/orders.customer_id
+indirect: * <~ file:<in>/orders.id
+indirect: * <~ file:<in>/orders.status
+```
+
+### Intersect of two inputs' keys (`intersect`)
+
+```scala
+f.orders(s).select("customer_id").intersect(f.customers(s).select("customer_id"))
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/customers
+input:  file:<in>/orders
+output: file:<out>/out
+customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+* <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY, INDIRECT/JOIN]
+```
+
+Spline leaves out: Spline does not report which columns decide the rows an INTERSECT keeps.
+
+```text
+indirect: * <~ file:<in>/customers.customer_id
+indirect: * <~ file:<in>/orders.customer_id
+```
+
+### ExceptAll of two inputs' keys (`except-all`)
+
+```scala
+f.orders(s).select("customer_id").exceptAll(f.customers(s).select("customer_id"))
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/customers
+input:  file:<in>/orders
+output: file:<out>/out
+customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+* <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
+```
+
+Spline leaves out: Spline does not report which columns decide the rows an EXCEPT keeps.
+
+```text
+indirect: * <~ file:<in>/customers.customer_id
+indirect: * <~ file:<in>/orders.customer_id
+```
+
+### A correlated scalar subquery in the select list (`correlated-scalar`)
+
+```scala
+f.orders(s).createOrReplaceTempView("orders"); f.customers(s).createOrReplaceTempView("customers")
+s.sql("SELECT id, (SELECT max(c.name) FROM customers c WHERE c.customer_id = o.customer_id) AS name FROM orders o")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<in>/customers
+input:  file:<in>/orders
+output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
+* <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+name <~ file:<in>/orders.customer_id  [INDIRECT/CONDITIONAL]
+```
+
+Spline leaves out: Spline does not follow the subquery into its input: it misses customers, the column name's value comes from and the column it filters on.
+
+```text
+dependency: name <- file:<in>/customers.name
+indirect: * <~ file:<in>/customers.customer_id
+input: file:<in>/customers
+```
+
 ### One read of two directories (`multiple-paths`)
 
 ```scala
@@ -689,12 +874,16 @@ input:  file:<in>/orders
 input:  file:<in>/orders_archive
 output: file:<out>/out
 amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+amount <- file:<in>/orders_archive.amount  [DIRECT/IDENTITY]
 id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+id <- file:<in>/orders_archive.id  [DIRECT/IDENTITY]
 ```
 
 Spline leaves out: Spline reports only the first directory of a read of several.
 
 ```text
+dependency: amount <- file:<in>/orders_archive.amount
+dependency: id <- file:<in>/orders_archive.id
 input: file:<in>/orders_archive
 ```
 
@@ -751,6 +940,74 @@ Spline leaves out: Spline cannot parse an H2 file URL and names the table jdbc:/
 output: h2:<out>/db:TOTALS
 ```
 
+### UPDATE of a Delta table (`delta-update`)
+
+```scala
+s.sql(s"CREATE TABLE delta.`${out.at("out")}` (id BIGINT, amount BIGINT, status STRING) USING delta")
+s.sql(s"UPDATE delta.`${out.at("out")}` SET amount = amount * 2 WHERE status = 'paid'")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<out>/out
+output: file:<out>/out
+amount <- file:<out>/out.amount  [DIRECT/TRANSFORMATION]
+id <- file:<out>/out.id  [DIRECT/IDENTITY]
+status <- file:<out>/out.status  [DIRECT/IDENTITY]
+amount <~ file:<out>/out.status  [INDIRECT/CONDITIONAL]
+```
+
+openlineage-spark leaves out: openlineage-spark reports no input and no column lineage for a Delta UPDATE. Invaract reports the table's rows as its input, the SET expression (amount * 2) and the WHERE condition that decides amount's value.
+
+```text
+direct: amount <- file:<out>/out.amount
+direct: id <- file:<out>/out.id
+direct: status <- file:<out>/out.status
+indirect: amount <~ file:<out>/out.status
+input: file:<out>/out
+```
+
+Spline leaves out: Spline does not report the WHERE condition (status) that decides which rows' amount the UPDATE changes.
+
+```text
+dependency: amount <- file:<out>/out.status
+```
+
+### DELETE from a Delta table (`delta-delete`)
+
+```scala
+s.sql(s"CREATE TABLE delta.`${out.at("out")}` (id BIGINT, amount BIGINT, status STRING) USING delta")
+s.sql(s"DELETE FROM delta.`${out.at("out")}` WHERE status = 'open'")
+```
+
+Invaract publishes:
+
+```text
+input:  file:<out>/out
+output: file:<out>/out
+amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
+id <- file:<out>/out.id  [DIRECT/IDENTITY]
+status <- file:<out>/out.status  [DIRECT/IDENTITY]
+* <~ file:<out>/out.status  [INDIRECT/FILTER]
+```
+
+openlineage-spark leaves out: openlineage-spark reports no input and no column lineage for a Delta DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them.
+
+```text
+direct: amount <- file:<out>/out.amount
+direct: id <- file:<out>/out.id
+direct: status <- file:<out>/out.status
+indirect: * <~ file:<out>/out.status
+input: file:<out>/out
+```
+
+Spline leaves out: Spline does not report the WHERE condition (status) that decides which rows a DELETE keeps.
+
+```text
+indirect: * <~ file:<out>/out.status
+```
+
 ### MERGE INTO an Iceberg table (`iceberg-merge`)
 
 ```scala
@@ -764,20 +1021,28 @@ Invaract publishes:
 
 ```text
 input:  file:<in>/orders
-input:  iceberg://ice:db.acct
-output: iceberg://ice:db.acct
+input:  file:<out>/ice/db/acct
+output: file:<out>/ice/db/acct
+amount <- file:<in>/orders.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+amount <- file:<out>/ice/db/acct.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+id <- file:<out>/ice/db/acct.id  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.id  [INDIRECT/JOIN]
-* <~ iceberg://ice:db.acct.id  [INDIRECT/JOIN]
+* <~ file:<out>/ice/db/acct.id  [INDIRECT/JOIN]
 ```
 
 Spline leaves out: Spline's agent records nothing for an Iceberg MERGE.
 
 ```text
+dependency: amount <- file:<in>/orders.amount
+dependency: amount <- file:<out>/ice/db/acct.amount
+dependency: id <- file:<in>/orders.id
+dependency: id <- file:<out>/ice/db/acct.id
 indirect: * <~ file:<in>/orders.id
-indirect: * <~ iceberg://ice:db.acct.id
+indirect: * <~ file:<out>/ice/db/acct.id
 input: file:<in>/orders
-input: iceberg://ice:db.acct
-output: iceberg://ice:db.acct
+input: file:<out>/ice/db/acct
+output: file:<out>/ice/db/acct
 ```
 
 ### UPDATE of an Iceberg table (`iceberg-update`)
@@ -790,26 +1055,23 @@ s.sql("UPDATE ice.db.upd SET amount = amount * 2 WHERE status = 'paid'")
 Invaract publishes:
 
 ```text
-input:  iceberg://ice:db.upd
-output: iceberg://ice:db.upd
-amount <- iceberg://ice:db.upd.amount  [DIRECT/TRANSFORMATION]
-id <- iceberg://ice:db.upd.id  [DIRECT/TRANSFORMATION]
-status <- iceberg://ice:db.upd.status  [DIRECT/TRANSFORMATION]
-amount <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-id <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-status <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
+input:  file:<out>/ice/db/upd
+output: file:<out>/ice/db/upd
+amount <- file:<out>/ice/db/upd.amount  [DIRECT/TRANSFORMATION]
+id <- file:<out>/ice/db/upd.id  [DIRECT/IDENTITY]
+status <- file:<out>/ice/db/upd.status  [DIRECT/IDENTITY]
+amount <~ file:<out>/ice/db/upd.status  [INDIRECT/CONDITIONAL]
 ```
 
 Spline leaves out: Spline's agent records nothing for an Iceberg UPDATE.
 
 ```text
-dependency: amount <- iceberg://ice:db.upd.amount
-dependency: amount <- iceberg://ice:db.upd.status
-dependency: id <- iceberg://ice:db.upd.id
-dependency: id <- iceberg://ice:db.upd.status
-dependency: status <- iceberg://ice:db.upd.status
-input: iceberg://ice:db.upd
-output: iceberg://ice:db.upd
+dependency: amount <- file:<out>/ice/db/upd.amount
+dependency: amount <- file:<out>/ice/db/upd.status
+dependency: id <- file:<out>/ice/db/upd.id
+dependency: status <- file:<out>/ice/db/upd.status
+input: file:<out>/ice/db/upd
+output: file:<out>/ice/db/upd
 ```
 
 ### DELETE from an Iceberg table (`iceberg-delete`)
@@ -822,23 +1084,33 @@ s.sql("DELETE FROM ice.db.del WHERE status = 'open'")
 Invaract publishes:
 
 ```text
-input:  iceberg://ice:db.del
-output: iceberg://ice:db.del
-amount <- iceberg://ice:db.del.amount  [DIRECT/IDENTITY]
-id <- iceberg://ice:db.del.id  [DIRECT/IDENTITY]
-status <- iceberg://ice:db.del.status  [DIRECT/IDENTITY]
-* <~ iceberg://ice:db.del.status  [INDIRECT/FILTER]
+input:  file:<out>/ice/db/del
+output: file:<out>/ice/db/del
+amount <- file:<out>/ice/db/del.amount  [DIRECT/IDENTITY]
+id <- file:<out>/ice/db/del.id  [DIRECT/IDENTITY]
+status <- file:<out>/ice/db/del.status  [DIRECT/IDENTITY]
+* <~ file:<out>/ice/db/del.status  [INDIRECT/FILTER]
+```
+
+openlineage-spark leaves out: openlineage-spark reports no input and no column lineage for an Iceberg DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them.
+
+```text
+direct: amount <- file:<out>/ice/db/del.amount
+direct: id <- file:<out>/ice/db/del.id
+direct: status <- file:<out>/ice/db/del.status
+indirect: * <~ file:<out>/ice/db/del.status
+input: file:<out>/ice/db/del
 ```
 
 Spline leaves out: Spline's agent records nothing for an Iceberg DELETE.
 
 ```text
-dependency: amount <- iceberg://ice:db.del.amount
-dependency: id <- iceberg://ice:db.del.id
-dependency: status <- iceberg://ice:db.del.status
-indirect: * <~ iceberg://ice:db.del.status
-input: iceberg://ice:db.del
-output: iceberg://ice:db.del
+dependency: amount <- file:<out>/ice/db/del.amount
+dependency: id <- file:<out>/ice/db/del.id
+dependency: status <- file:<out>/ice/db/del.status
+indirect: * <~ file:<out>/ice/db/del.status
+input: file:<out>/ice/db/del
+output: file:<out>/ice/db/del
 ```
 
 ### A stream whose micro-batches are written by foreachBatch (`foreach-batch`)
@@ -854,46 +1126,30 @@ q.awaitTermination()
 Invaract publishes:
 
 ```text
-input:  file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+input:  file:<in>/orders
 output: file:<out>/out
-id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id  [DIRECT/IDENTITY]
-tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount  [DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+tripled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+```
+
+openlineage-spark leaves out: openlineage-spark reports a foreachBatch micro-batch's input but no column lineage for it. Invaract checks each micro-batch and publishes its lineage.
+
+```text
+direct: id <- file:<in>/orders.id
+direct: tripled <- file:<in>/orders.amount
 ```
 
 Spline leaves out: Spline records each micro-batch's write with no input and no column lineage.
 
 ```text
-dependency: id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id
-dependency: tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount
-input: file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+dependency: id <- file:<in>/orders.id
+dependency: tripled <- file:<in>/orders.amount
+input: file:<in>/orders
 ```
 
 ## Known gaps
 
-- **InsertInto an existing table, by position** (`insert-into`): Spark's analyzer casts each column to the table's column type, here to the type it already has. Invaract counts that cast as a TRANSFORMATION, so a column copied unchanged is not IDENTITY.
-- **Columns referred to in another case than the input's** (`case-insensitive`): With spark.sql.caseSensitive off (Spark's default), a column can be referred to in any case. Invaract names each source column as the job wrote it (AMOUNT, Id), not as the input's schema has it (amount, id), so the edge names a column the dataset does not have.
-- **A join with a broadcast hint (broadcast())** (`broadcast-hint`): Invaract does not translate the plan node a broadcast hint adds (ResolvedHint): nothing on the hinted side is traced, so name has no source and the hinted side's join key is missing. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
-- **SQL hints: BROADCAST on a join, REBALANCE on the result** (`sql-hints`): Invaract translates neither node the hints add (ResolvedHint for BROADCAST, RebalancePartitions for REBALANCE): no written column is traced. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
-- **A LATERAL subquery correlated with the outer row** (`lateral-join`): Invaract does not translate a LATERAL join (LateralJoin): id and name have no source, and the outer column the subquery correlates on (orders.customer_id) is missing.
-- **A typed joinWith, then fields of the two structs it makes** (`join-with`): joinWith wraps each side's row in a struct (_1, _2). Invaract traces a field taken from such a struct to every column of the struct, as TRANSFORMATION, not to the field's own column. (openlineage-spark also reports the join keys as FILTER: the optimizer's isnotnull filter.)
-- **An aggregate with a FILTER clause** (`aggregate-filter`): An aggregate's FILTER clause decides which rows it sums, so paid depends on status. Invaract does not report that, nor does openlineage-spark; Spline does.
-- **A typed filter (a Scala function), then a column** (`typed-filter`): Invaract does not translate a typed filter (TypedFilter, a Scala function over each row): no column is traced through it.
-- **A union matching columns by position, not name** (`union-positional`): A union matches columns by position. Invaract matches them by name, so where the second side's columns are in another order it traces each output column to the wrong one: id should come from both id and customer_id, and customer_id from both customer_id and id.
-- **Intersect of two inputs' keys** (`intersect`): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept.
-- **ExceptAll of two inputs' keys** (`except-all`): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept. (openlineage-spark, reading Spark's rewrite of EXCEPT ALL as a union, also reports the subtracted side's column as a source of the value.)
-- **A temporary view over a temporary view** (`nested-views`): Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY.
-- **A permanent SQL view over a catalog table** (`permanent-view`): Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY.
-- **A correlated scalar subquery in the select list** (`correlated-scalar`): The subquery's value depends on the outer row's customer_id, which it correlates on; Invaract does not report that column. (openlineage-spark, reading the subquery rewritten as a join and an aggregate, also types customers.customer_id JOIN and GROUP_BY.)
-- **One read of two directories** (`multiple-paths`): One read of two directories: Invaract traces the columns to the first directory only; the second is an input with no column lineage.
-- **Observe(): metrics collected as the rows pass** (`observe`): Invaract does not translate observe() (CollectMetrics), so no column is traced through it.
-- **A random sample** (`sample`): Invaract does not translate sample() (Sample), so no column is traced through it.
-- **Rows after the first, by order (offset)** (`offset`): Invaract does not translate offset() (Offset), so no column is traced through it; it reports only the sort below it.
-- **UPDATE of a Delta table** (`delta-update`): An UPDATE writes the table's rows back to it. Invaract reports the table as the write's input, which openlineage-spark does not, but it traces each column as a copy: it misses the SET expression (amount * 2, a TRANSFORMATION) and the WHERE condition (status, which decides the value of amount).
-- **DELETE from a Delta table** (`delta-delete`): Invaract reports the table as the input of the rows a DELETE keeps, which openlineage-spark does not, but it misses the WHERE condition (status, FILTER) that decides which rows are kept. For an Iceberg DELETE it reports it.
-- **MERGE INTO an Iceberg table** (`iceberg-merge`): Invaract does not translate the MergeRows node Spark plans an Iceberg MERGE with, so no column of the table is traced: only the ON condition's columns are reported. It also names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location).
-- **UPDATE of an Iceberg table** (`iceberg-update`): Invaract names a table an UPDATE changes by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location). It also reports the columns the UPDATE leaves unchanged as computed and conditional on status: Spark's plan writes them as if(status = 'paid', id, id). openlineage-spark reports Iceberg's _file metadata column as shaping the rows.
-- **DELETE from an Iceberg table** (`iceberg-delete`): openlineage-spark reports no input and no column lineage for an Iceberg DELETE; Invaract reports the rows it keeps and the condition that decides them, but names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location).
-- **A stream whose micro-batches are written by foreachBatch** (`foreach-batch`): Invaract checks each micro-batch a foreachBatch function writes and publishes its lineage, but names the batch's input by the files that batch read, so each batch reads new datasets; openlineage-spark names the stream's source directory.
+None of the jobs on this page shows a gap in Invaract's lineage.
 
 Limits of Invaract's Spark lineage that no job on this page measures:
 
@@ -911,7 +1167,8 @@ Limits of Invaract's Spark lineage that no job on this page measures:
 - **Operators Invaract does not translate.** An operator Invaract does not translate is a boundary: a column
   computed through it has no sources.
 - **A MERGE's DELETE clauses, and the rows it leaves.** The rows a DELETE clause removes are not written, so its
-  condition is not reported. Rows no clause touches are not counted, as openlineage-spark counts them.
+  condition is not reported. In a Delta MERGE, rows no clause touches are not counted, as openlineage-spark counts
+  them; an Iceberg MERGE writes them back, and they are.
 
 ## Every job
 
@@ -2043,16 +2300,12 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/warehouse/totals
-customer <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+customer <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
 total <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
 * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
 ```
 
-**Against openlineage-spark** (Invaract gap): Spark's analyzer casts each column to the table's column type, here to the type it already has. Invaract counts that cast as a TRANSFORMATION, so a column copied unchanged is not IDENTITY.
-
-```text
-direct subtype: customer <- file:<in>/orders.customer_id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-```
+**Against openlineage-spark**: agrees.
 
 **Against Spline**: agrees.
 
@@ -2412,26 +2665,17 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
-AMOUNT <- file:<in>/orders.AMOUNT  [DIRECT/IDENTITY]
-next_id <- file:<in>/orders.Id  [DIRECT/TRANSFORMATION]
+AMOUNT <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+next_id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
 ```
 
-**Against openlineage-spark** (Invaract gap): With spark.sql.caseSensitive off (Spark's default), a column can be referred to in any case. Invaract names each source column as the job wrote it (AMOUNT, Id), not as the input's schema has it (amount, id), so the edge names a column the dataset does not have.
+**Against openlineage-spark**: agrees.
+
+**Against Spline** (the other tool's limit): Spline names the written column as the input names it (amount); the job writes it as AMOUNT.
 
 ```text
-direct: only invaract: AMOUNT <- file:<in>/orders.AMOUNT
-direct: only invaract: next_id <- file:<in>/orders.Id
-direct: only openlineage-spark: AMOUNT <- file:<in>/orders.amount
-direct: only openlineage-spark: next_id <- file:<in>/orders.id
-```
-
-**Against Spline** (Invaract gap): With spark.sql.caseSensitive off (Spark's default), a column can be referred to in any case. Invaract names each source column as the job wrote it (AMOUNT, Id), not as the input's schema has it (amount, id), so the edge names a column the dataset does not have.
-
-```text
-dependency: only invaract: AMOUNT <- file:<in>/orders.AMOUNT
-dependency: only invaract: next_id <- file:<in>/orders.Id
+dependency: only invaract: AMOUNT <- file:<in>/orders.amount
 dependency: only spline: amount <- file:<in>/orders.amount
-dependency: only spline: next_id <- file:<in>/orders.id
 ```
 
 ### case-sensitive
@@ -2596,23 +2840,19 @@ input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
 id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
 * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate the plan node a broadcast hint adds (ResolvedHint): nothing on the hinted side is traced, so name has no source and the hinted side's join key is missing. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
-direct: only openlineage-spark: name <- file:<in>/customers.name
+indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
-indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
 ```
 
-**Against Spline** (Invaract gap): Invaract does not translate the plan node a broadcast hint adds (ResolvedHint): nothing on the hinted side is traced, so name has no source and the hinted side's join key is missing. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
-
-```text
-dependency: only spline: name <- file:<in>/customers.name
-indirect: only spline: * <~ file:<in>/customers.customer_id
-```
+**Against Spline**: agrees.
 
 ### sql-hints
 
@@ -2629,25 +2869,20 @@ Invaract publishes:
 input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
 * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract translates neither node the hints add (ResolvedHint for BROADCAST, RebalancePartitions for REBALANCE): no written column is traced. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
-direct: only openlineage-spark: id <- file:<in>/orders.id
-direct: only openlineage-spark: name <- file:<in>/customers.name
+indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
-indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
 ```
 
-**Against Spline** (Invaract gap): Invaract translates neither node the hints add (ResolvedHint for BROADCAST, RebalancePartitions for REBALANCE): no written column is traced. (openlineage-spark also reports the join key as FILTER: the optimizer's isnotnull filter.)
-
-```text
-dependency: only spline: id <- file:<in>/orders.id
-dependency: only spline: name <- file:<in>/customers.name
-indirect: only spline: * <~ file:<in>/customers.customer_id
-```
+**Against Spline**: agrees.
 
 ### semi-join
 
@@ -2833,23 +3068,25 @@ Invaract publishes:
 input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
 * <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate a LATERAL join (LateralJoin): id and name have no source, and the outer column the subquery correlates on (orders.customer_id) is missing.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's rewrite of the correlated subquery as a join and an aggregate grouped by the correlated column, so it also reports orders.customer_id as GROUP_BY and as a copied value, and customers.customer_id as JOIN and GROUP_BY.
 
 ```text
-direct: only openlineage-spark: id <- file:<in>/orders.id
-direct: only openlineage-spark: name <- file:<in>/customers.name
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/FILTER,INDIRECT/GROUP_BY,INDIRECT/JOIN
-indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
+indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/GROUP_BY,INDIRECT/JOIN
 ```
 
-**Against Spline** (Invaract gap): Invaract does not translate a LATERAL join (LateralJoin): id and name have no source. Spline traces the outer side (id) but not the subquery: its input and the columns it filters on.
+**Against Spline** (the other tool's limit): Spline does not follow a LATERAL subquery: it misses its input, the column its value comes from and the columns it filters and correlates on.
 
 ```text
-dependency: only spline: id <- file:<in>/orders.id
+dependency: only invaract: name <- file:<in>/customers.name
 indirect: only invaract: * <~ file:<in>/customers.customer_id
+indirect: only invaract: * <~ file:<in>/orders.customer_id
 input: only invaract: file:<in>/customers
 ```
 
@@ -2868,34 +3105,29 @@ Invaract publishes:
 input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
-id <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-id <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
-id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
-id <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
-name <- file:<in>/customers.country  [DIRECT/TRANSFORMATION]
-name <- file:<in>/customers.customer_id  [DIRECT/TRANSFORMATION]
-name <- file:<in>/customers.email  [DIRECT/TRANSFORMATION]
-name <- file:<in>/customers.name  [DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+name <- file:<in>/customers.name  [DIRECT/IDENTITY]
 * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
 * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): joinWith wraps each side's row in a struct (_1, _2). Invaract traces a field taken from such a struct to every column of the struct, as TRANSFORMATION, not to the field's own column. (openlineage-spark also reports the join keys as FILTER: the optimizer's isnotnull filter.)
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's optimized plan, where the optimizer adds an isnotnull filter on each column a join compares; it reports those columns as FILTER as well as JOIN. Invaract reads the plan the job wrote, which filters nothing there.
 
 ```text
-direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-direct subtype: name <- file:<in>/customers.name: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-direct: only invaract: id <- file:<in>/orders.amount
-direct: only invaract: id <- file:<in>/orders.customer_id
-direct: only invaract: id <- file:<in>/orders.status
-direct: only invaract: name <- file:<in>/customers.country
-direct: only invaract: name <- file:<in>/customers.customer_id
-direct: only invaract: name <- file:<in>/customers.email
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 ```
 
-**Against Spline**: agrees.
+**Against Spline** (the other tool's limit): Spline traces a field taken from joinWith's struct (_1.id) to every column of the struct. Invaract traces it to the field's own column, as openlineage-spark does.
+
+```text
+dependency: only spline: id <- file:<in>/orders.amount
+dependency: only spline: id <- file:<in>/orders.customer_id
+dependency: only spline: id <- file:<in>/orders.status
+dependency: only spline: name <- file:<in>/customers.country
+dependency: only spline: name <- file:<in>/customers.customer_id
+dependency: only spline: name <- file:<in>/customers.email
+```
 
 ### having
 
@@ -2942,15 +3174,16 @@ output: file:<out>/out
 customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
 paid <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
 * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
+paid <~ file:<in>/orders.status  [INDIRECT/CONDITIONAL]
 ```
 
-**Against openlineage-spark**: agrees.
-
-**Against Spline** (Invaract gap): An aggregate's FILTER clause decides which rows it sums, so paid depends on status. Invaract does not report that, nor does openlineage-spark; Spline does.
+**Against openlineage-spark** (the other tool's limit): An aggregate's FILTER clause decides which rows it sums, so status decides paid's value: Invaract reports it as CONDITIONAL lineage of paid, as Spline reports it. openlineage-spark does not report it.
 
 ```text
-dependency: only spline: paid <- file:<in>/orders.status
+indirect: only invaract: paid <~ file:<in>/orders.status
 ```
+
+**Against Spline**: agrees.
 
 ### distinct-collect
 
@@ -3203,18 +3436,29 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+* <~ file:<in>/orders.amount  [INDIRECT/FILTER]
+* <~ file:<in>/orders.customer_id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.id  [INDIRECT/FILTER]
+* <~ file:<in>/orders.status  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate a typed filter (TypedFilter, a Scala function over each row): no column is traced through it.
+**Against openlineage-spark** (the other tool's limit): A typed filter's Scala function is given every column of the row, so each may decide which rows are kept: Invaract reports them as FILTER. openlineage-spark reports none.
 
 ```text
-direct: only openlineage-spark: id <- file:<in>/orders.id
+indirect: only invaract: * <~ file:<in>/orders.amount
+indirect: only invaract: * <~ file:<in>/orders.customer_id
+indirect: only invaract: * <~ file:<in>/orders.id
+indirect: only invaract: * <~ file:<in>/orders.status
 ```
 
-**Against Spline** (Invaract gap): Invaract does not translate a typed filter (TypedFilter, a Scala function over each row): no column is traced through it.
+**Against Spline** (the other tool's limit): Spline does not report the columns a typed filter's function is given either.
 
 ```text
-dependency: only spline: id <- file:<in>/orders.id
+indirect: only invaract: * <~ file:<in>/orders.amount
+indirect: only invaract: * <~ file:<in>/orders.customer_id
+indirect: only invaract: * <~ file:<in>/orders.id
+indirect: only invaract: * <~ file:<in>/orders.status
 ```
 
 ### group-by-key
@@ -3271,22 +3515,14 @@ Invaract publishes:
 input:  file:<in>/orders
 output: file:<out>/out
 customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+customer_id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
 id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 ```
 
-**Against openlineage-spark** (Invaract gap): A union matches columns by position. Invaract matches them by name, so where the second side's columns are in another order it traces each output column to the wrong one: id should come from both id and customer_id, and customer_id from both customer_id and id.
+**Against openlineage-spark**: agrees.
 
-```text
-direct: only openlineage-spark: customer_id <- file:<in>/orders.id
-direct: only openlineage-spark: id <- file:<in>/orders.customer_id
-```
-
-**Against Spline** (Invaract gap): A union matches columns by position. Invaract matches them by name, so where the second side's columns are in another order it traces each output column to the wrong one: id should come from both id and customer_id, and customer_id from both customer_id and id.
-
-```text
-dependency: only spline: customer_id <- file:<in>/orders.id
-dependency: only spline: id <- file:<in>/orders.customer_id
-```
+**Against Spline**: agrees.
 
 ### union-by-name
 
@@ -3347,20 +3583,18 @@ Invaract publishes:
 input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
+customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+* <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY, INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept.
+**Against openlineage-spark**: agrees.
+
+**Against Spline** (the other tool's limit): Spline does not report which columns decide the rows an INTERSECT keeps.
 
 ```text
-direct: only openlineage-spark: customer_id <- file:<in>/orders.customer_id
-indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
-indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
-```
-
-**Against Spline** (Invaract gap): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept.
-
-```text
-dependency: only spline: customer_id <- file:<in>/orders.customer_id
+indirect: only invaract: * <~ file:<in>/customers.customer_id
+indirect: only invaract: * <~ file:<in>/orders.customer_id
 ```
 
 ### except-all
@@ -3377,21 +3611,24 @@ Invaract publishes:
 input:  file:<in>/customers
 input:  file:<in>/orders
 output: file:<out>/out
+customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+* <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+* <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept. (openlineage-spark, reading Spark's rewrite of EXCEPT ALL as a union, also reports the subtracted side's column as a source of the value.)
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reads Spark's rewrite of EXCEPT ALL (a union with the subtracted rows, counted by an aggregate), so it reports the subtracted side's column as a source of the value and the key as GROUP_BY. Invaract reports the left side's column as the value and both keys as deciding the rows.
 
 ```text
 direct: only openlineage-spark: customer_id <- file:<in>/customers.customer_id
-direct: only openlineage-spark: customer_id <- file:<in>/orders.customer_id
-indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
-indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
+indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY
+indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/GROUP_BY
 ```
 
-**Against Spline** (Invaract gap): Invaract does not translate INTERSECT or EXCEPT: the output column has no source, and neither side's key is reported as deciding which rows are kept.
+**Against Spline** (the other tool's limit): Spline does not report which columns decide the rows an EXCEPT keeps.
 
 ```text
-dependency: only spline: customer_id <- file:<in>/orders.customer_id
+indirect: only invaract: * <~ file:<in>/customers.customer_id
+indirect: only invaract: * <~ file:<in>/orders.customer_id
 ```
 
 ### nested-views
@@ -3410,15 +3647,11 @@ Invaract publishes:
 input:  file:<in>/orders
 output: file:<out>/out
 doubled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.status  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark** (Invaract gap): Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY.
-
-```text
-direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-```
+**Against openlineage-spark**: agrees.
 
 **Against Spline**: agrees.
 
@@ -3459,16 +3692,12 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
-id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 next <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
 * <~ file:<in>/orders.amount  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark** (Invaract gap): Spark puts a cast to each column's own type above a view's query. Invaract counts that cast as a TRANSFORMATION, so a column the view passes through unchanged is not IDENTITY.
-
-```text
-direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-```
+**Against openlineage-spark**: agrees.
 
 **Against Spline**: agrees.
 
@@ -3490,20 +3719,21 @@ output: file:<out>/out
 id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
 * <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+name <~ file:<in>/orders.customer_id  [INDIRECT/CONDITIONAL]
 ```
 
-**Against openlineage-spark** (Invaract gap): The subquery's value depends on the outer row's customer_id, which it correlates on; Invaract does not report that column. (openlineage-spark, reading the subquery rewritten as a join and an aggregate, also types customers.customer_id JOIN and GROUP_BY.)
+**Against openlineage-spark** (a convention): The correlated column decides which value the subquery gives each row: Invaract reports it as CONDITIONAL lineage of name. openlineage-spark, reading the subquery rewritten as a join and an aggregate, reports it for the whole output, and types customers.customer_id JOIN and GROUP_BY.
 
 ```text
 indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/FILTER,INDIRECT/GROUP_BY,INDIRECT/JOIN
+indirect: only invaract: name <~ file:<in>/orders.customer_id
 indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
 ```
 
-**Against Spline** (Invaract gap): Spline reports the outer column the subquery correlates on (orders.customer_id), which Invaract misses; Spline misses the subquery's own input, customers, and the column its value comes from.
+**Against Spline** (the other tool's limit): Spline does not follow the subquery into its input: it misses customers, the column name's value comes from and the column it filters on.
 
 ```text
 dependency: only invaract: name <- file:<in>/customers.name
-dependency: only spline: name <- file:<in>/orders.customer_id
 indirect: only invaract: * <~ file:<in>/customers.customer_id
 input: only invaract: file:<in>/customers
 ```
@@ -3523,12 +3753,17 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
-amount <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.status  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark**: agrees.
+**Against openlineage-spark** (the other tool's limit): Spark puts a cast to each column's own type above a cached query. openlineage-spark reports it as a TRANSFORMATION; it changes nothing, and Invaract reports the columns as IDENTITY.
+
+```text
+direct subtype: amount <- file:<in>/orders.amount: invaract DIRECT/IDENTITY, openlineage-spark DIRECT/TRANSFORMATION
+direct subtype: id <- file:<in>/orders.id: invaract DIRECT/IDENTITY, openlineage-spark DIRECT/TRANSFORMATION
+```
 
 **Against Spline**: agrees.
 
@@ -3589,19 +3824,18 @@ input:  file:<in>/orders
 input:  file:<in>/orders_archive
 output: file:<out>/out
 amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+amount <- file:<in>/orders_archive.amount  [DIRECT/IDENTITY]
 id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+id <- file:<in>/orders_archive.id  [DIRECT/IDENTITY]
 ```
 
-**Against openlineage-spark** (Invaract gap): One read of two directories: Invaract traces the columns to the first directory only; the second is an input with no column lineage.
-
-```text
-direct: only openlineage-spark: amount <- file:<in>/orders_archive.amount
-direct: only openlineage-spark: id <- file:<in>/orders_archive.id
-```
+**Against openlineage-spark**: agrees.
 
 **Against Spline** (the other tool's limit): Spline reports only the first directory of a read of several.
 
 ```text
+dependency: only invaract: amount <- file:<in>/orders_archive.amount
+dependency: only invaract: id <- file:<in>/orders_archive.id
 input: only invaract: file:<in>/orders_archive
 ```
 
@@ -3743,21 +3977,13 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
+amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate observe() (CollectMetrics), so no column is traced through it.
+**Against openlineage-spark**: agrees.
 
-```text
-direct: only openlineage-spark: amount <- file:<in>/orders.amount
-direct: only openlineage-spark: id <- file:<in>/orders.id
-```
-
-**Against Spline** (Invaract gap): Invaract does not translate observe() (CollectMetrics), so no column is traced through it.
-
-```text
-dependency: only spline: amount <- file:<in>/orders.amount
-dependency: only spline: id <- file:<in>/orders.id
-```
+**Against Spline**: agrees.
 
 ### sample
 
@@ -3772,19 +3998,12 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate sample() (Sample), so no column is traced through it.
+**Against openlineage-spark**: agrees.
 
-```text
-direct: only openlineage-spark: id <- file:<in>/orders.id
-```
-
-**Against Spline** (Invaract gap): Invaract does not translate sample() (Sample), so no column is traced through it.
-
-```text
-dependency: only spline: id <- file:<in>/orders.id
-```
+**Against Spline**: agrees.
 
 ### offset
 
@@ -3799,20 +4018,13 @@ Invaract publishes:
 ```text
 input:  file:<in>/orders
 output: file:<out>/out
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.id  [INDIRECT/SORT]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate offset() (Offset), so no column is traced through it; it reports only the sort below it.
+**Against openlineage-spark**: agrees.
 
-```text
-direct: only openlineage-spark: id <- file:<in>/orders.id
-```
-
-**Against Spline** (Invaract gap): Invaract does not translate offset() (Offset), so no column is traced through it; it reports only the sort below it.
-
-```text
-dependency: only spline: id <- file:<in>/orders.id
-```
+**Against Spline**: agrees.
 
 ### insert-column-list
 
@@ -3970,21 +4182,27 @@ Invaract publishes:
 ```text
 input:  file:<out>/out
 output: file:<out>/out
-amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
+amount <- file:<out>/out.amount  [DIRECT/TRANSFORMATION]
 id <- file:<out>/out.id  [DIRECT/IDENTITY]
 status <- file:<out>/out.status  [DIRECT/IDENTITY]
+amount <~ file:<out>/out.status  [INDIRECT/CONDITIONAL]
 ```
 
-**Against openlineage-spark** (Invaract gap): An UPDATE writes the table's rows back to it. Invaract reports the table as the write's input, which openlineage-spark does not, but it traces each column as a copy: it misses the SET expression (amount * 2, a TRANSFORMATION) and the WHERE condition (status, which decides the value of amount).
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reports no input and no column lineage for a Delta UPDATE. Invaract reports the table's rows as its input, the SET expression (amount * 2) and the WHERE condition that decides amount's value.
 
 ```text
 direct: only invaract: amount <- file:<out>/out.amount
 direct: only invaract: id <- file:<out>/out.id
 direct: only invaract: status <- file:<out>/out.status
+indirect: only invaract: amount <~ file:<out>/out.status
 input: only invaract: file:<out>/out
 ```
 
-**Against Spline**: agrees.
+**Against Spline** (the other tool's limit): Spline does not report the WHERE condition (status) that decides which rows' amount the UPDATE changes.
+
+```text
+dependency: only invaract: amount <- file:<out>/out.status
+```
 
 ### delta-delete
 
@@ -4003,18 +4221,24 @@ output: file:<out>/out
 amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
 id <- file:<out>/out.id  [DIRECT/IDENTITY]
 status <- file:<out>/out.status  [DIRECT/IDENTITY]
+* <~ file:<out>/out.status  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract reports the table as the input of the rows a DELETE keeps, which openlineage-spark does not, but it misses the WHERE condition (status, FILTER) that decides which rows are kept. For an Iceberg DELETE it reports it.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reports no input and no column lineage for a Delta DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them.
 
 ```text
 direct: only invaract: amount <- file:<out>/out.amount
 direct: only invaract: id <- file:<out>/out.id
 direct: only invaract: status <- file:<out>/out.status
+indirect: only invaract: * <~ file:<out>/out.status
 input: only invaract: file:<out>/out
 ```
 
-**Against Spline**: agrees.
+**Against Spline** (the other tool's limit): Spline does not report the WHERE condition (status) that decides which rows a DELETE keeps.
+
+```text
+indirect: only invaract: * <~ file:<out>/out.status
+```
 
 ### delta-replace-where
 
@@ -4039,6 +4263,7 @@ id <- file:<out>/out.id  [DIRECT/IDENTITY]
 status <- file:<in>/orders.status  [DIRECT/IDENTITY]
 status <- file:<out>/out.status  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.status  [INDIRECT/FILTER]
+* <~ file:<out>/out.status  [INDIRECT/FILTER]
 ```
 
 **Against openlineage-spark** (a convention): Delta carries out a replaceWhere on a data column by also rewriting the files that hold rows the predicate does not select: it reads them back from the table and writes them again, in a second write of its own. Invaract checks and reports that write too, so the table is an input of its own; openlineage-spark does not see Delta's internal write.
@@ -4047,6 +4272,7 @@ status <- file:<out>/out.status  [DIRECT/IDENTITY]
 direct: only invaract: amount <- file:<out>/out.amount
 direct: only invaract: id <- file:<out>/out.id
 direct: only invaract: status <- file:<out>/out.status
+indirect: only invaract: * <~ file:<out>/out.status
 input: only invaract: file:<out>/out
 ```
 
@@ -4056,6 +4282,7 @@ input: only invaract: file:<out>/out
 dependency: only invaract: amount <- file:<out>/out.amount
 dependency: only invaract: id <- file:<out>/out.id
 dependency: only invaract: status <- file:<out>/out.status
+indirect: only invaract: * <~ file:<out>/out.status
 input: only invaract: file:<out>/out
 ```
 
@@ -4074,37 +4301,36 @@ Invaract publishes:
 
 ```text
 input:  file:<in>/orders
-input:  iceberg://ice:db.acct
-output: iceberg://ice:db.acct
+input:  file:<out>/ice/db/acct
+output: file:<out>/ice/db/acct
+amount <- file:<in>/orders.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+amount <- file:<out>/ice/db/acct.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+id <- file:<out>/ice/db/acct.id  [DIRECT/IDENTITY]
 * <~ file:<in>/orders.id  [INDIRECT/JOIN]
-* <~ iceberg://ice:db.acct.id  [INDIRECT/JOIN]
+* <~ file:<out>/ice/db/acct.id  [INDIRECT/JOIN]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract does not translate the MergeRows node Spark plans an Iceberg MERGE with, so no column of the table is traced: only the ON condition's columns are reported. It also names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location).
+**Against openlineage-spark** (the other tool's limit): openlineage-spark also counts the ON condition's columns as copied values (DIRECT/IDENTITY), and Iceberg's _file metadata column as shaping the rows. Invaract counts the ON condition's columns as JOIN.
 
 ```text
-direct: only openlineage-spark: amount <- file:<in>/orders.amount
-direct: only openlineage-spark: amount <- file:<out>/ice/db/acct.amount
-direct: only openlineage-spark: id <- file:<in>/orders.id
-direct: only openlineage-spark: id <- file:<out>/ice/db/acct.id
 indirect subtype: * <~ file:<in>/orders.id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/JOIN
-indirect: only invaract: * <~ iceberg://ice:db.acct.id
+indirect subtype: * <~ file:<out>/ice/db/acct.id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/JOIN
 indirect: only openlineage-spark: * <~ file:<out>/ice/db/acct._file
-indirect: only openlineage-spark: * <~ file:<out>/ice/db/acct.id
-input: only invaract: iceberg://ice:db.acct
-input: only openlineage-spark: file:<out>/ice/db/acct
-output: only invaract: iceberg://ice:db.acct
-output: only openlineage-spark: file:<out>/ice/db/acct
 ```
 
 **Against Spline** (the other tool's limit): Spline's agent records nothing for an Iceberg MERGE.
 
 ```text
+dependency: only invaract: amount <- file:<in>/orders.amount
+dependency: only invaract: amount <- file:<out>/ice/db/acct.amount
+dependency: only invaract: id <- file:<in>/orders.id
+dependency: only invaract: id <- file:<out>/ice/db/acct.id
 indirect: only invaract: * <~ file:<in>/orders.id
-indirect: only invaract: * <~ iceberg://ice:db.acct.id
+indirect: only invaract: * <~ file:<out>/ice/db/acct.id
 input: only invaract: file:<in>/orders
-input: only invaract: iceberg://ice:db.acct
-output: only invaract: iceberg://ice:db.acct
+input: only invaract: file:<out>/ice/db/acct
+output: only invaract: file:<out>/ice/db/acct
 ```
 
 ### iceberg-update
@@ -4119,46 +4345,30 @@ s.sql("UPDATE ice.db.upd SET amount = amount * 2 WHERE status = 'paid'")
 Invaract publishes:
 
 ```text
-input:  iceberg://ice:db.upd
-output: iceberg://ice:db.upd
-amount <- iceberg://ice:db.upd.amount  [DIRECT/TRANSFORMATION]
-id <- iceberg://ice:db.upd.id  [DIRECT/TRANSFORMATION]
-status <- iceberg://ice:db.upd.status  [DIRECT/TRANSFORMATION]
-amount <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-id <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-status <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
+input:  file:<out>/ice/db/upd
+output: file:<out>/ice/db/upd
+amount <- file:<out>/ice/db/upd.amount  [DIRECT/TRANSFORMATION]
+id <- file:<out>/ice/db/upd.id  [DIRECT/IDENTITY]
+status <- file:<out>/ice/db/upd.status  [DIRECT/IDENTITY]
+amount <~ file:<out>/ice/db/upd.status  [INDIRECT/CONDITIONAL]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract names a table an UPDATE changes by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location). It also reports the columns the UPDATE leaves unchanged as computed and conditional on status: Spark's plan writes them as if(status = 'paid', id, id). openlineage-spark reports Iceberg's _file metadata column as shaping the rows.
+**Against openlineage-spark** (a convention): Where its condition does not hold, an UPDATE copies amount: openlineage-spark reports it as both IDENTITY and TRANSFORMATION, Invaract as TRANSFORMATION, as it types a CASE WHEN's value. openlineage-spark also reports Iceberg's _file metadata column as shaping the rows.
 
 ```text
-direct: only invaract: amount <- iceberg://ice:db.upd.amount
-direct: only invaract: id <- iceberg://ice:db.upd.id
-direct: only invaract: status <- iceberg://ice:db.upd.status
-direct: only openlineage-spark: amount <- file:<out>/ice/db/upd.amount
-direct: only openlineage-spark: id <- file:<out>/ice/db/upd.id
-direct: only openlineage-spark: status <- file:<out>/ice/db/upd.status
-indirect: only invaract: amount <~ iceberg://ice:db.upd.status
-indirect: only invaract: id <~ iceberg://ice:db.upd.status
-indirect: only invaract: status <~ iceberg://ice:db.upd.status
+direct subtype: amount <- file:<out>/ice/db/upd.amount: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY,DIRECT/TRANSFORMATION
 indirect: only openlineage-spark: * <~ file:<out>/ice/db/upd._file
-indirect: only openlineage-spark: amount <~ file:<out>/ice/db/upd.status
-input: only invaract: iceberg://ice:db.upd
-input: only openlineage-spark: file:<out>/ice/db/upd
-output: only invaract: iceberg://ice:db.upd
-output: only openlineage-spark: file:<out>/ice/db/upd
 ```
 
 **Against Spline** (the other tool's limit): Spline's agent records nothing for an Iceberg UPDATE.
 
 ```text
-dependency: only invaract: amount <- iceberg://ice:db.upd.amount
-dependency: only invaract: amount <- iceberg://ice:db.upd.status
-dependency: only invaract: id <- iceberg://ice:db.upd.id
-dependency: only invaract: id <- iceberg://ice:db.upd.status
-dependency: only invaract: status <- iceberg://ice:db.upd.status
-input: only invaract: iceberg://ice:db.upd
-output: only invaract: iceberg://ice:db.upd
+dependency: only invaract: amount <- file:<out>/ice/db/upd.amount
+dependency: only invaract: amount <- file:<out>/ice/db/upd.status
+dependency: only invaract: id <- file:<out>/ice/db/upd.id
+dependency: only invaract: status <- file:<out>/ice/db/upd.status
+input: only invaract: file:<out>/ice/db/upd
+output: only invaract: file:<out>/ice/db/upd
 ```
 
 ### iceberg-delete
@@ -4173,35 +4383,33 @@ s.sql("DELETE FROM ice.db.del WHERE status = 'open'")
 Invaract publishes:
 
 ```text
-input:  iceberg://ice:db.del
-output: iceberg://ice:db.del
-amount <- iceberg://ice:db.del.amount  [DIRECT/IDENTITY]
-id <- iceberg://ice:db.del.id  [DIRECT/IDENTITY]
-status <- iceberg://ice:db.del.status  [DIRECT/IDENTITY]
-* <~ iceberg://ice:db.del.status  [INDIRECT/FILTER]
+input:  file:<out>/ice/db/del
+output: file:<out>/ice/db/del
+amount <- file:<out>/ice/db/del.amount  [DIRECT/IDENTITY]
+id <- file:<out>/ice/db/del.id  [DIRECT/IDENTITY]
+status <- file:<out>/ice/db/del.status  [DIRECT/IDENTITY]
+* <~ file:<out>/ice/db/del.status  [INDIRECT/FILTER]
 ```
 
-**Against openlineage-spark** (Invaract gap): openlineage-spark reports no input and no column lineage for an Iceberg DELETE; Invaract reports the rows it keeps and the condition that decides them, but names the table by its catalog identifier, where openlineage-spark names it by its location (both name a table appended to by its location).
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reports no input and no column lineage for an Iceberg DELETE. Invaract reports the rows it keeps and the WHERE condition that decides them.
 
 ```text
-direct: only invaract: amount <- iceberg://ice:db.del.amount
-direct: only invaract: id <- iceberg://ice:db.del.id
-direct: only invaract: status <- iceberg://ice:db.del.status
-indirect: only invaract: * <~ iceberg://ice:db.del.status
-input: only invaract: iceberg://ice:db.del
-output: only invaract: iceberg://ice:db.del
-output: only openlineage-spark: file:<out>/ice/db/del
+direct: only invaract: amount <- file:<out>/ice/db/del.amount
+direct: only invaract: id <- file:<out>/ice/db/del.id
+direct: only invaract: status <- file:<out>/ice/db/del.status
+indirect: only invaract: * <~ file:<out>/ice/db/del.status
+input: only invaract: file:<out>/ice/db/del
 ```
 
 **Against Spline** (the other tool's limit): Spline's agent records nothing for an Iceberg DELETE.
 
 ```text
-dependency: only invaract: amount <- iceberg://ice:db.del.amount
-dependency: only invaract: id <- iceberg://ice:db.del.id
-dependency: only invaract: status <- iceberg://ice:db.del.status
-indirect: only invaract: * <~ iceberg://ice:db.del.status
-input: only invaract: iceberg://ice:db.del
-output: only invaract: iceberg://ice:db.del
+dependency: only invaract: amount <- file:<out>/ice/db/del.amount
+dependency: only invaract: id <- file:<out>/ice/db/del.id
+dependency: only invaract: status <- file:<out>/ice/db/del.status
+indirect: only invaract: * <~ file:<out>/ice/db/del.status
+input: only invaract: file:<out>/ice/db/del
+output: only invaract: file:<out>/ice/db/del
 ```
 
 ### iceberg-overwrite-partitions
@@ -4265,25 +4473,23 @@ q.awaitTermination()
 Invaract publishes:
 
 ```text
-input:  file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+input:  file:<in>/orders
 output: file:<out>/out
-id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id  [DIRECT/IDENTITY]
-tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount  [DIRECT/TRANSFORMATION]
+id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+tripled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
 ```
 
-**Against openlineage-spark** (Invaract gap): Invaract checks each micro-batch a foreachBatch function writes and publishes its lineage, but names the batch's input by the files that batch read, so each batch reads new datasets; openlineage-spark names the stream's source directory.
+**Against openlineage-spark** (the other tool's limit): openlineage-spark reports a foreachBatch micro-batch's input but no column lineage for it. Invaract checks each micro-batch and publishes its lineage.
 
 ```text
-direct: only invaract: id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id
-direct: only invaract: tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount
-input: only invaract: file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
-input: only openlineage-spark: file:<in>/orders
+direct: only invaract: id <- file:<in>/orders.id
+direct: only invaract: tripled <- file:<in>/orders.amount
 ```
 
 **Against Spline** (the other tool's limit): Spline records each micro-batch's write with no input and no column lineage.
 
 ```text
-dependency: only invaract: id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id
-dependency: only invaract: tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount
-input: only invaract: file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+dependency: only invaract: id <- file:<in>/orders.id
+dependency: only invaract: tripled <- file:<in>/orders.amount
+input: only invaract: file:<in>/orders
 ```

@@ -522,11 +522,11 @@ agree
 [insert-into invaract]
   input:  file:<in>/orders
   output: file:<out>/warehouse/totals
-  customer <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  customer <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
   total <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
   * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
 [insert-into vs openlineage-spark]
-  direct subtype: customer <- file:<in>/orders.customer_id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
+agree
 [insert-into vs spline]
 agree
 
@@ -694,18 +694,13 @@ agree
 [case-insensitive invaract]
   input:  file:<in>/orders
   output: file:<out>/out
-  AMOUNT <- file:<in>/orders.AMOUNT  [DIRECT/IDENTITY]
-  next_id <- file:<in>/orders.Id  [DIRECT/TRANSFORMATION]
+  AMOUNT <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+  next_id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
 [case-insensitive vs openlineage-spark]
-  direct: only invaract: AMOUNT <- file:<in>/orders.AMOUNT
-  direct: only invaract: next_id <- file:<in>/orders.Id
-  direct: only openlineage-spark: AMOUNT <- file:<in>/orders.amount
-  direct: only openlineage-spark: next_id <- file:<in>/orders.id
+agree
 [case-insensitive vs spline]
-  dependency: only invaract: AMOUNT <- file:<in>/orders.AMOUNT
-  dependency: only invaract: next_id <- file:<in>/orders.Id
+  dependency: only invaract: AMOUNT <- file:<in>/orders.amount
   dependency: only spline: amount <- file:<in>/orders.amount
-  dependency: only spline: next_id <- file:<in>/orders.id
 
 [case-sensitive invaract]
   input:  file:<in>/orders
@@ -781,29 +776,28 @@ agree
   input:  file:<in>/orders
   output: file:<out>/out
   id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  name <- file:<in>/customers.name  [DIRECT/IDENTITY]
+  * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
   * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 [broadcast-hint vs openlineage-spark]
-  direct: only openlineage-spark: name <- file:<in>/customers.name
+  indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
   indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
-  indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
 [broadcast-hint vs spline]
-  dependency: only spline: name <- file:<in>/customers.name
-  indirect: only spline: * <~ file:<in>/customers.customer_id
+agree
 
 [sql-hints invaract]
   input:  file:<in>/customers
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  name <- file:<in>/customers.name  [DIRECT/IDENTITY]
+  * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
   * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 [sql-hints vs openlineage-spark]
-  direct: only openlineage-spark: id <- file:<in>/orders.id
-  direct: only openlineage-spark: name <- file:<in>/customers.name
+  indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
   indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
-  indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
 [sql-hints vs spline]
-  dependency: only spline: id <- file:<in>/orders.id
-  dependency: only spline: name <- file:<in>/customers.name
-  indirect: only spline: * <~ file:<in>/customers.customer_id
+agree
 
 [semi-join invaract]
   input:  file:<in>/customers
@@ -890,44 +884,37 @@ agree
   input:  file:<in>/customers
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
   * <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 [lateral-join vs openlineage-spark]
-  direct: only openlineage-spark: id <- file:<in>/orders.id
-  direct: only openlineage-spark: name <- file:<in>/customers.name
   indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/FILTER,INDIRECT/GROUP_BY,INDIRECT/JOIN
-  indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
+  indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/GROUP_BY,INDIRECT/JOIN
 [lateral-join vs spline]
-  dependency: only spline: id <- file:<in>/orders.id
+  dependency: only invaract: name <- file:<in>/customers.name
   indirect: only invaract: * <~ file:<in>/customers.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
   input: only invaract: file:<in>/customers
 
 [join-with invaract]
   input:  file:<in>/customers
   input:  file:<in>/orders
   output: file:<out>/out
-  id <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-  id <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
-  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
-  id <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
-  name <- file:<in>/customers.country  [DIRECT/TRANSFORMATION]
-  name <- file:<in>/customers.customer_id  [DIRECT/TRANSFORMATION]
-  name <- file:<in>/customers.email  [DIRECT/TRANSFORMATION]
-  name <- file:<in>/customers.name  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  name <- file:<in>/customers.name  [DIRECT/IDENTITY]
   * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
   * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 [join-with vs openlineage-spark]
-  direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-  direct subtype: name <- file:<in>/customers.name: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
-  direct: only invaract: id <- file:<in>/orders.amount
-  direct: only invaract: id <- file:<in>/orders.customer_id
-  direct: only invaract: id <- file:<in>/orders.status
-  direct: only invaract: name <- file:<in>/customers.country
-  direct: only invaract: name <- file:<in>/customers.customer_id
-  direct: only invaract: name <- file:<in>/customers.email
   indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
   indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/FILTER,INDIRECT/JOIN
 [join-with vs spline]
-agree
+  dependency: only spline: id <- file:<in>/orders.amount
+  dependency: only spline: id <- file:<in>/orders.customer_id
+  dependency: only spline: id <- file:<in>/orders.status
+  dependency: only spline: name <- file:<in>/customers.country
+  dependency: only spline: name <- file:<in>/customers.customer_id
+  dependency: only spline: name <- file:<in>/customers.email
 
 [having invaract]
   input:  file:<in>/orders
@@ -947,10 +934,11 @@ agree
   customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
   paid <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
   * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
+  paid <~ file:<in>/orders.status  [INDIRECT/CONDITIONAL]
 [aggregate-filter vs openlineage-spark]
-agree
+  indirect: only invaract: paid <~ file:<in>/orders.status
 [aggregate-filter vs spline]
-  dependency: only spline: paid <- file:<in>/orders.status
+agree
 
 [distinct-collect invaract]
   input:  file:<in>/orders
@@ -1067,10 +1055,21 @@ agree
 [typed-filter invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  * <~ file:<in>/orders.amount  [INDIRECT/FILTER]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/FILTER]
+  * <~ file:<in>/orders.id  [INDIRECT/FILTER]
+  * <~ file:<in>/orders.status  [INDIRECT/FILTER]
 [typed-filter vs openlineage-spark]
-  direct: only openlineage-spark: id <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.amount
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
 [typed-filter vs spline]
-  dependency: only spline: id <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.amount
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
 
 [group-by-key invaract]
   input:  file:<in>/orders
@@ -1092,13 +1091,13 @@ agree
   input:  file:<in>/orders
   output: file:<out>/out
   customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+  customer_id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
   id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 [union-positional vs openlineage-spark]
-  direct: only openlineage-spark: customer_id <- file:<in>/orders.id
-  direct: only openlineage-spark: id <- file:<in>/orders.customer_id
+agree
 [union-positional vs spline]
-  dependency: only spline: customer_id <- file:<in>/orders.id
-  dependency: only spline: id <- file:<in>/orders.customer_id
+agree
 
 [union-by-name invaract]
   input:  file:<in>/orders
@@ -1127,33 +1126,38 @@ agree
   input:  file:<in>/customers
   input:  file:<in>/orders
   output: file:<out>/out
+  customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+  * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY, INDIRECT/JOIN]
 [intersect vs openlineage-spark]
-  direct: only openlineage-spark: customer_id <- file:<in>/orders.customer_id
-  indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
-  indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
+agree
 [intersect vs spline]
-  dependency: only spline: customer_id <- file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/customers.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
 
 [except-all invaract]
   input:  file:<in>/customers
   input:  file:<in>/orders
   output: file:<out>/out
+  customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+  * <~ file:<in>/customers.customer_id  [INDIRECT/JOIN]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/JOIN]
 [except-all vs openlineage-spark]
   direct: only openlineage-spark: customer_id <- file:<in>/customers.customer_id
-  direct: only openlineage-spark: customer_id <- file:<in>/orders.customer_id
-  indirect: only openlineage-spark: * <~ file:<in>/customers.customer_id
-  indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
+  indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY
+  indirect subtype: * <~ file:<in>/orders.customer_id: invaract INDIRECT/JOIN, openlineage-spark INDIRECT/GROUP_BY
 [except-all vs spline]
-  dependency: only spline: customer_id <- file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/customers.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
 
 [nested-views invaract]
   input:  file:<in>/orders
   output: file:<out>/out
   doubled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.status  [INDIRECT/FILTER]
 [nested-views vs openlineage-spark]
-  direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
+agree
 [nested-views vs spline]
 agree
 
@@ -1170,11 +1174,11 @@ agree
 [permanent-view invaract]
   input:  file:<in>/orders
   output: file:<out>/out
-  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   next <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
   * <~ file:<in>/orders.amount  [INDIRECT/FILTER]
 [permanent-view vs openlineage-spark]
-  direct subtype: id <- file:<in>/orders.id: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY
+agree
 [permanent-view vs spline]
 agree
 
@@ -1185,23 +1189,25 @@ agree
   id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   name <- file:<in>/customers.name  [DIRECT/AGGREGATION]
   * <~ file:<in>/customers.customer_id  [INDIRECT/FILTER]
+  name <~ file:<in>/orders.customer_id  [INDIRECT/CONDITIONAL]
 [correlated-scalar vs openlineage-spark]
   indirect subtype: * <~ file:<in>/customers.customer_id: invaract INDIRECT/FILTER, openlineage-spark INDIRECT/FILTER,INDIRECT/GROUP_BY,INDIRECT/JOIN
+  indirect: only invaract: name <~ file:<in>/orders.customer_id
   indirect: only openlineage-spark: * <~ file:<in>/orders.customer_id
 [correlated-scalar vs spline]
   dependency: only invaract: name <- file:<in>/customers.name
-  dependency: only spline: name <- file:<in>/orders.customer_id
   indirect: only invaract: * <~ file:<in>/customers.customer_id
   input: only invaract: file:<in>/customers
 
 [cache-table invaract]
   input:  file:<in>/orders
   output: file:<out>/out
-  amount <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
-  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.status  [INDIRECT/FILTER]
 [cache-table vs openlineage-spark]
-agree
+  direct subtype: amount <- file:<in>/orders.amount: invaract DIRECT/IDENTITY, openlineage-spark DIRECT/TRANSFORMATION
+  direct subtype: id <- file:<in>/orders.id: invaract DIRECT/IDENTITY, openlineage-spark DIRECT/TRANSFORMATION
 [cache-table vs spline]
 agree
 
@@ -1230,11 +1236,14 @@ agree
   input:  file:<in>/orders_archive
   output: file:<out>/out
   amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+  amount <- file:<in>/orders_archive.amount  [DIRECT/IDENTITY]
   id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  id <- file:<in>/orders_archive.id  [DIRECT/IDENTITY]
 [multiple-paths vs openlineage-spark]
-  direct: only openlineage-spark: amount <- file:<in>/orders_archive.amount
-  direct: only openlineage-spark: id <- file:<in>/orders_archive.id
+agree
 [multiple-paths vs spline]
+  dependency: only invaract: amount <- file:<in>/orders_archive.amount
+  dependency: only invaract: id <- file:<in>/orders_archive.id
   input: only invaract: file:<in>/orders_archive
 
 [glob-path invaract]
@@ -1294,29 +1303,31 @@ agree
 [observe invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 [observe vs openlineage-spark]
-  direct: only openlineage-spark: amount <- file:<in>/orders.amount
-  direct: only openlineage-spark: id <- file:<in>/orders.id
+agree
 [observe vs spline]
-  dependency: only spline: amount <- file:<in>/orders.amount
-  dependency: only spline: id <- file:<in>/orders.id
+agree
 
 [sample invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
 [sample vs openlineage-spark]
-  direct: only openlineage-spark: id <- file:<in>/orders.id
+agree
 [sample vs spline]
-  dependency: only spline: id <- file:<in>/orders.id
+agree
 
 [offset invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.id  [INDIRECT/SORT]
 [offset vs openlineage-spark]
-  direct: only openlineage-spark: id <- file:<in>/orders.id
+agree
 [offset vs spline]
-  dependency: only spline: id <- file:<in>/orders.id
+agree
 
 [insert-column-list invaract]
   input:  file:<in>/orders
@@ -1384,16 +1395,18 @@ agree
 [delta-update invaract]
   input:  file:<out>/out
   output: file:<out>/out
-  amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
+  amount <- file:<out>/out.amount  [DIRECT/TRANSFORMATION]
   id <- file:<out>/out.id  [DIRECT/IDENTITY]
   status <- file:<out>/out.status  [DIRECT/IDENTITY]
+  amount <~ file:<out>/out.status  [INDIRECT/CONDITIONAL]
 [delta-update vs openlineage-spark]
   direct: only invaract: amount <- file:<out>/out.amount
   direct: only invaract: id <- file:<out>/out.id
   direct: only invaract: status <- file:<out>/out.status
+  indirect: only invaract: amount <~ file:<out>/out.status
   input: only invaract: file:<out>/out
 [delta-update vs spline]
-agree
+  dependency: only invaract: amount <- file:<out>/out.status
 
 [delta-delete invaract]
   input:  file:<out>/out
@@ -1401,13 +1414,15 @@ agree
   amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
   id <- file:<out>/out.id  [DIRECT/IDENTITY]
   status <- file:<out>/out.status  [DIRECT/IDENTITY]
+  * <~ file:<out>/out.status  [INDIRECT/FILTER]
 [delta-delete vs openlineage-spark]
   direct: only invaract: amount <- file:<out>/out.amount
   direct: only invaract: id <- file:<out>/out.id
   direct: only invaract: status <- file:<out>/out.status
+  indirect: only invaract: * <~ file:<out>/out.status
   input: only invaract: file:<out>/out
 [delta-delete vs spline]
-agree
+  indirect: only invaract: * <~ file:<out>/out.status
 
 [delta-replace-where invaract]
   input:  file:<in>/orders
@@ -1420,99 +1435,83 @@ agree
   status <- file:<in>/orders.status  [DIRECT/IDENTITY]
   status <- file:<out>/out.status  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.status  [INDIRECT/FILTER]
+  * <~ file:<out>/out.status  [INDIRECT/FILTER]
 [delta-replace-where vs openlineage-spark]
   direct: only invaract: amount <- file:<out>/out.amount
   direct: only invaract: id <- file:<out>/out.id
   direct: only invaract: status <- file:<out>/out.status
+  indirect: only invaract: * <~ file:<out>/out.status
   input: only invaract: file:<out>/out
 [delta-replace-where vs spline]
   dependency: only invaract: amount <- file:<out>/out.amount
   dependency: only invaract: id <- file:<out>/out.id
   dependency: only invaract: status <- file:<out>/out.status
+  indirect: only invaract: * <~ file:<out>/out.status
   input: only invaract: file:<out>/out
 
 [iceberg-merge invaract]
   input:  file:<in>/orders
-  input:  iceberg://ice:db.acct
-  output: iceberg://ice:db.acct
+  input:  file:<out>/ice/db/acct
+  output: file:<out>/ice/db/acct
+  amount <- file:<in>/orders.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+  amount <- file:<out>/ice/db/acct.amount  [DIRECT/IDENTITY, DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  id <- file:<out>/ice/db/acct.id  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.id  [INDIRECT/JOIN]
-  * <~ iceberg://ice:db.acct.id  [INDIRECT/JOIN]
+  * <~ file:<out>/ice/db/acct.id  [INDIRECT/JOIN]
 [iceberg-merge vs openlineage-spark]
-  direct: only openlineage-spark: amount <- file:<in>/orders.amount
-  direct: only openlineage-spark: amount <- file:<out>/ice/db/acct.amount
-  direct: only openlineage-spark: id <- file:<in>/orders.id
-  direct: only openlineage-spark: id <- file:<out>/ice/db/acct.id
   indirect subtype: * <~ file:<in>/orders.id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/JOIN
-  indirect: only invaract: * <~ iceberg://ice:db.acct.id
+  indirect subtype: * <~ file:<out>/ice/db/acct.id: invaract INDIRECT/JOIN, openlineage-spark DIRECT/IDENTITY,INDIRECT/JOIN
   indirect: only openlineage-spark: * <~ file:<out>/ice/db/acct._file
-  indirect: only openlineage-spark: * <~ file:<out>/ice/db/acct.id
-  input: only invaract: iceberg://ice:db.acct
-  input: only openlineage-spark: file:<out>/ice/db/acct
-  output: only invaract: iceberg://ice:db.acct
-  output: only openlineage-spark: file:<out>/ice/db/acct
 [iceberg-merge vs spline]
+  dependency: only invaract: amount <- file:<in>/orders.amount
+  dependency: only invaract: amount <- file:<out>/ice/db/acct.amount
+  dependency: only invaract: id <- file:<in>/orders.id
+  dependency: only invaract: id <- file:<out>/ice/db/acct.id
   indirect: only invaract: * <~ file:<in>/orders.id
-  indirect: only invaract: * <~ iceberg://ice:db.acct.id
+  indirect: only invaract: * <~ file:<out>/ice/db/acct.id
   input: only invaract: file:<in>/orders
-  input: only invaract: iceberg://ice:db.acct
-  output: only invaract: iceberg://ice:db.acct
+  input: only invaract: file:<out>/ice/db/acct
+  output: only invaract: file:<out>/ice/db/acct
 
 [iceberg-update invaract]
-  input:  iceberg://ice:db.upd
-  output: iceberg://ice:db.upd
-  amount <- iceberg://ice:db.upd.amount  [DIRECT/TRANSFORMATION]
-  id <- iceberg://ice:db.upd.id  [DIRECT/TRANSFORMATION]
-  status <- iceberg://ice:db.upd.status  [DIRECT/TRANSFORMATION]
-  amount <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-  id <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
-  status <~ iceberg://ice:db.upd.status  [INDIRECT/CONDITIONAL]
+  input:  file:<out>/ice/db/upd
+  output: file:<out>/ice/db/upd
+  amount <- file:<out>/ice/db/upd.amount  [DIRECT/TRANSFORMATION]
+  id <- file:<out>/ice/db/upd.id  [DIRECT/IDENTITY]
+  status <- file:<out>/ice/db/upd.status  [DIRECT/IDENTITY]
+  amount <~ file:<out>/ice/db/upd.status  [INDIRECT/CONDITIONAL]
 [iceberg-update vs openlineage-spark]
-  direct: only invaract: amount <- iceberg://ice:db.upd.amount
-  direct: only invaract: id <- iceberg://ice:db.upd.id
-  direct: only invaract: status <- iceberg://ice:db.upd.status
-  direct: only openlineage-spark: amount <- file:<out>/ice/db/upd.amount
-  direct: only openlineage-spark: id <- file:<out>/ice/db/upd.id
-  direct: only openlineage-spark: status <- file:<out>/ice/db/upd.status
-  indirect: only invaract: amount <~ iceberg://ice:db.upd.status
-  indirect: only invaract: id <~ iceberg://ice:db.upd.status
-  indirect: only invaract: status <~ iceberg://ice:db.upd.status
+  direct subtype: amount <- file:<out>/ice/db/upd.amount: invaract DIRECT/TRANSFORMATION, openlineage-spark DIRECT/IDENTITY,DIRECT/TRANSFORMATION
   indirect: only openlineage-spark: * <~ file:<out>/ice/db/upd._file
-  indirect: only openlineage-spark: amount <~ file:<out>/ice/db/upd.status
-  input: only invaract: iceberg://ice:db.upd
-  input: only openlineage-spark: file:<out>/ice/db/upd
-  output: only invaract: iceberg://ice:db.upd
-  output: only openlineage-spark: file:<out>/ice/db/upd
 [iceberg-update vs spline]
-  dependency: only invaract: amount <- iceberg://ice:db.upd.amount
-  dependency: only invaract: amount <- iceberg://ice:db.upd.status
-  dependency: only invaract: id <- iceberg://ice:db.upd.id
-  dependency: only invaract: id <- iceberg://ice:db.upd.status
-  dependency: only invaract: status <- iceberg://ice:db.upd.status
-  input: only invaract: iceberg://ice:db.upd
-  output: only invaract: iceberg://ice:db.upd
+  dependency: only invaract: amount <- file:<out>/ice/db/upd.amount
+  dependency: only invaract: amount <- file:<out>/ice/db/upd.status
+  dependency: only invaract: id <- file:<out>/ice/db/upd.id
+  dependency: only invaract: status <- file:<out>/ice/db/upd.status
+  input: only invaract: file:<out>/ice/db/upd
+  output: only invaract: file:<out>/ice/db/upd
 
 [iceberg-delete invaract]
-  input:  iceberg://ice:db.del
-  output: iceberg://ice:db.del
-  amount <- iceberg://ice:db.del.amount  [DIRECT/IDENTITY]
-  id <- iceberg://ice:db.del.id  [DIRECT/IDENTITY]
-  status <- iceberg://ice:db.del.status  [DIRECT/IDENTITY]
-  * <~ iceberg://ice:db.del.status  [INDIRECT/FILTER]
+  input:  file:<out>/ice/db/del
+  output: file:<out>/ice/db/del
+  amount <- file:<out>/ice/db/del.amount  [DIRECT/IDENTITY]
+  id <- file:<out>/ice/db/del.id  [DIRECT/IDENTITY]
+  status <- file:<out>/ice/db/del.status  [DIRECT/IDENTITY]
+  * <~ file:<out>/ice/db/del.status  [INDIRECT/FILTER]
 [iceberg-delete vs openlineage-spark]
-  direct: only invaract: amount <- iceberg://ice:db.del.amount
-  direct: only invaract: id <- iceberg://ice:db.del.id
-  direct: only invaract: status <- iceberg://ice:db.del.status
-  indirect: only invaract: * <~ iceberg://ice:db.del.status
-  input: only invaract: iceberg://ice:db.del
-  output: only invaract: iceberg://ice:db.del
-  output: only openlineage-spark: file:<out>/ice/db/del
+  direct: only invaract: amount <- file:<out>/ice/db/del.amount
+  direct: only invaract: id <- file:<out>/ice/db/del.id
+  direct: only invaract: status <- file:<out>/ice/db/del.status
+  indirect: only invaract: * <~ file:<out>/ice/db/del.status
+  input: only invaract: file:<out>/ice/db/del
 [iceberg-delete vs spline]
-  dependency: only invaract: amount <- iceberg://ice:db.del.amount
-  dependency: only invaract: id <- iceberg://ice:db.del.id
-  dependency: only invaract: status <- iceberg://ice:db.del.status
-  indirect: only invaract: * <~ iceberg://ice:db.del.status
-  input: only invaract: iceberg://ice:db.del
-  output: only invaract: iceberg://ice:db.del
+  dependency: only invaract: amount <- file:<out>/ice/db/del.amount
+  dependency: only invaract: id <- file:<out>/ice/db/del.id
+  dependency: only invaract: status <- file:<out>/ice/db/del.status
+  indirect: only invaract: * <~ file:<out>/ice/db/del.status
+  input: only invaract: file:<out>/ice/db/del
+  output: only invaract: file:<out>/ice/db/del
 
 [iceberg-overwrite-partitions invaract]
   input:  file:<in>/orders
@@ -1537,16 +1536,14 @@ agree
 agree
 
 [foreach-batch invaract]
-  input:  file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+  input:  file:<in>/orders
   output: file:<out>/out
-  id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id  [DIRECT/IDENTITY]
-  tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/IDENTITY]
+  tripled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
 [foreach-batch vs openlineage-spark]
-  direct: only invaract: id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id
-  direct: only invaract: tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount
-  input: only invaract: file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
-  input: only openlineage-spark: file:<in>/orders
+  direct: only invaract: id <- file:<in>/orders.id
+  direct: only invaract: tripled <- file:<in>/orders.amount
 [foreach-batch vs spline]
-  dependency: only invaract: id <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.id
-  dependency: only invaract: tripled <- file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet.amount
-  input: only invaract: file:<in>/orders/part-00000-<uuid>-c000.snappy.parquet
+  dependency: only invaract: id <- file:<in>/orders.id
+  dependency: only invaract: tripled <- file:<in>/orders.amount
+  input: only invaract: file:<in>/orders

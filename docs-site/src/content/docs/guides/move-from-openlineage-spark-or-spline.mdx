@@ -23,14 +23,9 @@ those tools. You can run it next to the tool you have now, compare the two, and 
 
 Because the datasets are named the same way, a lineage backend such as Marquez or DataHub joins Invaract's runs to the
 nodes openlineage-spark already created, including a table a write creates (`CREATE TABLE AS SELECT`,
-`writeTo(...).create()`), when Spark's configuration says where it will be stored. The exceptions, which Invaract names
-apart from openlineage-spark today:
-
-- a table created in a catalog that chooses its location only when it creates it (an Iceberg Hive, REST or Glue
-  catalog), and a table an Iceberg `MERGE`, `UPDATE` or `DELETE` changes: Invaract names these by their catalog
-  identifier, where openlineage-spark names them by their location;
-- a micro-batch a `foreachBatch` function writes: Invaract names its input by the files the batch read, where
-  openlineage-spark names the stream's source directory.
+`writeTo(...).create()`), when Spark's configuration says where it will be stored, and a table a `MERGE`, `UPDATE` or
+`DELETE` changes. The exception is a table created in a catalog that chooses its location only when it creates it (an
+Iceberg Hive, REST or Glue catalog): Invaract names that table by its catalog identifier.
 
 [Spark Column Lineage Coverage](/reference/spark-column-lineage/) shows, construct by construct, where the three tools
 agree and why they differ where they do, including Invaract's known gaps. For each job it shows the code and Invaract's
