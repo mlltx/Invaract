@@ -119,6 +119,7 @@ private[invaract] object DryRunReporting {
     * publish for it. `None` for a plan that is not a write. */
   def lineage(draft: Contract, plan: Plan, inputs: List[(String, LogicalSchema)], output: LogicalSchema,
               rowMutation: Option[MutationClassification] = None, lineagePlan: Option[Plan] = None): Option[WriteLineage] =
+    // lineage matches names ignoring case whatever `caseSensitive` says: its value here changes nothing (an equivalent mutant)
     VerificationPipeline.lineageOf(draft, CheckedWrite(plan, inputs, output, caseSensitive = true, rowMutation, Set.empty, lineagePlan = lineagePlan))
 
   /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred; `metadata` as for `inference`. */

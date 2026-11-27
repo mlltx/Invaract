@@ -72,6 +72,8 @@ class OpenLineageNamingSpec extends AnyFunSuite {
     assert(named("hdfs://@nn:8020/w") == DatasetId("hdfs://nn:8020", "/w"))
     assert(named("hdfs://nn/a?x=1?y=2#f") == DatasetId("hdfs://nn", "/a"), "the first ? ends the path")
     assert(named("hdfs://nn/a#f?x") == DatasetId("hdfs://nn", "/a"), "so does the first #, whichever comes first")
+    assert(named("hdfs://nn/a#b#c") == DatasetId("hdfs://nn", "/a"), "the first # of several")
+    assert(named("hdfs:///warehouse/t") == DatasetId("hdfs://", "/warehouse/t"), "an empty authority: the path is still the path")
   }
 
   test("other hierarchical schemes: namespace scheme://authority, name the path; a query or fragment is not part of it") {
@@ -98,6 +100,8 @@ class OpenLineageNamingSpec extends AnyFunSuite {
   test("an opaque JDBC URL's credentials never reach its namespace: user/password@ or a user, password or pwd property") {
     assert(named("jdbc:oracle:thin:scott/tiger@db:1521:orcl/EMP") == DatasetId("oracle:thin:db:1521:orcl", "EMP"))
     assert(named("jdbc:oracle:thin:@db:1521:orcl/EMP") == DatasetId("oracle:thin:db:1521:orcl", "EMP"))
+    assert(named("jdbc:oracle:thin:scott/ti@ger@db:1521:orcl/EMP") == DatasetId("oracle:thin:db:1521:orcl", "EMP"), "a password holding '@' is stripped whole")
+    assert(named("jdbc:oracle:@db:1521/EMP") == DatasetId("oracle:db:1521", "EMP"), "an empty credential part before the host")
     assert(named("jdbc:h2:mem:t;USER=sa;PASSWORD=secret;MODE=MySQL/T") == DatasetId("h2:mem:t;MODE=MySQL", "T"))
     assert(named("jdbc:h2:mem:t;user = sa ;Pwd=x;username=u/T") == DatasetId("h2:mem:t", "T"))
     assert(!named("jdbc:h2:mem:t;PASSWORD=secret/T").toString.contains("secret"))

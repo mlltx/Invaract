@@ -72,8 +72,12 @@ object OpenLineageNaming {
   /** An opaque JDBC URL with no credentials in it: neither `user/password@` (Oracle's thin driver) nor a `user=` or
     * `password=` property. */
   private def opaqueWithoutCredentials(url: String): String = {
+    // `[driver type:][user/password]@host...`: keep the driver type (`thin:`), when there is one before the `@`. With no
+    // `@` (`at` -1) nothing is cut: no colon is before it, and the rest is the whole URL. (`colon < at` and `<=` are the
+    // same: the two are different characters, never at one index.)
     val at = url.lastIndexOf('@')
-    val hostOnly = if (at < 0) url else url.substring(0, url.indexOf(':') + 1) + url.substring(at + 1)
+    val colon = url.indexOf(':')
+    val hostOnly = (if (colon < at) url.substring(0, colon + 1) else "") + url.substring(at + 1)
     hostOnly.split(';').toList match {
       case head :: properties => (head :: properties.filterNot(p => CredentialProperty.pattern.matcher(p).matches)).mkString(";")
       case Nil                => hostOnly
@@ -129,6 +133,7 @@ object OpenLineageNaming {
   private def withoutQuery(path: String): String = {
     val q = path.indexOf('?')
     val h = path.indexOf('#')
+    // `>= 0` and `> 0` are the same here: a path is empty or starts with `/`, so neither is ever at index 0
     val end = List(q, h).filter(_ >= 0).sorted.headOption.getOrElse(path.length)
     path.substring(0, end)
   }
