@@ -79,8 +79,14 @@ object WriteLineage {
         case ir.DerivationKind.Opaque => ("DIRECT", "TRANSFORMATION", Some("opaque: a function Invaract cannot see into"))
         case _                        => ("DIRECT", "TRANSFORMATION", None)
       }
+      // each source as it reaches the column: copied unchanged (IDENTITY), computed (the column's kind), or both - a
+      // MERGE's UPDATE copies a column its INSERT computes
       val values = column.values.toList.sortBy(_.toString).flatMap { source =>
-        edge(Some(name), source, LineageTransformation(kind, subtype, description, masking = column.masked(source)))
+        val copied = c.derivation == ir.DerivationKind.Direct || column.copied(source)
+        val computed = c.derivation != ir.DerivationKind.Direct && (column.transformed(source) || !column.copied(source))
+        val ways = (if (copied) List(LineageTransformation("DIRECT", "IDENTITY", None, masking = column.masked(source))) else Nil) ++
+          (if (computed) List(LineageTransformation(kind, subtype, description, masking = column.masked(source))) else Nil)
+        ways.flatMap(edge(Some(name), source, _))
       }
       val shaping = column.indirect.toList.sortBy(i => (subtypeOf(i.kind), i.source.toString)).flatMap { i =>
         edge(Some(name), i.source, LineageTransformation("INDIRECT", subtypeOf(i.kind)))

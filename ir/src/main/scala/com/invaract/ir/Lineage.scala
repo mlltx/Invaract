@@ -148,12 +148,18 @@ case class IndirectLineage(source: ColumnRef, kind: IndirectKind, output: Option
   *   over (a window's partitioning and ordering).
   * @param masked the sources of `values` that reach the column only through a masking function (a hash such as
   *   `sha2` or `md5`, or `mask`): the column carries no readable copy of them.
+  * @param copied the sources of `values` that reach the column unchanged on some path through the plan, and
+  * @param transformed those that reach it through a computation on some path: each source is in one or both. A union
+  *   whose branches differ (a MERGE's clauses: one copies a column, another computes it) gives each source its own;
+  *   `lineage.derivation` says it for the column as a whole.
   */
 case class ColumnDependencies(
   lineage: ColumnLineage,
   values: Set[ColumnRef],
   indirect: Set[IndirectLineage],
-  masked: Set[ColumnRef]
+  masked: Set[ColumnRef],
+  copied: Set[ColumnRef] = Set.empty,
+  transformed: Set[ColumnRef] = Set.empty
 )
 
 /** What `Lineage.traceDetailed` finds in a plan: each output column's dependencies, and the sources that shape the
@@ -228,14 +234,17 @@ object Lineage {
     * see `DerivationKind`'s own doc), and which aggregate function(s), if
     * any, it aggregates them through. `sources` are the columns whose value reaches it, `indirect` those that only
     * decide which value it takes or what rows it is computed over, `masked` the sources reaching it only through a
-    * masking function.
+    * masking function, `copied` the sources reaching it unchanged on some path, `changed` those reaching it through a
+    * computation on some path.
     */
   private case class Provenance(
     sources: Set[ColumnRef],
     derivation: DerivationKind,
     aggregations: Set[AggregationDetail],
     indirect: Set[(ColumnRef, IndirectKind)] = Set.empty,
-    masked: Set[ColumnRef] = Set.empty
+    masked: Set[ColumnRef] = Set.empty,
+    copied: Set[ColumnRef] = Set.empty,
+    changed: Set[ColumnRef] = Set.empty
   ) {
     /** Every column it depends on, how ever: what `trace` reports as a column's sources. A window's partitioning is not
       * among them, as it never was. */
@@ -275,7 +284,9 @@ object Lineage {
           ColumnLineage(output, p.all, p.derivation, p.aggregations),
           p.sources,
           p.indirect.map { case (r, k) => IndirectLineage(r, k, Some(name)) },
-          p.masked intersect p.sources
+          p.masked intersect p.sources,
+          p.copied intersect p.sources,
+          p.changed intersect p.sources
         )
       })
 
@@ -400,6 +411,7 @@ object Lineage {
           val tested = conditions.flatMap(_.everything).map(_ -> (IndirectKind.Conditional: IndirectKind)).toSet
           combined.copy(
             sources = values.flatMap(_.sources).toSet,
+            changed = values.flatMap(_.sources).toSet,
             indirect = values.flatMap(_.indirect).toSet ++ tested,
             masked = values.flatMap(_.masked).toSet -- values.flatMap(v => v.sources -- v.masked)
           )
@@ -463,7 +475,7 @@ object Lineage {
         if (provenances.exists(_.derivation == DerivationKind.Opaque)) DerivationKind.Opaque
         else if (provenances.forall(_.all.isEmpty)) DerivationKind.Constant
         else DerivationKind.Computed
-      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances))
+      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances), changed = sources)
     }
 
     private def maskedOf(provenances: List[Provenance]): Set[ColumnRef] =
@@ -490,7 +502,8 @@ object Lineage {
         else if (provenances.forall(_.derivation == DerivationKind.Direct)) DerivationKind.Direct
         else if (provenances.forall(_.all.isEmpty)) DerivationKind.Constant
         else DerivationKind.Computed
-      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances))
+      Provenance(sources, derivation, aggregations, provenances.flatMap(_.indirect).toSet, maskedOf(provenances),
+        provenances.flatMap(_.copied).toSet, provenances.flatMap(_.changed).toSet)
     }
 
     /** Resolves a bare column reference against a plan: does `ref` name a
@@ -507,6 +520,27 @@ object Lineage {
       }
     }
 
+    /** Whether `plan`, which resolves `ref`, does so only by name: its column `ref.name` is a projection passing another
+      * qualifier's column through. Anything else is `false`: a computed column, a join, an operator that makes its own
+      * columns, or a read (which resolves a qualified reference only under its own scope). Walks down one chain of
+      * inputs, in a loop: no deeper a stack for a deep plan. */
+    private def namesAnother(ref: ColumnRef, plan: Plan): Boolean = ref.qualifier.exists { qualifier =>
+      var current: Plan = plan
+      var answer: Option[Boolean] = None
+      while (answer.isEmpty) current match {
+        case Project(_, columns) =>
+          answer = Some(columns.find(_.name == ref.name) match {
+            case Some(NamedExpr(_, ColumnReference(passed))) => passed.qualifier.exists(_ != qualifier)
+            case _                                         => false
+          })
+        case Filter(input, _)   => current = input
+        case Sort(input, _)     => current = input
+        case Limit(input, _, _) => current = input
+        case _                  => answer = Some(false)
+      }
+      answer.get
+    }
+
     private def columnsOf(read: Read): Option[Set[String]] =
       knownColumns.getOrElseUpdate(read, readColumns(read).map(_.map(_.toLowerCase)))
 
@@ -516,7 +550,7 @@ object Lineage {
         val has = columnsOf(read).forall(_.contains(ref.name.toLowerCase))
         done(
           if (ref.qualifier.forall(_ == scope) && has)
-            Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty))
+            Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty, copied = Set(ColumnRef(ref.name, Some(scope)))))
           else
             None
         )
@@ -576,15 +610,23 @@ object Lineage {
           else Some(combineUnion(found))
         }
 
+      // A name both sides have is the side whose column it is. A projection matches a name whatever its qualifier, so a
+      // qualified reference (a USING join's key, `orders.id`) also resolves on a side that projects another read's column
+      // of that name (`events.id`): such a side is ruled out. When neither or both sides are, the reference stays theirs.
       case Join(left, right, _, _) =>
         for {
           l <- tailcall(resolveInScopeT(ref, left))
           r <- tailcall(resolveInScopeT(ref, right))
         } yield (l, r) match {
-          case (Some(lv), None)     => Some(lv)
-          case (None, Some(rv))     => Some(rv)
-          case (Some(lv), Some(rv)) => Some(combineUnion(List(lv, rv)))
-          case (None, None)         => None
+          case (Some(lv), None) => Some(lv)
+          case (None, Some(rv)) => Some(rv)
+          case (Some(lv), Some(rv)) =>
+            (namesAnother(ref, left), namesAnother(ref, right)) match {
+              case (true, false) => Some(rv)
+              case (false, true) => Some(lv)
+              case _             => Some(combineUnion(List(lv, rv)))
+            }
+          case (None, None) => None
         }
 
       case Write(_, input, _, _, _) => tailcall(resolveInScopeT(ref, input))

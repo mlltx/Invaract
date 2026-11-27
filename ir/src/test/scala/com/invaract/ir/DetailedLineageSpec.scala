@@ -35,6 +35,61 @@ class DetailedLineageSpec extends AnyFunSuite {
     assert(column(plan, "name", { case r if r eq orders => Some(Set("id")); case _ => None }).values == Set(src("name", "customers")))
   }
 
+  // --- a name both sides of a join have ----------------------------------------------------------------------------
+
+  private val events = Read(DatasetRef("events"))
+  private def keyed(right: Plan) = Join(orders, right, JoinType.Inner, Some(Comparison("=", col("id"), col("id", "events"))))
+  private val eventsKey = Project(events, List(NamedExpr("id", col("id", "events")), NamedExpr("b", col("b", "events"))))
+
+  test("a USING join's key is the side it is qualified by, not a side projecting another read's column of that name") {
+    def key(q: String, right: Plan = eventsKey) = column(Project(keyed(right), List(NamedExpr("id", col("id", q)))), "id").values
+    assert(key("orders") == Set(src("id")), "an inner or left join's key: the left side's")
+    assert(key("events") == Set(src("id", "events")), "a right join's key: the right side's")
+    assert(key("orders", Filter(Sort(Limit(eventsKey, 5), List(SortOrder(col("b", "events")))), Literal(true, "boolean"))) == Set(src("id")),
+      "through filters, sorts and limits")
+    val flipped = Join(eventsKey, orders, JoinType.Inner, None)
+    assert(column(Project(flipped, List(NamedExpr("id", col("id")))), "id").values == Set(src("id")), "whichever side it is on")
+  }
+
+  test("a join's name stays both sides' when neither or both are ruled out") {
+    def key(ref: Expr, right: Plan) = column(Project(keyed(right), List(NamedExpr("id", ref))), "id").values
+    val both = Set(src("id"), src("id", "events"))
+    assert(key(bare("id"), eventsKey) == both, "an unqualified reference: no side is ruled out")
+    assert(key(col("id"), Project(events, List(NamedExpr("id", Arithmetic("+", List(col("id", "events"), Literal(1, "int"))))))) == both,
+      "a computed column: whose it is is not known")
+    assert(key(col("id"), Project(events, List(NamedExpr("id", bare("id"))))) == both, "a passed-through column with no qualifier")
+    assert(key(col("id"), Join(eventsKey, Read(DatasetRef("x")), JoinType.Inner, None)) == both, "a join on the side: not followed")
+    val twice = Join(eventsKey, Project(Read(DatasetRef("other")), List(NamedExpr("id", col("id", "other")))), JoinType.Inner, None)
+    assert(column(Project(twice, List(NamedExpr("id", col("id")))), "id").values == Set(src("id", "events"), src("id", "other")),
+      "both sides another's: stays both")
+  }
+
+  // --- copied and transformed, source by source ------------------------------------------------------------------
+
+  test("each source is copied, transformed, or both: a union's branches each give their own; an operation transforms") {
+    val copiedBranch = Project(orders, List(NamedExpr("v", col("amount"))))
+    val computedBranch = Project(customers, List(NamedExpr("v", Arithmetic("+", List(col("customer_id", "customers"), Literal(1, "int"))))))
+    val both = Project(orders, List(NamedExpr("v", Arithmetic("*", List(col("amount"), Literal(100, "int"))))))
+    val constant = Project(customers, List(NamedExpr("v", Literal(null, "long"))))
+    def of(branches: Plan*) = {
+      val c = column(Project(Union(branches.toList), List(NamedExpr("v", bare("v")))), "v")
+      (c.copied, c.transformed)
+    }
+    assert(of(copiedBranch, computedBranch) == ((Set(src("amount")), Set(src("customer_id", "customers")))))
+    assert(of(copiedBranch, both) == ((Set(src("amount")), Set(src("amount")))), "the same source copied by one branch and computed by another")
+    assert(of(copiedBranch, constant) == ((Set(src("amount")), Set.empty)), "a constant branch neither copies nor computes")
+    assert(of(copiedBranch, constant)._1.nonEmpty && column(Project(Union(List(copiedBranch, constant)), List(NamedExpr("v", bare("v")))), "v").lineage.derivation != DerivationKind.Direct,
+      "the column as a whole is still not a plain copy")
+    val passed = one(col("amount"))
+    assert((passed.copied, passed.transformed) == ((Set(src("amount")), Set.empty)), "passed through: copied")
+    val computed = one(Arithmetic("+", List(col("amount"), col("id"))))
+    assert((computed.copied, computed.transformed) == ((Set.empty, Set(src("amount"), src("id")))), "an operation: transformed")
+    val chosen = one(Conditional(List(Comparison(">", col("amount"), Literal(1, "int")) -> col("status")), Some(col("email"))))
+    assert((chosen.copied, chosen.transformed) == ((Set.empty, Set(src("status"), src("email")))), "a CASE WHEN's values: transformed, as OpenLineage counts them")
+    val joined = Project(Join(copiedBranch, computedBranch, JoinType.Inner, None), List(NamedExpr("v", bare("v"))))
+    assert(column(joined, "v").copied == Set(src("amount")) && column(joined, "v").transformed == Set(src("customer_id", "customers")), "both sides of a join keep theirs")
+  }
+
   test("a read's known columns are matched ignoring case; a name it lacks makes the reference resolve to nothing") {
     val plan = Project(orders, List(NamedExpr("a", bare("AMOUNT")), NamedExpr("z", bare("zzz"))))
     val upper: Read => Option[Set[String]] = _ => Some(Set("Amount"))
