@@ -693,4 +693,20 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     assert(state.notNull == NullabilityFact.Proven)
     assert(state.equalsConstant.contains(Property.EqualsConstant("94107", "string")))
   }
+
+  test("a generator or an expansion keeps nothing proven of its input's columns, and defines no column's expression") {
+    val orders = Read(DatasetRef("orders"))
+    val id = ColumnReference(ColumnRef("id", Some("orders")))
+    val notNull = Map(ColumnRef("id", Some("orders")) -> ColumnPropertyState(notNull = NullabilityFact.Proven))
+    val g = Generate(Project(orders, List(NamedExpr("id", id))), Function("explode", List(id)), List("x"))
+    val e = Expand(Project(orders, List(NamedExpr("id", id))), List(List(id)), List("id"))
+    for (node <- List(g, e)) {
+      assert(PropertyAnalysis.analyze(Write(DatasetRef("out"), node), notNull).isEmpty)
+      val above = Project(node, List(NamedExpr("id", ColumnReference(ColumnRef("id")))))
+      assert(PropertyAnalysis.analyze(Write(DatasetRef("out"), above), notNull).head.state.notNull == NullabilityFact.Unknown)
+      assert(PropertyAnalysis.definingExpr(node, "id").isEmpty)
+    }
+    assert(PropertyAnalysis.analyze(Write(DatasetRef("out"), Project(Project(orders, List(NamedExpr("id", id))), List(NamedExpr("id", ColumnReference(ColumnRef("id")))))), notNull)
+      .head.state.notNull == NullabilityFact.Proven, "the same projection without one keeps it: the control")
+  }
 }

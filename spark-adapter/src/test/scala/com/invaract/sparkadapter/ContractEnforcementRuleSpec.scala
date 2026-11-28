@@ -2518,59 +2518,147 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   // Every DML PASS/FAIL pair above targets a catalog table, where
   // catalogTable is always populated - real, but not the only shape.
-  // `UPDATE delta.\`path\`` operates directly on a path with no catalog
-  // entry at all (confirmed empirically: catalogTable is None, not just
-  // missing a location), exercising deltaRowLevelDml's fallback branch -
-  // no active contract needed, direct inspection instead, the same
-  // pattern as the streaming format-detection test above.
-  //
-  // This is also the regression test for a real, fixed instability in that
-  // fallback: it used to report `target.toString` (raw LogicalPlan.toString,
-  // which renders any attribute reference as "name#<exprId>", a per-session
-  // counter, not a property of the query) as the write's location. Confirmed
-  // directly: running the identical MERGE against two separately-created,
-  // equivalently-shaped path tables produces two different raw
-  // `target.toString` values purely from exprId allocation order (a
-  // `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for
-  // one table, `Relation [id#1762L,v#1763L] parquet` for the other), while
-  // `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its
-  // own `EliminateSubqueryAliases` rule) renders both as the identical
-  // `Relation [none#0L,none#1L] parquet`. Fixed by switching to
-  // `target.canonicalized.toString`, mirroring deleteFromTable's own fix
-  // below for the same underlying reason.
-  test("WriteCommandSupport falls back to the target plan's canonicalized toString for a path-based DML op with no catalog table, stable across separate tables") {
-    val tablePath = scratchDir.resolve("path_dml_target").toString
-    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
-    capturedPlans.clear()
-
-    spark.sql(s"UPDATE delta.`${tablePath.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
-
-    val upd = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
-      .getOrElse(fail("no UpdateCommand plan observed"))
-    val info = WriteCommandSupport.combined.lift(upd).getOrElse(fail("path-based UpdateCommand should still be recognized"))
+  // `UPDATE delta.\`path\`` (and `MERGE INTO delta.\`path\``, `DeltaTable.forPath`) operates directly on a path with
+  // no catalog entry at all (catalogTable is None). Its target is still a relation over the table's directory, whose
+  // file index reports that directory as its root path: that is the write's location, the same one a read of the table
+  // gets. Before, it was the target plan's canonicalized toString (`Relation [none#0L,none#1L] parquet`) - a location
+  // no contract could sensibly declare, so a correct MERGE was refused, and the same string for any two tables of one
+  // shape, so a contract for one table matched DML against another. The lineage cross-check found it (a path MERGE
+  // refused for OUTPUT_LOCATION_MISMATCH).
+  test("a path-based Delta UPDATE or MERGE writes to the table's own path, each table its own, with no fallback") {
+    def dml(sql: String, command: String) = {
+      capturedPlans.clear()
+      spark.sql(sql).collect()
+      val plan = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == command => p }.getOrElse(fail(s"no $command observed"))
+      WriteCommandSupport.combined.lift(plan).getOrElse(fail(s"path-based $command should be recognized"))
+    }
+    val tablePath = scratchDir.resolve("path_dml_target").toString.replace('\\', '/')
+    val tablePath2 = scratchDir.resolve("path_dml_target_2").toString.replace('\\', '/')
+    for (path <- List(tablePath, tablePath2))
+      spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(path)
+    val info = dml(s"UPDATE delta.`$tablePath` SET doubled = doubled + 1 WHERE id > 2", "UpdateCommand")
     assert(info.format.contains("delta"))
-    assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
+    assert(info.diagnostic.isEmpty, s"the path is known: no fallback diagnostic, got ${info.diagnostic}")
+    assert(info.location.stripSuffix("/").endsWith("/path_dml_target"), info.location)
+    val info2 = dml(s"UPDATE delta.`$tablePath2` SET doubled = doubled + 1 WHERE id > 2", "UpdateCommand")
+    assert(info2.location.stripSuffix("/").endsWith("/path_dml_target_2") && info.location != info2.location)
+    spark.range(3).withColumn("doubled", col("id")).createOrReplaceTempView("path_dml_source")
+    val merge = dml(s"MERGE INTO delta.`$tablePath` t USING path_dml_source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.doubled = s.doubled", "MergeIntoCommand")
+    assert(merge.location == info.location && merge.diagnostic.isEmpty)
+  }
 
-    // A second, entirely separate path-based Delta table of the identical
-    // shape - different physical path, and (since Spark's exprId counter is
-    // session-global and monotonic) necessarily different exprIds for its
-    // own "id"/"doubled" columns - must still resolve to the exact same
-    // fallback location string, since the fallback's whole purpose is a
-    // location Invaract can compare across runs of the "same" job, not one
-    // that happens to differ only because Spark allocated different exprIds
-    // this time.
-    val tablePath2 = scratchDir.resolve("path_dml_target_2").toString
-    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath2)
+  // The session catalog's half of IcebergConnectorSpec's created-table test: a table a Delta write creates in it is
+  // stored at the catalog's default table path, which lineage names it by; the write's own location stays its name.
+  test("a table a write creates in the session catalog: where it will be stored, as Delta then stores it") {
+    import com.invaract.verification.openlineage.OpenLineageNaming
+    def created(create: => Unit) = {
+      capturedPlans.clear()
+      create
+      capturedPlans.toList.flatMap(p => WriteCommandSupport.combined.lift(p).toList).find(_.createdAt.isDefined).getOrElse(fail("no created table seen"))
+    }
+    def storedAt(table: String) = spark.sql(s"DESCRIBE DETAIL $table").select("location").head().getString(0)
+    val viaSql = created(spark.sql("CREATE TABLE created_by_ctas_tbl USING delta AS SELECT 1L AS id"))
+    assert(viaSql.createdAt.map(OpenLineageNaming.dataset).contains(OpenLineageNaming.dataset(storedAt("created_by_ctas_tbl"))),
+      s"${viaSql.createdAt} vs ${storedAt("created_by_ctas_tbl")}")
+    assert(!viaSql.location.contains("/"), s"the write's own location stays the table's name: ${viaSql.location}")
+    val viaSave = created(spark.range(2).write.format("delta").saveAsTable("created_by_save_tbl"))
+    assert(viaSave.createdAt.map(OpenLineageNaming.dataset).contains(OpenLineageNaming.dataset(storedAt("created_by_save_tbl"))))
+  }
+
+  // A MERGE's checked plan is its source (what the contract's inputs are checked against); its lineage is traced through
+  // its clauses (WriteCommandSupport.mergeClauses), which the lineage cross-check found missing: a column an UPDATE
+  // leaves keeps the target's own value, an INSERT's comes from what it inserts.
+  test("a Delta MERGE's column lineage follows its clauses; the plan it is checked against stays its source") {
+    val tablePath = scratchDir.resolve("merge_lineage_target").toString.replace('\\', '/')
+    val sourcePath = scratchDir.resolve("merge_lineage_source").toString.replace('\\', '/')
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.range(3).withColumn("doubled", col("id")).write.mode("overwrite").parquet(sourcePath)
+    spark.read.parquet(sourcePath).createOrReplaceTempView("merge_lineage_source")
+    def traced(clauses: String) = {
+      capturedPlans.clear()
+      spark.sql(s"MERGE INTO delta.`$tablePath` t USING merge_lineage_source s ON t.id = s.id $clauses").collect()
+      val plan = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "MergeIntoCommand" => p }.getOrElse(fail("no MERGE observed"))
+      val info = WriteCommandSupport.combined.lift(plan).getOrElse(fail("MERGE not recognized"))
+      val checked = SparkPlanAdapter.translate(plan).plan
+      val lineage = ContractEnforcementRule.lineagePlanOf(info, checked, Nil).getOrElse(fail("no lineage plan"))
+      val detailed = com.invaract.ir.Lineage.traceDetailed(lineage)
+      def side(r: com.invaract.ir.ColumnRef) = s"${if (r.qualifier.exists(_.contains("merge_lineage_source")) || r.qualifier.contains("s")) "s" else "t"}.${r.name}"
+      val values = detailed.columns.map(c => c.lineage.output.name -> c.values.map(side)).toMap
+      val conditions = detailed.columns.flatMap(_.indirect.map(i => s"${i.kind}:${side(i.source)}")).toSet
+      val joined = detailed.indirect.map(i => s"${i.kind}:${side(i.source)}").toSet
+      val derivations = detailed.columns.map(c => c.lineage.output.name -> c.lineage.derivation).toMap
+      (values, conditions, joined, checked, derivations)
+    }
+    val (values, conditions, joined, checked, derivations) = traced(
+      "WHEN MATCHED AND s.id = 0 THEN DELETE " +
+        "WHEN MATCHED AND s.doubled > 0 THEN UPDATE SET t.doubled = s.doubled " +
+        "WHEN NOT MATCHED THEN INSERT (id, doubled) VALUES (s.id, s.doubled + 1) " +
+        "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.doubled = 0")
+    assert(values("id") == Set("t.id", "s.id"), "an UPDATE leaves id: the row's own; an INSERT's from the source")
+    assert(values("doubled") == Set("t.doubled", "s.doubled"), "assigned from the source; a constant adds none; the rows no clause writes keep their own")
+    assert(derivations("id") == com.invaract.ir.DerivationKind.Direct, "copied as it is by every clause: IDENTITY, not a computation")
+    assert(derivations("doubled") == com.invaract.ir.DerivationKind.Computed, "an INSERT computes it")
+    assert(conditions.isEmpty, "a clause's condition decides which rows it writes, not a column's value")
+    assert(joined == Set("Join:t.id", "Join:s.id", "Filter:s.doubled", "Filter:s.id"), "the MERGE's condition joins the two; a clause's keeps rows; a DELETE's removes them")
+    def reads(p: com.invaract.ir.Plan): List[String] = p match {
+      case r: com.invaract.ir.Read => List(r.dataset.location)
+      case other                   => other.children.flatMap(reads)
+    }
+    assert(reads(checked).nonEmpty && reads(checked).forall(_.contains("merge_lineage_source")), s"checked as before, its source alone: ${reads(checked)}")
+    val (inserted, _, _, _, _) = traced("WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)")
+    assert(inserted("id") == Set("t.id", "s.id") && inserted("doubled") == Set("t.doubled"), "a column an INSERT does not name is null; the table's other rows keep theirs")
+    val (deleted, _, deletedRows, _, _) = traced("WHEN MATCHED AND s.doubled > 1 THEN DELETE")
+    assert(deleted == Map("id" -> Set("t.id"), "doubled" -> Set("t.doubled")), "a MERGE that only deletes keeps the table's other rows as they are")
+    assert(deletedRows.contains("Filter:s.doubled"), "the DELETE's condition decides which rows are removed")
+  }
+
+  test("a DataFrame built from an RDD is traced, for lineage only, to the files the RDD read; it is checked as the opaque source it is") {
+    val sourcePath = scratchDir.resolve("rdd_lineage_source").toString.replace('\\', '/')
+    spark.range(3).withColumn("amount", col("id") * 10).write.mode("overwrite").parquet(sourcePath)
+    val read = spark.read.parquet(sourcePath)
     capturedPlans.clear()
-    spark.sql(s"UPDATE delta.`${tablePath2.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
-    val upd2 = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
-      .getOrElse(fail("no UpdateCommand plan observed for the second table"))
-    val info2 = WriteCommandSupport.combined.lift(upd2).getOrElse(fail("path-based UpdateCommand should still be recognized"))
-    assert(
-      info.location == info2.location,
-      s"the fallback location must be stable across two structurally-identical path tables with necessarily " +
-        s"different exprIds, got '${info.location}' vs '${info2.location}'"
-    )
+    spark.createDataFrame(read.rdd, read.schema).select("id").write.mode("overwrite").parquet(scratchDir.resolve("rdd_lineage_out").toString)
+    val plan = capturedPlans.collectFirst { case p if WriteCommandSupport.combined.isDefinedAt(p) => p }.getOrElse(fail("no write observed"))
+    val checked = SparkPlanAdapter.translate(plan).plan
+    assert(StructuralVerifier.collectUnknownPlans(checked).exists(_.sourceType == SparkPlanAdapter.RddRelationSourceType), "checked as before")
+    val info = WriteCommandSupport.combined.lift(plan).get
+    val lineage = ContractEnforcementRule.lineagePlanOf(info, checked, Nil, Some(plan)).getOrElse(fail("no lineage plan"))
+    val id = com.invaract.ir.Lineage.traceDetailed(lineage).columns.find(_.lineage.output.name == "id").get
+    assert(id.values.map(_.name) == Set("id", "amount") && id.lineage.derivation == com.invaract.ir.DerivationKind.Opaque,
+      "every column the RDD read, through code Invaract cannot see into")
+    assert(ContractEnforcementRule.lineagePlanOf(info, checked, Nil).isEmpty, "without the plan it was translated from, no lineage plan")
+    capturedPlans.clear()
+    read.select("id").write.mode("overwrite").parquet(scratchDir.resolve("rdd_lineage_plain").toString)
+    val plain = capturedPlans.collectFirst { case p if WriteCommandSupport.combined.isDefinedAt(p) => p }.get
+    assert(ContractEnforcementRule.lineagePlanOf(WriteCommandSupport.combined.lift(plain).get, SparkPlanAdapter.translate(plain).plan, Nil, Some(plain)).isEmpty,
+      "no RDD, no lineage plan")
+  }
+
+  test("a Delta UPDATE's lineage is its assignments where its condition holds; a DELETE's the rows its condition keeps") {
+    val tablePath = scratchDir.resolve("dml_lineage_target").toString.replace('\\', '/')
+    spark.range(3).withColumn("amount", col("id") * 10).withColumn("status", lit("paid")).write.format("delta").mode("overwrite").save(tablePath)
+    def traced(sql: String) = {
+      capturedPlans.clear()
+      spark.sql(sql).collect()
+      val plan = capturedPlans.collectFirst { case p if Set("UpdateCommand", "DeleteCommand")(p.getClass.getSimpleName) => p }.getOrElse(fail("no DML observed"))
+      val info = WriteCommandSupport.combined.lift(plan).getOrElse(fail("DML not recognized"))
+      val lineage = ContractEnforcementRule.lineagePlanOf(info, SparkPlanAdapter.translate(plan).plan, Nil).getOrElse(fail("no lineage plan"))
+      val detailed = com.invaract.ir.Lineage.traceDetailed(lineage)
+      val columns = detailed.columns.map(c => c.lineage.output.name -> c).toMap
+      (columns, detailed.indirect.map(i => s"${i.kind}:${i.source.name}").toSet)
+    }
+    val (updated, updatedRows) = traced(s"UPDATE delta.`$tablePath` SET amount = amount * 2 WHERE status = 'paid'")
+    assert(updated("amount").values.map(_.name) == Set("amount") && updated("amount").transformed.map(_.name) == Set("amount"), "computed")
+    assert(updated("amount").indirect.map(i => s"${i.kind}:${i.source.name}") == Set("Conditional:status"), "the condition decides which")
+    assert(updated("id").lineage.derivation == com.invaract.ir.DerivationKind.Direct && updated("id").indirect.isEmpty, "a column it leaves is copied")
+    assert(updatedRows.isEmpty, "an UPDATE keeps every row")
+    val (everywhere, _) = traced(s"UPDATE delta.`$tablePath` SET amount = 0")
+    assert(everywhere("amount").values.isEmpty && everywhere("amount").indirect.isEmpty, "no condition: the new value everywhere")
+    val (kept, keptRows) = traced(s"DELETE FROM delta.`$tablePath` WHERE status = 'open'")
+    assert(kept("amount").lineage.derivation == com.invaract.ir.DerivationKind.Direct && kept("amount").values.map(_.name) == Set("amount"))
+    assert(keptRows == Set("Filter:status"), "the condition decides which rows are kept")
+    val (none, noneRows) = traced(s"DELETE FROM delta.`$tablePath`")
+    assert(noneRows.isEmpty && none("id").values.map(_.name) == Set("id"), "an unconditional DELETE keeps no row; its plan names the table's columns")
   }
 
   // --- Feature surface: WriteCommandInfo.partitionColumns across Delta's

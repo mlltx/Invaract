@@ -155,7 +155,8 @@ class SparkAdapterListener(
               SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
             },
             operation = info.operation,
-            catalog = info.catalogIdentity.map(CatalogInfo.from),
+            // a table the write created: where it is stored (WriteCommandInfo.createdAt), as the check's lineage names it
+            catalog = info.catalogIdentity.map(c => CatalogInfo.from(c.copy(location = c.location.orElse(info.createdAt)))),
             partitionColumns = info.partitionColumns,
             datasetType = datasetTypeFor(info.location, info.catalogIdentity),
             job = Some(DryRunReporter.jobInfoOf(qe.sparkSession))

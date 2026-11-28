@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.connector.catalog.StagedTable
 import org.apache.spark.sql.execution.command.{CreateDataSourceTableAsSelectCommand, InsertIntoDataSourceDirCommand}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.execution.datasources.{DataSourceUtils, InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.execution.datasources.{DataSourceUtils, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
@@ -115,7 +115,16 @@ private[sparkadapter] case class WriteCommandInfo(
   // for the shapes `PartitioningSupport`'s doc lists, where both are
   // stated; `Some(WritePartitioning(Nil, _))` is a write known to be
   // unpartitioned.
-  partitioning: Option[WritePartitioning] = None
+  partitioning: Option[WritePartitioning] = None,
+  // What the write computes, when `query` is not it: a Delta MERGE's `query` is its source (what the contract's inputs
+  // are checked against), this its clauses over the target joined to the source (`mergeClauses`). Column lineage is
+  // traced through it; it is never verified.
+  lineageQuery: Option[LogicalPlan] = None,
+  // Where the table is stored when the write's location is its catalog name: a table this write creates, when Spark's
+  // configuration says (`createdTableLocation`; it has no storage yet), or one a row-level operation rewrites
+  // (`storedTableLocation`) - the location openlineage-spark names it by. Lineage and notifications only - never
+  // checked, never the catalog identity a contract's `catalog` is held to.
+  createdAt: Option[String] = None
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -504,6 +513,7 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
+        createdAt = stagedTableLocation(cmd.table),
         partitionColumns = partitionColumnsOf(cmd.table),
         partitioning = partitioningOf(cmd.table, PartitionOverwriteModes.Static)
       )
@@ -532,6 +542,7 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
+        createdAt = stagedTableLocation(cmd.table),
         partitionColumns = partitionColumnsOf(cmd.table),
         // replaces what its condition matches (the whole table for a plain overwrite), whichever partitions the rows land in
         partitioning = partitioningOf(cmd.table, PartitionOverwriteModes.Static)
@@ -568,6 +579,7 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
+        createdAt = stagedTableLocation(cmd.table),
         partitionColumns = partitionColumnsOf(cmd.table),
         // replaces only the partitions the query's rows land in: Spark's dynamic overwrite, also what an
         // `INSERT OVERWRITE` into a V2 table plans when spark.sql.sources.partitionOverwriteMode is dynamic
@@ -601,6 +613,7 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
         catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
+        createdAt = createdTableLocation(cmd.name, cmd.tableSpec.location, cmd.writeOptions),
         // `partitioning: Seq[Transform]` is a direct field on this case
         // class (confirmed empirically, a real throwaway probe since
         // deleted, against a live Delta-catalog session: a
@@ -648,6 +661,7 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
         catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
+        createdAt = createdTableLocation(cmd.name, cmd.tableSpec.location, cmd.writeOptions),
         // Same direct `partitioning: Seq[Transform]` field as
         // ReplaceTableAsSelect above - see that case's own comment.
         partitionColumns = cmd.partitioning.toList.map(_.describe()),
@@ -663,6 +677,55 @@ private[sparkadapter] object WriteCommandSupport {
     * the two can't drift into two subtly different fallback messages for
     * what's really the same situation.
     */
+  /** Where a table `name` creates is stored: the location the statement gives it (`LOCATION`, a `path` option), else
+    * the one its catalog gives a new table - the session catalog's default table path, or an Iceberg Hadoop or JDBC
+    * catalog's `<warehouse>/<namespace>/<table>`. `None` for any other catalog (a Hive, REST or Glue Iceberg catalog
+    * decides at creation), or a name not yet resolved. */
+  private[sparkadapter] def createdTableLocation(name: LogicalPlan, location: Option[String], options: Map[String, String]): Option[String] =
+    location.orElse(options.get("path")).orElse(name match {
+      case ri: ResolvedIdentifier => defaultTableLocation(ri.catalog, ri.identifier)
+      case _                      => None
+    })
+
+  /** The same, for the table a CREATE/REPLACE stages before it commits: the location it was staged with, else its
+    * catalog's default. `None` for a table not being created. */
+  private[sparkadapter] def stagedTableLocation(table: NamedRelation): Option[String] = table match {
+    case v2: DataSourceV2Relation if v2.table.isInstanceOf[StagedTable] =>
+      Option(v2.table.properties.get("location")).orElse(
+        for { catalog <- v2.catalog; identifier <- v2.identifier; at <- defaultTableLocation(catalog, identifier) } yield at)
+    case _ => None
+  }
+
+  /** Where a table a row-level operation (MERGE, UPDATE, DELETE) rewrites is stored. The write's location is the table's
+    * catalog name; Spark hands the operation a wrapper of the table (`RowLevelOperationTable`) that reports none of its
+    * properties, but the table it wraps (`table`) does. Lineage and notifications only, as `createdAt` always is. */
+  private[sparkadapter] def storedTableLocation(table: NamedRelation): Option[String] = table match {
+    case v2: DataSourceV2Relation =>
+      val wrapped = scala.util.Try(v2.table.getClass.getMethod("table").invoke(v2.table)).toOption.collect {
+        case t: org.apache.spark.sql.connector.catalog.Table => t
+      }
+      Option(wrapped.getOrElse(v2.table).properties.get("location"))
+    case _ => None
+  }
+
+  private def defaultTableLocation(catalog: org.apache.spark.sql.connector.catalog.CatalogPlugin, identifier: org.apache.spark.sql.connector.catalog.Identifier): Option[String] =
+    scala.util.Try {
+      val session = org.apache.spark.sql.SparkSession.active
+      val prefix = s"spark.sql.catalog.${catalog.name}"
+      if (CatalogIdentitySupport.technologyOfCatalogPlugin(catalog) == "iceberg") {
+        // Iceberg's Hadoop and JDBC catalogs store a new table at <warehouse>/<namespace levels>/<table>; any other
+        // (Hive, REST, Glue, a custom one) decides for itself
+        val conf = (key: String) => session.conf.getOption(s"$prefix.$key")
+        val layout = conf("type").exists(t => t.equalsIgnoreCase("hadoop") || t.equalsIgnoreCase("jdbc")) ||
+          conf("catalog-impl").exists(i => i.endsWith(".HadoopCatalog") || i.endsWith(".JdbcCatalog"))
+        if (layout) conf("warehouse").map(w => (w.stripSuffix("/") +: identifier.namespace :+ identifier.name).mkString("/"))
+        else None
+      } else if (catalog.name == "spark_catalog")
+        Some(session.sessionState.catalog.defaultTablePath(
+          org.apache.spark.sql.catalyst.TableIdentifier(identifier.name, identifier.namespace.lastOption)).toString)
+      else None
+    }.toOption.flatten
+
   private def v2CreateOrReplaceLocation(name: LogicalPlan, tag: String): (String, Option[Diagnostic]) =
     name match {
       case ri: ResolvedIdentifier =>
@@ -981,7 +1044,13 @@ private[sparkadapter] object WriteCommandSupport {
           val target = plan.getClass.getMethod("target").invoke(plan).asInstanceOf[LogicalPlan]
           val catalogTable =
             plan.getClass.getMethod("catalogTable").invoke(plan).asInstanceOf[Option[SparkCatalogTable]]
-          val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString) match {
+          // A path-based table (`MERGE INTO delta.`path``, `DeltaTable.forPath`) has no catalog entry; its target is
+          // still a relation over the table's own directory, which Delta's file index reports as its root path - the
+          // same location a read of the table is given.
+          val targetPath = target.collectFirst {
+            case LogicalRelation(h: HadoopFsRelation, _, _, _) if h.location.rootPaths.size == 1 => h.location.rootPaths.head.toString
+          }
+          val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString).orElse(targetPath) match {
             case Some(loc) => (loc, None)
             case None =>
               // .canonicalized, not target's plain LogicalPlan.toString this
@@ -1066,10 +1135,80 @@ private[sparkadapter] object WriteCommandSupport {
             // MERGE/UPDATE/DELETE, confirmed empirically above - the exact
             // same catalogTable this case already extracted for location.
             catalogIdentity = catalogTable.map(CatalogIdentitySupport.fromCatalogTable),
-            partitionColumns = deltaMetadataPartitionColumnsOf(plan)
+            partitionColumns = deltaMetadataPartitionColumnsOf(plan),
+            lineageQuery = if (isMerge) mergeClauses(plan, target, query) else updatedOrKept(plan, target)
           )
         }.toOption
     }
+
+  /** A Delta UPDATE or DELETE as what it writes: the table's rows. An UPDATE gives each column it assigns its new value
+    * where its condition holds and the row's own elsewhere (`IF(cond, value, column)`; a column it leaves is the row's
+    * own, copied); a DELETE keeps the rows its condition does not remove (an unconditional one, none). Read through
+    * Delta's `updateExpressions` (one per target column, in order) and `condition`; `None` when they are not there. */
+  private[sparkadapter] def updatedOrKept(dml: LogicalPlan, target: LogicalPlan): Option[LogicalPlan] =
+    scala.util.Try {
+      import org.apache.spark.sql.catalyst.expressions.{Alias, EqualNullSafe, Expression, If, Literal, Not}
+      import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project}
+      def call[A](method: String): A = dml.getClass.getMethod(method).invoke(dml).asInstanceOf[A]
+      val condition = call[Option[Expression]]("condition")
+      if (dml.getClass.getSimpleName == "UpdateCommand") {
+        val assigned = call[Seq[Expression]]("updateExpressions")
+        Project(target.output.zip(assigned).map { case (column, value) =>
+          Alias(condition.fold(value)(c => If(c, value, column)), column.name)()
+        }, target)
+      } else
+        Project(target.output, Filter(condition.fold[Expression](Literal.FalseLiteral)(c => Not(EqualNullSafe(c, Literal.TrueLiteral))), target))
+    }.toOption
+
+  /** A Delta MERGE as what it writes: the rows of each of its clauses, and the table's other rows, together. Each
+    * clause's rows are the target joined to the source on the MERGE's condition, kept by the clause's own condition,
+    * each target column the value the clause gives it - in a matched or not-matched-by-source UPDATE, its assignment, or
+    * the row's own value when the clause leaves it; in an INSERT, its assignment (none: null). A DELETE writes no row,
+    * and its condition decides which of the table's rows are removed; the rest, no clause touches, stay as they are -
+    * the table's own values, as an Iceberg MERGE (and Spline) counts them. A value a clause copies stays a copy, not a
+    * computation. Read through Delta's public clause API (`condition`, `resolvedActions`, each action's
+    * `targetColNameParts` and `expr`); `None` when it is not there. An action on a nested field is its top-level
+    * column's: the column keeps its other fields, so the row's own value is one of its sources too.
+    */
+  private[sparkadapter] def mergeClauses(merge: LogicalPlan, target: LogicalPlan, source: LogicalPlan): Option[LogicalPlan] =
+    scala.util.Try {
+      import org.apache.spark.sql.catalyst.expressions.{Alias, Coalesce, Expression, Literal, Not, Or}
+      import org.apache.spark.sql.catalyst.plans.FullOuter
+      import org.apache.spark.sql.catalyst.plans.logical.{Filter, Join, JoinHint, Project, Union}
+      def call[A](o: Any, method: String): A = o.getClass.getMethod(method).invoke(o).asInstanceOf[A]
+      case class Clause(condition: Option[Expression], actions: Seq[(Seq[String], Expression)], inserts: Boolean)
+      def isDelete(c: AnyRef) = call[String](c, "clauseType").toLowerCase(java.util.Locale.ROOT).contains("delete")
+      def clauses(method: String, inserts: Boolean): Seq[Clause] = call[Seq[AnyRef]](merge, method).collect {
+        case c if !isDelete(c) =>
+          Clause(
+            call[Option[Expression]](c, "condition"),
+            call[Seq[AnyRef]](c, "resolvedActions").map(a => (call[Seq[String]](a, "targetColNameParts"), call[Expression](a, "expr"))),
+            inserts
+          )
+      }
+      val joined = Join(target, source, FullOuter, Some(call[Expression](merge, "condition")), JoinHint.NONE)
+      def rowsOf(clause: Clause): LogicalPlan = {
+        val columns = target.output.map { column =>
+          val own = clause.actions.filter(_._1.headOption.exists(_.equalsIgnoreCase(column.name)))
+          val value = own.find(_._1.size == 1).map(_._2).getOrElse(
+            if (own.nonEmpty) Coalesce(column +: own.map(_._2))
+            else if (clause.inserts) Literal(null, column.dataType)
+            else column)
+          Alias(value, column.name)()
+        }
+        Project(columns, clause.condition.fold(joined: LogicalPlan)(Filter(_, joined)))
+      }
+      // The rows no clause writes stay as they are, the table's own (an Iceberg MERGE, through Spark's rewrite, writes
+      // them back too), but for those a DELETE removes: its condition decides which.
+      val deletes = (call[Seq[AnyRef]](merge, "matchedClauses") ++ call[Seq[AnyRef]](merge, "notMatchedBySourceClauses"))
+        .filter(isDelete).map(c => call[Option[Expression]](c, "condition").getOrElse(Literal.TrueLiteral))
+      val kept = Project(target.output.map(c => Alias(c, c.name)()), if (deletes.isEmpty) joined else Filter(Not(deletes.reduce(Or)), joined))
+      val written = clauses("matchedClauses", inserts = false) ++ clauses("notMatchedBySourceClauses", inserts = false) ++
+        clauses("notMatchedClauses", inserts = true)
+      // projected by name, as Spark projects a union it writes: each column is then every branch's, not the first's
+      val all = Union(written.map(rowsOf) :+ kept)
+      Project(all.output, all)
+    }.toOption
 
   /** A real, found-and-fixed bug in this feature's first pass: `catalogTable
     * .partitionColumnNames` (the field every other case in this file uses
@@ -1183,6 +1322,7 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic,
         catalogTableRef = catalogTableRefOf(cmd.table),
         catalogIdentity = catalogIdentityOf(cmd.table),
+        createdAt = stagedTableLocation(cmd.table).orElse(storedTableLocation(cmd.table)),
         // Unlike Delta above, this needs no class-name/reflection lookup
         // at all: RowLevelOperation.Command (DELETE/UPDATE/MERGE) is a
         // real, public, stable enum on Spark's own connector.write API -

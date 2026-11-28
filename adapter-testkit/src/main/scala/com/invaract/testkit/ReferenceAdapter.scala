@@ -57,7 +57,10 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
           val publishing = sink.getOrElse(new RecordingSink)
           try check(resolved, job, options, publishing)
           catch { case _: ContractViolationException => () } // blocked: the verdict is in the events
-          finally publishing.flush(10000L)
+          finally {
+            if (endsRuns) publishing.endRun(Some(jobInfo)) // the job is done: a sink keeping state per run closes it
+            publishing.flush(10000L)
+          }
         }
         AttachedRun.Ran
     })
@@ -102,6 +105,10 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
   /** Whether the adapter refuses a job that never writes a declared output (`check.outputsWritten`); the kit's own tests
     * turn it off to show the scenario for it catches the omission. */
   protected def checksOutputsWritten: Boolean = true
+
+  /** Whether the adapter tells its sink when the job is done (`NotificationSink.endRun`); the kit's own tests turn it off to
+    * show the OpenLineage scenarios catch a run never ended. */
+  protected def endsRuns: Boolean = true
 
   /** Whether the adapter checks a job's further writes (`ScenarioJob.extraWrites`), not only its main one; the kit's own
     * tests turn it off to show the scenarios for it catch the omission. */

@@ -224,10 +224,9 @@ private[pythonioadapter] final class Run {
       case (None, contract) =>
         // no data yet, so no empty values: everything else is judged, and only a refusal is published
         contract.foreach { c =>
-          val result = VerificationPipeline.evaluateWrite(
-            c, checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L)))), w.csv).copy(partitioning = Some(w.partitioning)), run.options, PythonIoCapabilities.declared
-          )
-          if (!result.passed) reject(c, result, plan, run)
+          val checked = checkedWrite(plan, LogicalSchema(w.schema.map(_.field(Some(0L)))), w.csv).copy(partitioning = Some(w.partitioning))
+          val result = VerificationPipeline.evaluateWrite(c, checked, run.options, PythonIoCapabilities.declared)
+          if (!result.passed) VerificationPipeline.rejectWrite(c, result, checked, run.sink, run.job.runId, PythonIoCapabilities.declared, Some(run.job))
         }
         pending += w.name -> (w -> location)
         Map("ok" -> true)
@@ -336,6 +335,8 @@ private[pythonioadapter] final class Run {
   /** The run's end: its `JobSummaryEvent`, then every event delivered. */
   private def end(run: Opened): Unit = {
     run.sink.foreach(tally => tally.publish(tally.summary(run.job, run.contract.fold(Map.empty[String, Any])(_.extensions))))
+    // the summary ends the run for a sink that reads it; this tells any other sink keeping state per run (endRun)
+    run.sink.foreach(_.endRun(Some(run.job)))
     flush(run)
   }
 
@@ -438,7 +439,8 @@ private[pythonioadapter] final class Run {
         )
         val selfCheck = DryRunSelfCheck.of(draft, plan, reads, schema, run.options, caseSensitive = true, Set.empty)
         DryRunReporting.inference(
-          run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck), run.contractMetadata
+          run.sink, logger, run.job, InferenceStatus.Inferred, None, Some(location), Some(ContractParser.write(draft)), Some(selfCheck), run.contractMetadata,
+          DryRunReporting.lineage(draft, plan, reads, schema)
         )
         InferenceStatus.Inferred -> Some(draft)
       } catch {
@@ -545,6 +547,8 @@ private[pythonioadapter] final class RunTally(delegate: NotificationSink) extend
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
 
   override def flush(timeoutMs: Long): Unit = delegate.flush(timeoutMs)
+
+  override def endRun(job: Option[JobInfo]): Unit = delegate.endRun(job)
 
   override def publish(event: NotificationEvent): Unit = {
     event match {

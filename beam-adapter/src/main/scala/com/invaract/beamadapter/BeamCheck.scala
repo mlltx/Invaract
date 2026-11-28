@@ -44,6 +44,12 @@ final class BeamCheck private[beamadapter] (
     * (or that cannot be verified), publishing each outcome to the sink first. In dry-run mode it throws nothing. */
   def verify(pipeline: Pipeline): Unit = verifyTranslation(BeamTranslator.translate(pipeline))
 
+  /** Tells the sink this check's run is over (`NotificationSink.endRun`): the pipeline was refused, or checked and handed to its
+    * runner. A sink keeping state per run (OpenLineage) publishes its end then, not when the process exits. Never throws. */
+  def endRun(): Unit =
+    try sink.foreach(_.endRun(Some(job)))
+    catch { case scala.util.control.NonFatal(e) => logger.warn(s"Invaract: the notification sink could not end the run ($e)") }
+
   /** `verify`, for a pipeline already translated: how a pipeline read from its portable form is checked (`PortableCheck`). */
   private[beamadapter] def verifyTranslation(translated: BeamTranslation): Unit = {
     // a step that ends the pipeline is let through when it reads only what writes report, or when the platform trusts it (D14)
@@ -123,10 +129,10 @@ final class BeamCheck private[beamadapter] (
         val (status, reason) =
           if (degradations.isEmpty) (InferenceStatus.Inferred, None) else (InferenceStatus.InferredDegraded, Some(degradations.mkString("; ")))
         // the draft checked against the write it describes, as enforcement would check it
-        val selfCheck = DryRunSelfCheck.of(
-          draft, BeamCheck.asDeclared(draft, w), w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType)
-        )
-        report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck))
+        val declared = BeamCheck.asDeclared(draft, w)
+        val selfCheck = DryRunSelfCheck.of(draft, declared, w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType))
+        report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck),
+          DryRunReporting.lineage(draft, declared, w.inputSchemas, schema))
         status -> Some(draft)
       } catch {
         case NonFatal(e) =>
@@ -148,8 +154,9 @@ final class BeamCheck private[beamadapter] (
       reason: Option[String],
       location: Option[String],
       yaml: Option[String],
-      selfCheck: Option[(String, List[Violation], List[String])] = None
-  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck, contractMetadata)
+      selfCheck: Option[(String, List[Violation], List[String])] = None,
+      lineage: => Option[com.invaract.verification.notification.WriteLineage] = None
+  ): Unit = DryRunReporting.inference(sink, logger, job, status, reason, location, yaml, selfCheck, contractMetadata, lineage)
 }
 
 private[beamadapter] object BeamCheck {

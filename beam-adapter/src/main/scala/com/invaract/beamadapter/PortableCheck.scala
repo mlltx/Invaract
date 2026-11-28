@@ -58,7 +58,9 @@ object PortableCheck {
         v == "true"
       }
       val check = python.check(new PythonConfigSource(settings), python.jobInfo(given.get("job_name"), given.get("sdk_version"), given.get("runner"), checkOnly))
-      check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), python.steps))
+      // the checker's run is the job's run as far as Invaract is concerned: it ends here, refused or let through to be submitted
+      try check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), python.steps))
+      finally check.endRun()
       Passed
     } catch {
       case e: ContractViolationException =>

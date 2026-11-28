@@ -80,7 +80,8 @@ object PropertyAnalysis {
     case Sort(input, _)           => tailcall(definingExprT(ref, input))
     case Limit(input, _, _)       => tailcall(definingExprT(ref, input))
     case Write(_, input, _, _, _) => tailcall(definingExprT(ref, input))
-    case Aggregate(_, _, _) | Window(_, _, _, _) | Union(_) | Join(_, _, _, _) | Read(_, _, _) | UnknownPlan(_, _, _) => done(None)
+    case Aggregate(_, _, _) | Window(_, _, _, _) | Union(_) | Join(_, _, _, _) | Read(_, _, _) | Generate(_, _, _, _) | Expand(_, _, _) |
+        UnknownPlan(_, _, _) => done(None)
   }
 
   /** Resolves a single, already-extracted `Expr` into its `ColumnPropertyState`
@@ -165,6 +166,9 @@ object PropertyAnalysis {
       // A bare Read declares no output list of its own — nothing to trace
       // until something downstream projects it (mirrors Lineage exactly).
       case Read(_, _, _)        => done(Nil)
+      // A generator or an expansion changes the rows: nothing proven of the input's columns is kept (as for an
+      // untranslated node), until an analysis of what each keeps is worth having.
+      case Generate(_, _, _, _) | Expand(_, _, _) => done(Nil)
       case UnknownPlan(_, _, _) => done(Nil)
     }
 
@@ -445,7 +449,7 @@ object PropertyAnalysis {
 
       case Write(_, input, _, _, _) => tailcall(resolveInScopeT(ref, input, axioms))
 
-      case UnknownPlan(_, _, _) => done(None)
+      case Generate(_, _, _, _) | Expand(_, _, _) | UnknownPlan(_, _, _) => done(None)
     }
 
     private def combineNotNullAll(states: List[ColumnPropertyState]): NullabilityFact =

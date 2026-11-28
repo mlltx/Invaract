@@ -36,7 +36,7 @@ jobs:
       matrix:
         # Every module in modules.json - .github/scripts/check_modules.py (CI's "Module registry
         # check") fails when this list and the registry disagree.
-        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, beam-adapter, notification-kafka, registry-client, pythonio-adapter]
+        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, beam-adapter, notification-kafka, registry-client, pythonio-adapter, lineage-crosscheck]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -60,8 +60,8 @@ jobs:
         uses: ./.github/actions/publish-engine-modules
 
       # runner also resolves spark-adapter
-      - name: Publish spark-adapter locally (runner's dependency)
-        if: matrix.module == 'runner'
+      - name: Publish spark-adapter locally (runner's and lineage-crosscheck's dependency)
+        if: matrix.module == 'runner' || matrix.module == 'lineage-crosscheck'
         run: cd spark-adapter && sbt -batch publishLocal
 
       - name: Submit ${{ matrix.module }} dependencies

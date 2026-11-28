@@ -6,7 +6,7 @@ package com.invaract.verification
 import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser, ContractValidator, LogicalSchema}
 import com.invaract.ir.Plan
 import com.invaract.verification.notification.{
-  ContractInferenceEvent, DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus, NotificationSink, SelfCheckStatus
+  ContractInferenceEvent, DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus, NotificationSink, SelfCheckStatus, WriteLineage
 }
 import org.slf4j.Logger
 
@@ -100,19 +100,27 @@ private[invaract] object DryRunReporting {
       location: Option[String],
       yaml: Option[String],
       selfCheck: Option[(String, List[Violation], List[String])],
-      metadata: Map[String, String] = Map.empty
+      metadata: Map[String, String] = Map.empty,
+      lineage: => Option[WriteLineage] = None
   ): Unit =
     sink match {
       case Some(s) =>
         s.publish(
           ContractInferenceEvent(
             status, reason, location, yaml, selfCheck.map(_._1), selfCheck.fold(List.empty[Violation])(_._2), selfCheck.fold(List.empty[String])(_._3),
-            None, job, System.currentTimeMillis(), metadata
+            None, job, System.currentTimeMillis(), metadata, lineage
           )
         )
       case None =>
         logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
     }
+
+  /** What a dry run's write read and wrote, for its `ContractInferenceEvent`: the lineage enforcement under `draft` would
+    * publish for it. `None` for a plan that is not a write. */
+  def lineage(draft: Contract, plan: Plan, inputs: List[(String, LogicalSchema)], output: LogicalSchema,
+              rowMutation: Option[MutationClassification] = None, lineagePlan: Option[Plan] = None): Option[WriteLineage] =
+    // lineage matches names ignoring case whatever `caseSensitive` says: its value here changes nothing (an equivalent mutant)
+    VerificationPipeline.lineageOf(draft, CheckedWrite(plan, inputs, output, caseSensitive = true, rowMutation, Set.empty, lineagePlan = lineagePlan))
 
   /** The job's summary: `outcomes` is each write's status, with its draft when one was inferred; `metadata` as for `inference`. */
   def summary(

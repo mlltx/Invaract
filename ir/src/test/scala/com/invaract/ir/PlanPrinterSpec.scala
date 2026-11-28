@@ -301,4 +301,15 @@ class PlanPrinterSpec extends AnyFunSuite {
     // per step: the Union, the Filter, the Project and the line under the Project; then the read under the lowest Filter
     assert(lines.length == 60 * 4 + 1)
   }
+
+  test("render shows a generator, OUTER when it is one, and an expansion's projection count and columns") {
+    val orders = Read(DatasetRef("orders"))
+    val tags = ColumnReference(ColumnRef("tags"))
+    assert(PlanPrinter.render(Generate(orders, Function("explode", List(tags)), List("tag"))).contains("Generate(explode(tags) AS tag)"))
+    assert(PlanPrinter.render(Generate(orders, Function("posexplode", List(tags)), List("pos", "col"), outer = true))
+      .contains("Generate(OUTER posexplode(tags) AS pos, col)"))
+    val e = Expand(orders, List(List(tags, Literal(0, "int")), List(Literal(null, "null"), Literal(1, "int"))), List("tags", "gid"))
+    assert(PlanPrinter.render(e).contains("Expand(2 projections AS tags, gid)"))
+    assert(PlanPrinter.render(e).contains("Read(orders)"), "the input is drawn beneath")
+  }
 }

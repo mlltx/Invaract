@@ -86,7 +86,7 @@ class Run:
             watcher = None if self.checking else _strict.from_environment()
             if self.checking:
                 # a check judges against the contract, and tells no one: it is the job's author's question, not a run
-                settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig")}
+                settings = {k: v for k, v in settings.items() if k not in ("dryRun", "notifyConfig") + _PUBLISHING}
             if self.implicit:
                 # every event says the platform opened this run, and how Invaract attached to the job
                 settings["jobAttributes"] = _attach.attributes(settings.get("jobAttributes"))
@@ -429,6 +429,10 @@ def _installed():
 #: How long the report of a job that opened no run may take, as the job ends: it changes nothing, so it never holds the
 #: job up for long.
 REPORT_SECONDS = 120
+
+
+#: The settings that publish a run's lineage: a check, which tells no one, drops them as it drops ``notifyConfig``.
+_PUBLISHING = ("openLineageUrl", "openLineageConfig", "openLineageNamespace")
 
 
 def report_without_run(scan):

@@ -23,6 +23,13 @@ trait ConfigSource {
     * person which setting to fix. Defaults to the neutral name.
     */
   def describe(name: String): String = name
+
+  /** The environment variable `name` as the job sees it - the process environment, unless the engine carries the same
+    * value its own way. Spark answers `OPENLINEAGE_PARENT_ID` and `OPENLINEAGE_ROOT_PARENT_ID` from the
+    * `spark.openlineage.parent*` and `spark.openlineage.rootParent*` settings an orchestrator (Airflow's OpenLineage
+    * provider) injects into the jobs it launches, so an Invaract run is its task's child with nothing configured.
+    */
+  def environment(name: String): Option[String] = Option(System.getenv(name))
 }
 
 object ConfigSource {
@@ -104,6 +111,14 @@ object InvaractConf {
   /** Class name of the registry client to load, overriding the default. */
   val RegistryClientClass = "registryClientClass"
 
+  // OpenLineage (docs/OPENLINEAGE.md): what was verified, published as OpenLineage run events.
+  /** Base URL of an OpenLineage HTTP endpoint (`http://marquez:5000`): publishing is on, with every default. */
+  val OpenLineageUrl = "openLineageUrl"
+  /** Path to an OpenLineage `.properties` file holding every OpenLineage setting (transport, scope, delivery). */
+  val OpenLineageConfig = "openLineageConfig"
+  /** The OpenLineage namespace this job's runs are published in. */
+  val OpenLineageNamespace = "openLineageNamespace"
+
   // Who the events come from (`VerificationSetup.identify`): set by the platform that runs the job, on every engine.
   /** The job's stable identity across runs (every event's `job.jobId`), where the engine's own name for a run (Spark's
     * application name, Beam's job name) can change from run to run under a scheduler. */
@@ -121,7 +136,7 @@ object InvaractConf {
   /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
     * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
   val All: List[String] = List(
-    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, LocationUrl, LocationTokenEnv, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
+    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, OpenLineageUrl, OpenLineageConfig, OpenLineageNamespace, LocationMap, LocationUrl, LocationTokenEnv, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
     RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, RuntimeDataQuality, FailOnMissingOutput, TrustedSteps,
     JobId, JobAttributes, ContractMetadata
   )

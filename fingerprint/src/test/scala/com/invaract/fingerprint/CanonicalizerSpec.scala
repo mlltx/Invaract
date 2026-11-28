@@ -631,4 +631,51 @@ class CanonicalizerSpec extends AnyFunSuite {
       case other => fail(s"expected the second field's passthrough reference to be deeply resolved too, got $other")
     }
   }
+
+  // -----------------------------------------------------------------
+  // Generate and Expand
+  // -----------------------------------------------------------------
+
+  private val genOrders = Read(DatasetRef("raw.orders"))
+  private val genTags = ColumnReference(ColumnRef("tags", Some("raw.orders")))
+  private val genStatus = ColumnReference(ColumnRef("status", Some("raw.orders")))
+
+  test("a generator's input, function, generated names and outer flag each change its encoding") {
+    val base = Generate(genOrders, Function("explode", List(genTags)), List("tag"))
+    assert(encodePlan(base) == encodePlan(Generate(genOrders, Function("explode", List(genTags)), List("tag"))))
+    assert(encodePlan(base) != encodePlan(base.copy(outer = true)))
+    assert(encodePlan(base) != encodePlan(base.copy(outputs = List("t"))))
+    assert(encodePlan(base) != encodePlan(base.copy(generator = Function("explode", List(genStatus)))))
+    assert(encodePlan(base) != encodePlan(base.copy(input = Filter(genOrders, Literal(true, "boolean")))))
+    assert(encodePlan(Generate(genOrders, Function("posexplode", List(genTags)), List("a", "b"))) !=
+      encodePlan(Generate(genOrders, Function("posexplode", List(genTags)), List("b", "a"))), "generated column order is output order")
+  }
+
+  test("an expansion's projections are a set, each projection's expressions and the output names a sequence") {
+    val p1 = List(genTags, Literal(0, "int"))
+    val p2 = List(Literal(null, "null"), Literal(1, "int"))
+    val e = Expand(genOrders, List(p1, p2), List("tags", "gid"))
+    assert(encodePlan(e) == encodePlan(Expand(genOrders, List(p2, p1), List("tags", "gid"))))
+    assert(encodePlan(e) != encodePlan(Expand(genOrders, List(p1.reverse, p2), List("tags", "gid"))))
+    assert(encodePlan(e) != encodePlan(Expand(genOrders, List(p1, p2), List("gid", "tags"))))
+    assert(encodePlan(e) != encodePlan(Expand(genOrders, List(p1), List("tags", "gid"))))
+    assert(encodePlan(e) != encodePlan(e.copy(input = Filter(genOrders, Literal(true, "boolean")))))
+  }
+
+  test("resolvedOutputs: a generated column is its generator, the input's columns pass through; an expansion has none") {
+    val projected = Project(genOrders, List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("raw.orders"))))))
+    val g = Generate(projected, Function("explode", List(genTags)), List("tag", "pos"))
+    val outputs = Canonicalizer.resolvedOutputs(Write(DatasetRef("out"), g))
+    assert(outputs.keySet == Set("id", "tag", "pos"))
+    assert(outputs("tag") == Function("explode", List(genTags)) && outputs("pos") == outputs("tag"))
+    assert(Canonicalizer.resolvedOutputs(Write(DatasetRef("out"), Expand(genOrders, List(List(genTags)), List("tags")))).isEmpty)
+  }
+
+  test("resolveExprDeep: through a generator to its function or its input; through an expansion, no single expression") {
+    val g = Generate(genOrders, Function("explode", List(genTags)), List("tag"))
+    assert(Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("tag")), g) == Function("explode", List(genTags)))
+    assert(Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("status")), g) == ColumnReference(ColumnRef("status", Some("raw.orders"))))
+    val e = Expand(genOrders, List(List(genTags)), List("tags"))
+    assert(Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("tags")), e) == ColumnReference(ColumnRef("tags")))
+  }
 }

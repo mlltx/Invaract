@@ -166,6 +166,10 @@ capabilities:
   reporting.dryRunInference:
     status: supported
     note: Infers from plain writes; row-level DML is inferred from only weakly and state-changing calls are skipped.
+  reporting.openLineage:
+    status: supported
+    note: spark.invaract.openLineageUrl or spark.invaract.openLineageConfig; one run per Spark application, ended when the application ends.
+    docs: OPENLINEAGE.md
 
   failClosed.unverifiableWrites:
     status: supported

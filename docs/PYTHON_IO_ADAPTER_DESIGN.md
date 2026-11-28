@@ -38,7 +38,9 @@ What it does not see is reading or writing done *outside* the package. A lint gu
 **Decisions** (settled 2026-11-01; section 13):
 1. Adopting Invaract for Python is a one-time code change per job. `config.zeroCodeInstall` is declared unsupported: a
    deliberate exception to the install half of the External Attachability Requirement in CLAUDE.md. Every setting stays
-   configurable from outside the job.
+   configurable from outside the job. *Superseded in part (2026-11-16, docs/PYTHONIO_ATTACH_DESIGN.md): the wheel's start-up
+   hook and `INVARACT_AUTO_RUN` attach Invaract to a job through settings alone, and `config.zeroCodeInstall` is now
+   `partial`; a job's reads and writes are still checked against the contract only when they go through the package.*
 2. **No Java where jobs run.** The existing checker is compiled ahead of time into a native program (GraalVM native image)
    and shipped inside the Python package. A Python re-implementation is the fallback only if that fails (section 4).
 3. "Required" means no empty values in what was written, checked exactly on the data.
@@ -267,6 +269,10 @@ setting cannot be missed.
 `config.zeroCodeInstall` unsupported, with that reason. CLAUDE.md's External Attachability Requirement asks that the
 baseline installation work without the job's code. This design trades that away, after the two surveys found the zero-change
 routes too costly to maintain. The maintainers should accept the exception explicitly.
+
+*Since docs/PYTHONIO_ATTACH_DESIGN.md (2026-11-16) the exception is narrower: the start-up hook and `INVARACT_AUTO_RUN`
+install Invaract through settings alone, so `config.zeroCodeInstall` is declared `partial`. What still takes a change to the
+job is having its reads and writes checked against the contract: that needs them to go through the package.*
 
 ## 7. Guarding against reads and writes outside the package
 

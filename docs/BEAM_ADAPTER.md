@@ -96,6 +96,7 @@ backing is not allowed.
 | `config.contractRegistry` | supported | `contract-from-registry`, `contract-from-registry-enforced`, `contract-not-in-registry` (the user adds the registry client to the launcher's classpath); BeamAttachSpec "contract registry: ..." |
 | `reporting.notifications` | supported | the PASSED/FAILED events every scenario checks; BeamCheckSpec for the engine, version and job they name |
 | `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec (per-write drafts, each self-checked by `DryRunSelfCheck`, then the job summary `DryRunSummary` builds; both shared with Spark) |
+| `reporting.openLineage` | supported | the kit's `openlineage-run`, `openlineage-refused` and `openlineage-unreachable` scenarios (BeamConformanceSpec, through `--runner=Invaract`); the run ends in `InvaractRunner.run` (docs/OPENLINEAGE.md) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed`; BeamTranslatorSpec and BeamCheckSpec for the other shapes it refuses |
 
 ## Operation surface

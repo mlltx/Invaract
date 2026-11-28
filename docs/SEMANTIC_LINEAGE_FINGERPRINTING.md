@@ -1953,6 +1953,13 @@ below):
     shaped path tables and assert the resulting locations are equal —
     confirmed to fail against the pre-fix code by temporarily reverting the
     one-line change and rerunning.
+    Later superseded for the case that prompted it: a path-based Delta table's
+    target is a relation over the table's own directory, whose file index
+    reports that directory as its root path, so the DML is now located at the
+    path itself (no diagnostic), each table at its own. The canonicalized
+    text stays only for a target with neither a catalog location nor a file
+    index; the lineage cross-check (docs/OPENLINEAGE.md, section 11) found
+    that a correct path-based `MERGE` was being refused.
   - **`WriteCommandSupport.insertIntoHiveDir`'s fallback for `INSERT ...
     DIRECTORY` with no resolved storage location used `plan.toString`, the
     same instability class.** Its own reachability is, like

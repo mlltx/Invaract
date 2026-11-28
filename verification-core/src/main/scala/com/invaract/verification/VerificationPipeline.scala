@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractValidator, LogicalSchema}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir
 import com.invaract.ir.PlanPrinter
-import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, NotificationSink}
+import com.invaract.verification.notification.{CatalogInfo, ContractValidationEvent, JobInfo, LineageDataset, NotificationSink, WriteLineage}
 
 import org.slf4j.LoggerFactory
 
@@ -46,6 +46,9 @@ import org.slf4j.LoggerFactory
   *   `csv`, `delta`, ...: `com.invaract.contract.Formats`), for an adapter
   *   that knows them; checked against the inputs' declared formats
   *   (`check.inputFormat`). A location not in the map is not checked.
+  * @param lineagePlan the plan column lineage is traced through, when it is not `plan`: the same write, spelled as what
+  *   it computes rather than as what is checked. Spark's is a Delta MERGE's, its clauses over the target joined to the
+  *   source, where `plan` is the source the contract's inputs are checked against. Never verified, only traced.
   */
 final case class CheckedWrite(
     plan: ir.Plan,
@@ -58,7 +61,8 @@ final case class CheckedWrite(
     dataChecks: List[DataCheckResult] = Nil,
     partitioning: Option[WritePartitioning] = None,
     formatOptions: Map[String, Map[String, String]] = Map.empty,
-    inputFormats: Map[String, String] = Map.empty
+    inputFormats: Map[String, String] = Map.empty,
+    lineagePlan: Option[ir.Plan] = None
 )
 
 /** How a write lays out its data: the columns it partitions by, in order (empty when it does not partition), and what an
@@ -141,7 +145,7 @@ object VerificationPipeline {
     requireValidContract(contract, sink, runId, job)
     val checked = write
     val result = evaluateWrite(contract, checked, options, capabilities)
-    publishValidation(contract, result, sink, runId, job, writeKey)
+    publishValidation(contract, result, sink, runId, job, writeKey, if (sink.isEmpty) None else lineageOf(contract, checked, tracesColumns(capabilities)))
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -399,6 +403,22 @@ object VerificationPipeline {
     throw new ContractViolationException(result, explain(contract, plan, result))
   }
 
+  /** `reject`, for a write refused before it runs whose `checked` form is known (an adapter that judges a write with
+    * `evaluateWrite` first): its validation event carries the write's lineage, as `verifyWrite`'s does, so a refusal is not
+    * missing from the lineage it concerns. */
+  private[invaract] def rejectWrite(
+      contract: Contract,
+      result: VerificationResult,
+      checked: CheckedWrite,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      capabilities: Option[AdapterCapabilities],
+      job: Option[JobInfo]
+  ): Nothing = {
+    publishValidation(contract, result, sink, runId, job, None, if (sink.isEmpty) None else lineageOf(contract, checked, tracesColumns(capabilities)))
+    throw new ContractViolationException(result, explain(contract, checked.plan, result))
+  }
+
   /** Throws if `contract` itself is structurally unsound per
     * `ContractValidator` (e.g. no declared outputs), or names a custom rule
     * type whose class cannot be resolved - the check every other rejection in
@@ -454,6 +474,17 @@ object VerificationPipeline {
       runId: Option[String],
       job: Option[JobInfo],
       writeKey: Option[String]
+  ): Unit = publishValidation(contract, result, sink, runId, job, writeKey, None)
+
+  /** The same, carrying what the write read and wrote (`ContractValidationEvent.lineage`). */
+  private[invaract] def publishValidation(
+      contract: Contract,
+      result: VerificationResult,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo],
+      writeKey: Option[String],
+      lineage: Option[WriteLineage]
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -470,9 +501,52 @@ object VerificationPipeline {
           roleConformance = result.roleConformance,
           unverifiableInputs = result.unverifiableInputs,
           job = job,
-          writeKey = writeKey
+          writeKey = writeKey,
+          lineage = lineage
         )
       )
+    }
+
+  /** What `checked` read and wrote, from what the check already holds (`WriteLineage`): references, so it costs the job
+    * nothing; column lineage is traced only if a sink asks. `None` for a plan with no write at its root. */
+  /** Whether an adapter's events carry column-level lineage: exactly when it declares `lineage.columnLevel` supported or
+    * partial (an adapter that declares nothing - a caller without capabilities - is taken at its plan). An adapter whose
+    * plan is opaque declares it unsupported, and its events then claim nothing about columns. */
+  private[invaract] def tracesColumns(capabilities: Option[AdapterCapabilities]): Boolean =
+    capabilities.forall(c => c.supportOf(Capability.LineageColumnLevel) == Support.Supported || c.supportOf(Capability.LineageColumnLevel) == Support.Partial)
+
+  private[invaract] def lineageOf(contract: Contract, checked: CheckedWrite, columns: Boolean = true): Option[WriteLineage] =
+    checked.plan match {
+      case w: ir.Write =>
+        val facts = PlanFacts.of(w)
+        def declared(datasets: List[com.invaract.contract.Dataset], location: String) =
+          datasets.find(d => LocationMatching.matchesAny(d.location, facts.namesOf(location))).map(_.name)
+        val schemas = checked.inputSchemas.toMap
+        val inputs = facts.reads.groupBy(_.dataset.location).toList.sortBy(_._1).map { case (location, reads) =>
+          LineageDataset(
+            location,
+            checked.inputFormats.get(location),
+            schemas.get(location),
+            reads.flatMap(_.catalog).headOption.map(CatalogInfo.from),
+            declared(contract.inputs, location)
+          )
+        }
+        val traced = checked.lineagePlan.collect { case l: ir.Write => l }.getOrElse(w)
+        // the catalog as lineage sees it: a table the write creates, where it will be stored
+        val output = LineageDataset(
+          w.dataset.location,
+          w.format,
+          Some(checked.outputSchema),
+          traced.catalog.map(CatalogInfo.from),
+          declared(contract.outputs, w.dataset.location)
+        )
+        // a MERGE, UPDATE or DELETE reads the table it changes: its rows are the output's too, and read back it is the
+        // same table, wherever lineage sees the output stored
+        val mutated = checked.rowMutation.isDefined
+        val read = inputs.map(i => if (mutated && i.location == output.location) i.copy(catalog = output.catalog.orElse(i.catalog)) else i)
+        val target = if (mutated && !inputs.exists(_.location == output.location)) List(output) else Nil
+        Some(WriteLineage(output, read ++ target, w.saveMode, checked.partitioning.toList.flatMap(_.columns), if (columns) Some(traced) else None))
+      case _ => None
     }
 
   /** The complete, human-readable explanation a `ContractViolationException`

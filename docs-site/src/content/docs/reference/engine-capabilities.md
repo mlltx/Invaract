@@ -35,9 +35,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (65) | ✅ | ✅ | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (68) | ✅ | ✅ | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ◐ | ✖ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (66) | ✅ | ✅ | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (69) | ✅ | ✅ | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ✅ | ✖ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | — | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | — | — | ✅ |
@@ -89,7 +89,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | beam-python | pythonio | spark |
 |---|---|---|---|---|---|---|
-| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ✖ | ✅ |
+| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ◐ | ◐ | ◐ | ✅ |
 | `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | verified (4) | ✅ | ✅ | ✅ | ✅ |
 | `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | verified (3) | ✅ | ✅ | ✅ | ✅ |
 
@@ -99,6 +99,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 |---|---|---|---|---|---|---|
 | `reporting.notifications` | Validation and write events are published to a notification sink. | verified (2) | ✅ | ✅ | ✅ | ✅ |
 | `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | attested | ◐ | ◐ | ✅ | ✅ |
+| `reporting.openLineage` | OpenLineage run events are published through configuration alone: one run per job, START to COMPLETE or FAIL, its datasets with their schemas and the contract's verdict. | verified (3) | ✅ | ✅ | ✅ | ✅ |
 
 ### Fail-closed behaviour
 
@@ -124,14 +125,14 @@ Attested:
 
 ## Conformance results
 
-The suite has 72 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 75 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 61 | 72 |
-| `beam-python` | 61 | 72 |
-| `pythonio` | 59 | 72 |
-| `spark` | 72 | 72 |
+| `beam` | 64 | 75 |
+| `beam-python` | 64 | 75 |
+| `pythonio` | 62 | 75 |
+| `spark` | 75 | 75 |
 
 ## Notes
 
@@ -167,6 +168,7 @@ The suite has 72 scenarios. For each adapter, the scenarios it is held to confor
 - `config.zeroCodeInstall` — partial: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
 - `config.locationRefs` — supported: Resolved from --invaractLocationMap (a .properties file) and --invaractLocationUrl (a location service), the map first.
 - `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the graph states them; one with none (a text write of strings) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `reporting.openLineage` — supported: --invaractOpenLineageUrl or --invaractOpenLineageConfig; one run per pipeline run, ended when the pipeline finishes. No columnLineage facet (lineage.columnLevel is not declared). ([details](https://github.com/mlltx/Invaract/blob/main/docs/OPENLINEAGE.md))
 - `failClosed.unverifiableWrites` — partial: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.
 
 ### beam-python
@@ -201,6 +203,7 @@ The suite has 72 scenarios. For each adapter, the scenarios it is held to confor
 - `config.zeroCodeInstall` — partial: --runner=invaract_beam.InvaractRunner and the --invaract_* flags on the job's command line, with the invaract_beam package installed and Java 11 or later where the job is submitted. A job that sets its runner in its own code, or does not pass its command line to Beam, bypasses it; a job submitted without the package, or without Java, does not start.
 - `config.locationRefs` — supported: Resolved from --invaract_location_map (a .properties file) and --invaract_location_url (a location service), the map first.
 - `reporting.dryRunInference` — partial: Every located read and write is in the draft, with columns where the pipeline states them; one whose columns cannot be told (a ReadFromParquet of dictionaries) is drafted without columns, and the draft says so. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+- `reporting.openLineage` — supported: --invaract_open_lineage_url or --invaract_open_lineage_config; one run per pipeline run, ended when the pipeline finishes. No columnLineage facet (lineage.columnLevel is not declared). ([details](https://github.com/mlltx/Invaract/blob/main/docs/OPENLINEAGE.md))
 - `failClosed.unverifiableWrites` — partial: A step that ends the pipeline without being a recognised write is refused, unless it reads only what a write reports or the platform trusts it (--invaract_trusted_steps). A function that writes to an outside system in the middle of the pipeline is invisible to any check made before it runs.
 
 ### pythonio
@@ -233,11 +236,12 @@ The suite has 72 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Column lineage needs the transformation; the checker sees only reads and writes.
 - `lineage.boundaryResolution` — not-applicable: No checkpoint or cache stands between a read and a write in the package.
 - `policy.organizational` — supported: Set with INVARACT_ORG_POLICY, applied when the run opens.
-- `config.zeroCodeInstall` — unsupported: Adopting the package is a one-time change to the job's code by design (docs/PYTHON_IO_ADAPTER_DESIGN.md); settings are environment variables, so a platform configures a job without touching it.
+- `config.zeroCodeInstall` — partial: The wheel's start-up hook (00_invaract_attach.pth) attaches Invaract before the job's first line once an INVARACT_* variable asks for it, and INVARACT_AUTO_RUN opens the run the job never opens (docs/PYTHONIO_ATTACH_DESIGN.md); `python -m invaract job.py` does the same for a platform that owns the start command. Partial: only reads and writes through the package are checked against the contract; one the job makes itself (pandas, open, ...) is refused or reported by strict mode, whatever its shape, and one strict mode cannot see (another program, compiled code) is missed. Strict mode needs the lint extra (invaract[lint]); without it a job Invaract opens the run for ends not checked. A job started with `python -S` (no site processing), or where the package is not installed, is not reached. Shown by PythonIoAttachSpec on real jobs, attached at start-up by the .pth file's own line.
 - `config.locationRefs` — supported: Resolved when the run opens, from INVARACT_LOCATION_MAP (a .properties file) and INVARACT_LOCATION_URL (a location service), the map first.
 - `config.contractRegistry` — supported: INVARACT_CONTRACT may name a registry:// reference, resolved with INVARACT_REGISTRY_URL.
 - `reporting.notifications` — supported: Set with INVARACT_NOTIFY_CONFIG. Every check publishes a CONTRACT_VALIDATION event, every output the run publishes a WRITE event (rows, files, bytes, the Delta version or Iceberg snapshot its commit made), and every run ends with a JOB_SUMMARY; the checker delivers a run's events before it ends.
 - `reporting.dryRunInference` — supported: Set with INVARACT_DRY_RUN=true: reads and writes name their locations, each staged write gets a draft contract (CONTRACT_INFERENCE), and the drafts are merged into one for the job when it finishes (DRY_RUN_SUMMARY).
+- `reporting.openLineage` — supported: INVARACT_OPEN_LINEAGE_URL or INVARACT_OPEN_LINEAGE_CONFIG; one run per job, ended when the job finishes. No columnLineage facet (lineage.columnLevel is not declared). ([details](https://github.com/mlltx/Invaract/blob/main/docs/OPENLINEAGE.md))
 - `failClosed.unverifiableWrites` — partial: A table invaract.write cannot read as Arrow (it offers no __arrow_c_stream__) is refused as unverifiable, never written unchecked. A write made around the package is invisible to the checker itself; two guards find it. invaract-lint reads the job's code (docs/PYTHON_IO_ADAPTER_DESIGN.md), in CI or by the package when the run starts (INVARACT_LINT: report publishes a CODE_SCAN event, enforce also refuses the run with UNGOVERNED_DATA_ACCESS for a call no marker explains, before the job reads anything, and again before it publishes for code it imported meanwhile). Strict mode watches the run (INVARACT_STRICT): a file opened to write, a compiled library's writer, SQL that reaches files, a connection or another program is reported as a CODE_SCAN event of phase RUNTIME and, enforced, refused before it happens. Both are off unless set, and what strict mode cannot see (reads, compiled code it does not wrap, another program's own writes) is listed in docs/PYTHONIO_ADAPTER.md.
 
 ### spark
@@ -268,5 +272,6 @@ The suite has 72 scenarios. For each adapter, the scenarios it is held to confor
 - `config.locationRefs` — supported: Resolved from spark.invaract.locationMap (a .properties file) and spark.invaract.locationUrl (a location service), the map first.
 - `config.contractRegistry` — supported: Needs the registry client on the classpath and spark.invaract.registryUrl; a job that does neither is unaffected. ([details](https://github.com/mlltx/Invaract/blob/main/docs/CONTRACT_REGISTRY.md))
 - `reporting.dryRunInference` — supported: Infers from plain writes; row-level DML is inferred from only weakly and state-changing calls are skipped.
+- `reporting.openLineage` — supported: spark.invaract.openLineageUrl or spark.invaract.openLineageConfig; one run per Spark application, ended when the application ends. ([details](https://github.com/mlltx/Invaract/blob/main/docs/OPENLINEAGE.md))
 - `failClosed.unverifiableWrites` — supported: A Command-shaped plan that does not translate and is not on the known-safe list is rejected (UNVERIFIABLE_WRITE). ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
 

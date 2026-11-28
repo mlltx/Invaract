@@ -133,9 +133,14 @@ An adapter owns exactly this, and nothing the pipeline already does:
    can do, naming the engine's own settings and docs.
 5. **Read configuration** through `ConfigSource`, `VerificationSetup` and `AttachSetup`, spelling the neutral keys
    the engine's way (see "Spelling the configuration keys" below). `AttachSetup.select` decides dry-run or
-   enforcement, resolves the contract (a path or a `registry://` reference) and builds the sink; the adapter
-   installs the result with its engine's hook.
-6. **Declare** what it does (step 3) and **fail closed** on what it cannot translate.
+   enforcement, resolves the contract (a path or a `registry://` reference) and builds the sink - with OpenLineage
+   joined when `openLineageUrl` or `openLineageConfig` is set, at no cost to the adapter (docs/OPENLINEAGE.md); the
+   adapter installs the result with its engine's hook. A code path that takes a sink of its own joins OpenLineage with
+   `AttachSetup.withOpenLineage`.
+6. **End the run** when the engine says the job is over: call `NotificationSink.endRun(job)` on the sink (Spark does it
+   at application end, Beam once the pipeline is checked and handed on). The kit's `openlineage-*` scenarios
+   (`reporting.openLineage`) fail an adapter whose run never ends; until the adapter does, declare it unsupported.
+7. **Declare** what it does (step 3) and **fail closed** on what it cannot translate.
 
 `adapter-testkit`'s `ReferenceAdapter` is the shortest complete example (about forty lines, no engine).
 `SparkConformanceAdapter` is the real one.

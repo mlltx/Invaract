@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{ContractInference, DryRunSelfCheck, DryRunSummary, StructuralVerifier, VerificationOptions, VerificationSetup, Violation}
+import com.invaract.verification.{ContractInference, DryRunReporting, DryRunSelfCheck, DryRunSummary, StructuralVerifier, VerificationOptions, VerificationSetup, Violation}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.mutable
@@ -21,7 +21,8 @@ import com.invaract.verification.notification.{
   SelfCheckStatus,
   JobInfo,
   NotificationEvent,
-  NotificationSink
+  NotificationSink,
+  WriteLineage
 }
 
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd}
@@ -132,7 +133,8 @@ private[sparkadapter] final class DryRunReporter(
         Some(selfCheck),
         selfCheckViolations,
         diagnostics,
-        fingerprintOf(inferred)
+        fingerprintOf(inferred),
+        lineageOf(inferred)
       )
     )
   }
@@ -175,6 +177,12 @@ private[sparkadapter] final class DryRunReporter(
       lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes
     )
 
+  /** What the write read and wrote, as enforcement under the draft would publish it (an OpenLineage sink publishes it). */
+  private def lineageOf(inferred: InferenceOutcome.Inferred): Option[WriteLineage] =
+    Try(DryRunReporting.lineage(inferred.contract, inferred.translated.plan, inferred.inputSchemas,
+      SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema), RowMutationSupport.classify(inferred.plan),
+      ContractEnforcementRule.lineagePlanOf(inferred.writeInfo, inferred.translated.plan, Nil, Some(inferred.plan)))).toOption.flatten
+
   private def fingerprintOf(inferred: InferenceOutcome.Inferred): Option[TransformationFingerprint] =
     Try {
       val mutation = RowMutationSupport.classify(inferred.plan).collect {
@@ -191,7 +199,8 @@ private[sparkadapter] final class DryRunReporter(
       selfCheck: Option[String],
       selfCheckViolations: List[Violation],
       diagnostics: List[String],
-      fingerprints: Option[TransformationFingerprint]
+      fingerprints: Option[TransformationFingerprint],
+      lineage: Option[WriteLineage] = None
   ): ContractInferenceEvent =
     ContractInferenceEvent(
       status = status,
@@ -204,7 +213,8 @@ private[sparkadapter] final class DryRunReporter(
       fingerprints = fingerprints,
       job = job,
       timestamp = clock(),
-      metadata = contractMetadata
+      metadata = contractMetadata,
+      lineage = lineage
     )
 
   /** Counts, de-duplicates and publishes one event. `draft` is kept for the

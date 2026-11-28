@@ -34,7 +34,9 @@ private[beamadapter] final case class BeamFrontEnd(
 
   /** Enforcement of `contract` under `options`, resolving `ref://` locations, overlaying the settings in `config` and applying
     * organizational policy exactly as every adapter does (`VerificationSetup`). */
-  def enforcing(contract: Contract, options: VerificationOptions, sink: Option[NotificationSink], config: ConfigSource, given: JobInfo): BeamCheck = {
+  def enforcing(contract: Contract, options: VerificationOptions, givenSink: Option[NotificationSink], config: ConfigSource, given: JobInfo): BeamCheck = {
+    // OpenLineage attaches through the settings to a check built in code too, once (a sink from AttachSetup carries it already)
+    val sink = AttachSetup.withOpenLineage(givenSink, config)
     val job = VerificationSetup.identify(given, config)
     val located = VerificationSetup.resolveContractLocations(contract, config)
     val resolved = VerificationSetup.resolveVerificationOptions(options, config)

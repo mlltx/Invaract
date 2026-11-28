@@ -70,7 +70,9 @@ don't present it as something external consumers would bind to.
   checkers, rule/data-quality/role verifiers, the result model, notification
   sinks, location resolution; no Spark dependency, so a second engine's
   adapter depends on this, not on `spark-adapter` — see
-  docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
+  docs/MULTI_ENGINE_ADAPTERS.md; it also publishes OpenLineage run events, through the neutral
+  `openLineageUrl`/`openLineageConfig`/`openLineageNamespace` settings, off the job's thread — see
+  docs/OPENLINEAGE.md), `adapter-testkit` (the engine-neutral conformance
   scenarios every adapter's tests run — test-scope infrastructure, not part of any
   runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
   submitted through a wrapper runner named by `--runner`, the second adapter after
@@ -85,6 +87,13 @@ don't present it as something external consumers would bind to.
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
+- **Lineage cross-check**: `lineage-crosscheck` (not published, built by its own CI job on every pull request and push)
+  runs a corpus of real Spark jobs with Invaract, `openlineage-spark` and Spline's agent all capturing each, and holds
+  Invaract's column lineage to them: every difference is fixed or explained in its `Corpus.scala` (as an Invaract gap,
+  the other tool's limit, or a convention), Invaract's complete lineage of every job and the exact differences are
+  checked in (`crosscheck-baseline.txt`), and docs-site's "Spark Column Lineage Coverage" page (each job's code, its
+  lineage, and why the tools differ) is generated from the run. A change to how Spark plans are translated or traced shows up there:
+  explain it, then `CROSSCHECK_UPDATE=true sbt test` (docs/OPENLINEAGE.md, section 11)
 - **Optional extension**: `notification-kafka` (a `NotificationSink`
   publishing to Kafka — see "Notification sinks" in
   docs/SPARK_ADAPTER.md; not part of the engine's own dependency
@@ -425,6 +434,12 @@ list of the repository's sbt modules; `.github/scripts/check_modules.py` (CI's "
 when any file that lists modules - the CI loops, the release steps, `dev/build`, the warm-up list, the dependency
 graph, the mutation jobs - disagrees with it, naming the file and line. A new module is added there first.
 
+**Every adapter ends its runs.** When an adapter knows a job's run is over (Spark: the application ends; Beam: the
+pipeline is refused or handed to its runner; Python: the run finishes) it calls `NotificationSink.endRun(job)` on its
+sink, so a sink that keeps state per run (OpenLineage, docs/OPENLINEAGE.md) publishes the run's end then, not when the
+process exits. A sink that wraps another passes it on. The kit's `openlineage-*` scenarios fail an adapter whose run never
+ends (`reporting.openLineage`).
+
 **Every adapter is checked against its own declaration** by the conformance kit
 (`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
 and each must come out as the adapter's declaration promises (a capability declared
@@ -662,6 +677,12 @@ would be.
 │   ├── tsconfig.json
 │   ├── next.config.js
 │   └── .eslintrc.json
+│
+├── lineage-crosscheck/           # Invaract's Spark lineage vs openlineage-spark and Spline, on real jobs (test-only)
+│   └── src/test/scala/com/invaract/crosscheck/
+│       ├── Corpus.scala                       # the jobs, and why each differs where it does
+│       ├── Harness.scala, Captured.scala      # run a job under all three; read each tool's output
+│       └── Comparison.scala, Report.scala     # the differences, the baseline, the docs-site page
 │
 ├── modules.json                  # The one list of the repository's sbt modules (checked by check_modules.py)
 ├── adapter-scaffold/             # Templates dev/new-adapter turns into a new engine adapter module

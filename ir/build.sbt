@@ -165,5 +165,14 @@ import com.typesafe.tools.mima.core._
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.this")
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.this"),
+  // Not an API change: Lineage.Provenance and Lineage.Run are `private` to object Lineage (Scala's `private` compiles to
+  // public bytecode, so MiMa sees them). They changed when Lineage.traceDetailed was added (a provenance now carries its
+  // indirect and masked sources; a run is told each read's columns); nothing outside Lineage can name either.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Lineage#Provenance.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Lineage#Provenance.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Lineage#Provenance.apply"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.Lineage$Provenance$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Lineage#Run.outputsOfT"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Lineage#Run.this")
 )

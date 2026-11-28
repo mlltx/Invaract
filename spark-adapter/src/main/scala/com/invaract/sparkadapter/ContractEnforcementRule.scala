@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{AdapterCapabilities, StructuralVerifier, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
+import com.invaract.verification.{AdapterCapabilities, AttachSetup, StructuralVerifier, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
 import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 
@@ -87,6 +87,14 @@ object ContractEnforcementRule {
     * asynchronous, so there is no timing window.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
+    session =>
+      // OpenLineage attaches through configuration alone, to a job that installs Invaract in code too
+      AttachSetup.openLineageSink(SparkConfigSource(session)) match {
+        case Some(openLineage) => forContract(contract, options, openLineage)(session)
+        case None              => withoutSink(contract, options)(session)
+      }
+
+  private def withoutSink(contract: Contract, options: VerificationOptions): SparkSession => LogicalPlan => Unit =
     session => {
       SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
@@ -118,6 +126,9 @@ object ContractEnforcementRule {
     * example.
     */
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
+    session => withSink(contract, options, AttachSetup.withOpenLineage(Some(sink), SparkConfigSource(session)).get)(session)
+
+  private def withSink(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
     session => {
       SparkSettingNames.check(session, enforcing = true)
       VersionCompatibilityGuard.check(session)
@@ -799,8 +810,26 @@ object ContractEnforcementRule {
       // the format each read was made in (check.inputFormat)
       inputFormats = collectInputFormats(plan, writeInfo.map(_.query), declaredInputs),
       // the partition columns and overwrite mode, where Spark states them (check.partitioning)
-      partitioning = writeInfo.flatMap(_.partitioning)
+      partitioning = writeInfo.flatMap(_.partitioning),
+      // what column lineage is traced through when the checked plan is not what the write computes (a MERGE's clauses)
+      lineagePlan = writeInfo.flatMap(lineagePlanOf(_, translated.plan, declaredInputs, Some(plan)))
     )
+  }
+
+  /** The write `translated` is, as lineage sees it: `info.lineageQuery` in place of its own query, the table it
+    * creates stored where `info.createdAt` says, and a DataFrame built from an RDD the files the RDD read
+    * (`SparkPlanAdapter.translateForLineage`, from `plan`, the plan `translated` was translated from). `None` when it has
+    * none of them, or `translated` is not a write. */
+  private[sparkadapter] def lineagePlanOf(info: WriteCommandInfo, translated: com.invaract.ir.Plan, declaredInputs: Seq[String],
+                                          plan: Option[LogicalPlan] = None): Option[com.invaract.ir.Plan] = {
+    val rddBacked = plan.filter(_ => StructuralVerifier.collectUnknownPlans(translated).exists(_.sourceType == SparkPlanAdapter.RddRelationSourceType))
+    val traced = rddBacked.map(SparkPlanAdapter.translateForLineage(_, declaredInputs).plan).getOrElse(translated)
+    Some(traced).collect { case w: com.invaract.ir.Write if info.lineageQuery.isDefined || info.createdAt.isDefined || rddBacked.isDefined => w }.map { write =>
+      write.copy(
+        input = info.lineageQuery.fold(write.input)(SparkPlanAdapter.translateForLineage(_, declaredInputs).plan),
+        catalog = write.catalog.map(c => c.copy(location = c.location.orElse(info.createdAt)))
+      )
+    }
   }
 
   /** The dry-run counterpart to `verifyOrThrow`: only the plain-write shape

@@ -1,0 +1,291 @@
+---
+title: Publish Lineage to OpenLineage
+description: Show every run of a job in an OpenLineage backend (Marquez, DataHub, a data catalog) with what it read and wrote, its schemas, and whether it kept to its contract, set through the job's configuration on Spark, Beam or a Python job.
+sidebar:
+  order: 9
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide turns on OpenLineage publishing, so each run of a job appears in your lineage backend: the datasets it read and
+wrote, the columns of each, where each output column came from, and the contract's verdict on every write. Like the rest of
+Invaract it is set through the job's own configuration, so a platform team can turn it on for a job whose code it does not
+own. With none of the settings below, nothing here runs.
+
+[OpenLineage](https://openlineage.io) is an open standard for lineage events. Any backend that accepts it works: Marquez,
+DataHub, Atlan, OpenMetadata, or the cloud catalogs that read it.
+
+## Turn it on
+
+Point the job at your backend's URL. Events go to `<url>/api/v1/lineage`, the endpoint OpenLineage backends serve.
+
+<Tabs>
+<TabItem label="Spark">
+```bash
+spark-submit \
+  --conf spark.plugins=com.invaract.sparkadapter.InvaractSparkPlugin \
+  --conf spark.invaract.contract=/contracts/orders_daily.yaml \
+  --conf spark.invaract.openLineageUrl=http://marquez:5000 \
+  ...
+```
+A job that installs Invaract in its own code (`ContractEnforcementRule.forContract`) publishes too: the settings are read
+from the session, as `spark.invaract.locationMap` is.
+</TabItem>
+<TabItem label="Beam Java">
+```bash
+java -jar orders-pipeline.jar \
+  --runner=Invaract --invaractDelegate=DataflowRunner \
+  --invaractContract=/contracts/orders_daily.yaml \
+  --invaractOpenLineageUrl=http://marquez:5000
+```
+</TabItem>
+<TabItem label="Beam Python">
+```bash
+python orders_pipeline.py \
+  --runner=invaract_beam.InvaractRunner --invaract_delegate=DataflowRunner \
+  --invaract_contract=/contracts/orders_daily.yaml \
+  --invaract_open_lineage_url=http://marquez:5000
+```
+</TabItem>
+<TabItem label="Python">
+```bash
+INVARACT_CONTRACT=/contracts/orders_daily.yaml \
+INVARACT_OPEN_LINEAGE_URL=http://marquez:5000 \
+python orders_daily.py
+```
+</TabItem>
+</Tabs>
+
+Two more settings, spelled the same way per engine (see [Configuration](/reference/configuration/#reporting)):
+
+- `openLineageNamespace`: the namespace the job is published under. Default: the configuration file's `namespace`, else the
+  `OPENLINEAGE_NAMESPACE` environment variable, else `default`.
+- `openLineageConfig`: a `.properties` file for everything else: [the configuration file](#the-configuration-file).
+
+Either `openLineageUrl` or `openLineageConfig` turns publishing on. Settings Invaract cannot use (a URL that is not http or
+https, an unknown key in the file, a file that is not there) stop an enforced job when it starts, naming the setting, as a
+broken `notifyConfig` does. In [dry-run mode](/guides/dry-run-mode/) they cost one warning and the job runs without them.
+
+## What a run looks like
+
+Each run of a job is one OpenLineage run: a `START` event, a `RUNNING` event for each write Invaract checks (and, on Spark
+attached through configuration, each write once it completes), and a terminal event, `COMPLETE`, or `FAIL` when Invaract refused a write.
+
+This is a real run: a Spark job that reads a Parquet folder, adds a column, and writes it, published with
+`transport=file`. Its first `RUNNING` event, trimmed (every facet also carries `_producer` and `_schemaURL`):
+
+```json
+{
+  "eventType": "RUNNING",
+  "eventTime": "2026-11-26T00:29:28.411381073Z",
+  "run": {
+    "runId": "9427ba22-d13b-5d1c-80de-379927b4e494",
+    "facets": {
+      "processing_engine": { "version": "3.5.9", "name": "spark", "openlineageAdapterVersion": "0.4.0" },
+      "invaract_run": { "mode": "enforce", "invaractRunId": "local-1795652967576" }
+    }
+  },
+  "job": { "namespace": "spark-test", "name": "SparkOpenLineageSpec" },
+  "inputs": [
+    { "namespace": "file", "name": "/tmp/spark-openlineage5230414482405925150/orders",
+      "facets": {
+        "schema": { "fields": [ { "name": "id", "type": "bigint", "ordinal_position": 1 } ] },
+        "storage": { "storageLayer": "default", "fileFormat": "parquet" } } }
+  ],
+  "outputs": [
+    { "namespace": "file", "name": "/tmp/spark-openlineage5230414482405925150/report",
+      "facets": {
+        "schema": { "fields": [ { "name": "id", "type": "bigint", "ordinal_position": 1 },
+                                { "name": "doubled", "type": "bigint", "ordinal_position": 2 } ] },
+        "columnLineage": { "fields": {
+          "doubled": { "inputFields": [ { "namespace": "file", "name": "/tmp/spark-openlineage5230414482405925150/orders",
+                                          "field": "id", "transformations": [ { "type": "DIRECT", "subtype": "TRANSFORMATION" } ] } ] },
+          "id": { "inputFields": [ { "namespace": "file", "name": "/tmp/spark-openlineage5230414482405925150/orders",
+                                     "field": "id", "transformations": [ { "type": "DIRECT", "subtype": "IDENTITY" } ] } ] } } },
+        "lifecycleStateChange": { "lifecycleStateChange": "OVERWRITE" },
+        "invaract_contract": { "contract": "lineage_demo@1.0.0", "dataset": "report", "status": "PASSED",
+                               "violations": [], "unverifiableInputs": [] } },
+      "outputFacets": {
+        "dataQualityAssertions": { "assertions": [ { "assertion": "invaract_contract", "success": true, "severity": "error",
+          "name": "lineage_demo@1.0.0", "description": "the write keeps to contract lineage_demo@1.0.0" } ] } } }
+  ]
+}
+```
+
+And its `COMPLETE` event's run totals:
+
+```json
+"invaract_run": { "mode": "enforce", "invaractRunId": "local-1795652967576",
+                  "checksPassed": 1, "checksFailed": 0, "violations": 0, "writes": 1 }
+```
+
+A refused write appears too, so a broken run is visible in the graph, not missing from it: its output's `invaract_contract`
+facet is `FAILED` with the violations, the `dataQualityAssertions` facet lists each one as a failed assertion, and the run
+ends `FAIL` with an `errorMessage` facet giving the reason.
+
+### What each facet holds
+
+| Facet | On | Holds |
+|---|---|---|
+| `schema` | each dataset | its columns and types, nested columns included |
+| `columnLineage` | the output | where each output column comes from, and how. `DIRECT`: identity, transformation, aggregation, and `masking` when a column reaches the output only through a hash, `mask` or a count. Each source is typed as it reaches the column: one copied by a MERGE's `UPDATE` and computed by its `INSERT` is both `IDENTITY` and `TRANSFORMATION`. `INDIRECT`: what decides an output column's value (a `CASE WHEN`'s tests, a window's partitioning and ordering), or the output's rows (filters, joins, groupings, sorts). Only on engines that trace columns: Spark. See [Spark Column Lineage Coverage](/reference/spark-column-lineage/) for how complete it is |
+| `storage` | each dataset | its format (`parquet`, `delta`, `iceberg`, ...) |
+| `symlinks`, `catalog` | each dataset | the catalog table it is registered as |
+| `lifecycleStateChange` | the output | `OVERWRITE` or `CREATE`, from the write's save mode |
+| `invaract_contract` | the output | the contract, the dataset's declared name, the verdict, the violations, and the transformation's fingerprint when one is computed |
+| `dataQualityAssertions` | the output | the verdict and each violation as an assertion, for backends that show data quality |
+| `outputStatistics`, `version` | the output | rows, bytes and files written, and the Delta version or Iceberg snapshot, when the engine reports them |
+| `processing_engine`, `jobType`, `parent` | the run, the job | the engine and its version; the run's orchestrator run, when set |
+| `invaract_run` | the run | dry run or enforcement, Invaract's own run id, the job id and attributes, and the run's totals on its last event |
+| `errorMessage` | the run | why a write was refused |
+
+`invaract_contract` and `invaract_run` are Invaract's own facets. Their schemas are published at
+`https://mlltx.github.io/Invaract/schemas/openlineage/1-0-0/`.
+
+### How datasets are named
+
+Datasets are named by the [OpenLineage naming conventions](https://openlineage.io/docs/spec/naming), so a dataset Invaract
+publishes is the same node as one another integration publishes:
+
+| Location | Namespace | Name |
+|---|---|---|
+| `/data/orders` or `file:/data/orders` | `file` | `/data/orders` |
+| `C:\data\orders` or `file:/C:/data/orders` (Windows) | `file` | `C:/data/orders` |
+| `s3a://bucket/orders` | `s3://bucket` | `orders` |
+| `gs://bucket/orders` | `gs://bucket` | `orders` |
+| `abfss://lake@acct.dfs.core.windows.net/orders` (or `abfs://`) | `abfss://lake@acct.dfs.core.windows.net` | `orders` |
+| `hdfs://nn:8020/warehouse/orders` | `hdfs://nn:8020` | `/warehouse/orders` |
+| `jdbc:postgresql://db:5432/sales/public/orders` | `postgres://db:5432` | `sales.public.orders` |
+| `jdbc:sqlserver://db;databaseName=sales`, table `dbo.orders` | `sqlserver://db` | `sales.dbo.orders` |
+| `jdbc:oracle:thin:@db:1521:orcl`, table `SALES.ORDERS` | `oracle://db:1521` | `orcl.SALES.ORDERS` |
+| an opaque JDBC URL: `jdbc:h2:mem:bank`, table `ACCOUNTS` | `h2:mem:bank` | `ACCOUNTS` |
+| a Kafka topic (Beam's `KafkaIO`, servers `broker:9092`, topic `orders`) | `kafka://broker:9092` | `orders` |
+| a Pub/Sub topic (`projects/p/topics/orders`) | `pubsub` | `topic:p:orders` |
+
+A database URL with no port gets the database's default (`jdbc:postgresql://db/sales` is `postgres://db:5432`), as
+openlineage-spark names it. A relative path is made absolute against the job's working directory, and a trailing `/` is dropped (`s3://bucket/orders/`
+is `s3://bucket`, `orders`). User names and passwords in a location are never published.
+
+### When a run ends
+
+| Engine | The run ends |
+|---|---|
+| Spark | when the application stops (`spark.stop()`, or the driver exiting) |
+| Beam Java | when the pipeline is refused, or once it is checked and handed to its runner (for a runner that blocks, when the pipeline finishes) |
+| Beam Python | when the checker has checked the pipeline: refused, or let through to be submitted |
+| Python | when the job's Invaract run finishes |
+
+A process that ends before saying so (it was killed, or never stopped its session) has its open runs ended as it exits,
+within `shutdownTimeoutMs`. A process killed outright (`kill -9`) cannot: the backend shows that run as still running.
+
+## The configuration file
+
+`openLineageConfig` names a `.properties` file. Every key is optional, but either `url` (or `openLineageUrl`) or a
+`transport` other than `http` must be set. A key Invaract does not know is refused, so a typo is caught rather than ignored.
+
+```properties
+# where events go
+url=https://marquez.internal:5000
+endpoint=api/v1/lineage
+# the API key is read from this environment variable (default OPENLINEAGE_API_KEY), sent as a bearer token
+apiKeyEnv=MARQUEZ_API_KEY
+header.X-Team=orders
+compression=gzip
+timeoutMs=5000
+
+namespace=orders-platform
+jobName=orders_daily
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `transport` | `http` | `http`, `file` (one event per line, appended to `path`), or `console` (the log) |
+| `url` | | the backend's base URL; `openLineageUrl` overrides it |
+| `endpoint` | `api/v1/lineage` | the path events are POSTed to |
+| `apiKeyEnv` | `OPENLINEAGE_API_KEY` | the environment variable holding the API key: the variable's name, never the key |
+| `header.<name>` | | an extra header on every request |
+| `compression` | `none` | `gzip` compresses each request; worth it for wide jobs |
+| `timeoutMs` | `5000` | how long one request may take |
+| `path` | | the file the `file` transport appends to |
+| `namespace` | `default` | the namespace the job is published under; `openLineageNamespace` overrides it |
+| `jobName` | | the job's name; default: `jobId`, else the engine's name for the application |
+| `parent.runId`, `parent.job.namespace`, `parent.job.name` | | the orchestrator run this run belongs to (all three, or none). Default: the `OPENLINEAGE_PARENT_ID` environment variable, in the `namespace/name/runId` form Airflow's `lineage_parent_id` macro renders, with `OPENLINEAGE_ROOT_PARENT_ID` as the root run above it. On Spark, the `spark.openlineage.parentJobNamespace`/`parentJobName`/`parentRunId` and `rootParentJobNamespace`/`rootParentJobName`/`rootParentRunId` settings Airflow's OpenLineage provider injects are read first, so a job Airflow launches is its task's child with nothing to configure |
+| `facets.disabled` | | comma-separated facets to leave out, by the names in [the facet table](#what-each-facet-holds) |
+| `schema.maxFields` | `1000` | at most this many columns in a `schema` facet |
+| `columnLineage.maxFields` | `1000` | at most this many output columns in a `columnLineage` facet |
+| `emission` | `perCheck` | `perCheck`: an event per write; `endOfRun`: only `START` and the terminal event, carrying every dataset the run saw |
+| `failuresOnly` | `false` | `true`: publish a run only if a write in it was refused |
+| `queue.capacity` | `1000` | events waiting to be sent; beyond it the newest are dropped, counted and logged |
+| `retry.maxAttempts` | `3` | tries per event when the backend fails or cannot be reached (`408`, `429`, `5xx`); another `4xx` is not retried |
+| `retry.initialBackoffMs`, `retry.maxBackoffMs` | `200`, `5000` | the wait between tries, doubling, capped |
+| `circuit.failures`, `circuit.cooldownMs` | `5`, `30000` | after this many events in a row fail, events are skipped for the cooldown, then sending resumes |
+| `deadLetter.path` | | a file each event that could not be delivered is appended to, to replay later |
+| `maxEventBytes` | `1048576` | an event larger than this sheds its column lineage, then its schemas; one still too large is dropped |
+| `shutdownTimeoutMs` | `5000` | how long the end of the job waits to send what is left |
+
+## What it costs a job
+
+Publishing happens on a thread of its own. The job's thread only hands each event to it, so a slow or unreachable backend
+never slows the job down or fails it. The figures below are from the `OpenLineagePerformanceSpec` and `SparkOpenLineageSpec`
+tests:
+
+- A check of a 200-column job costs tens of microseconds more with OpenLineage on (within the noise of the measurement).
+- Publishing an event costs the job about a microsecond, whether the backend answers in a millisecond or not at all: a
+  thousand events against a backend that takes a second each cost the job under 20 ms.
+- A Spark job of 20 writes took 2,960 ms with OpenLineage off and 2,939 ms with it on, against a backend answering in 20 ms.
+- Memory is bounded by `queue.capacity`. A queued event holds what describes its write, so a thousand events of a
+  200-column job are on the order of 100 MB at the very worst (a backend that hangs while the job writes a thousand times); an
+  ordinary job holds a few MB.
+- At the end of the job, at most `shutdownTimeoutMs` is spent sending what is left, and only when something is left.
+
+To publish less: `emission=endOfRun` sends two events per run, `failuresOnly=true` sends only failed runs,
+`facets.disabled=columnLineage,schema` drops the largest facets, and `compression=gzip` shrinks what is sent.
+
+<Aside type="caution" title="Delivery is best effort">
+An event that still cannot be delivered after its retries, or that is dropped because the queue is full, is lost (or
+written to `deadLetter.path`): lineage never holds up a job. One warning a minute says how many were lost, and why.
+</Aside>
+
+## Check it worked
+
+Publish to a file first, to see the events without a backend:
+
+```properties
+transport=file
+path=/tmp/lineage.jsonl
+namespace=orders-platform
+```
+
+Run the job with `openLineageConfig` naming that file, then look at `/tmp/lineage.jsonl`: one line per event, starting with
+`START` and ending with `COMPLETE` or `FAIL`. When the URL is set, the job's log says where events go:
+
+```
+Invaract publishes OpenLineage events to http://marquez:5000/api/v1/lineage (namespace 'orders-platform')
+```
+
+## How complete the column lineage is
+
+Invaract's Spark column lineage is held up against `openlineage-spark` and [Spline](https://absaoss.github.io/spline/) on a
+corpus of real Spark jobs, on every build of Invaract. [Spark Column Lineage Coverage](/reference/spark-column-lineage/)
+lists each construct (projections, conditions, joins, aggregates, windows, rollups, nested data, SQL subqueries and CTEs,
+UDFs, catalog tables, Delta Lake `MERGE`, Iceberg, Hive, JDBC, RDDs, streaming), whether the three agree, and why not where
+they differ. For each job it shows the code and the lineage Invaract publishes for it, so you can check it, and the steps
+to run the comparison yourself. It also lists what Invaract captures that the other tools miss, and its known limits.
+
+## Alongside openlineage-spark
+
+The `openlineage-spark` integration publishes one run per Spark SQL query, with the plan's lineage as Spark sees it.
+Invaract publishes one run per application, with what it checked. Both can be on: they are different jobs in the graph, and
+the datasets are the same nodes, measured on every job of the coverage corpus. A table a write creates (`CREATE TABLE AS
+SELECT`, `writeTo(...).create()`) is named by where it will be stored, as `openlineage-spark` names it, when Spark's
+configuration says where that is: a `LOCATION`, the session catalog, or an Iceberg Hadoop or JDBC catalog. In a catalog
+that chooses the location itself when it creates the table, such as an Iceberg Hive, REST or Glue catalog, Invaract names
+the table by its catalog identifier. Set `openLineageNamespace` or
+`jobName` to keep them apart, or the same parent run to group them under one orchestrator run.
+
+## What's next
+
+- [Configure a notification sink](/guides/notification-sinks/), to send Invaract's own events (every check, with its
+  violations in full) to a file, an HTTP endpoint or Kafka as well.
+- [What each engine checks](/reference/what-each-engine-checks/), for which engines trace column lineage.
+- [Configuration](/reference/configuration/), for every setting on every engine.

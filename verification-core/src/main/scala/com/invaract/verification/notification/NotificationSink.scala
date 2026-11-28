@@ -47,6 +47,14 @@ trait NotificationSink {
     * timed out (that is already logged); it only waits.
     */
   def flush(timeoutMs: Long): Unit = ()
+
+  /** The run `job` names has ended: the adapter knows it (Spark: the application ended; Beam: the pipeline finished;
+    * Python: the job's process is ending). A sink that keeps state per run - `OpenLineageSink`, which publishes the
+    * run's terminal event - closes it here; every other sink has nothing to do, the default. A wrapping sink passes it
+    * on. Must not throw (the job has already ended); called at most once per run, and possibly never - a run nobody saw
+    * end is closed when the process ends, if at all.
+    */
+  def endRun(job: Option[JobInfo]): Unit = ()
 }
 
 /** Wraps a sink so a broken or slow `publish` call (a network sink timing
@@ -79,6 +87,14 @@ private[invaract] class SafeNotificationSink(delegate: NotificationSink) extends
     } catch {
       case e: Exception =>
         logger.warn(s"Notification sink ${delegate.getClass.getName} failed to flush; continuing without it.", e)
+    }
+
+  override def endRun(job: Option[JobInfo]): Unit =
+    try {
+      delegate.endRun(job)
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Notification sink ${delegate.getClass.getName} failed to end a run; continuing without it.", e)
     }
 }
 
@@ -484,6 +500,8 @@ private[notification] object HttpNotificationSink {
   * enforces there never will be) doesn't blank out an already-known one.
   */
 class SummarizingNotificationSink(delegate: NotificationSink) extends NotificationSink {
+  override def endRun(job: Option[JobInfo]): Unit = delegate.endRun(job)
+
   private val writesPublished = new java.util.concurrent.atomic.AtomicLong(0L)
   private val checksPassed = new java.util.concurrent.atomic.AtomicLong(0L)
   private val checksFailed = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -556,6 +574,8 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
   * destination.
   */
 class FailureOnlyNotificationSink(delegate: NotificationSink) extends NotificationSink {
+  override def endRun(job: Option[JobInfo]): Unit = delegate.endRun(job)
+
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
 
   override def flush(timeoutMs: Long): Unit = delegate.flush(timeoutMs)
@@ -619,6 +639,8 @@ class RetryingNotificationSink(
     delegate.flush(timeoutMs)
     deadLetterSink.flush(timeoutMs)
   }
+
+  override def endRun(job: Option[JobInfo]): Unit = delegate.endRun(job)
 
   /** Pulled out so a test can override it (to a no-op, or to one that
     * records the requested duration) instead of a real test run actually
@@ -727,6 +749,12 @@ class FanOutNotificationSink extends NotificationSink {
       try target.sink.flush(timeoutMs)
       catch { case NonFatal(e) => logger.warn(s"FanOutNotificationSink target '${target.id}' failed to flush: $e") }
     }
+
+  override def endRun(job: Option[JobInfo]): Unit =
+    targets.foreach { target =>
+      try target.sink.endRun(job)
+      catch { case NonFatal(e) => logger.warn(s"FanOutNotificationSink target '${target.id}' failed to end a run: $e") }
+    }
 }
 
 private[notification] object FanOutNotificationSink {
@@ -742,4 +770,30 @@ private[notification] object FanOutNotificationSink {
         }
     }
   }
+}
+
+/** Publishes every event to each of `sinks`, in order, none of their failures reaching the others or the caller: how
+  * `AttachSetup` joins the `notifyConfig` sink and the OpenLineage one. */
+private[invaract] final class TeeNotificationSink(sinks: List[NotificationSink]) extends NotificationSink {
+  private[invaract] def members: List[NotificationSink] = sinks
+
+  private val logger = LoggerFactory.getLogger(classOf[TeeNotificationSink])
+
+  override def publish(event: NotificationEvent): Unit =
+    sinks.foreach { sink =>
+      try sink.publish(event)
+      catch { case NonFatal(e) => logger.warn(s"Notification sink ${sink.getClass.getName} failed to publish a ${event.eventType} event; continuing without it.", e) }
+    }
+
+  override def flush(timeoutMs: Long): Unit =
+    sinks.foreach { sink =>
+      try sink.flush(timeoutMs)
+      catch { case NonFatal(e) => logger.warn(s"Notification sink ${sink.getClass.getName} failed to flush; continuing without it.", e) }
+    }
+
+  override def endRun(job: Option[JobInfo]): Unit =
+    sinks.foreach { sink =>
+      try sink.endRun(job)
+      catch { case NonFatal(e) => logger.warn(s"Notification sink ${sink.getClass.getName} failed to end a run; continuing without it.", e) }
+    }
 }

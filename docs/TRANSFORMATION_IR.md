@@ -144,10 +144,12 @@ is not flagged. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 5.
 | `Filter(input, condition)` | Restricts rows; column set unchanged. |
 | `Join(left, right, joinType, condition)` | Combines two datasets row-wise. Both sides' columns appear in the output. |
 | `Aggregate(input, groupBy, aggregates)` | Groups by `groupBy`, collapses each group via `aggregates`. `aggregates` is the complete output schema — `groupBy` contributes no output columns of its own (see below). |
-| `Union(inputs)` | Concatenates rows from multiple same-shaped plans. Output names follow the first branch. |
+| `Union(inputs)` | Concatenates rows from multiple same-shaped plans, matching columns by position. Output names follow the first branch. |
 | `Sort(input, order)` | Orders rows; column set unchanged. |
 | `Limit(input, limit, offset)` | Restricts the number of rows; column set unchanged. `offset` is `0` when the source plan has none. |
 | `Window(input, windowExprs, partitionBy, orderBy)` | Adds columns computed over a window of related rows, without collapsing row count. Input columns pass through unchanged. |
+| `Generate(input, generator, outputs, outer)` | Turns each input row into zero or more rows by a generator (`explode`, `posexplode`, `inline`, ...): the input's columns, then the generated ones (`outputs`), computed from `generator`. Row count not preserved. |
+| `Expand(input, projections, outputs)` | One output row per projection for each input row, column `i` from each projection's `i`-th expression: how `ROLLUP`/`CUBE`/`GROUPING SETS` are computed beneath their aggregate. |
 | `UnknownPlan(description, sourceType, children)` | A plan node a front-end translator couldn't represent — always paired with a diagnostic, never silently dropped. |
 
 Every `Plan` exposes `children: List[Plan]`, the one generic traversal
@@ -343,19 +345,35 @@ with no symbol table:
 1. If the immediate input plan is a `Project`/`Aggregate`/`Window` that
    *declares* a matching output name, resolve against that declaration
    (recursing into the expression, which may itself reference further
-   columns).
+   columns). A name matches exactly, or else the one declared name equal to
+   it ignoring case, as an engine resolves names by default (`AMOUNT` is a
+   column named `amount`); two names equal ignoring case and neither exact
+   match neither.
 2. If the immediate input is a pass-through node (`Filter`, `Sort`),
    resolve against its input instead.
 3. If the immediate input is a `Read`, the reference is a base case: it
-   resolves to itself, qualified by that Read's dataset (or alias).
-4. If the immediate input is a `Union`, try every branch and union the
-   results — any branch could be the one producing a given row.
+   resolves to itself, qualified by that Read's dataset (or alias). When the
+   read's columns are known (`traceDetailed(plan, readColumns)`), it is named
+   as the read has it, whatever case the reference spells it in.
+4. If the immediate input is a `Union`, the column at the reference's
+   position in the first branch is each branch's column at that position (a
+   union matches columns by position, not name), and the results are
+   unioned — any branch could be the one producing a given row. A branch that
+   declares no columns (a `Read`) is asked for the name; a union of reads
+   alone (one read of several paths) gives the name from every read.
 5. If the immediate input is a `Join`, try both branches. A qualified
    reference is ruled out on the side whose scope doesn't match. An
    unqualified reference that matches on only one side resolves normally;
    one that matches on **both** sides is genuinely ambiguous, and is
    resolved conservatively by unioning both sides' sources rather than
    guessing or throwing.
+
+**A field of a struct the plan builds.** A `StructField` over a
+`StructConstruct` - directly, through an `Alias`, or through a reference to a
+column a projection below builds (`joinWith`'s `_1.id`) - resolves to that
+field's own expression, so it is the field's column, copied, not every column
+the struct was built from. A struct read from an input, a function's result or
+a name both sides of a join declare stays the whole struct's, computed.
 
 **Aggregation detail.** Every `AggregateCall` an output column's expression
 traces through contributes an `AggregationDetail(function, distinct)` to
@@ -416,7 +434,26 @@ there's nothing further to resolve into.
   real resolver, an unqualified name present on both sides of a `Join` is
   attributed to both, rather than raising an error or requiring
   disambiguation. This favors "don't silently miss a source" over
-  "reject invalid SQL."
+  "reject invalid SQL." `Lineage.trace(plan, readColumns)` narrows it: told
+  the columns each `Read` really has (an adapter knows its reads' schemas),
+  a read is never the source of a name it lacks. Two reads that both have
+  the name (a `USING` join's key) still both are.
+
+### Detailed lineage (`Lineage.traceDetailed`)
+
+`trace` gives each output column every column it depends on. A lineage
+consumer (OpenLineage's column lineage facet) needs to know *how*:
+`traceDetailed` returns, per output column, a `ColumnDependencies` with its
+`values` (the columns whose value reaches it), its per-column `indirect`
+lineage (`IndirectKind.Conditional`: what a `CASE WHEN` tests;
+`IndirectKind.Window`: a window's partitioning and ordering) and the
+sources it holds only `masked` (through a hash, `mask` or a count). Beside
+them, the plan's own indirect lineage: every `Filter`'s, `Join`'s,
+`Aggregate` grouping's and `Sort`'s columns, resolved through the plan to
+the read columns they come from, so a filter on a computed column is a
+filter on what it was computed from. `trace` is `traceDetailed`'s
+`lineage` per column, unchanged by any of this: its `sources` still count a
+`CASE WHEN`'s tests and still leave a window's partitioning out.
 - **`SELECT *` isn't supported.** `Project.columns` and `Aggregate.aggregates`
   are always complete, explicit output lists. A front end translating a
   real engine's plan (future Phase 1b work) is expected to expand any

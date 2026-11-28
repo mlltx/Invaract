@@ -809,7 +809,7 @@ object Scenarios {
   ) ++ attachedThroughConfiguration
 
   /** The scenarios whose job is attached to Invaract through the engine's own configuration alone (`Attachment`): the
-    * contract fetched from a contract registry, and `ref://` locations resolved through a location map or a location service,
+    * contract fetched from a contract registry, OpenLineage published to an endpoint, and `ref://` locations resolved through a location map or a location service,
     * each run on the services the kit stands up, with nothing handed to the adapter in code. */
   private def attachedThroughConfiguration: List[Scenario] = List(
     Scenario(
@@ -870,6 +870,31 @@ object Scenarios {
       Set(Capability.ConfigLocationRefs),
       referencedContract, job(), defaults, Expectation.Stopped(Set("ref://report_out")),
       attach = Some(Attachment.LocationService(referencedLocations - "report_out"))
+    ),
+    Scenario(
+      "openlineage-run",
+      "with openLineageUrl set, the job is one OpenLineage run: START, then its datasets with their schemas and the contract's verdict, then COMPLETE",
+      "The platform runs a lineage service (Marquez, DataHub, a data catalog) and points the job at it in its configuration. " +
+        "Every run of the job appears there: what it read, what it wrote and the columns it wrote, and that the write kept to its contract.",
+      Set(Capability.ReportingOpenLineage),
+      contract(), job(), defaults, Expectation.Pass, attach = Some(Attachment.OpenLineage())
+    ),
+    Scenario(
+      "openlineage-refused",
+      "a refused write is published too: the output's contract verdict is FAILED, with the violation, and the run ends FAIL with the reason",
+      "The job writes its report to the wrong place, so Invaract stops the write. The lineage service still shows the run, marked failed, " +
+        "with the reason, so whoever looks at the graph sees the broken run and why, not a gap.",
+      Set(Capability.ReportingOpenLineage),
+      contract(), job(output = ScenarioOutput("out/elsewhere")), defaults, Expectation.Reject(Set(ViolationType.OutputLocationMismatch)),
+      attach = Some(Attachment.OpenLineage())
+    ),
+    Scenario(
+      "openlineage-unreachable",
+      "a lineage endpoint nobody answers costs the job nothing: the job runs and is checked as usual",
+      "The lineage service is down during the run. The job still runs and its contract is still checked: lineage is a report, " +
+        "and it never stops a job that keeps to its contract.",
+      Set(Capability.ReportingOpenLineage),
+      contract(), job(), defaults, Expectation.Pass, attach = Some(Attachment.OpenLineage(reachable = false))
     )
   )
 

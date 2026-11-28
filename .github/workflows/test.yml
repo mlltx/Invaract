@@ -1285,6 +1285,7 @@ jobs:
       beam: ${{ steps.detect.outputs.beam }}
       # pythonio-adapter's native build, re-run by a change to it or to what it is built from
       pythonio: ${{ steps.detect.outputs.pythonio }}
+      # the lineage cross-check: Spark's engine modules, or the cross-check itself
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -2044,7 +2045,7 @@ jobs:
           set -o pipefail
           # Every module in modules.json; check_modules.py fails when this list drifts from it.
           pids=()
-          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter beam-adapter runner notification-kafka registry-client pythonio-adapter; do
+          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter beam-adapter runner notification-kafka registry-client pythonio-adapter lineage-crosscheck; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -2145,15 +2146,43 @@ jobs:
         run: cd registry-client && sbt test
         shell: bash
 
+  lineage-crosscheck:
+    name: Lineage cross-check (Invaract vs openlineage-spark and Spline)
+    runs-on: ubuntu-latest
+    # Runs the corpus of real Spark jobs in lineage-crosscheck/ with Invaract, openlineage-spark and Spline's agent all
+    # capturing each, and fails when Invaract's lineage of any job, or how it differs from either reference, is not
+    # what the checked-in baseline (lineage-crosscheck/src/test/resources/crosscheck-baseline.txt) records, when a
+    # difference has no explanation, or when docs-site's generated "Spark Column Lineage Coverage" page is out of date.
+    # On every pull request and push, whatever it changes: lineage verified there must never change unseen, and a run
+    # takes a few minutes. See docs/OPENLINEAGE.md, "Cross-checking Spark lineage". One Linux leg: it measures
+    # lineage, not platforms.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules locally
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Publish spark-adapter locally
+        shell: bash
+        run: cd spark-adapter && sbt publishLocal
+
+      - name: Run the cross-check
+        shell: bash
+        run: cd lineage-crosscheck && sbt test
+
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, pythonio-storage, pythonio-lint, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-pythonio-adapter, pythonio-native-checker, pythonio-python, pythonio-storage, pythonio-lint, mutation-testing-beam-adapter, mutation-testing-spark-adapter, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, beam-version-matrix, beam-python, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client, lineage-crosscheck]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.pythonio-storage.result }}" == "failure" ] || [ "${{ needs.pythonio-lint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-pythonio-adapter.result }}" == "failure" ] || [ "${{ needs.pythonio-native-checker.result }}" == "failure" ] || [ "${{ needs.pythonio-python.result }}" == "failure" ] || [ "${{ needs.pythonio-storage.result }}" == "failure" ] || [ "${{ needs.pythonio-lint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-beam-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-version-matrix.result }}" == "failure" ] || [ "${{ needs.beam-python.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ] || [ "${{ needs.lineage-crosscheck.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

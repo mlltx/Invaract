@@ -377,7 +377,7 @@ def _settle(watcher):
     if run is not None:
         return _close(run)
     if auto:
-        return _run_at_the_end(watcher)
+        return _run_at_the_end(watcher, strict)
     if runs_opened == 0:
         return _no_run(watcher, require, strict)
     return _after_runs(watcher, strict)
@@ -398,10 +398,12 @@ def _close(run):
     return _ending(lambda: run.__exit__(None, None, None))
 
 
-def _run_at_the_end(watcher):
+def _run_at_the_end(watcher, strict):
     """No run is open as the job ends, and Invaract opens runs for it: one that has something to say gets a run that says
     it (what it did outside any run, or what the scan of its code found), and is judged by it. The scan made to find out
-    is the run's own: the job's code is scanned once."""
+    is the run's own: the job's code is scanned once. A job the watch was asked for and could not start on (invaract-lint
+    not installed) gets one too: nothing is known of what it did, and the run that opens says why and ends it not
+    checked, rather than letting it pass unwatched."""
     scanned, unscannable = None, False
     try:
         scanner = _codescan.from_environment()
@@ -410,7 +412,8 @@ def _run_at_the_end(watcher):
     except CheckNotRun:
         unscannable = True  # said, and judged, by the run that opens for it
     found = watcher is not None and watcher.seen()[0]
-    if not (found or unscannable or (scanned and (scanned[1]["findings"] or scanned[1]["errors"]))):
+    unwatched = watcher is None and strict != "off"
+    if not (found or unscannable or unwatched or (scanned and (scanned[1]["findings"] or scanned[1]["errors"]))):
         return None
     return _ending(lambda: _open_implicit(scanned).__exit__(None, None, None))
 

@@ -22,7 +22,7 @@ class SparkConformanceSpec extends AdapterConformanceSpec with BeforeAndAfterAll
     val scenario = Scenarios.all.find(_.id == "unrecognized-step-does-not-hide-an-undeclared-read").get
     val plan = sparkAdapter.translation(scenario.id, scenario.job).getOrElse(fail("Spark exposes its translation"))
     val unknown = PlanFacts.of(plan).unknownPlans
-    assert(unknown.map(_.sourceType) == List("Sample"), unknown.toString)
+    assert(unknown.map(_.sourceType) == List("OpaqueStep"), unknown.toString)
     assert(PlanFacts.of(unknown.head).reads.size == 2, "both inputs are still reads beneath the unrecognized node")
   }
 

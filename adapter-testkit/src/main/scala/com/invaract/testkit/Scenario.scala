@@ -126,7 +126,7 @@ final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
   *
   * With `opaqueStep` set the work so far (the read, the join, the filter) passes through one step the adapter's
   * translation has no representation for, before the projection and the write: an engine operation that keeps
-  * the columns as they are (Spark: a row sample). What the contract says about the job must come out the same as
+  * the columns as they are (Spark: a plan node of its conformance adapter's own, `OpaqueStep`). What the contract says about the job must come out the same as
   * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
   * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
   *
@@ -288,6 +288,11 @@ object Attachment {
   /** The contract is a file, and its `ref://<id>` locations resolve through a location service the kit runs (`locationUrl`),
     * which answers for the ids in `locations` and holds no other. */
   final case class LocationService(locations: Map[String, String]) extends Attachment
+
+  /** The contract is a file, and OpenLineage is on: `openLineageUrl` names an endpoint the kit runs (`reachable = false`: a
+    * URL nothing answers at, which must cost the job nothing) and `openLineageNamespace` the namespace the events must carry
+    * (`OpenLineageConformance`). */
+  final case class OpenLineage(reachable: Boolean = true) extends Attachment
 }
 
 /** What an adapter reports of a job it ran attached through configuration (`ConformanceAdapter.attached`). Whether its write

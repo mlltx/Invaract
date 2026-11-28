@@ -98,6 +98,9 @@ capabilities:
   reporting.dryRunInference:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  reporting.openLineage:
+    status: supported
+    note: Through the shared attach path (AttachSetup), which adds the OpenLineage sink; the run ends with NotificationSink.endRun when the job is done.
   failClosed.unverifiableWrites:
     status: supported
     note: An operation the adapter has no translation for is rejected (UNVERIFIABLE_WRITE) through VerificationPipeline.rejectUnverifiableWrite.

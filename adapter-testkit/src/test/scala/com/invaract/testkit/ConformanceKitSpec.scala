@@ -57,8 +57,9 @@ class ConformanceKitSpec extends AnyFunSuite {
       val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, s.job.writtenLocations).nonEmpty
       // a job attached through configuration relies on what its configuration points at
       val attached: Set[Capability] = s.attach match {
-        case Some(_: Attachment.Registry) => Set(Capability.ConfigContractRegistry)
-        case Some(_)                      => Set(Capability.ConfigLocationRefs)
+        case Some(_: Attachment.Registry)    => Set(Capability.ConfigContractRegistry)
+        case Some(_: Attachment.OpenLineage) => Set(Capability.ReportingOpenLineage)
+        case Some(_)                         => Set(Capability.ConfigLocationRefs)
         case None                         => Set.empty
       }
       val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ attached ++

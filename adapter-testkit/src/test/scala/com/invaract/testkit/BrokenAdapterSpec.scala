@@ -19,6 +19,9 @@ import org.scalatest.funsuite.AnyFunSuite
   */
 class BrokenAdapterSpec extends AnyFunSuite {
 
+  // the reference adapter ends its runs before `attached` returns: a short wait is only spent on the one that never does
+  OpenLineageConformance.WaitMs = 3000L
+
   /** The reference adapter with one thing wrong: a plan rewrite, a change to what is handed to the pipeline, or a
     * change to what is reported back. */
   private class Variant(
@@ -32,8 +35,10 @@ class BrokenAdapterSpec extends AnyFunSuite {
       attachable: Boolean = true,
       bundles: Boolean = false,
       rewriteSettings: Map[String, String] => Map[String, String] = identity,
-      rewriteAttached: AttachedRun => AttachedRun = identity
+      rewriteAttached: AttachedRun => AttachedRun = identity,
+      endsRun: Boolean = true
   ) extends ReferenceAdapter() {
+    override protected def endsRuns: Boolean = endsRun
     override def attached(scenarioId: String, contract: Contract, job: ScenarioJob, settings: Map[String, String]): Option[AttachedRun] =
       if (!attachable) None else super.attached(scenarioId, contract, job, rewriteSettings(settings)).map(rewriteAttached)
     override def bundlesRegistryClient: Boolean = bundles
@@ -75,6 +80,9 @@ class BrokenAdapterSpec extends AnyFunSuite {
     * configuration reports through the events its configured sink writes, which the attached mistakes below get at. */
   private val handed: Set[String] = Scenarios.all.filter(_.attach.isEmpty).map(_.id).toSet
   private val attachedIds: Set[String] = allIds -- handed
+
+  /** The scenarios that read what reached the kit's OpenLineage endpoint (the unreachable one has nothing to read). */
+  private val openLineagePublishing = Set("openlineage-run", "openlineage-refused")
 
   private val rejecting: Set[String] = Scenarios.all.filter(s => s.attach.isEmpty && s.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
   private val passing: Set[String] = handed -- rejecting
@@ -153,7 +161,10 @@ class BrokenAdapterSpec extends AnyFunSuite {
       Set("contract-not-in-registry", "location-not-in-service")
     ),
     Mistake("never reads the location map", new Variant(rewriteSettings = _ - InvaractConf.LocationMap), Set("locations-from-map", "locations-from-map-enforced")),
-    Mistake("never asks the location service", new Variant(rewriteSettings = _ - InvaractConf.LocationUrl), Set("locations-from-service"))
+    Mistake("never asks the location service", new Variant(rewriteSettings = _ - InvaractConf.LocationUrl), Set("locations-from-service")),
+    Mistake("never sets the OpenLineage endpoint on the engine", new Variant(rewriteSettings = _ - InvaractConf.OpenLineageUrl), openLineagePublishing),
+    Mistake("loses the OpenLineage namespace its configuration sets", new Variant(rewriteSettings = _ - InvaractConf.OpenLineageNamespace), openLineagePublishing),
+    Mistake("never tells its sink the job is done, so the OpenLineage run never ends", new Variant(endsRun = false), openLineagePublishing)
   )
 
   // Each of these breaks one thing an adapter's engine-specific half does.

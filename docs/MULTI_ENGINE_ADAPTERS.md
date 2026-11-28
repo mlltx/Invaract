@@ -483,7 +483,8 @@ through the engine's checkpoint or cache before the projection; the scenarios re
 the boundary to still satisfy a `required_filter_columns` rule, no declared input to be reported hidden, and
 a genuinely unread input to still be missing. An adapter that cannot see through its boundary fails them.
 `opaqueStep` passes the work so far through one step the adapter's translation has no representation for
-(Spark: a row sample, which becomes an `ir.UnknownPlan` over the plan beneath it); the two scenarios require the
+(Spark: a plan node of its conformance adapter's own, `OpaqueStep`, which becomes an `ir.UnknownPlan` over the plan
+beneath it; Spark's own operators keep gaining translations); the two scenarios require the
 input read beneath it to still count as read and an undeclared one to still be rejected, so an adapter that drops
 what it could not interpret fails them. This is `ir.UnknownPlan`'s own promise ("the rest of the tree stays
 inspectable"), held at the adapter's translation.

@@ -246,6 +246,12 @@ object CapabilityGuide {
         "There is no dry-run mode: contracts are written by hand.",
         "/guides/dry-run-mode/"
       ),
+      ReportingOpenLineage -> e(
+        "Shows your jobs in a lineage graph",
+        "Publishes OpenLineage events (to Marquez, DataHub or any OpenLineage backend) for each job: what it read and wrote, the schemas, and whether the contract passed, set through the job's configuration.",
+        "Nothing is published to a lineage backend.",
+        "/guides/openlineage/"
+      ),
       FailClosedUnverifiableWrites -> e(
         "Refuses writes it cannot understand",
         "Refuses a step that writes data in a way Invaract cannot check (`UNVERIFIABLE_WRITE`), rather than letting it through unchecked.",

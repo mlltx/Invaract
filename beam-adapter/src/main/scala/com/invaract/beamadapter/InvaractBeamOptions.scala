@@ -95,6 +95,18 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractContractMetadata: String
   def setInvaractContractMetadata(value: String): Unit
 
+  @Description("The OpenLineage endpoint the job's lineage is published to (http or https; the events go to <url>/api/v1/lineage), such as a Marquez or DataHub server. Unset: nothing is published.")
+  def getInvaractOpenLineageUrl: String
+  def setInvaractOpenLineageUrl(value: String): Unit
+
+  @Description("A .properties file configuring OpenLineage publishing: transport, endpoint, headers, compression, retries, which facets, how events are batched (docs: OpenLineage guide).")
+  def getInvaractOpenLineageConfig: String
+  def setInvaractOpenLineageConfig(value: String): Unit
+
+  @Description("The OpenLineage namespace the job is published under. Default: the configuration file's, else OPENLINEAGE_NAMESPACE, else 'default'.")
+  def getInvaractOpenLineageNamespace: String
+  def setInvaractOpenLineageNamespace(value: String): Unit
+
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
   def setInvaractDelegate(value: String): Unit
@@ -151,6 +163,9 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.JobId                  => options.getInvaractJobId
       case InvaractConf.JobAttributes          => options.getInvaractJobAttributes
       case InvaractConf.ContractMetadata       => options.getInvaractContractMetadata
+      case InvaractConf.OpenLineageUrl         => options.getInvaractOpenLineageUrl
+      case InvaractConf.OpenLineageConfig      => options.getInvaractOpenLineageConfig
+      case InvaractConf.OpenLineageNamespace   => options.getInvaractOpenLineageNamespace
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 

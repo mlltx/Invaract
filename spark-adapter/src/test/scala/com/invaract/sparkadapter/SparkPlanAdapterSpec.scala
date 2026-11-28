@@ -263,9 +263,8 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("falls back to UnknownPlan with a diagnostic for a plan node with no translation, instead of throwing") {
     val df = readSample()
-    val exploded = df.select(col("id"), explode(array(col("value"), col("value"))).as("v"))
-
-    val result = SparkPlanAdapter.translate(exploded.queryExecution.analyzed)
+    // a plan node of the conformance adapter's own, which no translation case knows
+    val result = SparkPlanAdapter.translate(OpaqueStep(df.queryExecution.analyzed))
 
     assert(result.diagnostics.nonEmpty)
     val unknownNode = {
@@ -509,17 +508,97 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.isEmpty)
   }
 
-  test("translates .distinct() as a transparent pass-through (Deduplicate), preserving the underlying plan") {
-    val df = readSample()
-    val deduped = df.select("id", "value").distinct()
-
+  test("translates .distinct() as what Spark's optimizer makes of it: a grouping by every column, each passed through") {
+    val deduped = readSample().select("id", "value").distinct()
     val result = SparkPlanAdapter.translate(deduped.queryExecution.analyzed)
-
     result.plan match {
-      case Project(Read(DatasetRef(location), None, _), _) => assert(location.contains("sample.csv"))
-      case other                                          => fail(s"expected Distinct to be transparent to translation, got ${PlanPrinter.render(other)}")
+      case Aggregate(Project(Read(DatasetRef(location), None, _), _), groupBy, aggregates) =>
+        assert(location.contains("sample.csv"))
+        assert(groupBy.map { case ColumnReference(r) => r.name; case other => other.toString } == List("id", "value"))
+        assert(aggregates.map(_.name) == List("id", "value"))
+        assert(aggregates.forall(_.expr.isInstanceOf[ColumnReference]), "every column is a key: none is aggregated")
+      case other => fail(s"expected an Aggregate, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.isEmpty)
+  }
+
+  test("translates .dropDuplicates(keys): grouped by the keys, every other column its group's FIRST value") {
+    val result = SparkPlanAdapter.translate(readSample().select("id", "value").dropDuplicates("id").queryExecution.analyzed)
+    result.plan match {
+      case Aggregate(_, List(ColumnReference(key)), List(NamedExpr("id", ColumnReference(_)), NamedExpr("value", AggregateCall("FIRST", ColumnReference(v), false)))) =>
+        assert(key.name == "id" && v.name == "value")
+      case other => fail(s"expected a grouping by id, got ${PlanPrinter.render(other)}")
+    }
+    val lineage = Lineage.trace(result.plan)
+    assert(lineage.find(_.output.name == "value").exists(_.aggregations.map(_.function) == Set("FIRST")))
+    assert(lineage.find(_.output.name == "id").exists(!_.aggregated))
+  }
+
+  test("translates SQL SELECT DISTINCT (Distinct) as the same grouping, where it had no translation before") {
+    readSample().createOrReplaceTempView("plan_adapter_distinct")
+    val result = SparkPlanAdapter.translate(spark.sql("SELECT DISTINCT value FROM plan_adapter_distinct").queryExecution.analyzed)
+    result.plan match {
+      case Aggregate(_, List(ColumnReference(key)), List(NamedExpr("value", ColumnReference(_)))) => assert(key.name == "value")
+      case other => fail(s"expected an Aggregate, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, "no UnknownPlan for Distinct any more")
+  }
+
+  test("translates explode as a Generate: the generator, its output's name, outer or not; the input's columns pass through") {
+    val df = readSample()
+    val result = SparkPlanAdapter.translate(df.select(col("id"), explode(array(col("value"), col("value"))).as("v")).queryExecution.analyzed)
+    result.plan match {
+      case Project(Generate(_, Function(name, List(_)), List("v"), false), columns) =>
+        assert(name.equalsIgnoreCase("explode") && columns.map(_.name) == List("id", "v"))
+      case other => fail(s"expected a Project over a Generate, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty)
+    val outer = SparkPlanAdapter.translate(df.select(col("id"), explode_outer(array(col("value"))).as("v")).queryExecution.analyzed)
+    assert(outer.plan match { case Project(g: Generate, _) => g.outer; case _ => false })
+    val v = Lineage.trace(result.plan).find(_.output.name == "v").get
+    assert(v.sources.map(_.name) == Set("value") && v.derivation == DerivationKind.Computed)
+  }
+
+  test("translates a rollup's Expand: one projection per grouping set, its output names; the aggregate above traces through") {
+    val result = SparkPlanAdapter.translate(readSample().rollup("id").agg(sum("value").as("total")).queryExecution.analyzed)
+    def expandOf(p: Plan): Option[Expand] = p match { case e: Expand => Some(e); case other => other.children.flatMap(expandOf).headOption }
+    val expand = expandOf(result.plan).getOrElse(fail(s"expected an Expand in ${PlanPrinter.render(result.plan)}"))
+    assert(expand.projections.size == 2, "rollup(id): (id) and ()")
+    assert(expand.projections.forall(_.size == expand.outputs.size))
+    assert(expand.outputs.contains("id") && expand.outputs.contains("spark_grouping_id"))
+    val total = Lineage.trace(result.plan).find(_.output.name == "total").get
+    assert(total.sources.map(_.name) == Set("value") && total.aggregated)
+    assert(result.diagnostics.isEmpty)
+  }
+
+  test("an RDD-backed relation keeps its opaque node, with a read of each directory its files came from; a parallelized one none") {
+    val fromFiles = readSample()
+    val rddBacked = spark.createDataFrame(fromFiles.rdd, fromFiles.schema)
+    val result = SparkPlanAdapter.translate(rddBacked.queryExecution.analyzed)
+    result.plan match {
+      case UnknownPlan(_, SparkPlanAdapter.RddRelationSourceType, List(Read(DatasetRef(location), None, None))) =>
+        assert(location.stripSuffix("/").endsWith(inputCsv.getParent.getFileName.toString), location)
+      case other => fail(s"expected an RDD relation over one read, got ${PlanPrinter.render(other)}")
+    }
+    assert(Lineage.trace(Write(DatasetRef("out"), result.plan)).isEmpty, "no column traced through the RDD")
+    val parallelized = spark.createDataFrame(spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1L))), StructType(Seq(StructField("id", LongType))))
+    assert(SparkPlanAdapter.translate(parallelized.queryExecution.analyzed).plan.children.isEmpty)
+    assert(SparkPlanAdapter.scannedDirectories(fromFiles.rdd, maxRdds = 0).isEmpty, "the walk stops at its bound")
+    assert(SparkPlanAdapter.scannedDirectories(fromFiles.union(fromFiles).rdd).size == 1, "a directory scanned twice is one input")
+  }
+
+  test("an IN (subquery) condition refers to the subquery's column, so the filter depends on it") {
+    readSample().createOrReplaceTempView("plan_adapter_in_outer")
+    readSample().createOrReplaceTempView("plan_adapter_in_inner")
+    val q = spark.sql("SELECT id FROM plan_adapter_in_outer WHERE id IN (SELECT value FROM plan_adapter_in_inner)")
+    val result = SparkPlanAdapter.translate(q.queryExecution.analyzed)
+    def filterOf(p: Plan): Option[Filter] = p match { case f: Filter => Some(f); case other => other.children.flatMap(filterOf).headOption }
+    val condition = filterOf(result.plan).getOrElse(fail(s"no Filter in ${PlanPrinter.render(result.plan)}")).condition
+    val refs = condition.references.map(r => (r.name, r.qualifier))
+    assert(refs.exists { case (n, q) => n.endsWith(".value") && q.exists(_.startsWith("subquery#")) }, s"$refs")
+    assert(refs.exists(_._1 == "id"))
+    val indirect = Lineage.traceDetailed(result.plan).indirect.filter(_.kind == IndirectKind.Filter).map(_.source.name).toSet
+    assert(indirect == Set("id", "value"), "the outer id and the subquery's value")
   }
 
   test("translates .repartition(n), .coalesce(n), and .repartition(col) as transparent pass-throughs") {

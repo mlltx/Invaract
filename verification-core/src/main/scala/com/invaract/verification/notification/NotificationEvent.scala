@@ -110,6 +110,10 @@ sealed trait NotificationEvent {
   * so one statement can publish two or three `PASSED` events. Their `writeKey` is the same, so a consumer counts writes
   * by `writeKey`, not by event. `None` from an adapter that checks each write once, and for an event that is not a
   * write's check (a refused statement, a state-changing CALL).
+  *
+  * `lineage` is what the checked write read and wrote (`WriteLineage`), for a sink that publishes lineage
+  * (OpenLineage, docs/OPENLINEAGE.md). References to what the check already built, so it costs nothing to carry; not part
+  * of this event's JSON. `None` for an event that is not a write's check.
   */
 case class ContractValidationEvent(
   contract: String,
@@ -123,7 +127,8 @@ case class ContractValidationEvent(
   roleConformance: List[RoleConformanceCheckResult] = Nil,
   unverifiableInputs: List[UnverifiableInput] = Nil,
   job: Option[JobInfo] = None,
-  writeKey: Option[String] = None
+  writeKey: Option[String] = None,
+  lineage: Option[WriteLineage] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }
@@ -422,7 +427,10 @@ object InferenceStatus {
   * draft is not usable as-is. `None` when there was no draft to check.
   * `reason`/`diagnostics` say why a status is not plain `INFERRED`.
   * `fingerprints` identifies the transformation, so a consumer can recognize
-  * the same job's nightly runs as one transformation.
+  * the same job's nightly runs as one transformation. `lineage` is what the
+  * write read and wrote, as `ContractValidationEvent.lineage` is for a checked
+  * one, so a dry run publishes the same lineage enforcement would (an
+  * OpenLineage sink); it is not part of the event's own JSON.
   */
 case class ContractInferenceEvent(
   status: String,
@@ -435,7 +443,8 @@ case class ContractInferenceEvent(
   fingerprints: Option[TransformationFingerprint],
   job: JobInfo,
   timestamp: Long,
-  metadata: Map[String, Any]
+  metadata: Map[String, Any],
+  lineage: Option[WriteLineage] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_INFERENCE"
 }
