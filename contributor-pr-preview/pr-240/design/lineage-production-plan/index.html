@@ -1,0 +1,529 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Spark Lineage: Plan for Production-Grade Support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-240/design/lineage-production-plan/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-240/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-240/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.11"/><meta name="generator" content="Starlight v0.42.11"/><meta property="og:title" content="Spark Lineage: Plan for Production-Grade Support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-240/design/lineage-production-plan/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Status: plan. Written after the third review of Invaract's Spark column lineage (docs/OPENLINEAGE.md, section 11). That review closed every gap a fix co..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Status: plan. Written after the third review of Invaract's Spark column lineage (docs/OPENLINEAGE.md, section 11). That review closed every gap a fix co..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-240/_astro/print.C9eyqPGL.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-240/_astro/common.DBvFT8MH.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-240/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-240/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-240/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding: 0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/Search.astro_astro_type_script_index_0_lang.8ZeAw53g.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="1uelemi" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-240/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-production-grade-means-here" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What production grade means here</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#order" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Order</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-kafka-and-other-non-file-streaming-sources-and-sinks" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Kafka and other non-file streaming sources and sinks</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-pyspark-in-ci" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. PySpark in CI</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-schema-evolving-merge" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. Schema-evolving MERGE</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-generated-columns" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Generated columns</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-connectors-and-catalogs-beyond-the-tested-set" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Connectors and catalogs beyond the tested set</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-tables-a-catalog-places" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Tables a catalog places</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-streaming-lineage-per-micro-batch" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. Streaming: lineage per micro-batch</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-nested-field-lineage" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Nested-field lineage</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-production-grade-means-here" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What production grade means here</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#order" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Order</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#1-kafka-and-other-non-file-streaming-sources-and-sinks" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">1. Kafka and other non-file streaming sources and sinks</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#2-pyspark-in-ci" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">2. PySpark in CI</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#3-schema-evolving-merge" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">3. Schema-evolving MERGE</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#4-generated-columns" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">4. Generated columns</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#5-connectors-and-catalogs-beyond-the-tested-set" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">5. Connectors and catalogs beyond the tested set</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#6-tables-a-catalog-places" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">6. Tables a catalog places</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#7-streaming-lineage-per-micro-batch" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">7. Streaming: lineage per micro-batch</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#8-nested-field-lineage" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">8. Nested-field lineage</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-240/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Spark Lineage: Plan for Production-Grade Support</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/LINEAGE_PRODUCTION_PLAN.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>Status: plan. Written after the third review of Invaract’s Spark column lineage (docs/OPENLINEAGE.md, section 11). That
+review closed every gap a fix could close. What is left needs more than a fix: a dependency, a test fixture, a decision
+about a convention, or a design choice that affects enforcement as well as lineage. For each item this document gives:</p>
+<ul>
+<li>what Invaract does today, measured where it could be;</li>
+<li>what production-grade support means for a team running it on every job;</li>
+<li>the design;</li>
+<li>how it is proven (a corpus job, a fixture, a parity test);</li>
+<li>what it costs.</li>
+</ul>
+<p>“Measured” means a real run, with the probe or test named. “From the code” means read but not yet run, because the
+library or service it needs is not available to the tests yet. Closing that gap is part of each item.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="what-production-grade-means-here">What production grade means here</h2><a class="sl-anchor-link" href="#what-production-grade-means-here"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What production grade means here”</span></a></div>
+<p>An item is done when all of these hold. They are the same gates every Spark lineage change already passes:</p>
+<ol>
+<li><strong>Held by a real job.</strong> The construct is a job in <code dir="auto">lineage-crosscheck</code>’s corpus (or in the PySpark corpus, item 2),
+with its lineage in the baseline and every difference from openlineage-spark and Spline explained. A construct no
+job can run is documented as a limit on the generated page.</li>
+<li><strong>Named as the other integrations name it.</strong> Its datasets are named as openlineage-spark names them, so the same
+dataset is one node in a lineage graph. <code dir="auto">NamingParitySpec</code> holds this for every location form a job cannot reach.</li>
+<li><strong>Enforcement decided.</strong> Where the item changes how a dataset is located, the contract side is specified and
+fails closed: a contract can declare the dataset, and a write Invaract cannot place is refused, not passed.</li>
+<li><strong>Usual gates.</strong> At least 70% mutation score on changed files, MiMa, coverage, the docs-site page, and
+<code dir="auto">./dev/test</code>/<code dir="auto">./dev/regression</code>.</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="order">Order</h2><a class="sl-anchor-link" href="#order"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Order”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Item</th><th>Why this order</th><th>Size</th></tr></thead><tbody><tr><td>1</td><td>Kafka (and other non-file streaming sources and sinks)</td><td>Wrong for enforcement as well as lineage: every topic is one dataset</td><td>M</td></tr><tr><td>2</td><td>PySpark in CI</td><td>Most Spark jobs are written in Python. Its operators are translated, but no PySpark job runs in CI</td><td>M</td></tr><tr><td>3</td><td>Schema-evolving MERGE</td><td>A column the MERGE adds has no lineage at all</td><td>S</td></tr><tr><td>4</td><td>Generated columns</td><td>A generated column has no lineage, though its expression is in the table’s metadata</td><td>S</td></tr><tr><td>5</td><td>Connectors and catalogs beyond the tested set</td><td>Each one is a dataset naming question, and some are enforcement questions too</td><td>M per connector, S for naming</td></tr><tr><td>6</td><td>Tables a catalog places</td><td>Measured correct for a staging catalog; non-staging catalogs still to confirm</td><td>S</td></tr><tr><td>7</td><td>Streaming: lineage per micro-batch</td><td>A stream’s run carries one write’s lineage, not one per batch</td><td>M</td></tr><tr><td>8</td><td>Nested-field lineage</td><td>Needs a convention OpenLineage does not define yet</td><td>M, after a decision</td></tr></tbody></table>
+<p>Already closed by the third review, and no longer in this plan:</p>
+<ul>
+<li>PySpark’s pandas and Arrow operators, and pandas-on-Spark’s default index (<code dir="auto">AttachDistributedSequence</code>, which hid
+every pandas-on-Spark job);</li>
+<li>streaming watermarks, <code dir="auto">dropDuplicatesWithinWatermark</code> and <code dir="auto">mapGroupsWithState</code>;</li>
+<li>typed Dataset operations and RDDs;</li>
+<li>the MERGE convention for untouched rows;</li>
+<li>object-store naming (Azure, trailing <code dir="auto">/</code>, bucket roots);</li>
+<li>the naming of Beam’s Kafka and Pub/Sub topics.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="1-kafka-and-other-non-file-streaming-sources-and-sinks">1. Kafka and other non-file streaming sources and sinks</h2><a class="sl-anchor-link" href="#1-kafka-and-other-non-file-streaming-sources-and-sinks"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “1. Kafka and other non-file streaming sources and sinks”</span></a></div>
+<p><strong>Today (from the code).</strong> A source read through <code dir="auto">StreamingRelationV2</code> is located by its table’s location when the
+table has one, else by the source’s short name (<code dir="auto">SparkPlanAdapter.streamingRelationV2LocationOf</code>). Kafka’s table has no
+location, so every Kafka source in every job is the one dataset <code dir="auto">kafka</code>:</p>
+<ul>
+<li>a contract cannot say which topic a job may read;</li>
+<li>every topic is one node in the lineage graph.</li>
+</ul>
+<p>How a Kafka <em>sink</em> is located has not been measured. A streaming write goes to <code dir="auto">KafkaTable</code> through <code dir="auto">WriteToStream</code>. A
+batch <code dir="auto">df.write.format("kafka")</code> goes through <code dir="auto">SaveIntoDataSourceCommand</code>, because <code dir="auto">kafka</code> is in Spark’s
+<code dir="auto">spark.sql.sources.useV1SourceList</code>. Neither has a path. <code dir="auto">spark-sql-kafka-0-10</code> is not on any test classpath, so none
+of this has run.</p>
+<p>openlineage-spark names a topic as the conventions say: namespace <code dir="auto">kafka://&#x3C;bootstrap server></code>, name the topic
+(<code dir="auto">KafkaRelationVisitor</code>, <code dir="auto">KafkaBootstrapServerResolver</code>). Beam’s adapter already locates a topic as <code dir="auto">&#x3C;servers>/&#x3C;topic></code>,
+format <code dir="auto">kafka</code>. Since the third review, OpenLineage naming turns that into <code dir="auto">kafka://&#x3C;first server></code>, <code dir="auto">&#x3C;topic></code>
+(<code dir="auto">OpenLineageNaming.dataset(..., format)</code>).</p>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>A Kafka read is located per topic, the same way Beam locates it: <code dir="auto">broker:9092/orders</code>, format <code dir="auto">kafka</code>. A contract
+that declares <code dir="auto">orders</code> matches the topic on any cluster, and one that declares <code dir="auto">broker:9092/orders</code> matches only that
+cluster’s topic. Both use the existing <code dir="auto">LocationMatching.fromParts</code> rule.</li>
+<li>A Kafka write is located the same way, from its <code dir="auto">topic</code> option.</li>
+<li>A topic decided per row (a <code dir="auto">topic</code> column, no <code dir="auto">topic</code> option) cannot be placed before the write. Under a contract it
+is refused as <code dir="auto">UNVERIFIABLE_WRITE</code>, unless the contract’s output declares the topic column’s values are allowed. In
+lineage, the topic column’s sources are reported, as for any other column.</li>
+<li>A read by <code dir="auto">subscribePattern</code> or <code dir="auto">assign</code> cannot name its topics before the query runs:
+<ul>
+<li><code dir="auto">assign</code> names them: one read per topic in its JSON;</li>
+<li>a pattern is reported as a read of the pattern’s location (<code dir="auto">broker:9092/orders-.*</code>). A contract can declare it, but
+the pattern is not matched against topics: a contract either names the pattern or the read is undeclared;</li>
+<li>this is documented, and the conformance kit’s capability declaration says so.</li>
+</ul>
+</li>
+<li>Column lineage reaches Kafka’s fixed columns (<code dir="auto">key</code>, <code dir="auto">value</code>, <code dir="auto">topic</code>, <code dir="auto">partition</code>, <code dir="auto">offset</code>, <code dir="auto">timestamp</code>,
+<code dir="auto">headers</code>). A column parsed out of <code dir="auto">value</code> (<code dir="auto">from_json</code>, <code dir="auto">from_avro</code>) has <code dir="auto">value</code> as its source. Which field of the
+payload it came from needs nested lineage (item 8).</li>
+<li>The same shape for the other non-file sources that have a stable identity:
+<ul>
+<li>Kinesis (<code dir="auto">aws-kinesis</code> stream name);</li>
+<li>Pub/Sub Lite;</li>
+<li>Event Hubs (namespace and hub);</li>
+<li><code dir="auto">rate</code> and <code dir="auto">socket</code>, which have no identity, stay as their name and are documented as not declarable.</li>
+</ul>
+</li>
+</ul>
+<p><strong>Design.</strong></p>
+<ul>
+<li>A <code dir="auto">StreamingSourceLocation</code> table in spark-adapter, keyed by the source’s short name, that reads the source’s
+options (<code dir="auto">kafka.bootstrap.servers</code>, <code dir="auto">subscribe</code>, <code dir="auto">assign</code>, <code dir="auto">subscribePattern</code>). It returns one or more locations and
+a format.</li>
+<li><code dir="auto">streamingRelationV2LocationOf</code> and the batch Kafka relation (<code dir="auto">KafkaRelation</code>, matched by class name as JDBC’s is)
+use it. A source with several topics becomes a <code dir="auto">Union</code> of reads, the shape a several-path file read already has.</li>
+<li>The sink side reads <code dir="auto">WriteToStream</code>’s and <code dir="auto">SaveIntoDataSourceCommand</code>’s options through the same table.</li>
+<li>No compile-time dependency on <code dir="auto">spark-sql-kafka</code>. Options are read as strings, and classes are matched by name, the
+way JDBC’s are.</li>
+</ul>
+<p><strong>Proof.</strong></p>
+<ul>
+<li><code dir="auto">spark-sql-kafka-0-10</code> and its test jar (<code dir="auto">KafkaTestUtils</code>: an in-process broker, no Docker, so it runs on the macOS
+and Windows CI legs too) as test dependencies of spark-adapter and lineage-crosscheck.</li>
+<li>Corpus jobs:
+<ul>
+<li>a batch read and write;</li>
+<li>a stream from one topic to another;</li>
+<li><code dir="auto">subscribe</code> to two topics;</li>
+<li>a <code dir="auto">topic</code> column;</li>
+<li>a <code dir="auto">from_json</code> over <code dir="auto">value</code>;</li>
+<li>a <code dir="auto">foreachBatch</code> MERGE into Delta from Kafka, the most common production shape.</li>
+</ul>
+</li>
+<li>Each job is compared with openlineage-spark, which supports Kafka.</li>
+<li>A <code dir="auto">ContractEnforcementRuleSpec</code> case for each enforcement rule above.</li>
+</ul>
+<p><strong>Cost.</strong> About two weeks. The enforcement change is visible to users: a contract that declares the input <code dir="auto">kafka</code>
+today must name its topic. The migration guide and the connector table say so, and the old form is refused with a
+message naming the topic it should declare.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="2-pyspark-in-ci">2. PySpark in CI</h2><a class="sl-anchor-link" href="#2-pyspark-in-ci"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. PySpark in CI”</span></a></div>
+<p><strong>Today (measured).</strong> <code dir="auto">pyspark_probe.py</code> ran real PySpark 3.5.9 jobs with Invaract and openlineage-spark both capturing:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Construct</th><th>Invaract</th><th>openlineage-spark</th></tr></thead><tbody><tr><td>a Python UDF (<code dir="auto">@udf</code>)</td><td>the UDF’s input columns, opaque <code dir="auto">TRANSFORMATION</code></td><td>none for the UDF’s column</td></tr><tr><td>a pandas scalar UDF</td><td>the same</td><td>none</td></tr><tr><td>a pandas grouped-aggregate UDF</td><td><code dir="auto">AGGREGATION</code></td><td>the same</td></tr><tr><td><code dir="auto">mapInPandas</code>, <code dir="auto">applyInPandas</code>, a cogroup’s <code dir="auto">applyInPandas</code>, <code dir="auto">mapInArrow</code></td><td>none (measured before the third review’s fix)</td><td>none</td></tr><tr><td>pandas-on-Spark (<code dir="auto">ps.read_parquet</code>, a computed column, <code dir="auto">to_parquet</code>)</td><td>none (measured before the fix)</td><td>every column</td></tr></tbody></table>
+<p>The third review translated the plan nodes behind the last two rows: <code dir="auto">MapInPandas</code>, <code dir="auto">PythonMapInArrow</code>,
+<code dir="auto">FlatMapGroupsInPandas</code>, <code dir="auto">FlatMapCoGroupsInPandas</code>, <code dir="auto">FlatMapGroupsInPandasWithState</code> and pandas-on-Spark’s
+<code dir="auto">AttachDistributedSequence</code>. <code dir="auto">LineageEdgeCasesSpec</code> holds them, with each node built in Scala as PySpark builds it.</p>
+<p>What no test runs is a PySpark job itself:</p>
+<ul>
+<li>pandas-on-Spark’s other default index types (<code dir="auto">sequence</code> is a <code dir="auto">Window</code>, <code dir="auto">distributed</code> a function call: both already
+translated) and its <code dir="auto">__natural_order__</code> columns;</li>
+<li>Spark Connect, where the plan is built on the server from a client’s protobuf;</li>
+<li>the Python-side shapes that change between PySpark releases.</li>
+</ul>
+<p>Two environment facts were measured:</p>
+<ul>
+<li>PySpark 3.5 needs <code dir="auto">pandas&#x3C;2.2</code>, <code dir="auto">pyarrow==14.0.2</code> and <code dir="auto">numpy&#x3C;2</code>;</li>
+<li>on Java 17 and later, Arrow fails at execution unless the JVM has <code dir="auto">--add-opens=java.base/java.nio=ALL-UNNAMED</code> and
+<code dir="auto">-Dio.netty.tryReflectionSetAccessible=true</code> (the flags Spark’s own documentation gives). Lineage is captured at
+check time, before Arrow runs, so the check itself was unaffected.</li>
+</ul>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>A PySpark corpus in lineage-crosscheck, run in CI beside the Scala corpus, with the same baseline and page:
+<ul>
+<li>every row above;</li>
+<li>pandas-on-Spark with each index type;</li>
+<li><code dir="auto">toPandas</code>/<code dir="auto">createDataFrame(pandas)</code> round trips;</li>
+<li>a Python UDTF;</li>
+<li>a Spark Connect session.</li>
+</ul>
+</li>
+<li>Each job’s lineage is compared with openlineage-spark’s. Spline has no Python integration beyond the JVM agent’s,
+which sees the same plan.</li>
+</ul>
+<p><strong>Design.</strong></p>
+<ul>
+<li>A <code dir="auto">python/</code> folder in lineage-crosscheck holding the jobs, one function each, as <code dir="auto">Corpus.scala</code> holds the Scala ones.</li>
+<li>A Scala test that starts each job in a Python process (<code dir="auto">INVARACT_TEST_PYTHON</code>, as beam-adapter’s Python tests do),
+with Invaract writing OpenLineage events to a file and openlineage-spark writing to another.</li>
+<li>The two files are read by the existing <code dir="auto">Captured</code>/<code dir="auto">Comparison</code> code, so differences, notes and the baseline work as
+they do for Scala jobs.</li>
+<li>The generated page gets a “PySpark” section with each job’s Python code.</li>
+<li>A Spark Connect job starts <code dir="auto">SparkConnectServer</code> in-process, with <code dir="auto">spark.plugins</code> installing Invaract.</li>
+</ul>
+<p><strong>Proof.</strong> The corpus itself, in CI on Linux with Java 17 (Arrow’s flags set), as a job of its own (<code dir="auto">crosscheck-python</code>)
+gated by <code dir="auto">changes</code> like the Scala cross-check.</p>
+<p><strong>Cost.</strong> About a week and a half. The Python environment is pinned in a <code dir="auto">requirements.txt</code> beside the jobs.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="3-schema-evolving-merge">3. Schema-evolving MERGE</h2><a class="sl-anchor-link" href="#3-schema-evolving-merge"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “3. Schema-evolving MERGE”</span></a></div>
+<p><strong>Today (measured).</strong> A Delta MERGE with <code dir="auto">spark.databricks.delta.schema.autoMerge.enabled</code> and <code dir="auto">UPDATE SET *</code> /
+<code dir="auto">INSERT *</code> from a source with a column the table lacks (<code dir="auto">status</code>):</p>
+<ul>
+<li>the column is in the write’s schema (<code dir="auto">outputSchema</code>), and the schema facet shows it;</li>
+<li>it has no column lineage.</li>
+</ul>
+<p>The lineage-only plan (<code dir="auto">WriteCommandSupport.mergeClauses</code>) builds each clause’s rows over the table’s existing columns
+(<code dir="auto">target.output</code>), so a column the MERGE adds has no row to come from. An append with <code dir="auto">mergeSchema</code> is already correct
+(measured: its query has the column).</p>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>Every column the MERGE adds gets lineage from each clause that assigns it, as an existing column does. A clause that
+does not assign it contributes no source; its rows have null there.</li>
+<li>The same for Iceberg’s schema-evolving MERGE where the Iceberg version supports it, and for Delta’s <code dir="auto">WITH SCHEMA EVOLUTION</code> clause on Delta versions that have it.</li>
+</ul>
+<p><strong>Design.</strong> <code dir="auto">mergeClauses</code> takes its output columns from the write’s schema, not the table’s:</p>
+<ul>
+<li>an existing column as today;</li>
+<li>a new column from each clause’s assignment to that name. With schema evolution Delta resolves <code dir="auto">*</code> against the source,
+so the assignment is present in the resolved clause; that will be confirmed against Delta 3.3.3’s
+<code dir="auto">DeltaMergeIntoClause</code> when this is built, not assumed.</li>
+<li><code dir="auto">ColumnDependencies</code> already types each source as it reaches the column.</li>
+</ul>
+<p><strong>Proof.</strong></p>
+<ul>
+<li>A corpus job (<code dir="auto">delta-merge-schema-evolution</code>) beside the existing MERGE jobs;</li>
+<li>a <code dir="auto">ContractEnforcementRuleSpec</code> lineage-plan case;</li>
+<li>the Iceberg form gated on the verified Iceberg versions.</li>
+</ul>
+<p><strong>Cost.</strong> Two to three days.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="4-generated-columns">4. Generated columns</h2><a class="sl-anchor-link" href="#4-generated-columns"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Generated columns”</span></a></div>
+<p><strong>Today (measured).</strong> A Delta table with <code dir="auto">doubled BIGINT GENERATED ALWAYS AS (amount * 2)</code>, written by <code dir="auto">INSERT INTO gen (id, amount) SELECT ...</code>:</p>
+<ul>
+<li><code dir="auto">doubled</code> is in the write’s schema;</li>
+<li>it has no lineage: the query does not compute it, Delta does, from metadata Invaract does not read.</li>
+</ul>
+<p>An identity column (<code dir="auto">GENERATED ALWAYS AS IDENTITY</code>) has no source column, which is correct. A column <code dir="auto">DEFAULT</code> is a
+constant, which is also correct.</p>
+<p><strong>Production grade.</strong> A generated column’s lineage is its generation expression’s columns: <code dir="auto">doubled &#x3C;- amount</code>,
+<code dir="auto">TRANSFORMATION</code>, traced through the query to the read that supplied <code dir="auto">amount</code>. An identity column is documented as
+having no source.</p>
+<p><strong>Design.</strong></p>
+<ul>
+<li>Delta keeps the expression in the field’s metadata (<code dir="auto">delta.generationExpression</code>), which the table’s schema carries.</li>
+<li>Where the write’s schema has a column the query does not produce and that key is present:
+<ul>
+<li>parse the expression with the session’s parser (<code dir="auto">sessionState.sqlParser.parseExpression</code>);</li>
+<li>resolve its names against the query’s output columns by name, under <code dir="auto">spark.sql.caseSensitive</code>;</li>
+<li>append it to the lineage-only plan’s projection.</li>
+</ul>
+</li>
+<li>An expression that does not parse or resolve leaves the column without lineage and logs why. Enforcement is
+untouched: Delta checks generated values itself.</li>
+</ul>
+<p><strong>Proof.</strong></p>
+<ul>
+<li>A corpus job (<code dir="auto">delta-generated-column</code>). openlineage-spark does not read generation expressions: the job’s note
+says so.</li>
+<li>A unit case for an expression that fails to resolve.</li>
+</ul>
+<p><strong>Cost.</strong> Two days.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="5-connectors-and-catalogs-beyond-the-tested-set">5. Connectors and catalogs beyond the tested set</h2><a class="sl-anchor-link" href="#5-connectors-and-catalogs-beyond-the-tested-set"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Connectors and catalogs beyond the tested set”</span></a></div>
+<p><strong>Today.</strong></p>
+<ul>
+<li><strong>Tested</strong> (docs-site “Connector Support”): Delta, Iceberg, Parquet, CSV, Avro, Hive, JDBC (H2), ClickHouse.</li>
+<li><strong>openlineage-spark</strong> also handles:
+<ul>
+<li>BigQuery, Snowflake, Cosmos DB, Kusto, Cassandra and Kafka;</li>
+<li>JDBC dialect naming for PostgreSQL, MySQL, Oracle, SQL Server, Db2, Teradata, Trino, Crate, Derby and OceanBase;</li>
+<li>catalog symlinks for Glue, Hive Metastore, Hadoop, REST, Nessie, Unity Catalog, BigQuery Metastore, Snowflake,
+S3 Tables and Databricks Delta.</li>
+</ul>
+</li>
+<li><strong>A connector Invaract does not recognise</strong> fails closed under a contract (<code dir="auto">UNVERIFIABLE_WRITE</code>). In dry-run or
+lineage-only use, it is published by whatever location the plan gives, which may be the connector’s name.</li>
+</ul>
+<p><code dir="auto">NamingParitySpec</code> (lineage-crosscheck) now holds Invaract’s names to openlineage-spark’s own naming code for every
+file system form and for the JDBC dialects above. That needs no database, so the naming half of a JDBC dialect is
+already held. Its first run found, and the third review fixed, eight ways Invaract named a JDBC table otherwise:</p>
+<ul>
+<li>default ports;</li>
+<li>SQL Server’s <code dir="auto">databaseName</code> property;</li>
+<li>Teradata’s <code dir="auto">DATABASE</code> and <code dir="auto">DBS_PORT</code>;</li>
+<li>Oracle’s thin URLs;</li>
+<li>Db2, MariaDB and Redshift paths;</li>
+<li>Trino’s <code dir="auto">catalog/schema</code>;</li>
+<li>a URL query that hid the table;</li>
+<li>a <code dir="auto">dbfs:</code> trailing <code dir="auto">/</code>.</li>
+</ul>
+<p>One thing found there is an enforcement question, not a naming one. A JDBC table’s <em>enforcement</em> location is
+<code dir="auto">jdbc:&#x3C;the connection URL>/&#x3C;table></code>, so a URL that carries <code dir="auto">user=</code>/<code dir="auto">password=</code> in its query carries them into the
+location a violation message shows. OpenLineage names strip them. Enforcement should strip them as well, under the
+same rule, with a contract still matching the table without them.</p>
+<p><strong>Production grade, per connector.</strong> The <code dir="auto">add-spark-connector</code> skill’s ledger, both surfaces:</p>
+<ul>
+<li>every read and write shape is covered or fails closed;</li>
+<li>the dataset is named as openlineage-spark names it;</li>
+<li>a catalog table carries the <code dir="auto">symlinks</code> facet as openlineage-spark gives it. For Hive that is <code dir="auto">hive://&#x3C;metastore host>:&#x3C;port></code>, <code dir="auto">db.table</code>; for Glue it is <code dir="auto">arn:aws:glue:&#x3C;region>:&#x3C;account></code>, <code dir="auto">table/db/table</code>.</li>
+</ul>
+<p><strong>Order, by how often a production Spark job uses each.</strong></p>
+<ol>
+<li>JDBC dialects: PostgreSQL, MySQL and SQL Server against real servers. The naming is already held; reads, writes and
+pushed-down queries are not.</li>
+<li>Hive Metastore and Glue symlinks. These change only the symlink, not the dataset’s name.</li>
+<li>BigQuery (<code dir="auto">spark-bigquery-connector</code>) and Snowflake (<code dir="auto">spark-snowflake</code>), each a relation class matched by name, with
+its table identity read from its options.</li>
+<li>Unity Catalog and Nessie, through Iceberg’s and Delta’s catalogs, which are already translated: naming and symlinks
+only.</li>
+<li>Cassandra, MongoDB and Elasticsearch, on demand.</li>
+</ol>
+<p><strong>Proof.</strong> Per connector, the skill’s investigation, a fixture (a real server where one runs in CI, as ClickHouse’s does;
+the connector’s own emulator otherwise), and a corpus job compared with openlineage-spark.</p>
+<p><strong>Cost.</strong> Naming and symlinks: a day per catalog. A connector’s read and write surface: one to two weeks each, as
+ClickHouse’s was.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="6-tables-a-catalog-places">6. Tables a catalog places</h2><a class="sl-anchor-link" href="#6-tables-a-catalog-places"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. Tables a catalog places”</span></a></div>
+<p><strong>Today (measured).</strong> A CTAS into an Iceberg catalog that chooses where the table is stored (<code dir="auto">InMemoryCatalog</code>, probed
+with <code dir="auto">CREATE TABLE mem.db.t USING iceberg AS SELECT ...</code>): the location is known when the write is checked, through the
+staged table (<code dir="auto">createdAt</code>), and equals the location <code dir="auto">DESCRIBE TABLE EXTENDED</code> reports after the commit. So for a
+catalog that stages its creates, which Iceberg’s <code dir="auto">SparkCatalog</code> always does, the documented limit (“named by its
+catalog identifier”) does not apply.</p>
+<p>Not measured:</p>
+<ul>
+<li>a REST catalog, whose server picks the location when the table is staged;</li>
+<li>a Hive or Glue catalog;</li>
+<li>a DSv2 catalog that does not stage at all.</li>
+</ul>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>A table a write creates is named by where it is stored whenever the catalog says before the write.</li>
+<li>When the catalog says only after the write, the run’s completion event names it by its location, with the catalog
+identifier as a symlink. That way a backend sees one dataset, not two.</li>
+<li>The limit on the generated page is narrowed to what stays true.</li>
+</ul>
+<p><strong>Design.</strong></p>
+<ul>
+<li>Confirm the staged path for REST (Iceberg’s <code dir="auto">RESTCatalogServer</code> from <code dir="auto">iceberg-open-api</code> test fixtures, in-process)
+and Hive (the embedded metastore the Hive tests already use).</li>
+<li>For a non-staging catalog, look the table up in the existing <code dir="auto">QueryExecutionListener</code> after a successful write and
+name the output by its location in the completion event. This needs a rule in <code dir="auto">OpenLineageMapper</code>: an output named
+by identifier at check time and by location at completion is one dataset, and its earlier name becomes a symlink.</li>
+</ul>
+<p><strong>Proof.</strong> A corpus job per catalog kind. openlineage-spark resolves locations from the catalog too, so the jobs are
+compared.</p>
+<p><strong>Cost.</strong> Two days to confirm. A week if the non-staging path is needed.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="7-streaming-lineage-per-micro-batch">7. Streaming: lineage per micro-batch</h2><a class="sl-anchor-link" href="#7-streaming-lineage-per-micro-batch"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7. Streaming: lineage per micro-batch”</span></a></div>
+<p><strong>Today.</strong> A streaming query is checked once, when it starts, and its run carries that lineage (docs/OPENLINEAGE.md,
+section 12, item 16). That is correct: the plan does not change between batches. But a backend sees no activity while
+the query runs, and no per-batch statistics. openlineage-spark emits an event per micro-batch.</p>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>A long-running query’s run shows it is alive:
+<ul>
+<li>one <code dir="auto">RUNNING</code> event per micro-batch (or per N batches, or per interval, so a query with a one-second trigger does
+not flood the backend), carrying the batch’s <code dir="auto">outputStatistics</code> (rows, from the <code dir="auto">StreamingQueryProgress</code>);</li>
+<li>the run ends when the query stops.</li>
+</ul>
+</li>
+</ul>
+<p><strong>Design.</strong></p>
+<ul>
+<li>A <code dir="auto">StreamingQueryListener</code> in spark-adapter, registered with the check rule. On each progress it publishes a
+<code dir="auto">WriteEvent</code> with the batch’s row count to the query’s run (the run id is the query’s id).</li>
+<li><code dir="auto">onQueryTerminated</code> calls <code dir="auto">NotificationSink.endRun</code>.</li>
+<li>The interval is a neutral setting (<code dir="auto">openLineageStreamingInterval</code>), so a platform can set it through <code dir="auto">--conf</code>
+(External Attachability).</li>
+</ul>
+<p><strong>Proof.</strong> The corpus’s streaming jobs, with the events per batch counted. A unit case for the interval.</p>
+<p><strong>Cost.</strong> About a week.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="8-nested-field-lineage">8. Nested-field lineage</h2><a class="sl-anchor-link" href="#8-nested-field-lineage"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “8. Nested-field lineage”</span></a></div>
+<p><strong>Today.</strong></p>
+<ul>
+<li>The schema facet is nested (a struct’s fields under it).</li>
+<li>Column lineage is by top-level column. A field of a struct built in the plan is traced to its own source (the third
+review). A column read out of a struct (<code dir="auto">payload.a</code>) has the struct column (<code dir="auto">payload</code>) as its source.</li>
+<li>openlineage-spark also reports top-level columns.</li>
+<li>The OpenLineage column-lineage facet’s <code dir="auto">field</code> is a free string; the specification defines no convention for a
+nested field.</li>
+</ul>
+<p><strong>Production grade.</strong></p>
+<ul>
+<li>Nested lineage is opt-in and off by default, so the default matches openlineage-spark and every backend reads it as
+it does today.</li>
+<li>When it is on, an edge to a struct’s field names the field by path (<code dir="auto">payload.a</code>, the form the schema facet’s nesting
+implies).</li>
+</ul>
+<p><strong>Design.</strong></p>
+<ul>
+<li><code dir="auto">ir.Lineage</code> already follows <code dir="auto">GetStructField</code> chains when it builds struct fields.</li>
+<li>The change is to keep the path on the source side: <code dir="auto">LineageSource(location, field, path)</code>.</li>
+<li>Emit it only under the setting (<code dir="auto">openLineageNestedFields=true</code>, a neutral setting).</li>
+</ul>
+<p><strong>Decision first.</strong></p>
+<ul>
+<li>Which form a backend joins on: DataHub has its own field-path form, and Marquez treats names as opaque strings.</li>
+<li>Whether OpenLineage is settling a convention. If it is, Invaract follows it rather than inventing one.</li>
+</ul>
+<p><strong>Proof.</strong> Corpus jobs over <code dir="auto">events.payload</code>, with the setting on and off.</p>
+<p><strong>Cost.</strong> About a week once the convention is decided.</p></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/LINEAGE_PRODUCTION_PLAN.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
