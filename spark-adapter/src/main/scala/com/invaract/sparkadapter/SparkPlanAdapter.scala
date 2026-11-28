@@ -45,12 +45,21 @@ import org.apache.spark.sql.catalyst.plans.{
 }
 import org.apache.spark.sql.catalyst.plans.logical.{
   Aggregate,
+  AppendColumns,
+  AttachDistributedSequence,
   CollectMetrics,
   Deduplicate,
+  DeduplicateWithinWatermark,
+  DeserializeToObject,
   Distinct,
+  EventTimeWatermark,
   Except,
   Expand,
   Filter,
+  FlatMapCoGroupsInPandas,
+  FlatMapGroupsInPandas,
+  FlatMapGroupsInPandasWithState,
+  FlatMapGroupsWithState,
   Generate,
   GlobalLimit,
   Intersect,
@@ -59,14 +68,20 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   LateralJoin,
   LocalLimit,
   LogicalPlan,
+  MapElements,
+  MapGroups,
+  MapInPandas,
+  MapPartitions,
   MergeRows,
   Offset,
   Project,
+  PythonMapInArrow,
   RebalancePartitions,
   Repartition,
   RepartitionByExpression,
   ResolvedHint,
   Sample,
+  SerializeFromObject,
   Sort,
   SubqueryAlias,
   TypedFilter,
@@ -173,6 +188,16 @@ private[sparkadapter] object SparkPlanAdapter {
     val translator = new Translator(computeAliasDisambiguation(plan, declaredInputs), declaredInputs)
     val irPlan = translator.translatePlan(plan)
     TranslationResult(irPlan, translator.diagnostics)
+  }
+
+  /** `translate`, as column lineage is traced: a DataFrame built from an RDD is the files the RDD read, each of its
+    * columns an opaque computation of every column read from them (`scannedColumns`), where enforcement keeps it the
+    * opaque source of its own it is (`RddRelationSourceType`: what it computes cannot be checked). Never verified:
+    * `ContractEnforcementRule.lineagePlanOf` builds a write's lineage-only plan with it. */
+  private[sparkadapter] def translateForLineage(plan: LogicalPlan, declaredInputs: Seq[String]): TranslationResult = {
+    val translator = new Translator(computeAliasDisambiguation(plan, declaredInputs), declaredInputs)
+    translator.forLineage = true
+    TranslationResult(translator.translatePlan(plan), translator.diagnostics)
   }
 
   /** Computes a disambiguated alias for every `SubqueryAlias` occurrence in
@@ -509,6 +534,30 @@ private[sparkadapter] object SparkPlanAdapter {
     found.toList
   }
 
+  /** The columns each directory `scannedDirectories` finds is read for: every file scan's read schema (the columns it
+    * reads, after Spark has pruned the rest), in the order the scans are reached. */
+  private[sparkadapter] def scannedColumns(rdd: org.apache.spark.rdd.RDD[_], maxRdds: Int = 10000): List[(String, List[String])] = {
+    val seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[org.apache.spark.rdd.RDD[_], java.lang.Boolean]())
+    val found = scala.collection.mutable.LinkedHashMap.empty[String, List[String]]
+    var pending = List[org.apache.spark.rdd.RDD[_]](rdd)
+    while (pending.nonEmpty && seen.size < maxRdds) {
+      val next = pending.head
+      pending = pending.tail
+      if (seen.add(next)) {
+        next match {
+          case scan: org.apache.spark.sql.execution.datasources.FileScanRDD =>
+            val columns = scan.readSchema.fieldNames.toList
+            scan.filePartitions.flatMap(_.files).flatMap(f => Option(f.toPath.getParent)).map(_.toString).distinct.foreach { dir =>
+              found(dir) = (found.getOrElse(dir, Nil) ++ columns).distinct
+            }
+          case _ => ()
+        }
+        pending = scala.util.Try(next.dependencies.map(_.rdd).toList).getOrElse(Nil) ++ pending
+      }
+    }
+    found.toList
+  }
+
   /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
     * `FileFormat`) and non-file data sources written via `.save(...)`
     * (Delta, JDBC, ..., `CreatableRelationProvider`) mix in
@@ -593,6 +642,9 @@ private[sparkadapter] object SparkPlanAdapter {
   private class Translator(initialAliases: Map[Long, String], declaredInputs: Seq[String]) {
     // Replaced, for the attributes of an inlined CTE, by the map of the inlined plan (see the WithCTE case).
     private var aliasDisambiguation: Map[Long, String] = initialAliases
+
+    // Set by `translateForLineage`: the plan is translated for column lineage, not for a check.
+    var forLineage: Boolean = false
 
     // A secondary, no-arg constructor kept purely for binary compatibility:
     // MiMa flags the loss of the old `Translator()` constructor as a real
@@ -1018,6 +1070,17 @@ private[sparkadapter] object SparkPlanAdapter {
       // The RDD's own computation is opaque, but the files it read are not: an RDD made from a DataFrame's `.rdd` (or
       // any file source) still holds the scan of them, whose directories are this relation's inputs - with no column
       // traced through the RDD, which no plan describes.
+      // For lineage: the files the RDD read, each column of the DataFrame an opaque computation of every column read
+      // from them - the RDD's code is a function Invaract cannot see into.
+      case lrdd: LogicalRDD if forLineage && SparkPlanAdapter.scannedColumns(lrdd.rdd).exists(_._2.nonEmpty) =>
+        val scanned = SparkPlanAdapter.scannedColumns(lrdd.rdd)
+        val reads = scanned.map { case (dir, _) => ir.Read(ir.DatasetRef(dir)) }
+        val columns = scanned.flatMap { case (dir, cols) => cols.map(c => ir.ColumnReference(ir.ColumnRef(c, Some(dir)))) }
+        ir.Project(
+          if (reads.size == 1) reads.head else ir.Union(reads),
+          lrdd.output.map(a => ir.NamedExpr(a.name, ir.UDF(None, columns, Some(SparkPlanAdapter.RddRelationSourceType)))).toList
+        )
+
       case lrdd: LogicalRDD =>
         report(
           SparkPlanAdapter.RddRelationSourceType,
@@ -1062,11 +1125,12 @@ private[sparkadapter] object SparkPlanAdapter {
       // The rows a MERGE into a table with row-level operations (Iceberg's, Spark's own rewrite) writes: each kept row
       // takes its columns from one instruction's output - an UPDATE's assignments, an INSERT's values, a row kept as it
       // is - the candidates for a column being every instruction's, as an expansion's are. The instructions' conditions
-      // decide which rows are written; a DISCARD (a DELETE) writes none.
+      // decide which rows are written, a DISCARD's (a DELETE's) which are removed; a DISCARD writes none.
       case m: MergeRows =>
         val instructions = m.matchedInstructions ++ m.notMatchedInstructions ++ m.notMatchedBySourceInstructions
         val written = instructions.collect { case k: MergeRows.Keep => (k.condition, Seq(k.output)); case s: MergeRows.Split => (s.condition, Seq(s.output, s.otherOutput)) }
-        val kept = written.map(_._1).filterNot(_ == CatalystLiteral.TrueLiteral).map(translateExpr).toList
+        val discarded = instructions.collect { case d: MergeRows.Discard => d.condition }
+        val kept = (written.map(_._1) ++ discarded).filterNot(_ == CatalystLiteral.TrueLiteral).map(translateExpr).toList
         val input = translatePlan(m.child)
         ir.Expand(
           if (kept.isEmpty) input else ir.Filter(input, kept.reduce((a, b) => ir.BooleanExpr("OR", List(a, b)))),
@@ -1074,7 +1138,84 @@ private[sparkadapter] object SparkPlanAdapter {
           m.output.map(_.name).toList
         )
 
+      // A typed Dataset operation (`map`, `flatMap`, `mapPartitions`, `groupByKey`'s `mapGroups`): a Scala function over
+      // each row, partition or group as an object. What the function computes is opaque; which columns it is given is
+      // not. Each column it produces is an opaque computation of every column deserialized for it, and a grouping's key
+      // groups the rows. Opaque placeholders before, through which no column was traced.
+      case d: DeserializeToObject =>
+        ir.Project(translatePlan(d.child), List(ir.NamedExpr(d.outputObjAttr.name, opaqueOf("DeserializeToObject", d.deserializer.references.toSeq))))
+      case m: MapElements =>
+        ir.Project(translatePlan(m.child), List(ir.NamedExpr(m.outputObjAttr.name, opaqueOf("MapElements", m.child.output))))
+      case m: MapPartitions =>
+        ir.Project(translatePlan(m.child), List(ir.NamedExpr(m.outputObjAttr.name, opaqueOf("MapPartitions", m.child.output))))
+      case s: SerializeFromObject =>
+        ir.Project(translatePlan(s.child), s.serializer.map(n => ir.NamedExpr(n.name, opaqueOf("SerializeFromObject", s.child.output))).toList)
+      case a: AppendColumns =>
+        ir.Project(translatePlan(a.child),
+          (a.child.output.map(translateNamed) ++ a.serializer.map(n => ir.NamedExpr(n.name, opaqueOf("AppendColumns", a.deserializer.references.toSeq)))).toList)
+      case g: MapGroups =>
+        ir.Aggregate(translatePlan(g.child), g.groupingAttributes.map(translateExpr).toList,
+          List(ir.NamedExpr(g.outputObjAttr.name, opaqueOf("MapGroups", (g.keyDeserializer.references ++ g.valueDeserializer.references).toSeq))))
+
+      // Streaming operators. A watermark marks a column as the event time and changes no column; a deduplication within
+      // the watermark is a deduplication; `mapGroupsWithState`/`flatMapGroupsWithState` a typed function over each
+      // group, and over its initial state when it has one (cogrouped with it by key). Opaque before, so nothing above a
+      // watermark (a windowed aggregation, a stream-stream join) was traced.
+      case w: EventTimeWatermark => translatePlan(w.child)
+      case d: DeduplicateWithinWatermark =>
+        deduplicated(translatePlan(d.child), d.keys.map(_.exprId).toSet, d.child.output)
+      case g: FlatMapGroupsWithState =>
+        val given = (g.keyDeserializer.references ++ g.valueDeserializer.references).toSeq
+        if (g.hasInitialState)
+          cogrouped("FlatMapGroupsWithState", g.child, g.groupingAttributes, g.initialState, g.initialStateGroupAttrs,
+            List(g.outputObjAttr), given ++ g.initialStateDeserializer.references)
+        else opaqueGroups("FlatMapGroupsWithState", g.child, g.groupingAttributes, List(g.outputObjAttr), given)
+
+      // PySpark's pandas and Arrow functions: a Python function over each partition (`mapInPandas`, `mapInArrow`) or
+      // group (`applyInPandas`, `applyInPandasWithState`, a cogroup's `applyInPandas`), given it as a pandas DataFrame
+      // or an Arrow batch. As for a typed Dataset operation, what it computes is opaque and which columns it is given
+      // is not: each column it returns is an opaque computation of every one of them.
+      case m: MapInPandas      => opaqueRows("MapInPandas", m.child, m.output)
+      case m: PythonMapInArrow => opaqueRows("PythonMapInArrow", m.child, m.output)
+      case g: FlatMapGroupsInPandas =>
+        opaqueGroups("FlatMapGroupsInPandas", g.child, g.groupingAttributes, g.output, g.child.output)
+      case g: FlatMapGroupsInPandasWithState =>
+        opaqueGroups("FlatMapGroupsInPandasWithState", g.child, g.groupingAttributes, g.output, g.child.output)
+      case c: FlatMapCoGroupsInPandas =>
+        cogrouped("FlatMapCoGroupsInPandas", c.left, c.left.output.take(c.leftGroupingLen), c.right,
+          c.right.output.take(c.rightGroupingLen), c.output, c.left.output ++ c.right.output)
+      // pandas-on-Spark's default index (`compute.default_index_type` `distributed-sequence`): every column passed
+      // through, and a row number that comes from no column. Opaque before, so a pandas-on-Spark job traced nothing.
+      case a: AttachDistributedSequence =>
+        ir.Project(translatePlan(a.child),
+          ir.NamedExpr(a.sequenceAttr.name, ir.UDF(None, Nil, Some("AttachDistributedSequence"))) :: a.child.output.map(translateNamed).toList)
+
       case other => opaque(other)
+    }
+
+    /** An opaque function (`kind`) of `columns`, each once, in a stable order. */
+    private def opaqueOf(kind: String, columns: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): ir.Expr =
+      ir.UDF(None, columns.distinct.sortBy(_.exprId.id).map(translateExpr).toList, Some(kind))
+
+    /** Each row of `child` given to an opaque function (`kind`) that returns rows of `output`. */
+    private def opaqueRows(kind: String, child: LogicalPlan, output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): ir.Plan =
+      ir.Project(translatePlan(child), output.map(a => ir.NamedExpr(a.name, opaqueOf(kind, child.output))).toList)
+
+    /** `child`'s rows grouped by `keys`, each group given to an opaque function (`kind`) of `given` returning `output`. */
+    private def opaqueGroups(kind: String, child: LogicalPlan, keys: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+                             output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+                             given: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): ir.Plan =
+      ir.Aggregate(translatePlan(child), keys.map(translateExpr).toList, output.map(a => ir.NamedExpr(a.name, opaqueOf(kind, given))).toList)
+
+    /** `left`'s and `right`'s rows grouped together by their keys (a cogroup: every key of either side, a null key equal to
+      * a null one), each pair of groups given to an opaque function (`kind`) of `given` returning `output`. */
+    private def cogrouped(kind: String, left: LogicalPlan, leftKeys: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+                          right: LogicalPlan, rightKeys: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+                          output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+                          given: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): ir.Plan = {
+      val on = leftKeys.zip(rightKeys).map { case (l, r) => EqualNullSafe(l, r): Expression }.reduceOption(And).map(translateExpr)
+      ir.Aggregate(ir.Join(translatePlan(left), translatePlan(right), ir.JoinType.FullOuter, on),
+        (leftKeys ++ rightKeys).map(translateExpr).toList, output.map(a => ir.NamedExpr(a.name, opaqueOf(kind, given))).toList)
     }
 
     /** `plan`'s rows, each once unless `all`. */

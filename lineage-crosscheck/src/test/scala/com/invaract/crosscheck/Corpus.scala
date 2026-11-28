@@ -216,11 +216,11 @@ object Corpus {
       val tier = udf((amount: Long, status: String) => if (amount > 100) status else "low")
       f.orders(s).select(col("id"), tier(col("amount"), col("status")).as("tier"))
     }),
-    job("typed-map", "Dataset API", "a typed map over a Dataset of case classes")((s, f) => {
+    job("typed-map", "Dataset API", "a typed map over a Dataset of case classes", OLS -> theirs("openlineage-spark reports no column lineage through a typed map. Invaract reports each column as an opaque TRANSFORMATION of every column the function is given: what it computes is not known, which columns it is given is."), Spline -> theirs("Spline reports no column lineage through a typed map either."))((s, f) => {
       import s.implicits._
       f.orders(s).as[OrderRow].map(o => Doubled(o.id, o.amount * 2)).toDF()
     }),
-    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows", Spline -> theirs("Spline does not look into an RDD for the files it read; Invaract, like openlineage-spark, reports them as the input (with no column traced through the RDD)."))((s, f) => {
+    job("rdd", "Dataset API", "a DataFrame built from an RDD of another input's rows", OLS -> theirs("openlineage-spark reports the files an RDD read as the input, with no column lineage through the RDD. Invaract reports each column as an opaque TRANSFORMATION of every column the RDD read from them."), Spline -> theirs("Spline does not look into an RDD: it reports neither the files it read nor any column lineage."))((s, f) => {
       val rows = f.orders(s).rdd
       s.createDataFrame(rows, f.orders(s).schema).select("id")
     }),
@@ -289,9 +289,7 @@ object Corpus {
           "WHEN MATCHED THEN UPDATE SET t.amount = o.amount WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (o.id, o.amount)")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(
-        OLS -> choice("A MERGE's ON condition decides which rows each of its clauses writes: Invaract reports its columns as INDIRECT/JOIN, as for any join. openlineage-spark reports no indirect lineage for a MERGE."),
-        Spline -> choice("Spline also counts the rows a MERGE leaves as they are (no clause touches them), so the table's own amount is a source of amount; Invaract, like openlineage-spark, counts the rows the MERGE's clauses write. Spline records no indirect lineage, so not the ON condition either."))),
+      notes = Map(OLS -> choice("A MERGE's ON condition decides which rows each of its clauses writes: Invaract reports its columns as INDIRECT/JOIN, openlineage-spark reports no indirect lineage for a MERGE. Invaract also counts the rows no clause touches as the table's own values (amount from the table's amount), as Spline does and as an Iceberg MERGE's plan writes them; openlineage-spark does not count them for a Delta MERGE."), Spline -> theirs("Spline records no indirect lineage for a MERGE: not its ON condition."))),
     Job("delta-merge-clauses", "Delta Lake", "MERGE with conditional, DELETE, partial INSERT and NOT MATCHED BY SOURCE clauses",
       (s, f, out) => {
         f.orders(s).limit(0).select("id", "amount", "status").write.format("delta").save(out.at("out"))
@@ -303,9 +301,7 @@ object Corpus {
           "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.status = 'gone'")
       },
       extensions = delta, conf = deltaConf,
-      notes = Map(
-        OLS -> theirs("openlineage-spark does not follow a MERGE's clauses: it reports the amount the INSERT computes (amount * 100) as a copy, misses the table's own amount that the NOT MATCHED BY SOURCE clause keeps, and reports no indirect lineage - neither the ON condition nor the clause conditions that decide which rows are written."),
-        Spline -> theirs("Spline records no indirect lineage for a MERGE: neither its ON condition nor the clause conditions that decide which rows are written."))),
+      notes = Map(OLS -> theirs("openlineage-spark does not follow a MERGE's clauses: it reports the amount the INSERT computes (amount * 100) as a copy, does not count the table's own values in the rows no clause writes, and reports no indirect lineage - neither the ON condition, the clause conditions that decide which rows are written, nor the DELETE's condition that decides which are removed."), Spline -> theirs("Spline records no indirect lineage for a MERGE: neither its ON condition, the clause conditions that decide which rows are written, nor the DELETE's condition that decides which are removed."))),
     Job("iceberg-write", "Apache Iceberg", "an Iceberg table created from a query (writeTo)",
       (s, f, out) => f.orders(s).select(col("id"), col("amount")).writeTo("ice.db.orders_copy").using("iceberg").createOrReplace(),
       contractLocation = _ => "ice.db.orders_copy",
@@ -437,11 +433,11 @@ object Corpus {
       import s.implicits._
       f.orders(s).as[OrderRow].filter(o => o.amount > 60).select("id")
     }),
-    job("group-by-key", "Dataset API", "groupByKey and mapGroups")((s, f) => {
+    job("group-by-key", "Dataset API", "groupByKey and mapGroups", OLS -> theirs("openlineage-spark reports no column lineage through groupByKey and mapGroups. Invaract reports each column as an opaque TRANSFORMATION of every column the functions are given, and the key, a function of the whole row, as grouping the rows."), Spline -> theirs("Spline reports no column lineage through groupByKey and mapGroups either."))((s, f) => {
       import s.implicits._
       f.orders(s).as[OrderRow].groupByKey(_.customer_id).mapGroups((k, rows) => (k, rows.map(_.amount).sum)).toDF("customer_id", "total")
     }),
-    job("flat-map", "Dataset API", "a typed flatMap")((s, f) => {
+    job("flat-map", "Dataset API", "a typed flatMap", OLS -> theirs("openlineage-spark reports no column lineage through a typed flatMap. Invaract reports each column as an opaque TRANSFORMATION of every column the function is given: what it computes is not known, which columns it is given is."), Spline -> theirs("Spline reports no column lineage through a typed flatMap either."))((s, f) => {
       import s.implicits._
       f.orders(s).as[OrderRow].flatMap(o => Seq(o.id, o.amount)).toDF("value")
     }),
@@ -615,7 +611,30 @@ object Corpus {
           .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start()
         q.awaitTermination()
       },
-      notes = Map(OLS -> theirs("openlineage-spark reports a foreachBatch micro-batch's input but no column lineage for it. Invaract checks each micro-batch and publishes its lineage."), Spline -> theirs("Spline records each micro-batch's write with no input and no column lineage.")))
+      notes = Map(OLS -> theirs("openlineage-spark reports a foreachBatch micro-batch's input but no column lineage for it. Invaract checks each micro-batch and publishes its lineage."), Spline -> theirs("Spline records each micro-batch's write with no input and no column lineage."))),
+    Job("stream-watermark", "Structured Streaming", "a windowed aggregation over an event-time watermark, into a file sink",
+      (s, f, out) => {
+        val q = s.readStream.schema(f.orders(s).schema).parquet(f.orders).withColumn("ts", col("id").cast("timestamp"))
+          .withWatermark("ts", "10 seconds").groupBy(window(col("ts"), "1 minute"), col("status")).agg(sum("amount").as("total"))
+          .select(col("window.start").as("window_start"), col("status"), col("total"))
+          .writeStream.format("parquet").outputMode("append").option("checkpointLocation", out.at("checkpoint"))
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start(out.at("out"))
+        q.awaitTermination()
+      },
+      notes = Map(
+        OLS -> theirs("openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract traces through the watermark: the window from the event time, the total from the amounts."),
+        Spline -> theirs("Spline's agent records no lineage for a Structured Streaming query."))),
+    Job("stream-dedup-watermark", "Structured Streaming", "dropDuplicatesWithinWatermark on a stream, into a file sink",
+      (s, f, out) => {
+        val q = s.readStream.schema(f.orders(s).schema).parquet(f.orders).withColumn("ts", col("id").cast("timestamp"))
+          .withWatermark("ts", "10 seconds").dropDuplicatesWithinWatermark("customer_id").select("id", "customer_id", "amount")
+          .writeStream.format("parquet").option("checkpointLocation", out.at("checkpoint"))
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow()).start(out.at("out"))
+        q.awaitTermination()
+      },
+      notes = Map(
+        OLS -> theirs("openlineage-spark publishes no dataset for a file stream written to a file sink. Invaract reports the deduplication's key as grouping the rows."),
+        Spline -> theirs("Spline's agent records no lineage for a Structured Streaming query.")))
 
   )
 }

@@ -153,12 +153,18 @@ publishes is the same node as one another integration publishes:
 | `C:\data\orders` or `file:/C:/data/orders` (Windows) | `file` | `C:/data/orders` |
 | `s3a://bucket/orders` | `s3://bucket` | `orders` |
 | `gs://bucket/orders` | `gs://bucket` | `orders` |
+| `abfss://lake@acct.dfs.core.windows.net/orders` (or `abfs://`) | `abfss://lake@acct.dfs.core.windows.net` | `orders` |
 | `hdfs://nn:8020/warehouse/orders` | `hdfs://nn:8020` | `/warehouse/orders` |
 | `jdbc:postgresql://db:5432/sales/public/orders` | `postgres://db:5432` | `sales.public.orders` |
+| `jdbc:sqlserver://db;databaseName=sales`, table `dbo.orders` | `sqlserver://db` | `sales.dbo.orders` |
+| `jdbc:oracle:thin:@db:1521:orcl`, table `SALES.ORDERS` | `oracle://db:1521` | `orcl.SALES.ORDERS` |
 | an opaque JDBC URL: `jdbc:h2:mem:bank`, table `ACCOUNTS` | `h2:mem:bank` | `ACCOUNTS` |
+| a Kafka topic (Beam's `KafkaIO`, servers `broker:9092`, topic `orders`) | `kafka://broker:9092` | `orders` |
+| a Pub/Sub topic (`projects/p/topics/orders`) | `pubsub` | `topic:p:orders` |
 
-A relative path is made absolute against the job's working directory. User names and passwords in a location are never
-published.
+A database URL with no port gets the database's default (`jdbc:postgresql://db/sales` is `postgres://db:5432`), as
+openlineage-spark names it. A relative path is made absolute against the job's working directory, and a trailing `/` is dropped (`s3://bucket/orders/`
+is `s3://bucket`, `orders`). User names and passwords in a location are never published.
 
 ### When a run ends
 

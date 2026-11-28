@@ -46,8 +46,10 @@ class LineageEdgeCasesSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   /** The edges `df`'s write would publish, every read's columns known as they are when Invaract checks a write. */
-  private def edges(df: DataFrame): Set[String] = {
-    val plan = SparkPlanAdapter.translateAsWrite(df.queryExecution.analyzed, ir.DatasetRef("out")).plan
+  private def edges(df: DataFrame): Set[String] = edges(df.queryExecution.analyzed)
+
+  private def edges(analyzed: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Set[String] = {
+    val plan = SparkPlanAdapter.translateAsWrite(analyzed, ir.DatasetRef("out")).plan
     val inputs = reads(plan).distinct.map { location =>
       val schema = scala.util.Try(spark.read.parquet(location).schema).toOption.map(SparkSchemas.toLogicalSchema)
       LineageDataset(location, schema = schema)
@@ -57,8 +59,9 @@ class LineageEdgeCasesSpec extends AnyFunSuite with BeforeAndAfterAll {
     }.toSet
   }
 
-  private def values(df: DataFrame, field: String): Set[String] =
-    edges(df).filter(_.startsWith(s"$field DIRECT/")).map(_.split(' ').last)
+  private def values(df: DataFrame, field: String): Set[String] = values(df.queryExecution.analyzed, field)
+  private def values(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan, field: String): Set[String] =
+    edges(plan).filter(_.startsWith(s"$field DIRECT/")).map(_.split(' ').last)
 
   // --- a union matches columns by position -------------------------------------------------------------------------------
 
@@ -133,6 +136,108 @@ class LineageEdgeCasesSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(!edges(uncorrelated).exists(_.startsWith("* INDIRECT/JOIN")), "no correlation, no condition")
     val conditioned = spark.sql("SELECT o.id, t.name FROM o JOIN LATERAL (SELECT c.name FROM c WHERE c.customer_id = o.customer_id) t ON o.amount > 1")
     assert(Set("* INDIRECT/JOIN orders.customer_id", "* INDIRECT/JOIN orders.amount").subsetOf(edges(conditioned)), "its own ON condition too")
+  }
+
+  // --- typed Dataset operations ----------------------------------------------------------------------------------------
+
+  private val ordersColumns = Set("id", "customer_id", "amount", "status").map(c => s"orders.$c")
+  private def opaque(df: DataFrame, field: String): Set[(String, String)] = opaque(df.queryExecution.analyzed, field)
+  private def opaque(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan, field: String): Set[(String, String)] =
+    edges(plan).filter(_.startsWith(s"$field DIRECT/")).map(e => e.split(' ')(1) -> e.split(' ').last)
+
+  test("a typed map, flatMap or mapPartitions: each column an opaque computation of every column the function is given") {
+    val s = spark
+    import s.implicits._
+    val typed = orders.as[OrderRowForLineage]
+    assert(opaque(typed.map(o => (o.id, o.amount * 2)).toDF("id", "doubled"), "doubled") == ordersColumns.map("DIRECT/TRANSFORMATION" -> _))
+    assert(values(typed.flatMap(o => Seq(o.id, o.amount)).toDF("value"), "value") == ordersColumns)
+    assert(values(typed.mapPartitions(_.map(_.id)).toDF("id"), "id") == ordersColumns)
+    assert(values(orders.select("id", "amount").as[(Long, Long)].map(t => t._1 + t._2).toDF("sum"), "sum") == Set("orders.id", "orders.amount"),
+      "only the columns it is given")
+  }
+
+  test("groupByKey and mapGroups: the key groups the rows; each column an opaque computation of the key's and the rows' columns") {
+    val s = spark
+    import s.implicits._
+    val df = orders.as[OrderRowForLineage].groupByKey(_.customer_id).mapGroups((k, rows) => (k, rows.map(_.amount).sum)).toDF("customer_id", "total")
+    assert(values(df, "total") == ordersColumns)
+    assert(edges(df).filter(_.startsWith("* INDIRECT/GROUP_BY")).map(_.split(' ').last) == ordersColumns, "the key is a function of the whole row")
+  }
+
+  // --- streaming ---------------------------------------------------------------------------------------------------------
+
+  private def stream = spark.readStream.schema(orders.schema).parquet(at("orders")).withColumn("ts", col("id").cast("timestamp"))
+  private def groupedBy(df: DataFrame) = edges(df).filter(_.startsWith("* INDIRECT/GROUP_BY")).map(_.split(' ').last)
+
+  test("a watermark changes no column: a windowed aggregation above it is traced") {
+    val df = stream.withWatermark("ts", "10 seconds").groupBy(window(col("ts"), "1 minute"), col("status")).agg(sum("amount").as("total"))
+    assert(opaque(df, "total") == Set("DIRECT/AGGREGATION" -> "orders.amount"))
+    assert(groupedBy(df) == Set("orders.id", "orders.status"), "the window is a function of the event time, here the id")
+  }
+
+  test("a deduplication within a watermark is a deduplication by its keys") {
+    val df = stream.withWatermark("ts", "10 seconds").dropDuplicatesWithinWatermark("customer_id")
+    assert(groupedBy(df) == Set("orders.customer_id"))
+    assert(opaque(df, "amount") == Set("DIRECT/AGGREGATION" -> "orders.amount"))
+  }
+
+  test("mapGroupsWithState: each column an opaque computation of the group's columns, and of its initial state's when it has one") {
+    val s = spark
+    import s.implicits._
+    import org.apache.spark.sql.streaming.GroupStateTimeout
+    val rows = stream.drop("ts").as[OrderRowForLineage].groupByKey(_.customer_id)
+    val plain = rows.mapGroupsWithState[Long, (Long, Long)](GroupStateTimeout.NoTimeout())((k, rs, _) => (k, rs.map(_.amount).sum)).toDF("customer_id", "total")
+    assert(values(plain, "total") == ordersColumns)
+    assert(groupedBy(plain) == ordersColumns, "the key is a function of the whole row")
+    val initial = customers.select("customer_id", "name").as[(Long, String)].groupByKey(_._1).mapValues(_._2.length.toLong)
+    val seeded = rows.mapGroupsWithState[Long, (Long, Long)](GroupStateTimeout.NoTimeout(), initial)((k, rs, _) => (k, rs.map(_.amount).sum)).toDF("customer_id", "total")
+    assert(values(seeded, "total") == ordersColumns ++ Set("customers.customer_id", "customers.name"))
+    assert(edges(seeded).filter(_.startsWith("* INDIRECT/JOIN")).map(_.split(' ').last) == ordersColumns ++ Set("customers.customer_id", "customers.name"),
+      "the group's key and its initial state's are matched, each a function of every column its function is given")
+  }
+
+  // --- PySpark's pandas and Arrow functions (their plan nodes, built here as PySpark builds them) ------------------------
+
+  private def attr(name: String) = org.apache.spark.sql.catalyst.expressions.AttributeReference(name, org.apache.spark.sql.types.LongType)()
+  private val python = org.apache.spark.sql.catalyst.expressions.Literal(true) // the Python function: not looked at
+
+  test("mapInPandas and mapInArrow: each column an opaque computation of every column the function is given") {
+    import org.apache.spark.sql.catalyst.plans.logical.{MapInPandas, PythonMapInArrow}
+    val input = orders.queryExecution.analyzed
+    assert(opaque(MapInPandas(python, Seq(attr("tripled")), input, isBarrier = false), "tripled") == ordersColumns.map("DIRECT/TRANSFORMATION" -> _))
+    assert(values(PythonMapInArrow(python, Seq(attr("id")), orders.select("id", "amount").queryExecution.analyzed, isBarrier = false), "id") ==
+      Set("orders.id", "orders.amount"), "only the columns it is given")
+  }
+
+  test("applyInPandas and applyInPandasWithState: the grouping columns group the rows; each column an opaque computation of the group") {
+    import org.apache.spark.sql.catalyst.plans.logical.{FlatMapGroupsInPandas, FlatMapGroupsInPandasWithState}
+    import org.apache.spark.sql.streaming.{GroupStateTimeout, OutputMode}
+    val input = orders.queryExecution.analyzed
+    val key = input.output.filter(_.name == "customer_id")
+    val grouped = FlatMapGroupsInPandas(key, python, Seq(attr("total")), input)
+    assert(values(grouped, "total") == ordersColumns)
+    assert(edges(grouped).filter(_.startsWith("* INDIRECT/GROUP_BY")).map(_.split(' ').last) == Set("orders.customer_id"))
+    val stateful = FlatMapGroupsInPandasWithState(python, key, Seq(attr("total")), new org.apache.spark.sql.types.StructType().add("n", "long"),
+      OutputMode.Update(), GroupStateTimeout.NoTimeout(), input)
+    assert(values(stateful, "total") == ordersColumns)
+    assert(edges(stateful).filter(_.startsWith("* INDIRECT/GROUP_BY")).map(_.split(' ').last) == Set("orders.customer_id"))
+  }
+
+  test("a cogroup's applyInPandas: both inputs' groups, matched by key; each column an opaque computation of both") {
+    import org.apache.spark.sql.catalyst.plans.logical.FlatMapCoGroupsInPandas
+    val left = orders.select("customer_id", "amount").queryExecution.analyzed
+    val right = customers.select("customer_id", "name").queryExecution.analyzed
+    val cogroup = FlatMapCoGroupsInPandas(1, 1, python, Seq(attr("n")), left, right)
+    assert(values(cogroup, "n") == Set("orders.customer_id", "orders.amount", "customers.customer_id", "customers.name"))
+    val indirect = edges(cogroup).filter(_.startsWith("* INDIRECT/")).map(e => e.split(' ')(1) -> e.split(' ').last)
+    assert(indirect == Set("INDIRECT/JOIN", "INDIRECT/GROUP_BY").flatMap(k => Set(k -> "orders.customer_id", k -> "customers.customer_id")), indirect)
+  }
+
+  test("pandas-on-Spark's default index: every column passed through, and a row number from no column") {
+    import org.apache.spark.sql.catalyst.plans.logical.AttachDistributedSequence
+    val indexed = AttachDistributedSequence(attr("distributed_sequence_id"), orders.queryExecution.analyzed)
+    assert(opaque(indexed, "amount") == Set("DIRECT/IDENTITY" -> "orders.amount"))
+    assert(opaque(indexed, "distributed_sequence_id").isEmpty)
   }
 
   // --- reads -------------------------------------------------------------------------------------------------------------

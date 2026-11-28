@@ -189,7 +189,7 @@ private[openlineage] final class OpenLineageMapper(
   // --- datasets ---------------------------------------------------------------------------------------------------
 
   private def input(d: LineageDataset): Obj = {
-    val id = OpenLineageNaming.dataset(d.location, d.catalog, workingDirectory)
+    val id = OpenLineageNaming.dataset(d.location, d.catalog, workingDirectory, d.format)
     obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(datasetFacets(d, id)))
   }
 
@@ -199,7 +199,7 @@ private[openlineage] final class OpenLineageMapper(
   /** A write's output dataset: its own facets and column lineage, then `facets` and `outputFacets` of the event. */
   private def outputOf(l: WriteLineage, facets: List[(String, Any)], outputFacets: List[(String, Any)]): Obj = {
     val d = l.output
-    val id = OpenLineageNaming.dataset(d.location, d.catalog, workingDirectory)
+    val id = OpenLineageNaming.dataset(d.location, d.catalog, workingDirectory, d.format)
     val lineage = if (settings.enabled("columnLineage")) columnLineage(l) else None
     val all = datasetFacets(d, id) ++ lineage.toList ++ lifecycle(l.saveMode).toList ++ facets
     obj("namespace" -> id.namespace, "name" -> id.name, "facets" -> Obj(all), "outputFacets" -> Obj(outputFacets))
@@ -207,7 +207,7 @@ private[openlineage] final class OpenLineageMapper(
 
   private def writtenOutput(e: WriteEvent): Obj = {
     val d = LineageDataset(e.location, e.format, Some(com.invaract.contract.LogicalSchema(e.schema.map(f => LogicalField(f.name, LogicalType.OtherType(f.dataType), f.nullable)))), e.catalog)
-    val id = OpenLineageNaming.dataset(e.location, e.catalog, workingDirectory)
+    val id = OpenLineageNaming.dataset(e.location, e.catalog, workingDirectory, e.format)
     val version = e.deltaVersion.orElse(e.icebergSnapshotId).flatMap(v => facet("version", standard("DatasetVersionDatasetFacet", "1-0-1"), "datasetVersion" -> v.toString))
     val statistics = if (e.rowCount.isEmpty && e.bytesWritten.isEmpty && e.fileCount.isEmpty) None
       else facet("outputStatistics", standard("OutputStatisticsOutputDatasetFacet", "1-0-2"), "rowCount" -> e.rowCount, "size" -> e.bytesWritten, "fileCount" -> e.fileCount)
@@ -254,7 +254,7 @@ private[openlineage] final class OpenLineageMapper(
       def inputFields(es: List[ColumnLineageEdge]): List[Obj] =
         es.groupBy(_.source).toList.sortBy { case (s, _) => (s.location, s.field) }.map { case (source, bySource) =>
           val known = l.inputs.find(_.location == source.location)
-          val id = OpenLineageNaming.dataset(source.location, known.flatMap(_.catalog), workingDirectory)
+          val id = OpenLineageNaming.dataset(source.location, known.flatMap(_.catalog), workingDirectory, known.flatMap(_.format))
           obj("namespace" -> id.namespace, "name" -> id.name, "field" -> source.field,
             "transformations" -> bySource.map(_.transformation).distinct.map(t =>
               obj("type" -> t.kind, "subtype" -> t.subtype, "description" -> t.description, "masking" -> t.masking)))

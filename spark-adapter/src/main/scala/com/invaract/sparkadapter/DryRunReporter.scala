@@ -181,7 +181,7 @@ private[sparkadapter] final class DryRunReporter(
   private def lineageOf(inferred: InferenceOutcome.Inferred): Option[WriteLineage] =
     Try(DryRunReporting.lineage(inferred.contract, inferred.translated.plan, inferred.inputSchemas,
       SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema), RowMutationSupport.classify(inferred.plan),
-      ContractEnforcementRule.lineagePlanOf(inferred.writeInfo, inferred.translated.plan, Nil))).toOption.flatten
+      ContractEnforcementRule.lineagePlanOf(inferred.writeInfo, inferred.translated.plan, Nil, Some(inferred.plan)))).toOption.flatten
 
   private def fingerprintOf(inferred: InferenceOutcome.Inferred): Option[TransformationFingerprint] =
     Try {

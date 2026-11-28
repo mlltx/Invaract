@@ -26,13 +26,18 @@ object Report {
       |  batch (the `foreach-batch` job).
       |- **User-defined functions.** A column a UDF computes has the UDF's input columns as its sources, typed
       |  `TRANSFORMATION` and described as opaque: what the function does with them is not known.
-      |- **RDDs.** A DataFrame made from an RDD has the files the RDD read as its inputs, with no column lineage through
-      |  the RDD.
+      |- **RDDs, typed Dataset operations and PySpark's pandas and Arrow functions.** What an RDD's, a typed
+      |  `map`/`flatMap`/`mapGroups`/`mapGroupsWithState` function's or a `mapInPandas`/`applyInPandas`/`mapInArrow`
+      |  function's code computes is not known: each column it produces has every column it was given (for an RDD, every
+      |  column it read from its files) as its sources, typed `TRANSFORMATION` and described as opaque. No job on this page
+      |  runs PySpark: its operators are measured by `LineageEdgeCasesSpec` in spark-adapter.
+      |- **`input_file_name()`.** A column it computes has no source. Read the file's name from the `_metadata` column
+      |  instead (`_metadata.file_path`, Spark's recommended form): its lineage is the dataset's `_metadata`.
       |- **Operators Invaract does not translate.** An operator Invaract does not translate is a boundary: a column
       |  computed through it has no sources.
-      |- **A MERGE's DELETE clauses, and the rows it leaves.** The rows a DELETE clause removes are not written, so its
-      |  condition is not reported. In a Delta MERGE, rows no clause touches are not counted, as openlineage-spark counts
-      |  them; an Iceberg MERGE writes them back, and they are.
+      |- **The rows a MERGE leaves.** Rows no clause touches are counted as the table's own values, in a Delta MERGE as in
+      |  an Iceberg one (whose plan writes them back), and a DELETE clause's condition as deciding which rows remain.
+      |  openlineage-spark does not count them for Delta.
       |""".stripMargin
 
   def baseline(results: List[Outcome]): String = {

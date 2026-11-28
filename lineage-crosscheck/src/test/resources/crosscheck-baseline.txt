@@ -387,17 +387,50 @@ agree
 [typed-map invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  doubled <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  doubled <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  doubled <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  doubled <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
 [typed-map vs openlineage-spark]
-agree
+  direct: only invaract: doubled <- file:<in>/orders.amount
+  direct: only invaract: doubled <- file:<in>/orders.customer_id
+  direct: only invaract: doubled <- file:<in>/orders.id
+  direct: only invaract: doubled <- file:<in>/orders.status
+  direct: only invaract: id <- file:<in>/orders.amount
+  direct: only invaract: id <- file:<in>/orders.customer_id
+  direct: only invaract: id <- file:<in>/orders.id
+  direct: only invaract: id <- file:<in>/orders.status
 [typed-map vs spline]
-agree
+  dependency: only invaract: doubled <- file:<in>/orders.amount
+  dependency: only invaract: doubled <- file:<in>/orders.customer_id
+  dependency: only invaract: doubled <- file:<in>/orders.id
+  dependency: only invaract: doubled <- file:<in>/orders.status
+  dependency: only invaract: id <- file:<in>/orders.amount
+  dependency: only invaract: id <- file:<in>/orders.customer_id
+  dependency: only invaract: id <- file:<in>/orders.id
+  dependency: only invaract: id <- file:<in>/orders.status
 
 [rdd invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  id <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  id <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
 [rdd vs openlineage-spark]
-agree
+  direct: only invaract: id <- file:<in>/orders.amount
+  direct: only invaract: id <- file:<in>/orders.customer_id
+  direct: only invaract: id <- file:<in>/orders.id
+  direct: only invaract: id <- file:<in>/orders.status
 [rdd vs spline]
+  dependency: only invaract: id <- file:<in>/orders.amount
+  dependency: only invaract: id <- file:<in>/orders.customer_id
+  dependency: only invaract: id <- file:<in>/orders.id
+  dependency: only invaract: id <- file:<in>/orders.status
   input: only invaract: file:<in>/orders
 
 [cache invaract]
@@ -570,15 +603,16 @@ agree
   input:  file:<out>/out
   output: file:<out>/out
   amount <- file:<in>/orders.amount  [DIRECT/IDENTITY]
+  amount <- file:<out>/out.amount  [DIRECT/IDENTITY]
   id <- file:<in>/orders.id  [DIRECT/IDENTITY]
   id <- file:<out>/out.id  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.id  [INDIRECT/JOIN]
   * <~ file:<out>/out.id  [INDIRECT/JOIN]
 [delta-merge vs openlineage-spark]
+  direct: only invaract: amount <- file:<out>/out.amount
   indirect: only invaract: * <~ file:<in>/orders.id
   indirect: only invaract: * <~ file:<out>/out.id
 [delta-merge vs spline]
-  dependency: only spline: amount <- file:<out>/out.amount
   indirect: only invaract: * <~ file:<in>/orders.id
   indirect: only invaract: * <~ file:<out>/out.id
 
@@ -594,6 +628,7 @@ agree
   status <- file:<out>/out.status  [DIRECT/IDENTITY]
   * <~ file:<in>/orders.amount  [INDIRECT/FILTER]
   * <~ file:<in>/orders.id  [INDIRECT/JOIN]
+  * <~ file:<in>/orders.status  [INDIRECT/FILTER]
   * <~ file:<out>/out.amount  [INDIRECT/FILTER]
   * <~ file:<out>/out.id  [INDIRECT/JOIN]
 [delta-merge-clauses vs openlineage-spark]
@@ -601,11 +636,13 @@ agree
   direct: only invaract: amount <- file:<out>/out.amount
   indirect: only invaract: * <~ file:<in>/orders.amount
   indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
   indirect: only invaract: * <~ file:<out>/out.amount
   indirect: only invaract: * <~ file:<out>/out.id
 [delta-merge-clauses vs spline]
   indirect: only invaract: * <~ file:<in>/orders.amount
   indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
   indirect: only invaract: * <~ file:<out>/out.amount
   indirect: only invaract: * <~ file:<out>/out.id
 
@@ -1074,18 +1111,62 @@ agree
 [group-by-key invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  customer_id <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  customer_id <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  customer_id <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  customer_id <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
+  total <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  total <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  total <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  total <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
+  * <~ file:<in>/orders.amount  [INDIRECT/GROUP_BY]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
+  * <~ file:<in>/orders.id  [INDIRECT/GROUP_BY]
+  * <~ file:<in>/orders.status  [INDIRECT/GROUP_BY]
 [group-by-key vs openlineage-spark]
-agree
+  direct: only invaract: customer_id <- file:<in>/orders.amount
+  direct: only invaract: customer_id <- file:<in>/orders.customer_id
+  direct: only invaract: customer_id <- file:<in>/orders.id
+  direct: only invaract: customer_id <- file:<in>/orders.status
+  direct: only invaract: total <- file:<in>/orders.amount
+  direct: only invaract: total <- file:<in>/orders.customer_id
+  direct: only invaract: total <- file:<in>/orders.id
+  direct: only invaract: total <- file:<in>/orders.status
+  indirect: only invaract: * <~ file:<in>/orders.amount
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
 [group-by-key vs spline]
-agree
+  dependency: only invaract: customer_id <- file:<in>/orders.amount
+  dependency: only invaract: customer_id <- file:<in>/orders.customer_id
+  dependency: only invaract: customer_id <- file:<in>/orders.id
+  dependency: only invaract: customer_id <- file:<in>/orders.status
+  dependency: only invaract: total <- file:<in>/orders.amount
+  dependency: only invaract: total <- file:<in>/orders.customer_id
+  dependency: only invaract: total <- file:<in>/orders.id
+  dependency: only invaract: total <- file:<in>/orders.status
+  indirect: only invaract: * <~ file:<in>/orders.amount
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
 
 [flat-map invaract]
   input:  file:<in>/orders
   output: file:<out>/out
+  value <- file:<in>/orders.amount  [DIRECT/TRANSFORMATION]
+  value <- file:<in>/orders.customer_id  [DIRECT/TRANSFORMATION]
+  value <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  value <- file:<in>/orders.status  [DIRECT/TRANSFORMATION]
 [flat-map vs openlineage-spark]
-agree
+  direct: only invaract: value <- file:<in>/orders.amount
+  direct: only invaract: value <- file:<in>/orders.customer_id
+  direct: only invaract: value <- file:<in>/orders.id
+  direct: only invaract: value <- file:<in>/orders.status
 [flat-map vs spline]
-agree
+  dependency: only invaract: value <- file:<in>/orders.amount
+  dependency: only invaract: value <- file:<in>/orders.customer_id
+  dependency: only invaract: value <- file:<in>/orders.id
+  dependency: only invaract: value <- file:<in>/orders.status
 
 [union-positional invaract]
   input:  file:<in>/orders
@@ -1547,3 +1628,52 @@ agree
   dependency: only invaract: id <- file:<in>/orders.id
   dependency: only invaract: tripled <- file:<in>/orders.amount
   input: only invaract: file:<in>/orders
+
+[stream-watermark invaract]
+  input:  file:<in>/orders
+  output: file:<out>/out
+  status <- file:<in>/orders.status  [DIRECT/IDENTITY]
+  total <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
+  window_start <- file:<in>/orders.id  [DIRECT/TRANSFORMATION]
+  * <~ file:<in>/orders.id  [INDIRECT/FILTER, INDIRECT/GROUP_BY]
+  * <~ file:<in>/orders.status  [INDIRECT/GROUP_BY]
+  window_start <~ file:<in>/orders.id  [INDIRECT/CONDITIONAL]
+[stream-watermark vs openlineage-spark]
+  direct: only invaract: status <- file:<in>/orders.status
+  direct: only invaract: total <- file:<in>/orders.amount
+  direct: only invaract: window_start <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
+  indirect: only invaract: window_start <~ file:<in>/orders.id
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out
+[stream-watermark vs spline]
+  dependency: only invaract: status <- file:<in>/orders.status
+  dependency: only invaract: total <- file:<in>/orders.amount
+  dependency: only invaract: window_start <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.status
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out
+
+[stream-dedup-watermark invaract]
+  input:  file:<in>/orders
+  output: file:<out>/out
+  amount <- file:<in>/orders.amount  [DIRECT/AGGREGATION]
+  customer_id <- file:<in>/orders.customer_id  [DIRECT/IDENTITY]
+  id <- file:<in>/orders.id  [DIRECT/AGGREGATION]
+  * <~ file:<in>/orders.customer_id  [INDIRECT/GROUP_BY]
+[stream-dedup-watermark vs openlineage-spark]
+  direct: only invaract: amount <- file:<in>/orders.amount
+  direct: only invaract: customer_id <- file:<in>/orders.customer_id
+  direct: only invaract: id <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out
+[stream-dedup-watermark vs spline]
+  dependency: only invaract: amount <- file:<in>/orders.amount
+  dependency: only invaract: customer_id <- file:<in>/orders.customer_id
+  dependency: only invaract: id <- file:<in>/orders.id
+  indirect: only invaract: * <~ file:<in>/orders.customer_id
+  input: only invaract: file:<in>/orders
+  output: only invaract: file:<out>/out

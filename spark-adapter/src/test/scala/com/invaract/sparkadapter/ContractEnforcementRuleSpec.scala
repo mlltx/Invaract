@@ -2595,20 +2595,43 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         "WHEN NOT MATCHED THEN INSERT (id, doubled) VALUES (s.id, s.doubled + 1) " +
         "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.doubled = 0")
     assert(values("id") == Set("t.id", "s.id"), "an UPDATE leaves id: the row's own; an INSERT's from the source")
-    assert(values("doubled") == Set("s.doubled"), "assigned from the source; a constant adds none; a DELETE gives none")
+    assert(values("doubled") == Set("t.doubled", "s.doubled"), "assigned from the source; a constant adds none; the rows no clause writes keep their own")
     assert(derivations("id") == com.invaract.ir.DerivationKind.Direct, "copied as it is by every clause: IDENTITY, not a computation")
     assert(derivations("doubled") == com.invaract.ir.DerivationKind.Computed, "an INSERT computes it")
     assert(conditions.isEmpty, "a clause's condition decides which rows it writes, not a column's value")
-    assert(joined == Set("Join:t.id", "Join:s.id", "Filter:s.doubled"), "the MERGE's condition joins the two; a clause's keeps rows; a DELETE's writes none")
+    assert(joined == Set("Join:t.id", "Join:s.id", "Filter:s.doubled", "Filter:s.id"), "the MERGE's condition joins the two; a clause's keeps rows; a DELETE's removes them")
     def reads(p: com.invaract.ir.Plan): List[String] = p match {
       case r: com.invaract.ir.Read => List(r.dataset.location)
       case other                   => other.children.flatMap(reads)
     }
     assert(reads(checked).nonEmpty && reads(checked).forall(_.contains("merge_lineage_source")), s"checked as before, its source alone: ${reads(checked)}")
     val (inserted, _, _, _, _) = traced("WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)")
-    assert(inserted("id") == Set("s.id") && inserted("doubled").isEmpty, "a column an INSERT does not name is null")
-    val (deleted, _, _, _, _) = traced("WHEN MATCHED THEN DELETE")
-    assert(deleted.values.forall(_.isEmpty), "a MERGE that only deletes writes no value")
+    assert(inserted("id") == Set("t.id", "s.id") && inserted("doubled") == Set("t.doubled"), "a column an INSERT does not name is null; the table's other rows keep theirs")
+    val (deleted, _, deletedRows, _, _) = traced("WHEN MATCHED AND s.doubled > 1 THEN DELETE")
+    assert(deleted == Map("id" -> Set("t.id"), "doubled" -> Set("t.doubled")), "a MERGE that only deletes keeps the table's other rows as they are")
+    assert(deletedRows.contains("Filter:s.doubled"), "the DELETE's condition decides which rows are removed")
+  }
+
+  test("a DataFrame built from an RDD is traced, for lineage only, to the files the RDD read; it is checked as the opaque source it is") {
+    val sourcePath = scratchDir.resolve("rdd_lineage_source").toString.replace('\\', '/')
+    spark.range(3).withColumn("amount", col("id") * 10).write.mode("overwrite").parquet(sourcePath)
+    val read = spark.read.parquet(sourcePath)
+    capturedPlans.clear()
+    spark.createDataFrame(read.rdd, read.schema).select("id").write.mode("overwrite").parquet(scratchDir.resolve("rdd_lineage_out").toString)
+    val plan = capturedPlans.collectFirst { case p if WriteCommandSupport.combined.isDefinedAt(p) => p }.getOrElse(fail("no write observed"))
+    val checked = SparkPlanAdapter.translate(plan).plan
+    assert(StructuralVerifier.collectUnknownPlans(checked).exists(_.sourceType == SparkPlanAdapter.RddRelationSourceType), "checked as before")
+    val info = WriteCommandSupport.combined.lift(plan).get
+    val lineage = ContractEnforcementRule.lineagePlanOf(info, checked, Nil, Some(plan)).getOrElse(fail("no lineage plan"))
+    val id = com.invaract.ir.Lineage.traceDetailed(lineage).columns.find(_.lineage.output.name == "id").get
+    assert(id.values.map(_.name) == Set("id", "amount") && id.lineage.derivation == com.invaract.ir.DerivationKind.Opaque,
+      "every column the RDD read, through code Invaract cannot see into")
+    assert(ContractEnforcementRule.lineagePlanOf(info, checked, Nil).isEmpty, "without the plan it was translated from, no lineage plan")
+    capturedPlans.clear()
+    read.select("id").write.mode("overwrite").parquet(scratchDir.resolve("rdd_lineage_plain").toString)
+    val plain = capturedPlans.collectFirst { case p if WriteCommandSupport.combined.isDefinedAt(p) => p }.get
+    assert(ContractEnforcementRule.lineagePlanOf(WriteCommandSupport.combined.lift(plain).get, SparkPlanAdapter.translate(plain).plan, Nil, Some(plain)).isEmpty,
+      "no RDD, no lineage plan")
   }
 
   test("a Delta UPDATE's lineage is its assignments where its condition holds; a DELETE's the rows its condition keeps") {

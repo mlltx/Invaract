@@ -812,19 +812,25 @@ object ContractEnforcementRule {
       // the partition columns and overwrite mode, where Spark states them (check.partitioning)
       partitioning = writeInfo.flatMap(_.partitioning),
       // what column lineage is traced through when the checked plan is not what the write computes (a MERGE's clauses)
-      lineagePlan = writeInfo.flatMap(lineagePlanOf(_, translated.plan, declaredInputs))
+      lineagePlan = writeInfo.flatMap(lineagePlanOf(_, translated.plan, declaredInputs, Some(plan)))
     )
   }
 
-  /** The write `translated` is, as lineage sees it: `info.lineageQuery` in place of its own query, and the table it
-    * creates stored where `info.createdAt` says. `None` when it has neither, or `translated` is not a write. */
-  private[sparkadapter] def lineagePlanOf(info: WriteCommandInfo, translated: com.invaract.ir.Plan, declaredInputs: Seq[String]): Option[com.invaract.ir.Plan] =
-    Some(translated).collect { case w: com.invaract.ir.Write if info.lineageQuery.isDefined || info.createdAt.isDefined => w }.map { write =>
+  /** The write `translated` is, as lineage sees it: `info.lineageQuery` in place of its own query, the table it
+    * creates stored where `info.createdAt` says, and a DataFrame built from an RDD the files the RDD read
+    * (`SparkPlanAdapter.translateForLineage`, from `plan`, the plan `translated` was translated from). `None` when it has
+    * none of them, or `translated` is not a write. */
+  private[sparkadapter] def lineagePlanOf(info: WriteCommandInfo, translated: com.invaract.ir.Plan, declaredInputs: Seq[String],
+                                          plan: Option[LogicalPlan] = None): Option[com.invaract.ir.Plan] = {
+    val rddBacked = plan.filter(_ => StructuralVerifier.collectUnknownPlans(translated).exists(_.sourceType == SparkPlanAdapter.RddRelationSourceType))
+    val traced = rddBacked.map(SparkPlanAdapter.translateForLineage(_, declaredInputs).plan).getOrElse(translated)
+    Some(traced).collect { case w: com.invaract.ir.Write if info.lineageQuery.isDefined || info.createdAt.isDefined || rddBacked.isDefined => w }.map { write =>
       write.copy(
-        input = info.lineageQuery.fold(write.input)(SparkPlanAdapter.translate(_, declaredInputs).plan),
+        input = info.lineageQuery.fold(write.input)(SparkPlanAdapter.translateForLineage(_, declaredInputs).plan),
         catalog = write.catalog.map(c => c.copy(location = c.location.orElse(info.createdAt)))
       )
     }
+  }
 
   /** The dry-run counterpart to `verifyOrThrow`: only the plain-write shape
     * (backed by a real `WriteCommandInfo` from `WriteCommandSupport.combined`

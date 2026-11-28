@@ -383,6 +383,21 @@ class OpenLineageMapperSpec extends AnyFunSuite {
     assert(!broken.get("success").asBoolean && broken.get("description").asText().contains("breaks"))
   }
 
+  test("a Kafka topic and a Pub/Sub topic are named as the conventions name them, in every place a dataset is named") {
+    val topic = "broker:9092/orders"
+    val plan = Write(DatasetRef("projects/p/topics/out"), Project(Read(DatasetRef(topic)), List(NamedExpr("id", ColumnReference(ColumnRef("id", Some(topic)))))))
+    val lineage = WriteLineage(LineageDataset("projects/p/topics/out", Some("pubsub")), List(LineageDataset(topic, Some("kafka"))), plan = Some(plan))
+    val running = published(mapper(), check().copy(lineage = Some(lineage)))(1)
+    def id(n: JsonNode) = (n.get("namespace").asText(), n.get("name").asText())
+    assert(id(running.get("inputs").get(0)) == (("kafka://broker:9092", "orders")))
+    val output = running.get("outputs").get(0)
+    assert(id(output) == (("pubsub", "topic:p:out")), output.toString)
+    assert(!output.path("facets").path("columnLineage").isMissingNode, output.toString)
+    assert(id(output.path("facets").path("columnLineage").path("fields").path("id").path("inputFields").get(0)) == (("kafka://broker:9092", "orders")))
+    val written = published(mapper(), WriteEvent(None, topic, Some("kafka"), None, Nil, 1L, Map.empty, job = Some(job)))(1)
+    assert(id(written.get("outputs").get(0)) == (("kafka://broker:9092", "orders")))
+  }
+
   test("only statistics a write reports are published, and one is enough for the facet") {
     val write = WriteEvent(None, "/out/x", None, None, Nil, 3L, Map.empty, job = Some(job))
     def stats(w: WriteEvent) = published(mapper(), w)(1).get("outputs").get(0).path("outputFacets").get("outputStatistics")

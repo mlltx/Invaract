@@ -68,6 +68,13 @@ const PAGES = [
     order: 4,
   },
   {
+    src: 'docs/LINEAGE_PRODUCTION_PLAN.md',
+    slug: 'design/lineage-production-plan',
+    section: 'Design Docs',
+    label: 'Lineage Production Plan',
+    order: 4,
+  },
+  {
     src: 'docs/SPARK_ADAPTER_HARDENING_PLAN.md',
     slug: 'design/spark-adapter-hardening-plan',
     section: 'Design Docs',

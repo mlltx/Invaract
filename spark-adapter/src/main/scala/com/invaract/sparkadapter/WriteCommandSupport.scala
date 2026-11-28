@@ -1160,24 +1160,26 @@ private[sparkadapter] object WriteCommandSupport {
         Project(target.output, Filter(condition.fold[Expression](Literal.FalseLiteral)(c => Not(EqualNullSafe(c, Literal.TrueLiteral))), target))
     }.toOption
 
-  /** A Delta MERGE as what it writes: the rows of each of its clauses, together. Each clause's rows are the target joined
-    * to the source on the MERGE's condition, kept by the clause's own condition, each target column the value the
-    * clause gives it - in a matched or not-matched-by-source UPDATE, its assignment, or the row's own value when the
-    * clause leaves it; in an INSERT, its assignment (none: null). A DELETE writes no row. Rows no clause touches are not
-    * written by the MERGE and give nothing, as openlineage-spark counts them; a value a clause copies stays a copy, not
-    * a computation. Read through Delta's public clause API (`condition`, `resolvedActions`, each action's
+  /** A Delta MERGE as what it writes: the rows of each of its clauses, and the table's other rows, together. Each
+    * clause's rows are the target joined to the source on the MERGE's condition, kept by the clause's own condition,
+    * each target column the value the clause gives it - in a matched or not-matched-by-source UPDATE, its assignment, or
+    * the row's own value when the clause leaves it; in an INSERT, its assignment (none: null). A DELETE writes no row,
+    * and its condition decides which of the table's rows are removed; the rest, no clause touches, stay as they are -
+    * the table's own values, as an Iceberg MERGE (and Spline) counts them. A value a clause copies stays a copy, not a
+    * computation. Read through Delta's public clause API (`condition`, `resolvedActions`, each action's
     * `targetColNameParts` and `expr`); `None` when it is not there. An action on a nested field is its top-level
     * column's: the column keeps its other fields, so the row's own value is one of its sources too.
     */
   private[sparkadapter] def mergeClauses(merge: LogicalPlan, target: LogicalPlan, source: LogicalPlan): Option[LogicalPlan] =
     scala.util.Try {
-      import org.apache.spark.sql.catalyst.expressions.{Alias, Coalesce, Expression, Literal}
+      import org.apache.spark.sql.catalyst.expressions.{Alias, Coalesce, Expression, Literal, Not, Or}
       import org.apache.spark.sql.catalyst.plans.FullOuter
       import org.apache.spark.sql.catalyst.plans.logical.{Filter, Join, JoinHint, Project, Union}
       def call[A](o: Any, method: String): A = o.getClass.getMethod(method).invoke(o).asInstanceOf[A]
       case class Clause(condition: Option[Expression], actions: Seq[(Seq[String], Expression)], inserts: Boolean)
+      def isDelete(c: AnyRef) = call[String](c, "clauseType").toLowerCase(java.util.Locale.ROOT).contains("delete")
       def clauses(method: String, inserts: Boolean): Seq[Clause] = call[Seq[AnyRef]](merge, method).collect {
-        case c if !call[String](c, "clauseType").toLowerCase(java.util.Locale.ROOT).contains("delete") =>
+        case c if !isDelete(c) =>
           Clause(
             call[Option[Expression]](c, "condition"),
             call[Seq[AnyRef]](c, "resolvedActions").map(a => (call[Seq[String]](a, "targetColNameParts"), call[Expression](a, "expr"))),
@@ -1196,13 +1198,16 @@ private[sparkadapter] object WriteCommandSupport {
         }
         Project(columns, clause.condition.fold(joined: LogicalPlan)(Filter(_, joined)))
       }
-      clauses("matchedClauses", inserts = false) ++ clauses("notMatchedBySourceClauses", inserts = false) ++
-        clauses("notMatchedClauses", inserts = true) match {
-        case Seq()      => Project(target.output.map(c => Alias(Literal(null, c.dataType), c.name)()), joined)
-        case Seq(one)   => rowsOf(one)
-        // projected by name, as Spark projects a union it writes: each column is then every clause's, not the first's
-        case written => val all = Union(written.map(rowsOf)); Project(all.output, all)
-      }
+      // The rows no clause writes stay as they are, the table's own (an Iceberg MERGE, through Spark's rewrite, writes
+      // them back too), but for those a DELETE removes: its condition decides which.
+      val deletes = (call[Seq[AnyRef]](merge, "matchedClauses") ++ call[Seq[AnyRef]](merge, "notMatchedBySourceClauses"))
+        .filter(isDelete).map(c => call[Option[Expression]](c, "condition").getOrElse(Literal.TrueLiteral))
+      val kept = Project(target.output.map(c => Alias(c, c.name)()), if (deletes.isEmpty) joined else Filter(Not(deletes.reduce(Or)), joined))
+      val written = clauses("matchedClauses", inserts = false) ++ clauses("notMatchedBySourceClauses", inserts = false) ++
+        clauses("notMatchedClauses", inserts = true)
+      // projected by name, as Spark projects a union it writes: each column is then every branch's, not the first's
+      val all = Union(written.map(rowsOf) :+ kept)
+      Project(all.output, all)
     }.toOption
 
   /** A real, found-and-fixed bug in this feature's first pass: `catalogTable

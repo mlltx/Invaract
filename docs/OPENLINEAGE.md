@@ -100,13 +100,24 @@ published by Invaract, by Spark's integration and by a warehouse's own integrati
 | `hdfs://nn:8020/warehouse/t` | `hdfs://nn:8020` | `/warehouse/t` |
 | `s3://bucket/key`, `s3a://`, `s3n://` | `s3://bucket` | `key` |
 | `gs://bucket/key` | `gs://bucket` | `key` |
-| `abfss://container@account.dfs.core.windows.net/path` | the same, up to the host | `/path` |
+| `abfss://container@account.dfs.core.windows.net/path`, `abfs://`; `wasbs://`, `wasb://` | `abfss://container@account.dfs.core.windows.net` (`abfs` is `abfss`, `wasb` is `wasbs`) | `path` |
+| a bucket or container itself (`s3://bucket`) | `s3://bucket` | `/` |
+| `hdfs:///warehouse/t` (no authority: the cluster's default file system) | `hdfs` | `/warehouse/t` |
 | `postgresql://host:5432/db` and a table | `postgres://host:5432` | `db.schema.table` |
-| an opaque JDBC URL (`h2:mem:bank`, `oracle:thin:@db:1521:orcl`) and a table | the URL, credentials stripped (`h2:mem:bank`) | the table, as openlineage-spark names it |
+| a database URL with no port (`jdbc:postgresql://host/db`) | `postgres://host:5432`: the port openlineage-spark assumes (PostgreSQL 5432, MySQL 3306, Oracle 1521, Db2 6789, Teradata 1025, Trino 443; none for MariaDB or SQL Server) | `db.table` |
+| SQL Server's and Teradata's database as a property (`jdbc:sqlserver://host:1433;databaseName=sales`, `jdbc:teradata://host/DATABASE=sales,DBS_PORT=1030`) | `sqlserver://host:1433`, `teradata://host:1030` | `sales.dbo.orders`, `sales.orders` |
+| an Oracle thin URL (`oracle:thin:@db:1521:orcl`, `oracle:thin:@//db:1521/service`) and a table | `oracle://db:1521` | `orcl.SCHEMA.TABLE`, `service.SCHEMA.TABLE` |
+| Trino (`jdbc:trino://host:8080/hive/sales`) and a table | `trino://host:8080` | `hive/sales.orders`, as openlineage-spark names it |
+| an opaque JDBC URL (`h2:mem:bank`, `sqlite:/var/db.sqlite`) and a table | the URL, credentials stripped (`h2:mem:bank`) | the table, as openlineage-spark names it |
 | `bigquery:project.dataset.table` (Beam) | `bigquery` | `project.dataset.table` |
+| a Kafka topic, `broker:9092/orders` (Beam; format `kafka`) | `kafka://broker:9092` (the first server; `kafka` with none) | `orders` |
+| a Pub/Sub topic or subscription, `projects/p/topics/t` (Beam; format `pubsub`) | `pubsub` | `topic:p:t`, `subscription:p:s` |
 | any other `scheme://authority/path` | `scheme://authority` | `/path` |
 
-Credentials in a location (`s3://key:secret@bucket`, `postgresql://user:pass@host`) are always removed. A dataset that
+A trailing `/` is dropped (`s3://bucket/out/` is `s3://bucket/out`). Each row is measured against openlineage-spark's
+own naming (`FilesystemDatasetUtils` and `JdbcDatasetUtils`, 1.55.0, in lineage-crosscheck's `NamingParitySpec`) and agrees with it, except where Invaract is stricter: credentials in a
+location (`s3://key:secret@bucket`, `postgresql://user:pass@host`) are always removed (openlineage-spark keeps them in the
+namespace), and a scheme is lower-cased (`S3://bucket/key` is `s3://bucket`, `key`). A dataset that
 resolved to a catalog table also carries the `symlinks` facet naming the table (`TABLE`), and `catalog` when the catalog
 is known.
 
@@ -337,7 +348,7 @@ on every job of the cross-check corpus the two name every dataset alike, except 
 ## 11. Cross-checking Spark lineage
 
 Unit tests can only hold lineage to what their author expected. `lineage-crosscheck/` holds it to two independent tools
-instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 124 jobs: projections, conditions, filters, sorts,
+instead, on real Spark jobs: each job of its corpus (`Corpus.scala`, 126 jobs: projections, conditions, filters, sorts,
 joins of every kind (with hints, semi, anti, lateral, typed), aggregates (with `HAVING` and `FILTER`), windows, rollups,
 cubes, pivots and unpivots, unions by position and by name, `INTERSECT`/`EXCEPT`, nested data and higher-order functions,
 column names that differ in case or hold a dot, SQL with temporary and permanent views, CTEs and subqueries, UDFs, the
@@ -392,7 +403,7 @@ A second review, of the corpus itself, by Spark construct, added 69 jobs for the
 names (case, dots, swapped names), plan nodes that rarely appear in tests (hints, typed operations, `observe`, `sample`,
 `offset`, lateral joins), set operations matched by position, reads of several paths or one file, row-level writes on
 both table formats, and streaming through `foreachBatch`. It found these gaps of Invaract's, each now fixed, its job
-the test that holds it (Invaract agrees with openlineage-spark on 74 of the 124 jobs and with Spline on 90; no job shows
+the test that holds it (Invaract agrees with openlineage-spark on 70 of the 126 jobs and with Spline on 87; no job shows
 a gap of Invaract's):
 
 | Found | Kind | Done |
@@ -407,10 +418,16 @@ a gap of Invaract's):
 | A field of a struct built in the plan (`joinWith`'s `_1.id`) traced to every column of the struct | lower quality | the field's own column, copied (`ir.Lineage`) |
 | A cast to a column's own type (above a view's query, before an `insertInto`) typed `TRANSFORMATION`, not `IDENTITY`; an Iceberg UPDATE's unchanged columns typed as computed and conditional | lower quality | a cast to the type its value has, and `IF(c, x, x)`, are their value |
 | A table an Iceberg MERGE, UPDATE or DELETE changes named by its catalog identifier, where an append names it by its location; a `foreachBatch` micro-batch's input named by the files it read, not the stream's source | dataset naming | the table's storage for lineage (`WriteCommandSupport.storedTableLocation`), read back included; a micro-batch reads its stream's directory |
+| Nothing above a streaming watermark was traced (a windowed aggregation, a stream-stream join), nor through `dropDuplicatesWithinWatermark` or `mapGroupsWithState`; nothing through PySpark's `mapInPandas`, `applyInPandas` (grouped, cogrouped, with state) or `mapInArrow`; and a pandas-on-Spark job traced nothing at all (its default index, `AttachDistributedSequence`, was opaque) | missing lineage | each translated (docs/SPARK_ADAPTER.md, "Translation coverage"): a watermark passes through, a deduplication within it is a deduplication, and a Python or stateful function is an opaque `TRANSFORMATION` of every column it is given, its keys grouping the rows |
+| A column a typed `map`, `flatMap`, `mapPartitions` or `mapGroups` function produces, or an RDD-backed DataFrame's (`rdd.toDF`), had no sources | missing lineage | every column the function was given, or the RDD read from its files, typed `TRANSFORMATION` (opaque); for an RDD in a lineage-only plan (`SparkPlanAdapter.translateForLineage`), so enforcement still checks the opaque node |
+| The rows a Delta MERGE leaves were not counted, where an Iceberg MERGE's are (its plan writes them back); a MERGE's `DELETE` clause condition was not reported for Delta | inconsistent lineage | one convention for both formats: the rows no clause touches keep the table's own values (`IDENTITY` from the table), and a `DELETE` condition decides which rows remain (`FILTER`) (`WriteCommandSupport.mergeClauses`, `MergeRows`' `Filter`) |
+| A Beam pipeline's Kafka topic (`broker:9092/orders`) named as a URL with the scheme `broker`, and its Pub/Sub topic (`projects/p/topics/t`) as a relative file path | dataset naming | named by the dataset's format as the conventions name them (`OpenLineageNaming.dataset(..., format)`): `kafka://broker:9092`, `orders`; `pubsub`, `topic:p:t` |
+| JDBC tables named otherwise than openlineage-spark names them: a URL with no port had none (`postgres://db`, not `postgres://db:5432`); SQL Server's and Teradata's database properties were left in the namespace; an Oracle thin URL was the namespace itself; Db2, Teradata, MariaDB, Redshift and Trino tables were named as paths (`/sales/orders`); a URL's query swallowed the table | dataset naming | each as openlineage-spark names it (section 2.2), held by `NamingParitySpec` against its `JdbcDatasetUtils` |
+| Dataset names for Azure (`abfss://c@a.dfs.core.windows.net/path` named `/path`; `abfs://` and `wasb://` their own namespaces), a trailing `/`, a bucket's root and `hdfs:///` differed from openlineage-spark's | dataset naming | each as openlineage-spark names it (section 2.2), measured against its `FilesystemDatasetUtils` |
 
 It also showed where Invaract reports more than both references (a reliable `checkpoint()`, a cube's keys, an unpivot,
-a Delta or Iceberg UPDATE's and DELETE's rows and conditions, a typed filter's columns, a `foreachBatch` micro-batch's
-lineage) and where it is more precise (with `spark.sql.caseSensitive` on, a column differing only in case; `HAVING`, a
+a Delta or Iceberg UPDATE's and DELETE's rows and conditions, a typed filter's columns, a typed `map`'s and an RDD's
+columns, a Delta MERGE's untouched rows, a `foreachBatch` micro-batch's lineage) and where it is more precise (with `spark.sql.caseSensitive` on, a column differing only in case; `HAVING`, a
 grouping expression and an aggregate's `FILTER` typed as indirect lineage).
 
 ## 12. Production-readiness review
@@ -440,6 +457,7 @@ today, can it hurt a job, and can it be operated. Each finding, and what was don
 | 17 | Evolution | Invaract's own facets need a versioning rule | **Set**: the schemas are published under a versioned path (`schemas/openlineage/1-0-0/`). A new optional field is a new minor version under a new path (`1-1-0/`); a removed or changed field a new major version; a published version is never edited, so every event's `_schemaURL` keeps validating |
 | 18 | Transports | No Kafka or Kinesis transport, which openlineage-java has | **Follow-up**: HTTP, file and console only; the migration guide says how to reach Kafka meanwhile |
 | 19 | Completeness | A review of the corpus by Spark construct (69 more jobs) found gaps no earlier job measured: a union matched by name, not position; source columns named in the job's case; plan nodes not translated (hints, typed filter, `observe`, `sample`, `offset`, `LATERAL`, `INTERSECT`/`EXCEPT`, Iceberg's `MergeRows`); a read of several paths; Delta UPDATE/DELETE conditions; Iceberg row-level targets named by identifier | **Fixed** (section 11), each held by its corpus job |
+| 20 | Completeness | Typed Dataset operations, RDD-backed DataFrames, streaming watermarks and state, PySpark's pandas and Arrow functions and pandas-on-Spark had no column lineage; Delta and Iceberg MERGEs counted untouched rows differently; object-store and JDBC names differed from openlineage-spark's (Azure, trailing `/`, bucket roots, default ports, database properties, Oracle); a Beam pipeline's Kafka and Pub/Sub topics were misnamed | **Fixed** (section 11). What needs more than a fix (Kafka, PySpark in CI, schema-evolving MERGE, generated columns, connectors and catalogs, tables a catalog places, per-batch streaming events, nested fields) is planned in docs/LINEAGE_PRODUCTION_PLAN.md |
 
 Gates every change to this feature now passes: the OpenLineage 2-0-2 schema on every event, the conformance kit's three
 scenarios on every adapter, mutation testing (at or above 70% on every file changed, section 8), MiMa, coverage, the
